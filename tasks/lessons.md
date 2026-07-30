@@ -1,0 +1,40 @@
+# Lessons
+
+Format: `[date] | what went wrong | rule to prevent it`
+
+2026-07-30 | A bare `claude -p` call inherited the full session context (CLAUDE.md, MCP
+tool schemas, skill listings) — 29,919 cache-creation tokens and $0.31 for a 17-token
+answer. | Every pipeline invocation of the Claude CLI must pass `--safe-mode --tools ""
+--strict-mcp-config --mcp-config '{"mcpServers":{}}' --disable-slash-commands
+--no-session-persistence`. Measured 100x cost reduction. Never shell out to `claude`
+without them.
+
+2026-07-30 | Every commitment fixture passed in isolation, so an order-dependent bug
+(supersession never firing on a backfill, because extraction ran newest-first) survived a
+green suite and only appeared in an end-to-end run over the whole fixture set. | When
+post-processing steps are order dependent, one test must run the whole set through one
+ledger in the order the pipeline actually uses. Per-item fixtures cannot see ordering.
+
+2026-07-30 | Constructing `Settings(...)` directly in every test hid the fact that
+`OWNER_EMAILS=a,b` could not be parsed from the environment at all — pydantic-settings
+JSON-decodes complex types before validators run. The failure appeared the first time the
+CLI ran, not in CI. | Test config objects the way production builds them. If production
+reads the environment, at least one test must read the environment.
+
+2026-07-30 | Idempotency masked a cursor bug. The Obsidian connector truncated its mtime
+watermark to whole seconds, so every note was re-read on every run — but content_hash
+meant zero writes, so the sync looked perfectly idempotent while doing all the work
+twice. | An idempotency test proves nothing about whether work was *avoided*. When a
+connector has a cursor, assert the second run fetches nothing, not just that it writes
+nothing.
+
+2026-07-30 | Two sessions built concurrently in this checkout and the worktree escape
+hatch was dead: the repo's initial commit is empty, so every source file is untracked
+and a worktree would contain nothing. Had to serialize by watching mtimes instead. |
+Commit a baseline before any parallel-session work — worktree isolation only isolates
+what git tracks. An all-untracked repo cannot be shared safely at all.
+
+2026-07-30 | Wrote a test asserting no guilt-copy in the Monday brief with a substring
+check, and "again" matched inside "against" in an unrelated capacity sentence. | Banned-
+word assertions need word boundaries. A substring check on short words fails on the
+innocent case and teaches you to loosen the test.
