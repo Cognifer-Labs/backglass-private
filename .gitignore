@@ -1,0 +1,21 @@
+.env
+data/
+*.db
+*.db-wal
+*.db-shm
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+node_modules/
+.DS_Store
+
+# Never commit anything derived from real mail.
+tests/fixtures/**/real_*
+*.eml
+*.mbox

@@ -1,0 +1,85 @@
+/* Backglass design tokens
+   Paper #FAF3DF / black. One ink set, both modes.
+   Validate changes with scripts/validate-palette.mjs */
+
+:root {
+  color-scheme: light;
+
+  /* surfaces */
+  --paper:        #FAF3DF;
+  --ink:          #000000;
+  --on-ink:       #FAF3DF;
+
+  /* text */
+  --ink-2:        #3d3c37;   /* neutral 700 ·  9.97:1 */
+  --ink-muted:    #716f67;   /* neutral 500 ·  4.54:1 */
+
+  /* rules */
+  --rule:         #000000;
+  --rule-hair:    #c9c4b5;   /* neutral 200 */
+
+  /* neutral ramp, hue 91 */
+  --n-50:  #f5eedb;
+  --n-100: #e4decd;
+  --n-200: #c9c4b5;
+  --n-300: #aca79b;
+  --n-400: #8e8a81;
+  --n-500: #716f67;
+  --n-600: #57554f;
+  --n-700: #3d3c37;
+  --n-800: #252421;
+  --n-900: #0e0d0b;
+
+  /* the five inks — identical in both modes */
+  --vermilion: #D03D37;   /* overdue    · series 2 */
+  --gold:      #E8AC1D;   /* slipping             */
+  --green:     #249041;   /* done                 */
+  --turquoise: #009592;   /* awaiting   · series 3 */
+  --cobalt:    #2766C0;   /* series 1 — chart only, never carries text */
+
+  /* chart series */
+  --s1: var(--cobalt);
+  --s2: var(--vermilion);
+  --s3: var(--turquoise);
+
+  /* geometry */
+  --radius:      0;
+  --radius-reel: 2px;
+  --border:      2px;
+  --hair:        1px;
+
+  /* space scale */
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
+  --sp-5: 24px; --sp-6: 32px; --sp-7: 48px;
+
+  /* type */
+  --font-body: system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-cond: "Helvetica Neue Condensed", "HelveticaNeue-CondensedBold",
+               "Arial Narrow", system-ui, sans-serif;
+  --font-reel: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --paper:      #000000;
+    --ink:        #FAF3DF;
+    --on-ink:     #000000;
+    --ink-2:      #c9c4b5;   /* neutral 200 · 12.05:1 */
+    --ink-muted:  #aca79b;   /* neutral 300 ·  8.75:1 */
+    --rule:       #FAF3DF;
+    --rule-hair:  #3d3c37;   /* neutral 700 */
+    /* inks unchanged — that is the point, not an omission */
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper:      #000000;
+  --ink:        #FAF3DF;
+  --on-ink:     #000000;
+  --ink-2:      #c9c4b5;
+  --ink-muted:  #aca79b;
+  --rule:       #FAF3DF;
+  --rule-hair:  #3d3c37;
+}

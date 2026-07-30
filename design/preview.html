@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backglass — design reference</title>
+<style>
+/* Tokens mirror design/tokens.css. Kept inline so this file opens standalone. */
+:root{
+  color-scheme:light;
+  --paper:#FAF3DF; --ink:#000000; --on-ink:#FAF3DF;
+  --ink-2:#3d3c37; --ink-muted:#716f67;
+  --rule:#000000; --rule-hair:#c9c4b5;
+  --vermilion:#D03D37; --gold:#E8AC1D; --green:#249041;
+  --turquoise:#009592; --cobalt:#2766C0;
+  --s1:#2766C0; --s2:#D03D37; --s3:#009592;
+}
+@media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){
+  color-scheme:dark;
+  --paper:#000000; --ink:#FAF3DF; --on-ink:#000000;
+  --ink-2:#c9c4b5; --ink-muted:#aca79b;
+  --rule:#FAF3DF; --rule-hair:#3d3c37;
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --paper:#000000; --ink:#FAF3DF; --on-ink:#000000;
+  --ink-2:#c9c4b5; --ink-muted:#aca79b;
+  --rule:#FAF3DF; --rule-hair:#3d3c37;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font:400 15px/23px system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+.cond{font-family:"Helvetica Neue Condensed","HelveticaNeue-CondensedBold","Arial Narrow",system-ui,sans-serif;
+  font-weight:700;text-transform:uppercase;letter-spacing:.02em}
+.wrap{max-width:1060px;margin:0 auto;padding:0 0 72px}
+.mast{border-bottom:4px solid var(--rule);padding:24px 24px 16px;display:flex;
+  justify-content:space-between;align-items:flex-end;gap:16px;flex-wrap:wrap}
+.mast h1{font-size:38px;line-height:38px;margin:0}
+.mast .meta{font-size:11px;line-height:15px;letter-spacing:.06em;color:var(--ink-muted);margin:8px 0 0;
+  font-weight:700;text-transform:uppercase}
+button.toggle{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  background:var(--ink);color:var(--on-ink);border:2px solid var(--rule);border-radius:0;
+  padding:8px 16px;cursor:pointer}
+button.toggle:hover{background:var(--paper);color:var(--ink)}
+:focus-visible{outline:3px solid var(--vermilion);outline-offset:2px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:0}
+@media(max-width:840px){.grid{grid-template-columns:1fr}}
+.panel{border-bottom:2px solid var(--rule);border-right:2px solid var(--rule);padding:0 0 24px}
+.panel:nth-child(2n){border-right:0}
+@media(max-width:840px){.panel{border-right:0}}
+.banner{background:var(--ink);color:var(--on-ink);padding:8px 24px;font-size:14px;line-height:18px;
+  display:flex;justify-content:space-between;align-items:center;gap:12px}
+.inner{padding:0 24px}
+.cap{font-size:12px;line-height:17px;color:var(--ink-muted);padding:12px 0;
+  border-bottom:1px solid var(--rule-hair);margin-bottom:0}
+.row{display:flex;gap:16px;padding:12px 0;border-top:1px solid var(--rule-hair);align-items:flex-start}
+.row:first-of-type{border-top:0}
+.grow{flex:1;min-width:0}
+.b1{margin:0;font-size:15px;line-height:21px}
+.b2{margin:4px 0 0;font-size:13px;line-height:18px;color:var(--ink-muted)}
+.b2 a{color:var(--ink-muted);text-underline-offset:2px}
+.time{font-size:12px;font-weight:700;letter-spacing:.04em;color:var(--ink-muted);flex:0 0 88px;padding-top:4px}
+.prot{border:2px solid var(--rule);padding:12px;margin:12px 0;
+  background:repeating-linear-gradient(45deg,transparent,transparent 5px,var(--rule-hair) 5px,var(--rule-hair) 6px)}
+.prot .hd{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.chip{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;
+  font:700 10px/13px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  border:2px solid var(--rule);border-radius:0;padding:3px 8px;color:#000;background:var(--paper);white-space:nowrap}
+.chip svg{width:10px;height:10px;flex:0 0 10px}
+.k-black{background:var(--ink);color:var(--on-ink)}
+.k-verm{background:var(--vermilion)}
+.k-gold{background:var(--gold)}
+.k-turq{background:var(--turquoise)}
+.k-green{background:var(--green)}
+.k-dash{border-style:dashed;background:transparent;color:var(--ink-muted)}
+.reel{display:inline-flex;background:#000;border:2px solid #000;padding:2px;gap:1px}
+:root[data-theme="dark"] .reel{border-color:#FAF3DF}
+@media(prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .reel{border-color:#FAF3DF}}
+.reel span{background:#FAF3DF;color:#000;font:700 20px/24px ui-monospace,"SF Mono",Menlo,monospace;
+  padding:1px 5px;border-radius:2px;font-variant-numeric:tabular-nums}
+.goal{padding:16px 0;border-top:1px solid var(--rule-hair)}
+.goal:first-of-type{border-top:0}
+.goal .hd{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:4px}
+.goal .hd .nm{font-size:15px;line-height:21px}
+.tgt{font-size:12px;line-height:17px;color:var(--ink-muted);margin:0 0 8px}
+.track{height:14px;border:2px solid var(--rule);background:var(--paper)}
+.fill{height:100%;background:var(--ink)}
+.fill.gold{background:var(--gold)}
+.bars{display:flex;flex-direction:column;gap:8px;padding-top:2px}
+.bar{display:flex;align-items:center;gap:12px;font-size:13px}
+.bar .lbl{flex:0 0 96px;font-weight:700;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar .b{height:16px;background:var(--ink);border:1px solid var(--rule)}
+.bar .v{font-weight:700}
+.note{font-size:12px;line-height:17px;color:var(--ink-muted);margin:16px 0 0}
+.rev{border:2px dashed var(--rule);padding:16px;margin:12px 0}
+.rev p{margin:0}
+.quote{font-size:13px;line-height:19px;color:var(--ink-muted);font-style:italic;margin:8px 0 16px;
+  padding-left:12px;border-left:2px solid var(--rule)}
+.acts{display:flex;gap:8px;flex-wrap:wrap}
+.btn{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  border:2px solid var(--rule);border-radius:0;padding:8px 16px;cursor:pointer;
+  background:var(--paper);color:var(--ink)}
+.btn:hover{background:var(--ink);color:var(--on-ink)}
+.chk{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--rule-hair)}
+.chk:first-of-type{border-top:0}
+.box{width:16px;height:16px;border:2px solid var(--rule);flex:0 0 16px;position:relative}
+.box.on{background:var(--ink)}
+.box.on:after{content:"";position:absolute;left:3px;top:0px;width:5px;height:10px;
+  border:solid var(--on-ink);border-width:0 2px 2px 0;transform:rotate(45deg)}
+.chk .nm{flex:1}
+.chk.done .nm{color:var(--ink-muted);text-decoration:line-through}
+.chk .st{font:700 10px/13px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted)}
+.src{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--rule-hair);font-size:14px}
+.src:first-of-type{border-top:0}
+.sq{width:11px;height:11px;border:2px solid var(--rule);flex:0 0 11px}
+.src .nm{flex:1;font-weight:700;font-size:12px;letter-spacing:.05em;text-transform:uppercase}
+.src .ts{color:var(--ink-muted);font-size:13px}
+.sec{border-bottom:2px solid var(--rule)}
+.swrap{padding:24px}
+.sws{display:grid;grid-template-columns:repeat(5,1fr);gap:0;border:2px solid var(--rule)}
+@media(max-width:840px){.sws{grid-template-columns:repeat(2,1fr)}}
+.sw{padding:16px 12px;border-right:2px solid var(--rule);color:#000}
+.sw:last-child{border-right:0}
+.sw b{display:block;font:700 11px/14px system-ui,sans-serif;letter-spacing:.05em;text-transform:uppercase}
+.sw code{font:400 10px/14px ui-monospace,monospace}
+.legend{display:flex;gap:16px;font:700 10px/13px system-ui,sans-serif;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--ink-muted);margin-top:16px;flex-wrap:wrap}
+.legend i{display:inline-block;width:11px;height:11px;border:1px solid var(--rule);margin-right:6px;vertical-align:-2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="mast">
+    <div>
+      <p class="cond" style="margin:0 0 6px;font-size:12px;letter-spacing:.14em">Backglass</p>
+      <h1 class="cond">Wednesday 29 July</h1>
+      <p class="meta">America/Phoenix &nbsp;·&nbsp; Last sync 6 min ago &nbsp;·&nbsp; 4 sources healthy, 1 failing</p>
+    </div>
+    <button class="toggle" id="tg">Invert</button>
+  </header>
+
+  <div class="grid">
+
+    <section class="panel">
+      <div class="banner"><span class="cond">Today's plan</span><span class="cond" style="font-size:11px;letter-spacing:.06em">Proposed</span></div>
+      <div class="inner">
+        <p class="cap">6h 15m available &nbsp;·&nbsp; 5h 30m planned &nbsp;·&nbsp; 3 items did not fit</p>
+        <div class="row"><div class="time">09:00–09:45</div><div class="grow">
+          <p class="b1">NYWIC modernization standup</p><p class="b2">Fixed · 6 attendees</p></div></div>
+        <div class="prot">
+          <div class="hd"><span class="b1" style="font-weight:700">09:55–11:25 &nbsp;Deep work</span>
+            <span class="chip k-black">Protected</span></div>
+          <p class="b2" style="margin-top:4px">Migration plan for NY DOH · advances NYWIC phase 2 cutover</p>
+        </div>
+        <div class="row"><div class="time">11:30</div><div class="grow">
+          <p class="b1">Migration plan due to NY DOH</p><p class="b2"><a href="#">Email thread, 14 Jul</a></p></div>
+          <span class="chip k-black">Due today</span></div>
+        <div class="row"><div class="time">14:00–14:30</div><div class="grow">
+          <p class="b1">NJ WIC vendor sync</p><p class="b2">Fixed</p></div></div>
+        <div class="row"><div class="time">14:40–15:10</div><div class="grow">
+          <p class="b1">Small items ×4</p><p class="b2">Batched · 30 min</p></div></div>
+        <div class="row"><div class="time">—</div><div class="grow">
+          <p class="b1">Send revised RSVP proposal scope</p>
+          <p class="b2">Rolled over 3× · <a href="#">Note, 22 Jul</a></p></div>
+          <span class="chip k-verm"><svg viewBox="0 0 12 12" fill="currentColor"><path d="M6 0 12 11H0z"/></svg>Drop or do?</span></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="banner"><span class="cond">Awaiting others</span>
+        <span class="reel"><span>0</span><span>3</span></span></div>
+      <div class="inner">
+        <div class="row"><div class="grow">
+          <p class="b1">Signed DPA from vendor counsel</p><p class="b2">Asked 18 days ago · <a href="#">source</a></p></div>
+          <span class="chip k-turq">18 days</span></div>
+        <div class="row"><div class="grow">
+          <p class="b1">Schema sign-off, NJ team</p><p class="b2">Asked 6 days ago · <a href="#">source</a></p></div>
+          <span class="chip k-turq">6 days</span></div>
+        <div class="row"><div class="grow">
+          <p class="b1">Q3 invoice confirmation</p><p class="b2">Asked 3 days ago · <a href="#">source</a></p></div>
+          <span class="chip k-turq">3 days</span></div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="banner"><span class="cond">Goals</span>
+        <span class="cond" style="font-size:11px;letter-spacing:.06em">Week 31</span></div>
+      <div class="inner">
+        <div class="goal">
+          <div class="hd"><span class="nm">NYWIC phase 2 cutover</span>
+            <span class="reel"><span>7</span><span>2</span></span></div>
+          <p class="tgt">Target: 3 deep work sessions/wk · 2 done · on pace for 26 Sep, target 30 Sep</p>
+          <div class="track"><div class="fill" style="width:72%"></div></div>
+        </div>
+        <div class="goal">
+          <div class="hd"><span class="nm">Avorio launch readiness</span>
+            <span class="reel"><span>3</span><span>1</span></span></div>
+          <p class="tgt">Target: ship 1 milestone/wk · 0 done · on pace for 14 Oct, target 30 Sep</p>
+          <div class="track"><div class="fill gold" style="width:31%"></div></div>
+          <p style="margin:10px 0 0;display:flex;gap:8px;flex-wrap:wrap">
+            <span class="chip k-gold"><svg viewBox="0 0 12 12" fill="currentColor"><path d="M6 0 12 11H0z"/></svg>12 days quiet</span>
+            <span class="chip k-verm"><svg viewBox="0 0 12 12" fill="currentColor"><path d="M6 0 12 11H0z"/></svg>At risk 2 wks</span>
+          </p>
+        </div>
+        <div class="goal">
+          <div class="hd"><span class="nm">Farm irrigation build</span>
+            <span class="reel"><span>8</span><span>8</span></span></div>
+          <p class="tgt">Target: 1 site visit/wk · 1 done · on pace for 12 Aug, target 31 Aug</p>
+          <div class="track"><div class="fill" style="width:88%"></div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="banner"><span class="cond">Daily checklist</span>
+        <span class="cond" style="font-size:11px;letter-spacing:.06em">3 of 5</span></div>
+      <div class="inner">
+        <div class="chk done"><span class="box on"></span><span class="nm">Inbox triage</span><span class="st">14 day streak</span></div>
+        <div class="chk done"><span class="box on"></span><span class="nm">Review overnight NJ deploys</span><span class="st">6 day streak</span></div>
+        <div class="chk done"><span class="box on"></span><span class="nm">Walk before 08:00</span><span class="st">2 day streak</span></div>
+        <div class="chk"><span class="box"></span><span class="nm">One hour on Avorio</span><span class="st">—</span></div>
+        <div class="chk"><span class="box"></span><span class="nm">Shutdown note</span><span class="st">9 day streak</span></div>
+        <p class="note">Cap is seven. A checklist of twenty is a list nobody completes.</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="banner"><span class="cond">Open by counterparty</span></div>
+      <div class="inner">
+        <div class="bars">
+          <div class="bar"><span class="lbl">NY DOH</span><span class="b" style="width:54%"></span><span class="v">9</span></div>
+          <div class="bar"><span class="lbl">NJ WIC</span><span class="b" style="width:36%"></span><span class="v">6</span></div>
+          <div class="bar"><span class="lbl">Internal</span><span class="b" style="width:30%"></span><span class="v">5</span></div>
+          <div class="bar"><span class="lbl">Vendors</span><span class="b" style="width:18%"></span><span class="v">3</span></div>
+          <div class="bar"><span class="lbl">Other</span><span class="b" style="width:12%"></span><span class="v">2</span></div>
+        </div>
+        <p class="note">One series, so it wears black. Ink slots are for charts with two or three things to tell apart.</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="banner"><span class="cond">Needs review</span>
+        <span class="reel"><span>0</span><span>2</span></span></div>
+      <div class="inner">
+        <div class="rev">
+          <p class="b1">You owe a revised timeline to the NJ team by Friday</p>
+          <p class="quote">"…will circle back with a revised timeline before end of week."</p>
+          <div class="acts"><button class="btn">Accept</button><button class="btn">Reject</button></div>
+        </div>
+        <div class="rev" style="margin-bottom:0">
+          <p class="b1">Vendor owes you the security questionnaire</p>
+          <p class="quote">"…our team should have that over to you shortly."</p>
+          <div class="acts"><button class="btn">Accept</button><button class="btn">Reject</button></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="banner"><span class="cond">Sources</span>
+        <span class="cond" style="font-size:11px;letter-spacing:.06em">Triage kill 93%</span></div>
+      <div class="inner">
+        <div class="src"><span class="sq" style="background:var(--green)"></span><span class="nm">Gmail</span><span class="ts">6 min ago</span></div>
+        <div class="src"><span class="sq" style="background:var(--green)"></span><span class="nm">Google Drive</span><span class="ts">22 min ago</span></div>
+        <div class="src"><span class="sq" style="background:var(--green)"></span><span class="nm">Calendar</span><span class="ts">6 min ago</span></div>
+        <div class="src"><span class="sq" style="background:var(--green)"></span><span class="nm">Obsidian</span><span class="ts">1 hr ago</span></div>
+        <div class="src"><span class="sq" style="background:var(--vermilion)"></span><span class="nm">Canvas</span>
+          <span class="chip k-verm"><svg viewBox="0 0 12 12" fill="currentColor"><path d="M6 0 12 11H0z"/></svg>Auth expired</span></div>
+        <p class="note">142 messages excluded by data boundary this week.</p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="banner"><span class="cond">Capacity, this week</span></div>
+      <div class="inner">
+        <div class="bars" style="padding-top:8px">
+          <div class="bar"><span class="lbl">Available</span><span class="b" style="width:52%"></span><span class="v">14h</span></div>
+          <div class="bar"><span class="lbl">Committed</span><span class="b" style="width:82%;background:var(--gold);border-color:var(--rule)"></span><span class="v">22h</span></div>
+        </div>
+        <p class="note" style="color:var(--ink)"><strong>Your weekly targets need 22 hours. You have 14 available after meetings. Something has to give.</strong></p>
+        <p class="note">Shown every Monday. The system names the gap and never drops a target on your behalf.</p>
+      </div>
+    </section>
+
+  </div>
+
+  <section class="sec">
+    <div class="banner"><span class="cond">Five inks</span>
+      <span class="cond" style="font-size:11px;letter-spacing:.06em">Same values in both modes</span></div>
+    <div class="swrap">
+      <div class="sws">
+        <div class="sw" style="background:#D03D37"><b>Vermilion</b><code>#D03D37</code></div>
+        <div class="sw" style="background:#E8AC1D"><b>Gold</b><code>#E8AC1D</code></div>
+        <div class="sw" style="background:#249041"><b>Green</b><code>#249041</code></div>
+        <div class="sw" style="background:#009592"><b>Turquoise</b><code>#009592</code></div>
+        <div class="sw" style="background:#2766C0;color:#FAF3DF"><b>Cobalt</b><code>#2766C0</code></div>
+      </div>
+      <div class="sws" style="margin-top:20px">
+        <div class="sw" style="background:#FAF3DF"><b>Paper</b><code>#FAF3DF</code></div>
+        <div class="sw" style="background:#c9c4b5"><b>N 200</b><code>#c9c4b5</code></div>
+        <div class="sw" style="background:#716f67;color:#FAF3DF"><b>N 500</b><code>#716f67</code></div>
+        <div class="sw" style="background:#3d3c37;color:#FAF3DF"><b>N 700</b><code>#3d3c37</code></div>
+        <div class="sw" style="background:#000000;color:#FAF3DF"><b>Ink</b><code>#000000</code></div>
+      </div>
+      <div class="legend">
+        <span>Series, validated all-pairs both modes:</span>
+        <span><i style="background:var(--s1)"></i>Slot 1 cobalt</span>
+        <span><i style="background:var(--s2)"></i>Slot 2 vermilion</span>
+        <span><i style="background:var(--s3)"></i>Slot 3 turquoise</span>
+      </div>
+    </div>
+  </section>
+
+</div>
+<script>
+const r=document.documentElement,b=document.getElementById('tg');
+b.onclick=()=>{const d=r.getAttribute('data-theme')==='dark';
+  r.setAttribute('data-theme',d?'light':'dark');b.textContent=d?'Invert':'Revert';};
+</script>
+</body>
+</html>
