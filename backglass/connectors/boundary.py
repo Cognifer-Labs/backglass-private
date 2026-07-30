@@ -172,10 +172,15 @@ def purge(
 
     conn.execute("BEGIN")
     try:
+        # The 0005 delete guard: source_item deletion is forbidden except through
+        # this gate, opened and closed inside the same transaction — a crash rolls
+        # the gate closed along with everything else.
+        conn.execute("UPDATE purge_gate SET open = 1 WHERE id = 1")
         # Commitments first: commitment.source_item_id is NOT NULL and has no cascade,
         # so the foreign key would reject the parent delete otherwise.
         conn.execute(f"DELETE FROM commitment WHERE source_item_id IN ({placeholders})", doomed)
         conn.execute(f"DELETE FROM source_item WHERE id IN ({placeholders})", doomed)
+        conn.execute("UPDATE purge_gate SET open = 0 WHERE id = 1")
         conn.execute("COMMIT")
     except Exception:
         conn.execute("ROLLBACK")

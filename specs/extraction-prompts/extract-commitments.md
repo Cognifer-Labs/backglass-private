@@ -1,9 +1,15 @@
 ---
 id: extract-commitments
-version: 1
+version: 2
 model: careful
 output: strict JSON, schema-validated, one retry on malformed
 ---
+
+<!-- v2 (2026-07-30): the live eval showed the model returning zero commitments for a
+     resolving message — "do not extract completed things" appeared before the resolves
+     rule and won. Resolutions now come first, with an explicit carve-out in the
+     do-not-extract list. Eval finding #1 (the model dedupes thread restatements itself)
+     is welcome; the code-level dedup in post-processing stays as the backstop. -->
 
 # Tier 2 commitment extraction
 
@@ -43,14 +49,19 @@ CONFIDENCE
   0.5    hedged language ("should be able to", "will try")
   <0.5   you are guessing — return it anyway, it goes to a review queue
 
+RESOLUTIONS — check this before deciding something is "already done".
+If the message delivers or completes an earlier commitment ("here's that plan
+I promised", "sent the deck last night"), you MUST still return one entry for
+it: set resolves=true, describe the earlier commitment in resolves_what, and
+set what to the thing delivered. A resolution is not a skip — it is how the
+ledger closes the original promise.
+
 Do not extract:
   - aspirations with no counterparty ("we should really fix that")
-  - things already completed and reported in past tense
+  - things already completed, UNLESS they resolve an earlier commitment —
+    then return them with resolves=true as above
   - commitments between two other people that do not involve the user
   - restatements of a commitment already made in an earlier quoted message
-
-If the message resolves an earlier commitment ("here's that plan I promised"),
-set resolves=true and describe the commitment it resolves in resolves_what.
 
 MESSAGE
 From: {{author}}

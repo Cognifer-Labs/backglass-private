@@ -101,7 +101,7 @@ def test_a_message_becomes_a_source_item(enforcing: Boundary) -> None:
 
     assert len(items) == 1
     item = items[0]
-    assert item.source == "slack"
+    assert item.source == "slack:personal"
     assert item.external_id == f"{CHANNEL}:1753800000.000200"
     # ts is the clock as well as the ID. Resolved to UTC, full precision kept.
     assert item.occurred_at == "2025-07-29T14:40:00.000200+00:00"

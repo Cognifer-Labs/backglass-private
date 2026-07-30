@@ -169,3 +169,19 @@ def test_purge_removes_previously_stored_items_and_their_commitments(
 def test_purge_is_a_no_op_when_the_boundary_is_not_enforcing(settings: Settings, conn) -> None:
     report = purge(conn, Boundary.from_settings(settings))
     assert report.total == 0
+
+
+def test_raw_delete_of_source_items_is_forbidden(conn):  # type: ignore[no-untyped-def]
+    """0005: docs/03 'kept forever' is now schema-enforced, not convention."""
+    import sqlite3
+
+    import pytest
+
+    conn.execute(
+        "INSERT INTO source_item (source, external_id, fetched_at, occurred_at,"
+        " content_hash) VALUES ('gmail:personal', 'x', '2026-07-30', '2026-07-30', 'h')"
+    )
+    with pytest.raises(sqlite3.DatabaseError, match="kept forever"):
+        conn.execute("DELETE FROM source_item")
+    # And the gate is closed at rest.
+    assert conn.execute("SELECT open FROM purge_gate").fetchone()["open"] == 0

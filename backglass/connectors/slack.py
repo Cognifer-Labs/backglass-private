@@ -90,9 +90,13 @@ class SlackConnector:
     excluded_by_rule: dict[str, int] = field(default_factory=dict)
     rate_limited: bool = False
 
+    #: Labelled like gmail/calendar/drive so a second workspace never needs a
+    #: credential-row migration.
+    label: str = "personal"
+
     @property
     def name(self) -> str:
-        return "slack"
+        return f"slack:{self.label}"
 
     def health(self) -> Health:
         if not self.token:

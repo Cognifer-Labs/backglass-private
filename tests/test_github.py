@@ -76,7 +76,7 @@ def test_an_assigned_issue_becomes_a_source_item(enforcing: Boundary) -> None:
 
     assert len(items) == 1
     item = items[0]
-    assert item.source == "github"
+    assert item.source == "github:personal"
     assert item.external_id == "kesavan/backglass#41"
     assert item.title == "[kesavan/backglass] Ledger dedupe drops supersedes"
     assert item.author == "dana"
@@ -263,4 +263,4 @@ def test_an_issue_quoting_a_client_address_is_excluded(enforcing: Boundary) -> N
 def test_it_satisfies_the_connector_protocol() -> None:
     connector = GithubConnector(token="t", boundary=Boundary(mode="full_scope"))
     assert isinstance(connector, Connector)
-    assert connector.name == "github"
+    assert connector.name == "github:personal"

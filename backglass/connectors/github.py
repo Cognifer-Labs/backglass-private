@@ -78,9 +78,14 @@ class GithubConnector:
     #: cursor is still correct, the next run resumes from it.
     rate_limited: bool = False
 
+    #: Labelled like gmail/calendar/drive so a second account never needs a
+    #: credential-row migration — the prefix convention is what keeps
+    #: credential UNIQUE(user_id, source) honest.
+    label: str = "personal"
+
     @property
     def name(self) -> str:
-        return "github"
+        return f"github:{self.label}"
 
     def health(self) -> Health:
         if not self.token:

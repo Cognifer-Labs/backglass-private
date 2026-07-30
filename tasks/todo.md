@@ -752,9 +752,16 @@ dashboard due labels + people checkbox render right.
 # Phase 8 — Consolidate, upgrade extraction, package, activate
 (approved 2026-07-30; plan: ~/.claude/plans/wobbly-kindling-crayon.md)
 
-- [ ] S0 commit checkpoint (grouped; owner identity; no push — no remote)
-- [ ] S1 hygiene: 0005 DELETE guard + purge gate; extract prompt v2 + live eval
-      (~$0.15 approved); github/slack `:label` rename pre-activation
+- [x] S0 commit checkpoint — 4 grouped commits (docs/design, application, desktop,
+      tasks), owner authorship verified, no remote so no push
+- [x] S1 hygiene:
+      0005 `purge_gate` + BEFORE DELETE trigger — raw DELETE aborts, D6 purge opens
+      the gate inside its own transaction; prompt v2 (resolutions before the
+      completed-things exclusion, explicit carve-out) — live eval $0.14: dates 7/7
+      held, fixture 05 now yields the resolving commitment (v1 returned zero);
+      04's count X is fixture staleness (model self-dedupes, backstop stays);
+      github/slack renamed to `github:personal`/`slack:personal` pre-activation,
+      protocol test now covers them
 - [ ] S2 slack thread replies + github notifications feed
 - [ ] S3 imessage attributedBody typedstream + tapback filter
 - [ ] S4 pypdf, vendored quote-stripper, docs/10 §Dependencies

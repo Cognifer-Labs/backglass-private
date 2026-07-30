@@ -551,6 +551,13 @@ def test_every_connector_satisfies_the_protocol() -> None:
         NotesConnector(vault_path=Path("/tmp"), boundary=boundary),
         CanvasConnector(base_url="x", token="y", boundary=boundary),
     ]
+    from backglass.connectors.github import GithubConnector
+    from backglass.connectors.slack import SlackConnector
+
+    built += [
+        GithubConnector(token="t", boundary=boundary),
+        SlackConnector(token="t", channel_ids=("C1",), boundary=boundary),
+    ]
     for connector in built:
         assert isinstance(connector, Connector), type(connector)
         assert ":" in connector.name, "source names are prefixed so credential rows are unique"
