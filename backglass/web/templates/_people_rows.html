@@ -1,0 +1,25 @@
+<div id="people-rows">
+  {% if not rows %}
+    <p class="empty">No profiles match. People appear here automatically when commitments
+      name them, or add one below.</p>
+  {% else %}
+    {% for r in rows %}
+      {% set t = touches.get(r['id']) %}
+      <div class="src">
+        <a class="nm" href="/people/{{ r['id'] }}">{{ r['canonical_name'] }}</a>
+        <span class="ts">
+          {%- if r['role'] %}{{ r['role'] }}{% endif %}
+          {%- if r['role'] and r['org'] %} · {% endif %}
+          {%- if r['org'] %}{{ r['org'] }}{% endif -%}
+        </span>
+        {% for tag in r['tags'] %}<span class="chip">{{ tag }}</span>{% endfor %}
+        {% if r['open_count'] %}<span class="chip k-black">{{ r['open_count'] }} open</span>{% endif %}
+        {% if t and t.level == 'cold' %}
+          <span class="chip k-verm"><span aria-hidden="true">▲</span>{{ t.chip() }}</span>
+        {% elif t and t.level == 'warn' %}
+          <span class="chip k-gold"><span aria-hidden="true">◆</span>{{ t.chip() }}</span>
+        {% endif %}
+      </div>
+    {% endfor %}
+  {% endif %}
+</div>

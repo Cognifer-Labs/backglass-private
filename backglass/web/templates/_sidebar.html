@@ -1,0 +1,59 @@
+{# The sidebar's information blocks. Data comes from panels.sidebar() via
+   request.state.sb (set by the middleware in app.py) — derived fresh on every page
+   render, never stored, which is why alerts need no dismissal machinery.
+
+   Every line here is a pointer, not a claim: each alert links to the panel that
+   explains it, each goal line carries the same staleness/risk language the Goals
+   panel spells out. The sidebar summarizes; the panels carry the provenance. #}
+
+{% import "_macros.html" as m %}
+{% if sb.alerts %}
+  <div class="sblock" id="side-alerts">
+    <span class="shd cond">Alerts</span>
+    {% for a in sb.alerts %}
+      {# §8 rule 3: a colored fill never speaks by color alone — the filled alert
+         levels carry the same glyphs the status chips use. #}
+      <a class="salert k-{{ a.level }}" href="{{ a.href }}">
+        {%- if a.level == 'verm' %}<span aria-hidden="true">▲ </span>
+        {%- elif a.level == 'gold' %}<span aria-hidden="true">◆ </span>{% endif -%}
+        {{ a.text }}</a>
+    {% endfor %}
+  </div>
+{% endif %}
+
+{% if sb.goals %}
+  <div class="sblock" id="side-goals">
+    <span class="shd cond">Goals</span>
+    {% for g in sb.goals %}
+      <div class="sgoal">
+        <div class="hd">
+          <a class="nm" href="/#panel-goals">{{ g.title }}</a>
+          {{ m.stale_chip(g.staleness_level, g.staleness_chip) }}
+        </div>
+        {% if g.risk_sentence %}
+          {# G13: risk in words, projected date against target date. #}
+          <p class="srisk{% if g.at_risk %} bad{% endif %}">{{ g.risk_sentence }}</p>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+{% endif %}
+
+{% if sb.roadmaps %}
+  <div class="sblock" id="side-roadmaps">
+    <span class="shd cond">Roadmaps</span>
+    {% for r in sb.roadmaps %}
+      <div class="sgoal">
+        <div class="hd">
+          <a class="nm" href="/roadmaps/{{ r.id }}">{{ r.title }}</a>
+          <span class="ct">{{ r.done_steps }}/{{ r.live_steps }}</span>
+        </div>
+        {% if r.live_steps %}
+          {% set pct = (100 * r.done_steps / r.live_steps)|round|int %}
+          {# Single-series progress uses black, per design-system.md §5. #}
+          <div class="track mini"><div class="fill" style="width:{{ [pct, 100]|min }}%"></div></div>
+        {% endif %}
+      </div>
+    {% endfor %}
+  </div>
+{% endif %}

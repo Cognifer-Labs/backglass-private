@@ -1,0 +1,56 @@
+{% import "_macros.html" as m %}
+{# docs/06: "Looks like ops chrome, is actually the most important panel."
+   docs/02: "When the brief goes quiet because Gmail auth expired three days ago, it is
+   the only place that would tell you." #}
+<section class="panel" id="panel-sources">
+  {{ m.banner(d.sources.title, ('%.0f%% killed'|format(d.sources.meta.kill_rate * 100)) if d.sources.meta.triaged else '') }}
+  <div class="inner">
+    {% if d.sources.empty %}
+      <p class="empty">No sources configured. Run <span class="kbd">backglass auth &lt;label&gt;</span>.</p>
+    {% else %}
+      {% for s in d.sources.rows %}
+        {# docs/11 §8: "the row's keyline turns vermilion and stays that way" until fixed.
+           A paused source is neither ok nor failing: hollow square, muted row, no
+           vermilion — the owner chose this state, so it carries no alarm ink. #}
+        <div class="src{% if not s['enabled'] %} paused{% endif %}"{% if s['status'] != 'ok' and s['enabled'] %} style="border-left:3px solid var(--vermilion);padding-left:9px"{% endif %}>
+          <span class="sq" style="background:{{ 'transparent' if not s['enabled'] else 'var(--green)' if s['status'] == 'ok' else 'var(--vermilion)' }}"
+                title="{{ 'paused' if not s['enabled'] else s['status'] }}"></span>
+          <span class="nm">{{ s['source'] }}</span>
+          <span class="ts">{{ s['item_count'] }} items · {{ s['last_item_at']|relative }}</span>
+          <button class="btn{% if s['enabled'] %} defer{% endif %}"
+                  hx-post="/sources/{{ s['source'] }}/{{ 'disable' if s['enabled'] else 'enable' }}"
+                  hx-target="#panel-sources" hx-swap="outerHTML">
+            {{ 'Pause' if s['enabled'] else 'Resume' }}</button>
+        </div>
+        {% if s['last_error'] %}
+          <p class="note">{{ s['last_error'] }}
+            {# docs/11 §8 step 4: "a Reconnect button that runs the OAuth flow inline."
+               The flow needs a browser consent redirect the CLI already owns, so the
+               dashboard names the command rather than pretending to run it. Stated here
+               rather than silently omitted. #}
+            <span class="kbd">backglass auth {{ s['source'].split(':')[-1] }}</span></p>
+        {% endif %}
+      {% endfor %}
+    {% endif %}
+
+    {# Deliberately outside the has-credentials branch. The kill rate, the spend state and
+       the last run are properties of the pipeline, not of whether a credential row
+       happens to exist — and a run that ingested nothing because there are no credentials
+       is exactly when you most want to see that it ran at all. #}
+    {% if d.sources.meta.kill_rate_low %}
+      {# docs/06: "If it drops below 85 percent the rules have drifted and cost is about
+         to climb." #}
+      <p class="note">Triage kill rate {{ '%.0f'|format(d.sources.meta.kill_rate * 100) }}% —
+        below 85%. The rules have drifted; add senders to NOISE_SENDERS.</p>
+    {% endif %}
+    {% if d.sources.meta.degraded %}
+      <p class="note">Spend cap reached — extraction paused, triage only.</p>
+    {% endif %}
+    {% if d.sources.meta.last_run %}
+      {% set r = d.sources.meta.last_run %}
+      <p class="note">Last run {{ r['started_at']|relative }} · fetched {{ r['items_fetched'] }},
+        extracted {{ r['items_extracted'] }}, {{ r['spend_cents'] }}c{% if r['items_excluded'] %},
+        {{ r['items_excluded'] }} excluded by the data boundary{% endif %}.</p>
+    {% endif %}
+  </div>
+</section>

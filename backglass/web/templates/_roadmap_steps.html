@@ -1,0 +1,38 @@
+{% import "_macros.html" as m %}
+<div id="roadmap-steps">
+  {% for s in steps %}
+    <div class="row{% if s['status'] == 'skipped' %} skipped{% endif %}">
+      <span class="time">{{ (s['planned_date'] or '')[:10] or '—' }}</span>
+      <div class="grow">
+        <p class="b1">
+          {%- if s['status'] == 'done' %}{{ m.chip('done') }} {% endif -%}
+          {{ s['title'] }}
+          {%- if s['origin'] != 'preset' %} <span class="kbd">{{ s['origin'] }}</span>{% endif -%}
+        </p>
+        {% if s['detail'] %}<p class="b2">{{ s['detail'] }}</p>{% endif %}
+        <div class="acts">
+          {% if s['status'] not in ('done', 'skipped') %}
+            <button class="btn ok" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/done"
+                    hx-target="#roadmap-steps" hx-swap="outerHTML">Done</button>
+            <button class="btn defer" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/skip"
+                    hx-target="#roadmap-steps" hx-swap="outerHTML">Skip</button>
+          {% elif s['status'] == 'skipped' %}
+            <button class="btn" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/unskip"
+                    hx-target="#roadmap-steps" hx-swap="outerHTML">Unskip</button>
+          {% endif %}
+          {% if s['status'] != 'done' %}
+            <button class="btn pin" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/move/up"
+                    hx-target="#roadmap-steps" hx-swap="outerHTML" title="Move earlier">↑</button>
+            <button class="btn pin" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/move/down"
+                    hx-target="#roadmap-steps" hx-swap="outerHTML" title="Move later">↓</button>
+            <input type="date" value="{{ (s['planned_date'] or '')[:10] }}" aria-label="Re-date"
+                   hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/date/"
+                   hx-trigger="change"
+                   hx-on::config-request="event.detail.path += this.value"
+                   hx-target="#roadmap-steps" hx-swap="outerHTML">
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  {% endfor %}
+</div>

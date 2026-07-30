@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.cognifer.backglass.brief</string>
+
+  <!-- Absolute paths: launchd has no shell and no useful PATH. -->
+  <key>WorkingDirectory</key><string>/Users/Dharsan/Downloads/backglass</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/Dharsan/.local/bin/uv</string>
+    <string>run</string>
+    <string>backglass</string>
+    <string>brief</string><string>--send</string>
+  </array>
+
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>0</integer></dict>
+
+  <!-- docs/02 §Failure policy: the process exits non-zero at the end so a scheduled run
+       reports failure. These logs are where that lands. -->
+  <key>StandardOutPath</key><string>/Users/Dharsan/Downloads/backglass/data/brief.log</string>
+  <key>StandardErrorPath</key><string>/Users/Dharsan/Downloads/backglass/data/brief.err</string>
+  <key>RunAtLoad</key><false/>
+</dict>
+</plist>

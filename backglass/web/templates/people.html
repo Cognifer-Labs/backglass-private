@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = 'people' %}
+
+{% block title %}Backglass — People{% endblock %}
+{% block meta %}Networking profiles{% endblock %}
+
+{% block content %}
+<section class="sec">
+  {{ m.banner('People', rows|length ~ ' shown') }}
+  <div class="inner">
+    <form class="pplsearch" hx-get="/people" hx-target="#people-rows" hx-swap="outerHTML"
+          hx-trigger="input changed delay:250ms from:find input, submit">
+      <input type="search" name="q" value="{{ q }}" placeholder="name, alias, role, org, tag"
+             aria-label="Search people">
+      <label class="lbl"><input type="checkbox" name="cold" value="true"
+             {% if cold %}checked{% endif %}
+             hx-get="/people" hx-target="#people-rows" hx-swap="outerHTML"> going cold only</label>
+    </form>
+
+    {% include "_people_rows.html" %}
+
+    <details class="addform">
+      <summary class="lbl">Add a person</summary>
+      <form hx-post="/people" hx-target="#people-rows" hx-swap="outerHTML">
+        <input name="name" placeholder="Name" required>
+        <input name="role" placeholder="Role">
+        <input name="org" placeholder="Organization">
+        <input name="tags" placeholder="tags, comma, separated">
+        <input name="notes" placeholder="Notes">
+        <button class="btn ok" type="submit">Add</button>
+      </form>
+    </details>
+  </div>
+</section>
+{% endblock %}

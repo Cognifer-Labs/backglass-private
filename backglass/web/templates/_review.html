@@ -1,0 +1,41 @@
+{% import "_macros.html" as m %}
+<section class="panel" id="panel-review">
+  {{ m.banner(d.review.title, d.review.rows|length ~ ' waiting') }}
+  <div class="inner">
+    {% if d.review.empty %}
+      <p class="empty">Nothing to review.</p>
+    {% else %}
+      {% for r in d.review.rows %}
+        {# design-system.md §4: dashed keyline, no fill. "In a system where color means
+           certainty, a guess does not get an ink." #}
+        <div class="rev">
+          <p class="b1 hang">{{ m.chip('needs_review') }}<span>
+            {% if r['direction'] == 'i_owe' %}You owe{% else %}Owed to you{% endif %}:
+            {{ r['what'] }}{% if r['counterparty'] %} — {{ r['counterparty'] }}{% endif %}</span>
+          </p>
+          {# docs/11 §4 step 2: "the exact source sentence beneath it in quotes". #}
+          <p class="quote">{{ r['source_title'] or 'no subject' }} — {{ m.source_link(r) }}</p>
+          <p class="conf">{{ '%.0f'|format(r['confidence'] * 100) }}% confident{% if r['due_at'] %} · due {{ r['due_at'][:10] }}{% endif %}</p>
+          {# docs/11 §4: "Accept and Reject as equal-weight buttons." Never make Accept the
+             primary button, style it larger, or preselect it — a nudge toward accepting
+             turns the queue into a rubber stamp. Same class, same size, same order weight. #}
+          <div class="acts">
+            <button class="btn accept" hx-post="/review/{{ r['id'] }}/accept"
+                    hx-target="#panel-review" hx-swap="outerHTML">Accept</button>
+            <button class="btn reject" hx-post="/review/{{ r['id'] }}/reject/not_a_commitment"
+                    hx-target="#panel-review" hx-swap="outerHTML">Reject</button>
+          </div>
+          {# Four reason buttons, no free text. The distribution is the feedback loop. #}
+          <div class="why">
+            <span class="lbl">reject as</span>
+            {% for key, label in [('wrong_date','Wrong date'), ('not_a_commitment','Not a commitment'),
+                                  ('not_mine','Not mine'), ('already_done','Already done')] %}
+              <button class="btn" hx-post="/review/{{ r['id'] }}/reject/{{ key }}"
+                      hx-target="#panel-review" hx-swap="outerHTML">{{ label }}</button>
+            {% endfor %}
+          </div>
+        </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+</section>

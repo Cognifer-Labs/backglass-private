@@ -1,0 +1,54 @@
+{
+  "name": "a thread where the same commitment is quoted three times",
+  "why": "Post-processing step 5. A thread restating the same promise must not produce five rows. The model is shown the same promise phrased three ways; dedup collapses them to one.",
+  "message": {
+    "id": "c04",
+    "from": "Dana Whitfield <dwhitfield@example.gov>",
+    "to": "contactdharsan@gmail.com",
+    "subject": "Re: Re: Migration plan",
+    "date": "Fri, 10 Jul 2026 14:20:00 -0700",
+    "body": "Still on track. I'll get the revised migration plan to you by Friday."
+  },
+  "model_response": {
+    "commitments": [
+      {
+        "direction": "owed_to_me",
+        "counterparty": "Dana Whitfield <dwhitfield@example.gov>",
+        "what": "revised migration plan",
+        "due_at": "2026-07-17",
+        "due_is_explicit": true,
+        "estimated_minutes": null,
+        "confidence": 0.9,
+        "evidence": "I'll get the revised migration plan to you by Friday.",
+        "resolves": false,
+        "resolves_what": null
+      },
+      {
+        "direction": "owed_to_me",
+        "counterparty": "Dana Whitfield <dwhitfield@example.gov>",
+        "what": "the revised migration plan",
+        "due_at": "2026-07-17",
+        "due_is_explicit": true,
+        "estimated_minutes": null,
+        "confidence": 0.9,
+        "evidence": "I'll have the revised migration plan over to you by Friday.",
+        "resolves": false,
+        "resolves_what": null
+      },
+      {
+        "direction": "owed_to_me",
+        "counterparty": "Dana Whitfield <dwhitfield@example.gov>",
+        "what": "migration plan revised",
+        "due_at": "2026-07-17",
+        "due_is_explicit": true,
+        "estimated_minutes": null,
+        "confidence": 0.85,
+        "evidence": "the revised migration plan by Friday",
+        "resolves": false,
+        "resolves_what": null
+      }
+    ]
+  },
+  "expect": {"inserted": 1, "deduped": 2, "superseded": 0, "review_queue": 0,
+             "due_at": ["2026-07-17"], "estimate_source": [null]}
+}

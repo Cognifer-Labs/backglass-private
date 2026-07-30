@@ -1,0 +1,30 @@
+{
+  "name": "a hedged commitment that should land near 0.5",
+  "why": "extract-commitments.md CONFIDENCE: 0.5 is hedged language. Below the 0.7 threshold the row is still created open, but it belongs to the review queue and never to the brief (CLAUDE.md rule 2).",
+  "message": {
+    "id": "c03",
+    "from": "Priya Raman <praman@example.com>",
+    "to": "contactdharsan@gmail.com",
+    "subject": "Draft",
+    "date": "Fri, 10 Jul 2026 11:02:00 -0700",
+    "body": "I should be able to get you a draft sometime next week, will try."
+  },
+  "model_response": {
+    "commitments": [
+      {
+        "direction": "owed_to_me",
+        "counterparty": "Priya Raman <praman@example.com>",
+        "what": "draft",
+        "due_at": "next week",
+        "due_is_explicit": false,
+        "estimated_minutes": null,
+        "confidence": 0.5,
+        "evidence": "I should be able to get you a draft sometime next week, will try.",
+        "resolves": false,
+        "resolves_what": null
+      }
+    ]
+  },
+  "expect": {"inserted": 1, "deduped": 0, "superseded": 0, "review_queue": 1,
+             "due_at": ["2026-07-17"], "estimate_source": [null]}
+}

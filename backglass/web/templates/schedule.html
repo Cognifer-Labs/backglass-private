@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = 'schedule' %}
+
+{% block title %}Backglass — Schedule{% endblock %}
+{% block meta %}{{ view.day.strftime('%A %d %B %Y') }} · {{ view.tz }}{% endblock %}
+
+{% block content %}
+<section class="sec">
+  {{ m.banner('Schedule', view.day.isoformat()) }}
+  <div class="inner">
+    <div class="pager">
+      <a class="btn" href="/schedule?date={{ prev }}">← prev</a>
+      <a class="btn" href="/schedule">today</a>
+      <a class="btn" href="/schedule?date={{ next }}">next →</a>
+      <span class="grow"></span>
+      <a class="btn" href="/schedule/week?start={{ week_start }}">week view</a>
+    </div>
+
+    {% if cap %}
+      {# docs/04 §4.3: one sentence. Overflow is a warning, never a footnote. #}
+      <p class="cap">{{ (cap['capacity_minutes'] // 60) }}h {{ '%02d' % (cap['capacity_minutes'] % 60) }}m available ·
+        {{ (cap['planned_minutes'] // 60) }}h {{ '%02d' % (cap['planned_minutes'] % 60) }}m planned
+        {%- if cap['overflow_count'] %} · <span class="over">{{ cap['overflow_count'] }} did not fit</span>{% endif %}</p>
+    {% endif %}
+
+    {% if view.empty %}
+      <p class="empty">Nothing planned and no fixed events. The day planner runs at 05:45,
+        or run <span class="kbd">backglass plan --date {{ view.day.isoformat() }}</span>.</p>
+    {% else %}
+      <div class="tl" style="height:{{ tl.height }}px">
+        {% for h in tl.hours %}
+          <div class="hr" style="top:{{ loop.index0 * 60 }}px">
+            <span class="hlbl">{{ '%02d:00' % h }}</span>
+          </div>
+        {% endfor %}
+
+        {% for e in tl.entries %}
+          <div class="ev k-{{ e.kind }}{% if e.lane %} lane1{% endif %}{% if e.slim %} slim{% endif %}"
+               style="top:{{ e.top }}px;height:{{ e.height }}px">
+            {% if e.kind == 'protected' %}
+              <span class="et">{{ e.start_label }}–{{ e.end_label }}</span>
+              <span class="en cond">{{ e.title }}</span>
+              {% if not e.slim %}{{ m.chip('protected') }}{% endif %}
+            {% else %}
+              <span class="et">{{ e.start_label }}–{{ e.end_label }}</span>
+              <span class="en">{{ e.title }}</span>
+              {% if not e.slim %}
+                <span class="ek">{{ e.kind }}{% if e.travel %} · travel{% endif %}
+                  {%- if e.outcome and e.outcome != 'pending' %} · {{ e.outcome }}{% endif %}</span>
+              {% endif %}
+            {% endif %}
+          </div>
+        {% endfor %}
+
+        {% if tl.now_top is not none %}
+          {# The strongest mark available is maximum contrast, not a hue — the same
+             reasoning that makes "due today" solid black. #}
+          <div class="now" style="top:{{ tl.now_top }}px"><span>Now</span></div>
+        {% endif %}
+      </div>
+      {{ m.kind_legend() }}
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

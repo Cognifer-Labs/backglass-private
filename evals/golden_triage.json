@@ -1,0 +1,82 @@
+[
+  {
+    "label": "explicit commitment with a date",
+    "keep": true,
+    "author": "Dana Whitfield <dwhitfield@example.gov>",
+    "occurred_at": "2026-07-10T09:15:00-07:00",
+    "title": "Migration plan",
+    "body": "Thanks for the call. I'll have the revised migration plan over to you by Friday."
+  },
+  {
+    "label": "hedged commitment",
+    "keep": true,
+    "author": "Priya Raman <praman@example.com>",
+    "occurred_at": "2026-07-10T11:02:00-07:00",
+    "title": "Draft",
+    "body": "I should be able to get you a draft sometime next week, will try."
+  },
+  {
+    "label": "decision reached",
+    "keep": true,
+    "author": "Marcus Reed <mreed@example.com>",
+    "occurred_at": "2026-07-09T15:00:00-07:00",
+    "title": "Vendor",
+    "body": "We went with Vendor B in the end. Contract starts 1 August."
+  },
+  {
+    "label": "durable project fact",
+    "keep": true,
+    "author": "Dana Whitfield <dwhitfield@example.gov>",
+    "occurred_at": "2026-07-08T10:00:00-07:00",
+    "title": "Staffing",
+    "body": "Just so you know, Priya is out until the 20th, so the review will slip."
+  },
+  {
+    "label": "newsletter",
+    "keep": false,
+    "author": "The Weekly <hello@theweekly.example>",
+    "occurred_at": "2026-07-10T06:00:00-07:00",
+    "title": "Your Friday digest",
+    "body": "Top five stories this week, plus a sponsored message from our partners."
+  },
+  {
+    "label": "receipt",
+    "keep": false,
+    "author": "orders@shop.example",
+    "occurred_at": "2026-07-09T18:22:00-07:00",
+    "title": "Your order #40122",
+    "body": "Thanks for your order. Your total was $48.20. Track your shipment here."
+  },
+  {
+    "label": "shipping notice",
+    "keep": false,
+    "author": "tracking@courier.example",
+    "occurred_at": "2026-07-10T08:10:00-07:00",
+    "title": "Out for delivery",
+    "body": "Your package is out for delivery and should arrive by 8pm."
+  },
+  {
+    "label": "social notification",
+    "keep": false,
+    "author": "notify@social.example",
+    "occurred_at": "2026-07-10T07:45:00-07:00",
+    "title": "You have 3 new connections",
+    "body": "See who viewed your profile this week."
+  },
+  {
+    "label": "pleasantry with no substance",
+    "keep": false,
+    "author": "Marcus Reed <mreed@example.com>",
+    "occurred_at": "2026-07-10T09:20:00-07:00",
+    "title": "Re: Thanks",
+    "body": "Great, thanks! Appreciate it. Talk soon."
+  },
+  {
+    "label": "ambiguous - triage.md says keep when uncertain",
+    "keep": true,
+    "author": "Dana Whitfield <dwhitfield@example.gov>",
+    "occurred_at": "2026-07-10T12:00:00-07:00",
+    "title": "Quick one",
+    "body": "Can you take a look at the phasing before the board meeting?"
+  }
+]

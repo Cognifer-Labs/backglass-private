@@ -1,0 +1,29 @@
+{
+  "name": "an explicit commitment with an explicit date",
+  "message": {
+    "id": "c01",
+    "from": "Dana Whitfield <dwhitfield@example.gov>",
+    "to": "contactdharsan@gmail.com",
+    "subject": "Migration plan",
+    "date": "Fri, 10 Jul 2026 09:15:00 -0700",
+    "body": "Thanks for the call. I'll have the revised migration plan over to you by Friday."
+  },
+  "model_response": {
+    "commitments": [
+      {
+        "direction": "owed_to_me",
+        "counterparty": "Dana Whitfield <dwhitfield@example.gov>",
+        "what": "revised migration plan",
+        "due_at": "2026-07-17",
+        "due_is_explicit": true,
+        "estimated_minutes": null,
+        "confidence": 0.92,
+        "evidence": "I'll have the revised migration plan over to you by Friday.",
+        "resolves": false,
+        "resolves_what": null
+      }
+    ]
+  },
+  "expect": {"inserted": 1, "deduped": 0, "superseded": 0, "review_queue": 0,
+             "due_at": ["2026-07-17"], "estimate_source": [null]}
+}

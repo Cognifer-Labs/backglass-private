@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = 'people' %}
+
+{% block title %}Backglass — {{ p['canonical_name'] }}{% endblock %}
+{% block meta %}{{ p['canonical_name'] }}{% if p['role'] %} · {{ p['role'] }}{% endif %}{% if p['org'] %} · {{ p['org'] }}{% endif %}{% endblock %}
+
+{% block content %}
+<div class="grid">
+
+<section class="panel">
+  {{ m.banner(p['canonical_name']) }}
+  <div class="inner">
+    {% if touch %}
+      <p class="cap">
+        {% if touch.level == 'cold' %}{{ m.chip('overdue') }}{% elif touch.level == 'warn' %}{{ m.chip('slipping') }}{% endif %}
+        {{ touch.chip() }}
+      </p>
+    {% endif %}
+    {% if p['aliases'] %}
+      <p class="b2">Known as: {{ p['aliases']|join(' · ') }}</p>
+    {% endif %}
+    {% if p['notes'] %}<p class="b1" style="margin-top:12px">{{ p['notes'] }}</p>{% endif %}
+
+    <details class="addform" style="margin-top:16px">
+      <summary class="lbl">Edit profile</summary>
+      <form method="post" action="/people/{{ p['id'] }}/edit">
+        <input name="role" placeholder="Role" value="{{ p['role'] or '' }}">
+        <input name="org" placeholder="Organization" value="{{ p['org'] or '' }}">
+        <input name="tags" placeholder="tags, comma, separated" value="{{ p['tags']|join(', ') }}">
+        <input name="notes" placeholder="Notes" value="{{ p['notes'] or '' }}">
+        <button class="btn ok" type="submit">Save</button>
+      </form>
+    </details>
+  </div>
+</section>
+
+<section class="panel">
+  {{ m.banner('Open commitments', commitments|length ~ ' open') }}
+  <div class="inner">
+    {% if not commitments %}
+      <p class="empty">Nothing open with {{ p['canonical_name'] }}.</p>
+    {% else %}
+      {% for c in commitments %}
+        <div class="row">
+          <div class="grow">
+            <p class="b1">{% if c['direction'] == 'i_owe' %}You owe{% else %}Owed to you{% endif %}:
+              {{ c['what'] }}</p>
+            <p class="b2">{% if c['due_at'] %}{{ c['due_at']|due(today) }} · {% endif %}{{ m.source_link(c) }}</p>
+          </div>
+        </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+</section>
+
+<section class="panel">
+  {{ m.banner('Timeline', timeline|length ~ ' items') }}
+  <div class="inner">
+    {% if not timeline %}
+      <p class="empty">No interactions on record.</p>
+    {% else %}
+      {% for item in timeline %}
+        <div class="row">
+          <span class="time">{{ (item['source_occurred_at'] or '')[:10] }}</span>
+          <div class="grow">
+            <p class="b1">{{ item['source_title'] or 'no subject' }}</p>
+            <p class="b2">{{ 'commitment evidence' if item['via'] == 'commitment' else 'mentioned' }}
+              · {{ m.source_link(item) }}</p>
+          </div>
+        </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+</section>
+
+</div>
+{% endblock %}

@@ -1,0 +1,57 @@
+{% import "_macros.html" as m %}
+<section class="panel" id="panel-board">
+  {{ m.banner(d.board.title, d.board.rows|length ~ ' open') }}
+  <div class="inner">
+    {# Phase 6: the one way a commitment enters by hand. Provenance is a manual
+       source_item — see actions.quick_add. #}
+    <details class="addform" style="margin-top:12px;border-top:0;padding-top:0">
+      <summary class="lbl">Quick add</summary>
+      <form hx-post="/commitments/quick-add" hx-target="#panel-board" hx-swap="outerHTML">
+        <input name="what" placeholder="What was promised" required style="min-width:220px">
+        <select name="direction" aria-label="Direction">
+          <option value="i_owe">I owe</option>
+          <option value="owed_to_me">Owed to me</option>
+        </select>
+        <input name="counterparty" placeholder="Who (optional)">
+        <input type="date" name="due_at" aria-label="Due date">
+        <button class="btn ok" type="submit">Add</button>
+      </form>
+    </details>
+    {% if d.board.empty %}
+      {# docs/06 §Empty states: declarative, never cheerful. #}
+      <p class="empty">Nothing open.</p>
+    {% else %}
+      {% for counterparty, cards in d.lanes.items() %}
+        <p class="lane">{{ counterparty }}</p>
+        {% for c in cards %}
+          {# docs/06: "Every commitment card is a click target in full, not just its title." #}
+          <div class="row card" tabindex="0" data-commitment="{{ c['id'] }}"
+               data-state="{{ c['state'] }}">
+            <div class="grow">
+              <p class="b1 hang">{{ m.chip(c['state']) }}<span>{{ c['what'] }}</span></p>
+              <p class="b2">
+                {{ m.due_text(c, d.today) }}
+                {%- if c['estimated_minutes'] %} · {{ c['estimated_minutes'] }}m{% endif %}
+                {%- if c['goal_title'] %} · {{ c['goal_title'] }}{% endif %}
+                · {{ m.source_link(c) }}
+              </p>
+              <div class="acts">
+                {# docs/11 §3: no confirmation on resolve. The action is reversible and the
+                   dialog costs more over a year than the occasional misclick. #}
+                <button class="btn ok" hx-post="/commitments/{{ c['id'] }}/resolve"
+                        hx-target="#panel-board" hx-swap="outerHTML">Resolve</button>
+                <button class="btn defer" hx-post="/commitments/{{ c['id'] }}/snooze/1"
+                        hx-target="#panel-board" hx-swap="outerHTML">Snooze</button>
+                {# docs/06: "No confirmation dialogs except for drop, which is destructive
+                   and rare." This is the only hx-confirm in the application. #}
+                <button class="btn danger" hx-post="/commitments/{{ c['id'] }}/drop"
+                        hx-target="#panel-board" hx-swap="outerHTML"
+                        hx-confirm="Drop “{{ c['what'] }}”? This tombstones it.">Drop</button>
+              </div>
+            </div>
+          </div>
+        {% endfor %}
+      {% endfor %}
+    {% endif %}
+  </div>
+</section>

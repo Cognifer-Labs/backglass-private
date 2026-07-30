@@ -1,0 +1,38 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = 'roadmaps' %}
+
+{% block title %}Backglass — {{ r['title'] }}{% endblock %}
+{% block meta %}{{ r['title'] }} · {{ r['path_id'] }} v{{ r['path_version'] }}{% endblock %}
+
+{% block content %}
+<section class="sec">
+  {{ m.banner(r['title'], 'target ' ~ (r['target_date'] or '')[:10]) }}
+  <div class="inner">
+    <p class="cap">Done means: {{ r['definition_of_done'] }}
+      {%- if r['personalized'] %} · personalized{% endif %}</p>
+
+    {% include "_roadmap_steps.html" %}
+
+    {% if cadences %}
+      <div class="addform">
+        <p class="lbl">Weekly cadences</p>
+        {% for c in cadences %}
+          <div class="row">
+            <div class="grow">
+              <p class="b1">{{ c['title'] }}</p>
+              <p class="b2">{{ c['weekly_count'] }}/wk
+                {%- if c['estimated_minutes_each'] %} · {{ c['estimated_minutes_each'] }}m each{% endif %}</p>
+            </div>
+          </div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <form method="post" action="/roadmaps/{{ r['id'] }}/drop" style="margin-top:16px"
+          onsubmit="return confirm('Drop this roadmap? The goal is dropped with it; nothing is deleted.')">
+      <button class="btn danger" type="submit">Drop roadmap</button>
+    </form>
+  </div>
+</section>
+{% endblock %}

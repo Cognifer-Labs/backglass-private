@@ -1,0 +1,28 @@
+{% import "_macros.html" as m %}
+<section class="panel" id="panel-awaiting">
+  {{ m.banner(d.awaiting.title, d.awaiting.rows|length ~ ' open') }}
+  <div class="inner">
+    {% if d.awaiting.empty %}
+      <p class="empty">Nothing outstanding.</p>
+    {% else %}
+      {# docs/06: "Owed to you, sorted by age descending." docs/03: this is "the one nobody
+         tracks manually and the one that justifies the build". #}
+      {% for a in d.awaiting.rows %}
+        <div class="row">
+          <span class="time">{{ a['age_days'] }}d</span>
+          <div class="grow">
+            <p class="b1 hang">{{ m.chip('awaiting') }}<span>{{ a['counterparty'] or 'unknown' }}: {{ a['what'] }}</span></p>
+            <p class="b2">
+              {% if a['due_at'] %}{{ a['due_at']|due(d.today) }} · {% endif %}{{ m.source_link(a) }}
+            </p>
+            <div class="acts">
+              <button class="btn ok" hx-post="/commitments/{{ a['id'] }}/resolve"
+                      hx-target="#panel-board" hx-swap="outerHTML"
+                      hx-on::after-request="htmx.trigger('body','bg:refresh')">Received</button>
+            </div>
+          </div>
+        </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+</section>

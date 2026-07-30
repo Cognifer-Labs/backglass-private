@@ -1,0 +1,31 @@
+{
+  "name": "a message that resolves an earlier commitment",
+  "requires": "01-explicit-date.json",
+  "why": "Post-processing step 4. The earlier commitment is set superseded with superseded_by pointing at the new row. Never deleted (docs/03 Retention). Note this case must bypass the step-5 dedup: a resolving message is BY DEFINITION about the same thing as the commitment it resolves, so a dedup pass that ran first would drop it and the old row would stay open forever.",
+  "message": {
+    "id": "c05",
+    "from": "Dana Whitfield <dwhitfield@example.gov>",
+    "to": "contactdharsan@gmail.com",
+    "subject": "Re: Migration plan",
+    "date": "Wed, 15 Jul 2026 10:05:00 -0700",
+    "body": "Here's that revised migration plan I promised - attached. Let me know if the phasing works."
+  },
+  "model_response": {
+    "commitments": [
+      {
+        "direction": "owed_to_me",
+        "counterparty": "Dana Whitfield <dwhitfield@example.gov>",
+        "what": "revised migration plan",
+        "due_at": null,
+        "due_is_explicit": false,
+        "estimated_minutes": null,
+        "confidence": 0.94,
+        "evidence": "Here's that revised migration plan I promised - attached.",
+        "resolves": true,
+        "resolves_what": "revised migration plan"
+      }
+    ]
+  },
+  "expect": {"inserted": 1, "deduped": 0, "superseded": 1, "review_queue": 0,
+             "due_at": [null], "estimate_source": [null]}
+}

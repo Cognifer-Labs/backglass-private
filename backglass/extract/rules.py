@@ -1,0 +1,122 @@
+"""Tier 0: the rule layer. docs/02 §Tier 1 triage — "Rules first, and rules handle most of it."
+
+Every item this layer drops is a model call not made. docs/02 expects tiers 0 and 1
+together to eliminate 90–95% of volume; if the measured kill rate falls below 85%, the
+rules have drifted and the cost model is about to break. That number is computed by
+db/queries/triage_kill_rate.sql and belongs in the Sources panel.
+
+Each rule records *which* rule fired, in `source_item.triage_reason`. triage.md: reading
+a week of reasons is how you find the rule that should have caught something earlier.
+"""
+
+from __future__ import annotations
+
+import json
+import re
+from dataclasses import dataclass
+from email.utils import parseaddr
+
+#: Bulk-mail headers. Their presence is close to a definition of "not personal mail".
+_BULK_HEADERS = (
+    "list-unsubscribe",
+    "list-id",
+    "list-post",
+    "x-campaign-id",
+    "x-mailer-campaign",
+    "feedback-id",
+)
+_BULK_PRECEDENCE = {"bulk", "list", "junk", "auto_reply"}
+
+#: Local-parts that never carry a commitment. Kept narrow on purpose: `support@` and
+#: `billing@` are excluded from this list because a human on a support alias absolutely
+#: does make commitments, and triage.md is explicit that a false negative loses a
+#: commitment permanently while a false positive costs one call.
+_NOREPLY = re.compile(
+    r"^(no[-_.]?reply|do[-_.]?not[-_.]?reply|donotreply|mailer[-_.]?daemon|postmaster|"
+    r"bounce[sd]?|notifications?|automated|auto[-_.]?confirm)",
+    re.IGNORECASE,
+)
+
+_CALENDAR_MIME = "text/calendar"
+
+
+@dataclass(frozen=True)
+class RuleVerdict:
+    #: 'drop' or 'unclassified'. Rules never return 'keep' — a rule cannot establish that
+    #: something is worth extracting, only that it is not. Anything they cannot classify
+    #: goes to the tier-1 model.
+    verdict: str
+    reason: str | None = None
+
+    @property
+    def dropped(self) -> bool:
+        return self.verdict == "drop"
+
+
+UNCLASSIFIED = RuleVerdict(verdict="unclassified")
+
+
+def classify(
+    *,
+    headers: dict[str, str],
+    author: str | None,
+    raw_json: str | None = None,
+    noise_senders: frozenset[str] = frozenset(),
+) -> RuleVerdict:
+    lowered = {key.lower(): value for key, value in headers.items()}
+
+    for header in _BULK_HEADERS:
+        if header in lowered:
+            return RuleVerdict("drop", f"bulk header: {header}")
+
+    precedence = lowered.get("precedence", "").strip().lower()
+    if precedence in _BULK_PRECEDENCE:
+        return RuleVerdict("drop", f"precedence: {precedence}")
+
+    if lowered.get("auto-submitted", "").strip().lower() not in ("", "no"):
+        return RuleVerdict("drop", "auto-submitted")
+
+    address = _address(author or lowered.get("from", ""))
+    if address:
+        local, _, domain = address.partition("@")
+        if _NOREPLY.match(local):
+            return RuleVerdict("drop", f"no-reply sender: {local}@")
+        if address in noise_senders:
+            return RuleVerdict("drop", f"known-noise sender: {address}")
+        # Subdomain-aware, the same way boundary.py reads a domain entry, so that one
+        # `example.com` entry covers `mail.example.com` without a second line of config.
+        for denied in noise_senders:
+            if domain and (domain == denied or domain.endswith("." + denied)):
+                return RuleVerdict("drop", f"known-noise domain: {denied}")
+
+    # docs/02: calendar invites are "handled by the calendar connector, not extraction".
+    if _is_calendar_invite(lowered, raw_json):
+        return RuleVerdict("drop", "calendar invite; owned by the calendar connector")
+
+    return UNCLASSIFIED
+
+
+def _address(raw: str) -> str:
+    return parseaddr(raw)[1].lower().strip()
+
+
+def _is_calendar_invite(lowered: dict[str, str], raw_json: str | None) -> bool:
+    content_type = lowered.get("content-type", "").lower()
+    if _CALENDAR_MIME in content_type or "method=" in content_type:
+        return True
+    if not raw_json:
+        return False
+    try:
+        parsed = json.loads(raw_json)
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    headers = parsed.get("headers")
+    if isinstance(headers, dict):
+        joined = " ".join(
+            str(v).lower() for k, v in headers.items() if k.lower() == "content-type"
+        )
+        if _CALENDAR_MIME in joined:
+            return True
+    return False

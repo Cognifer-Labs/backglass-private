@@ -1,0 +1,79 @@
+{% import "_macros.html" as m %}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{% block title %}Backglass{% endblock %}</title>
+{# docs/10 §Web layer: no build step, no npm, no bundler. Tokens come from design/, which
+   is the file scripts/validate-palette.mjs checks — not a copy that can drift. #}
+<script>
+  // Pre-paint, before the stylesheets: a saved-dark owner otherwise gets a cream
+  // flash on every navigation. Cream-on-black stays opt-in via the toggle; without
+  // a saved choice the page keeps the design-system default (cream paper, black
+  // ink) even under OS dark mode.
+  document.documentElement.setAttribute(
+    'data-theme', localStorage.getItem('bg-theme') || 'light');
+</script>
+<link rel="stylesheet" href="/design/tokens.css">
+<link rel="stylesheet" href="/static/dashboard.css">
+<script src="/static/htmx.min.js" defer></script>
+</head>
+<body>
+<div class="shell">
+
+  <aside class="side">
+    <h1 class="cond brand">Backglass</h1>
+    {% set sb = request.state.sb %}
+    <nav class="snav" aria-label="Pages">
+      {% for href, label, key, count in [('/', 'Dashboard', 'dashboard', sb.counts.open if sb else none),
+                                         ('/schedule', 'Schedule', 'schedule', none),
+                                         ('/goals', 'Goals', 'goals', none),
+                                         ('/people', 'People', 'people', sb.counts.follow_ups if sb else none),
+                                         ('/roadmaps', 'Roadmaps', 'roadmaps', sb.counts.roadmaps if sb else none)] %}
+        <a href="{{ href }}"{% if active == key %} class="on" aria-current="page"{% endif %}>
+          <span>{{ label }}</span>
+          {%- if count %} <span class="ct">{{ count }}</span>{% endif %}
+        </a>
+      {% endfor %}
+    </nav>
+    {% if sb %}{% include "_sidebar.html" %}{% endif %}
+  </aside>
+
+  <div class="wrap">
+    <header class="mast">
+      <div>
+        <p class="meta">{% block meta %}{% endblock %}</p>
+      </div>
+      <div class="acts">
+        {% block mast_right %}{% endblock %}
+        <button class="toggle" onclick="toggleTheme()">Theme</button>
+      </div>
+    </header>
+
+    {% block content %}{% endblock %}
+  </div>
+</div>
+
+<script>
+function toggleTheme() {
+  const root = document.documentElement;
+  const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  root.setAttribute('data-theme', next);
+  localStorage.setItem('bg-theme', next);
+}
+(function () {
+  // Page switching mirrors the sidebar order. Same contract as the dashboard keys:
+  // learn once, use daily; skipped while typing.
+  const pages = { '1': '/', '2': '/schedule', '3': '/goals', '4': '/people', '5': '/roadmaps' };
+  document.addEventListener('keydown', (event) => {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const tag = (event.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+    if (pages[event.key]) { window.location.href = pages[event.key]; event.preventDefault(); }
+  });
+})();
+</script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,69 @@
+{% import "_macros.html" as m %}
+<section class="panel" id="panel-goals">
+  {{ m.banner(d.goals.title) }}
+  <div class="inner">
+    {% if d.goals.empty %}
+      {# docs/06 §Empty states, verbatim. #}
+      <p class="empty">No targets set. A goal without a target is inert.</p>
+    {% else %}
+      {% for t in d.goals.rows %}
+        {# Staleness and risk are goal-level signals on target-level rows: show them on
+           the goal's first row only, or a two-target goal states them twice. #}
+        {% set first_of_goal = loop.changed(t['goal_id']) %}
+        {% set stale = d.goals.meta.staleness.get(t['goal_id']) if first_of_goal else none %}
+        {% set risk = d.goals.meta.risk.get(t['goal_id']) if first_of_goal else none %}
+        {% if first_of_goal %}
+          {# The goal names the lane once; rows carry only the target. Repeating the
+             full goal title as a prefix on every row made the panel unscannable. #}
+          <p class="lane">{{ t['goal_title'] }}</p>
+        {% endif %}
+        <div class="goal">
+          <div class="hd">
+            <span class="nm">{{ t['target_title'] }}</span>
+            {% if t['weekly_count'] and t['done_this_week'] < t['weekly_count'] %}
+              {{ m.chip('slipping') }}
+            {% endif %}
+            {% if stale %}
+              {{ m.stale_chip(stale.level, stale.chip()) }}
+            {% endif %}
+          </div>
+          {% if risk and risk.sentence() %}
+            {# G13: risk as a projected date against the target date, in words. Kept a
+               separate line from the staleness chip — G11 forbids merging the two. The
+               lane header already names the goal, so the sentence's title prefix goes. #}
+            <p class="tgt srisk{% if risk.at_risk %} bad{% endif %}">{{ risk.sentence().removeprefix(risk.goal_title ~ ': ') }}</p>
+          {% endif %}
+          <p class="tgt">
+            {% if t['weekly_count'] %}
+              {{ t['done_this_week'] }}/{{ t['weekly_count'] }} this week
+            {% else %}
+              {{ t['kind'] }}
+            {% endif %}
+            {%- if t['last_checkpoint'] %} · last {{ t['last_checkpoint'][:10] }}
+            {%- else %} · no checkpoints yet{% endif %}
+          </p>
+          {% if t['weekly_count'] %}
+            {% set pct = (100 * t['done_this_week'] / t['weekly_count'])|round|int %}
+            {# design-system.md §5: a single-series bar uses black, not cobalt. Gold only
+               when it is behind, because colour means state. #}
+            <div class="track"><div class="fill{% if pct < 100 %} gold{% endif %}"
+                 style="width:{{ [pct, 100]|min }}%"></div></div>
+            {# Cadence controls only make sense on a cadence target — a milestone row
+               carrying four /wk buttons was noise. The set value reads as state. #}
+            <div class="acts">
+              {% for n in [1, 2, 3, 5] %}
+                <button class="btn ok{% if n == t['weekly_count'] %} on{% endif %}"
+                        aria-pressed="{{ 'true' if n == t['weekly_count'] else 'false' }}"
+                        hx-post="/targets/{{ t['target_id'] }}/weekly/{{ n }}"
+                        hx-target="#panel-goals" hx-swap="outerHTML">{{ n }}/wk</button>
+              {% endfor %}
+            </div>
+          {% endif %}
+        </div>
+      {% endfor %}
+    {% endif %}
+    {% for g in d.goals.meta.goals_without_targets %}
+      <p class="note">{{ g['goal_title'] }}: no targets set. A goal without a target is inert.</p>
+    {% endfor %}
+  </div>
+</section>

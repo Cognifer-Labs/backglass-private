@@ -1,0 +1,415 @@
+/* Backglass dashboard.
+ *
+ * Lifted from design/preview.html, which docs/06 §Visual specification names as the
+ * reference: "design/preview.html is a rendered reference with realistic data in both
+ * modes. Match it." Copying it is how they stay matched; re-deriving it by eye is how the
+ * black bars drift two pixels and the keylines go missing.
+ *
+ * The design tokens are NOT here. They are served from design/tokens.css, which is the
+ * source of truth validate-palette.mjs checks. preview.html inlines them only so it opens
+ * standalone.
+ *
+ * Spacing sits on the --sp scale (4 8 12 16 24 32 48) from design/tokens.css. The one
+ * page gutter is --sp-5; every panel, banner, masthead and sidebar edge shares it so
+ * content columns align across sections. Any off-scale px that remains is optical, not
+ * layout: the chip's 3px vertical padding keeps it inside a 21px text line, the reel's
+ * 1–2px gaps are the digit-window housing, and the checkbox tick is drawn geometry.
+ *
+ * design-system.md §8, the rules that are not negotiable: no shadows, no rounded corners
+ * except the 2px reel windows, every coloured fill carries a black keyline, tabular
+ * figures everywhere.
+ */
+
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);
+  font:400 15px/23px system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
+.cond{font-family:"Helvetica Neue Condensed","HelveticaNeue-CondensedBold","Arial Narrow",system-ui,sans-serif;
+  font-weight:700;text-transform:uppercase;letter-spacing:.02em}
+/* ── shell: sidebar + page (Phase 6 rework) ────────────────────────────────
+ * Two columns, one 2px rule between them — the same seam language as the panel
+ * grid. The sidebar is navigation plus derived state (alerts, goal health,
+ * roadmap progress); it never carries a claim the panels cannot substantiate. */
+.shell{display:grid;grid-template-columns:236px minmax(0,1fr);min-height:100vh}
+.side{border-right:2px solid var(--rule);padding:var(--sp-5) 0 var(--sp-6);
+  position:sticky;top:0;align-self:start;max-height:100vh;overflow-y:auto}
+.side .brand{font-size:24px;line-height:26px;margin:0 var(--sp-5) var(--sp-4)}
+.snav{display:flex;flex-direction:column;border-top:2px solid var(--rule)}
+.snav a{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-2);
+  font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink);text-decoration:none;padding:var(--sp-3) var(--sp-5);border-bottom:1px solid var(--rule-hair)}
+.snav a:hover{background:var(--rule-hair)}
+/* The nav's last hairline would stack against the first .sblock's 2px rule. */
+.snav a:last-child{border-bottom:0}
+/* The active page gets the section-bar treatment: ink fill, paper text. */
+.snav a.on{background:var(--ink);color:var(--on-ink)}
+.snav .ct{font-variant-numeric:tabular-nums;font:700 11px/14px ui-monospace,monospace}
+.sblock{margin-top:var(--sp-5);padding:var(--sp-3) var(--sp-5) 0;border-top:2px solid var(--rule)}
+.sblock .shd{display:block;font-size:11px;line-height:14px;letter-spacing:.06em;
+  color:var(--ink-muted);margin-bottom:var(--sp-2)}
+.salert{display:block;font-size:12px;line-height:17px;color:#000;text-decoration:none;
+  border:2px solid var(--rule);padding:var(--sp-2);margin:0 0 var(--sp-2);background:var(--paper)}
+.salert.k-verm{background:var(--vermilion)}
+.salert.k-gold{background:var(--gold)}
+.salert.k-dash{border-style:dashed;color:var(--ink)}
+.salert:hover{outline:2px solid var(--rule)}
+.sgoal{padding:var(--sp-2) 0;border-top:1px solid var(--rule-hair)}
+.sgoal:first-of-type{border-top:0}
+.sgoal .hd{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-2);flex-wrap:wrap}
+/* Two-line clamp, not nowrap: the chip used to win the width fight and a goal name
+ * would truncate to two letters on every page. */
+.sgoal .nm{font-size:13px;line-height:18px;color:var(--ink);text-decoration:none;
+  flex:1;min-width:120px;overflow:hidden;text-overflow:ellipsis;
+  display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2}
+.sgoal .nm:hover{text-decoration:underline;text-underline-offset:2px}
+.sgoal .ct{font-variant-numeric:tabular-nums;font:700 11px/14px ui-monospace,monospace;
+  color:var(--ink-muted)}
+.srisk{font-size:12px;line-height:17px;color:var(--ink-muted);margin:var(--sp-1) 0 0}
+/* At-risk keeps its words and gains weight, not a bare colour (G12's rule applied
+ * to G13's sentence). */
+.srisk.bad{color:var(--ink);font-weight:700}
+.track.mini{height:8px;border-width:1px;margin-top:var(--sp-1)}
+@media(max-width:900px){
+  .shell{display:block}
+  .side{border-right:0;border-bottom:2px solid var(--rule);padding:var(--sp-4) 0 0}
+  .snav{flex-direction:row;flex-wrap:wrap}
+  .snav a{border-bottom:0;flex:1 1 auto;justify-content:center}
+  .sblock{display:none}
+}
+
+/* width:100% matters: as a grid item, the auto margins would otherwise defeat the
+ * default stretch and the column shrink-wraps to content — the frame then jumps
+ * hundreds of px between pages. */
+.wrap{width:100%;max-width:1060px;margin:0 auto;padding:0 0 72px}
+.mast{border-bottom:4px solid var(--rule);padding:var(--sp-5) var(--sp-5) var(--sp-4);display:flex;
+  justify-content:space-between;align-items:flex-end;gap:var(--sp-4);flex-wrap:wrap}
+.mast h1{font-size:38px;line-height:38px;margin:0}
+.mast .meta{font-size:11px;line-height:15px;letter-spacing:.06em;color:var(--ink-muted);margin:var(--sp-2) 0 0;
+  font-weight:700;text-transform:uppercase}
+button.toggle{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  background:var(--ink);color:var(--on-ink);border:2px solid var(--rule);border-radius:0;
+  padding:var(--sp-2) var(--sp-4);cursor:pointer}
+button.toggle:hover{background:var(--paper);color:var(--ink)}
+/* Focus rings are ink, not vermilion: §8 rule 1 reserves vermilion for overdue and
+ * destroy, and a red ring on every tabbed element wore the alarm ink decoratively.
+ * The offset keeps the ring clear of the element's own keyline. */
+:focus-visible{outline:3px solid var(--rule);outline-offset:2px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:0}
+@media(max-width:840px){.grid{grid-template-columns:1fr}}
+.panel{border-bottom:2px solid var(--rule);border-right:2px solid var(--rule);padding:0 0 var(--sp-5)}
+.panel:nth-child(2n){border-right:0}
+@media(max-width:840px){.panel{border-right:0}}
+.banner{background:var(--ink);color:var(--on-ink);padding:var(--sp-2) var(--sp-5);font-size:14px;line-height:18px;
+  display:flex;justify-content:space-between;align-items:baseline;gap:var(--sp-3)}
+/* §6: section headers are the identity-carrying element and the spec sets them at
+ * banner scale, not label scale. The count span stays 14px, subordinate. */
+.banner .bt{font-size:22px;line-height:28px}
+.inner{padding:0 var(--sp-5)}
+.cap{font-size:12px;line-height:17px;color:var(--ink-muted);padding:var(--sp-3) 0;
+  border-bottom:1px solid var(--rule-hair);margin-bottom:0}
+.row{display:flex;gap:var(--sp-4);padding:var(--sp-3) 0;border-top:1px solid var(--rule-hair);align-items:flex-start}
+.row:first-of-type{border-top:0}
+.grow{flex:1;min-width:0}
+.b1{margin:0;font-size:15px;line-height:21px}
+/* A chip that opens a line hangs left; wrapped text lines align after it, never
+ * beneath it. Templates opt in with .hang and wrap the text in a span. */
+.b1.hang{display:flex;align-items:flex-start;gap:var(--sp-2)}
+.b1.hang .chip{margin-top:2px}
+.b2{margin:var(--sp-1) 0 0;font-size:13px;line-height:18px;color:var(--ink-muted)}
+.b2 a{color:var(--ink-muted);text-underline-offset:2px}
+.time{font-size:12px;font-weight:700;letter-spacing:.04em;color:var(--ink-muted);flex:0 0 88px;padding-top:4px}
+.prot{border:2px solid var(--rule);padding:var(--sp-3);margin:var(--sp-3) 0;
+  background:repeating-linear-gradient(45deg,transparent,transparent 5px,var(--rule-hair) 5px,var(--rule-hair) 6px)}
+.prot .hd{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-3)}
+/* Base chip is theme-aware: ink on paper in both modes. The old #000-on-paper pair
+ * went invisible in dark mode for any chip without a colored fill (the PROTECTED
+ * chip). Fills declare their own #000 text — the five inks keep black text on
+ * either surface, which is what the palette validator checks. */
+.chip{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;
+  font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  border:2px solid var(--rule);border-radius:0;padding:2px 8px;color:var(--ink);background:var(--paper);white-space:nowrap}
+.chip svg{width:10px;height:10px;flex:0 0 10px}
+.k-black{background:var(--ink);color:var(--on-ink)}
+.k-verm{background:var(--vermilion);color:#000}
+.k-gold{background:var(--gold);color:#000}
+.k-turq{background:var(--turquoise);color:#000}
+.k-green{background:var(--green);color:#000}
+/* §4: a guess gets a dashed keyline and no fill — but its label is still read
+ * every morning, so it keeps full ink, not muted. */
+.k-dash{border-style:dashed;background:transparent;color:var(--ink)}
+/* A neutral chip: solid keyline, no fill, full ink — for states that are neither a
+ * warning nor a guess (a fresh staleness count). The bare .chip default's #000 text
+ * assumes a filled background and goes invisible on dark paper. */
+.k-plain{background:transparent;color:var(--ink)}
+.reel{display:inline-flex;background:#000;border:2px solid #000;padding:2px;gap:1px}
+:root[data-theme="dark"] .reel{border-color:#FAF3DF}
+@media(prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .reel{border-color:#FAF3DF}}
+.reel span{background:#FAF3DF;color:#000;font:700 20px/24px ui-monospace,"SF Mono",Menlo,monospace;
+  padding:1px 5px;border-radius:2px;font-variant-numeric:tabular-nums}
+.goal{padding:var(--sp-4) 0;border-top:1px solid var(--rule-hair)}
+.goal:first-of-type{border-top:0}
+.goal .hd{display:flex;justify-content:space-between;gap:var(--sp-4);align-items:center;margin-bottom:var(--sp-1)}
+.goal .hd .nm{font-size:15px;line-height:21px}
+.tgt{font-size:12px;line-height:17px;color:var(--ink-muted);margin:0 0 var(--sp-2)}
+.track{height:14px;border:2px solid var(--rule);background:var(--paper)}
+.fill{height:100%;background:var(--ink)}
+.fill.gold{background:var(--gold)}
+.bars{display:flex;flex-direction:column;gap:var(--sp-2);padding-top:2px}
+.bar{display:flex;align-items:center;gap:var(--sp-3);font-size:13px}
+.bar .lbl{flex:0 0 96px;font-weight:700;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+  color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar .b{height:16px;background:var(--ink);border:1px solid var(--rule)}
+.bar .v{font-weight:700}
+.note{font-size:12px;line-height:17px;color:var(--ink-muted);margin:var(--sp-4) 0 0}
+.rev{border:2px dashed var(--rule);padding:var(--sp-4);margin:var(--sp-3) 0}
+.rev p{margin:0}
+/* Quote and confidence read as one evidence cluster (sp-1 between them); the sp-4
+ * before the buttons is the seam between information and action. */
+.quote{font-size:13px;line-height:19px;color:var(--ink-muted);font-style:italic;
+  margin:var(--sp-2) 0 var(--sp-1);padding-left:var(--sp-3);border-left:2px solid var(--rule)}
+/* Provenance links inside quotes stay faded ink, like .b2 a — §1: nothing gets an
+ * undeclared color, least of all the browser's default blue. */
+.quote a{color:var(--ink-muted);text-underline-offset:2px}
+.conf{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-muted);margin:0 0 var(--sp-4)}
+.acts{display:flex;gap:var(--sp-2);flex-wrap:wrap}
+/* Action rows under row/goal text sit one step off the copy above them. Was an
+ * inline style repeated across five templates. */
+.row .acts,.goal .acts{margin-top:var(--sp-2)}
+.btn{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  border:2px solid var(--rule);border-radius:0;padding:var(--sp-2) var(--sp-4);cursor:pointer;
+  background:var(--paper);color:var(--ink)}
+.btn:hover{background:var(--ink);color:var(--on-ink)}
+.chk{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3) 0;border-top:1px solid var(--rule-hair)}
+.chk:first-of-type{border-top:0}
+.box{width:16px;height:16px;border:2px solid var(--rule);flex:0 0 16px;position:relative}
+/* A 16px tick is a 28px target: the halo pads the hit area without touching the
+ * drawn geometry. Interactive boxes only — spans stay inert. */
+button.box::before{content:"";position:absolute;inset:-6px}
+.box.on{background:var(--ink)}
+.box.on:after{content:"";position:absolute;left:3px;top:0px;width:5px;height:10px;
+  border:solid var(--on-ink);border-width:0 2px 2px 0;transform:rotate(45deg)}
+.chk .nm{flex:1}
+.chk.done .nm{color:var(--ink-muted);text-decoration:line-through}
+.chk .st{font:700 10px/13px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted)}
+.src{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3) 0;border-top:1px solid var(--rule-hair);font-size:14px}
+.src:first-of-type{border-top:0}
+.sq{width:11px;height:11px;border:2px solid var(--rule);flex:0 0 11px}
+.src .nm{flex:1;font-weight:700;font-size:12px;letter-spacing:.05em;text-transform:uppercase}
+.src .ts{color:var(--ink-muted);font-size:13px}
+.sec{border-bottom:2px solid var(--rule)}
+/* The section's closing 2px rule needs breathing room below the last row, or the
+ * content sits flush against the seam. */
+.sec .inner{padding-bottom:var(--sp-5)}
+.swrap{padding:var(--sp-5)}
+.sws{display:grid;grid-template-columns:repeat(5,1fr);gap:0;border:2px solid var(--rule)}
+@media(max-width:840px){.sws{grid-template-columns:repeat(2,1fr)}}
+.sw{padding:var(--sp-4) var(--sp-3);border-right:2px solid var(--rule);color:#000}
+.sw:last-child{border-right:0}
+.sw b{display:block;font:700 11px/14px system-ui,sans-serif;letter-spacing:.05em;text-transform:uppercase}
+.sw code{font:400 10px/14px ui-monospace,monospace}
+.legend{display:flex;gap:var(--sp-4);font:700 10px/13px system-ui,sans-serif;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--ink-muted);margin-top:var(--sp-4);flex-wrap:wrap}
+.legend i{display:inline-block;width:11px;height:11px;border:1px solid var(--rule);margin-right:6px;vertical-align:-2px}
+
+/* ── HTMX ──────────────────────────────────────────────────────────────────
+ * docs/06: "Optimistic UI on ticks and resolutions, with rollback on failure."
+ * HTMX swaps the server-rendered fragment in place; these rules cover the gap
+ * between click and swap. No spinner — at localhost latency a spinner is a flash
+ * of noise, and design-system.md has no loading language.
+ */
+.htmx-request{opacity:.55}
+.htmx-swapping{opacity:0;transition:opacity .08s}
+[aria-busy="true"]{cursor:progress}
+
+/* Actions rest quiet and declare their ink on hover: §8 rule 1 says color means
+ * state, and a resting SNOOZE button is not state — with every button inked, gold
+ * chrome outnumbered real SLIPPING chips two to one and the alarm inks read as
+ * wallpaper. The press-preview keeps the semantics: hovering an action fills it
+ * with the state it produces — green completes, gold defers, vermilion destroys,
+ * turquoise holds. Resting = plain 2px keyline, paper fill, ink text (base .btn). */
+.btn.ok:hover{background:var(--green);border-color:var(--green);color:#000}
+.btn.defer:hover{background:var(--gold);border-color:var(--gold);color:#000}
+.btn.pin:hover{background:var(--turquoise);border-color:var(--turquoise);color:#000}
+/* The exception: destructive actions keep their vermilion keyline at rest. Danger
+ * before the click is a safety cue, not decoration (docs/06 allows Drop alone a
+ * confirmation for the same reason). */
+.btn.danger{border-color:var(--vermilion)}
+.btn.danger:hover{background:var(--vermilion);border-color:var(--vermilion);color:#000}
+
+/* The currently-set value (a /WK cadence) is state, so it holds the same ink-fill
+ * treatment as the active nav item. */
+.btn.on{background:var(--ink);color:var(--on-ink)}
+
+/* The per-panel colored banner seams are gone: they were fixed decoration, and §8
+ * rule 1 says nothing decorative gets an ink (cobalt on a header also broke §3). */
+
+/* Plan rows carry their kind on a full-height keyline: work cobalt, small-items
+ * turquoise, fixed (calendar) black. Protected already has the hatch. The stripe
+ * spans the whole component, not just the time gutter, so each block reads as its
+ * own colored object at a glance — same semantic inks, louder carrier. */
+.row.k-work,.row.k-small,.row.k-fixed{padding-left:var(--sp-3)}
+.row.k-work{border-left:3px solid var(--cobalt)}
+.row.k-small{border-left:3px solid var(--turquoise)}
+.row.k-fixed{border-left:3px solid var(--ink)}
+
+/* Schedule pages. */
+.pager{display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-3) 0;border-bottom:1px solid var(--rule-hair)}
+.pager .btn{text-decoration:none;display:inline-block}
+.weekgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:0;border:2px solid var(--rule);margin-top:var(--sp-4)}
+@media(max-width:840px){.weekgrid{grid-template-columns:repeat(2,1fr)}}
+.wday{border-right:1px solid var(--rule-hair);padding:var(--sp-2);min-height:120px}
+.wday:last-child{border-right:0}
+/* Outline, not fill: a rule-hair fill matched the witem stripes in dark mode and
+ * erased them. An inset keyline marks today without touching the stripes. */
+.wday.now{outline:2px solid var(--rule);outline-offset:-2px}
+.wday .hd{display:block;font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--ink);text-decoration:none;margin-bottom:var(--sp-2);
+  border-bottom:2px solid var(--rule);padding-bottom:var(--sp-1)}
+.witem{margin:0 0 var(--sp-1);font-size:12px;line-height:16px;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;border-left:3px solid var(--rule-hair);padding-left:var(--sp-2)}
+.witem.fixed{border-left-color:var(--ink)}
+.witem.k-work{border-left-color:var(--cobalt)}
+.witem.k-small{border-left-color:var(--turquoise)}
+.witem.k-protected{border-left-color:var(--ink);border-left-style:double}
+.wempty{color:var(--ink-muted);font-size:12px;margin:0}
+
+/* People page + inline forms. Inputs follow the button language: 2px keyline,
+ * square corners, paper field. */
+.pplsearch{display:flex;gap:var(--sp-3);align-items:center;padding:var(--sp-3) 0;border-bottom:1px solid var(--rule-hair)}
+.pplsearch input[type=search]{flex:1;max-width:420px}
+input,textarea,select{font:400 14px/20px system-ui,sans-serif;background:var(--paper);color:var(--ink);
+  border:2px solid var(--rule);border-radius:0;padding:var(--sp-2) var(--sp-3)}
+/* The one native checkbox (People search) joins the .box language: square, 2px
+ * keyline, green fill + drawn tick when checked. The UA control had rounded
+ * corners and vanished in dark mode. */
+input[type=checkbox]{appearance:none;-webkit-appearance:none;width:16px;height:16px;
+  padding:0;position:relative;vertical-align:-3px}
+input[type=checkbox]:checked{background:var(--green)}
+input[type=checkbox]:checked::after{content:"";position:absolute;left:3px;top:0;
+  width:5px;height:10px;border:solid #000;border-width:0 2px 2px 0;transform:rotate(45deg)}
+input:focus,textarea:focus,select:focus{outline:3px solid var(--rule);outline-offset:1px}
+.lbl{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-muted)}
+.addform{margin-top:var(--sp-4);border-top:1px solid var(--rule-hair);padding-top:var(--sp-3)}
+.addform summary{cursor:pointer}
+.addform form{display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-3)}
+.src .nm a,a.nm{color:var(--ink);text-decoration:none}
+a.nm:hover{text-decoration:underline;text-underline-offset:2px}
+/* A paused source stays listed — configuration is visible even when inactive. */
+.src.paused .nm,.src.paused .ts{color:var(--ink-muted)}
+.src .btn{margin-left:auto;font-size:10px;padding:var(--sp-1) var(--sp-2)}
+
+/* A skipped roadmap step stays visible — it was a decision, not a deletion. */
+.row.skipped .b1,.row.skipped .b2,.row.skipped .time{color:var(--ink-muted)}
+.row.skipped .b1{text-decoration:line-through}
+
+/* A done tick is green. Keyline stays black, check stays black — 5.1:1 on green. */
+.box.on{background:var(--green)}
+.box.on:after{border-color:#000}
+
+/* Overflow is a warning, not a footnote: gold fill, black keyline, black text —
+ * the same mitigation the palette doc prescribes for gold on paper. */
+.cap .over{background:var(--gold);border:2px solid var(--rule);padding:0 5px;font-weight:700;color:#000}
+
+/* Review queue: docs/11 §4 — "Accept and Reject as equal-weight buttons."
+ * Never make Accept primary, larger, or preselected. Both inherit .btn's size;
+ * only the semantic ink differs. The explicit selectors exist to make an
+ * inequality a visible edit rather than a CSS accident. */
+.rev .acts .btn{flex:0 0 auto;min-width:96px}
+.rev .acts .btn.accept:hover{background:var(--green);border-color:var(--green);color:#000}
+.rev .acts .btn.reject{border-color:var(--vermilion)}
+.rev .acts .btn.reject:hover{background:var(--vermilion);border-color:var(--vermilion);color:#000}
+
+/* Reject reasons are the second decision, so they render one size step down from
+ * Accept/Reject — hierarchy by size, not by color. */
+.why{display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-3);align-items:center}
+.why .lbl{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-muted)}
+.why .btn{font-size:11px;padding:var(--sp-1) var(--sp-2)}
+.empty{font-size:13px;line-height:19px;color:var(--ink-muted);padding:var(--sp-4) 0}
+.kbd{font:700 10px/13px ui-monospace,monospace;border:1px solid var(--rule-hair);
+  padding:1px 4px;color:var(--ink-muted)}
+.card{cursor:pointer}
+.card:focus-visible{outline:3px solid var(--rule);outline-offset:2px}
+.card[data-selected="true"]{background:var(--rule-hair)}
+.lane{margin:0 0 var(--sp-2);font:700 10px/13px system-ui,sans-serif;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--ink-muted);padding-top:var(--sp-3);
+  border-top:1px solid var(--rule-hair)}
+.lane:first-of-type{border-top:0;padding-top:0}
+
+/* ── Goals page (Phase 8) ──────────────────────────────────────────────────
+ * The deep view behind the dashboard's Goals + Checklist panels. Cards per
+ * goal because staleness and risk are goal-level signals (G11); the checklist
+ * is a week of tick cells because a habit is a row over days, and the streak
+ * is a bare tabular number (C4: quiet). */
+.wkg{width:100%;border-collapse:collapse;margin-top:var(--sp-4)}
+.wkg th{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-muted);border-bottom:2px solid var(--rule);padding:var(--sp-2);text-align:center}
+.wkg th .dnum{font:700 12px/16px ui-monospace,monospace;color:var(--ink);font-variant-numeric:tabular-nums}
+.wkg td{border-bottom:1px solid var(--rule-hair);padding:var(--sp-2);text-align:center}
+.wkg td.nm,.wkg th.nm{text-align:left;font-size:15px;padding-left:0}
+.wkg td.nm{font:400 15px/21px system-ui,sans-serif;color:var(--ink)}
+/* rule-hair, not n-50: the neutral ramp is fixed-hex in both modes, so n-50 turns
+ * into a light band on black. rule-hair is the theme-aware selection surface. */
+.wkg th.today,.wkg td.today{background:var(--rule-hair)}
+.wkg th.today{color:var(--ink)}
+/* Spans stay transparent so .box.on's green fill wins; the button needs paper
+ * explicitly or the UA default grey shows through. */
+.wkg .box{display:inline-block;vertical-align:middle;padding:0;cursor:default}
+.wkg button.box{cursor:pointer;background:var(--paper)}
+.wkg button.box.on{background:var(--green)}
+/* A future scheduled day is an intention, not yet a claim: hairline, no fill. */
+.wkg .box.due{border-color:var(--rule-hair)}
+.wkg .off{color:var(--ink-muted)}
+.wkg td.stk,.wkg th.stk{text-align:right;padding-right:0}
+.wkg td.stk{font:700 13px/18px ui-monospace,monospace;font-variant-numeric:tabular-nums;color:var(--ink-muted)}
+.gcard{border:2px solid var(--rule);margin-top:var(--sp-4)}
+.gcard .ghd{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--sp-4);
+  padding:var(--sp-3) var(--sp-4);border-bottom:2px solid var(--rule)}
+.gcard .gtitle{font-size:19px;line-height:24px;margin:0}
+.gcard .gmeta{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-muted);margin:var(--sp-1) 0 0}
+/* The definition of done reads as the goal's own words — the quote treatment. */
+.gcard .dod{font-size:13px;line-height:19px;color:var(--ink-muted);font-style:italic;
+  margin:var(--sp-3) var(--sp-4) 0;padding-left:var(--sp-3);border-left:2px solid var(--rule)}
+.gcard .srisk{margin:var(--sp-2) var(--sp-4) 0}
+.gcard .gtgt{padding:var(--sp-3) var(--sp-4);border-top:1px solid var(--rule-hair);margin-top:var(--sp-3)}
+.gcard .gtgt:first-of-type{border-top:0}
+.gcard .gtgt .hd{display:flex;align-items:center;gap:var(--sp-2);margin-bottom:var(--sp-1)}
+.gcard .gtgt .nm{font-size:15px;line-height:21px;flex:1;min-width:0}
+.gcard .gtgt .kind{font:700 10px/13px system-ui,sans-serif;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--ink-muted)}
+.gcard .acts{margin-top:var(--sp-2)}
+
+/* ── Schedule day timeline (Phase 8) ───────────────────────────────────────
+ * One pixel per minute. Gaps are free time made visible; the hour ruler is
+ * hairlines, entries carry the same kind inks as the Today rows, and "now"
+ * is a solid black rule — maximum contrast, same reasoning as due-today. */
+.tl{position:relative;margin-top:var(--sp-4);border:2px solid var(--rule);overflow:hidden}
+.tl .hr{position:absolute;left:0;right:0;border-top:1px solid var(--rule-hair)}
+.tl .hlbl{position:absolute;top:-1px;left:0;width:52px;padding:2px 0 0 var(--sp-2);
+  font:700 10px/13px ui-monospace,monospace;letter-spacing:.04em;color:var(--ink-muted);
+  font-variant-numeric:tabular-nums}
+.tl .ev{position:absolute;left:64px;right:var(--sp-3);border:2px solid var(--rule);
+  background:var(--paper);padding:3px var(--sp-2);overflow:hidden;
+  display:flex;flex-direction:column;gap:1px}
+.tl .ev.lane1{left:calc(50% + 32px)}
+.tl .ev .et{font:700 10px/13px ui-monospace,monospace;letter-spacing:.04em;
+  color:var(--ink-muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+.tl .ev .en{font-size:13px;line-height:17px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tl .ev .ek{font:700 10px/13px system-ui,sans-serif;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--ink-muted)}
+.tl .ev.slim{flex-direction:row;align-items:center;gap:var(--sp-2);padding:0 var(--sp-2)}
+.tl .ev.k-fixed{border-left:4px solid var(--ink)}
+.tl .ev.k-work{border-left:4px solid var(--cobalt)}
+.tl .ev.k-small{border-left:4px solid var(--turquoise)}
+.tl .ev.k-buffer{border-style:dashed;border-left-width:2px}
+.tl .ev.k-buffer .en{color:var(--ink-muted)}
+.tl .ev.k-protected{background:repeating-linear-gradient(45deg,transparent,transparent 5px,var(--rule-hair) 5px,var(--rule-hair) 6px) var(--paper)}
+.tl .ev.k-protected .en{font-size:14px}
+.tl .now{position:absolute;left:0;right:0;border-top:2px solid var(--ink);z-index:2}
+.tl .now span{position:absolute;right:0;top:-1px;background:var(--ink);color:var(--on-ink);
+  font:700 10px/13px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  padding:1px 6px}
+.legend .hatch{background:repeating-linear-gradient(45deg,transparent,transparent 2px,var(--rule) 2px,var(--rule) 3px)}

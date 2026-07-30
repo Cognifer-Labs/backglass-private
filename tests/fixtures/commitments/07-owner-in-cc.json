@@ -1,0 +1,31 @@
+{
+  "name": "a message in which the owner is in Cc rather than To",
+  "why": "Direction must still resolve correctly when the owner is not the primary recipient, and it must resolve against BOTH of the owner's addresses - here the ASU one, in Cc.",
+  "message": {
+    "id": "c07",
+    "from": "contactdharsan@gmail.com",
+    "to": "Marcus Reed <mreed@example.com>",
+    "cc": "dkesava2@asu.edu",
+    "subject": "Vendor comparison",
+    "date": "Fri, 10 Jul 2026 13:00:00 -0700",
+    "body": "Marcus, I'll put together the vendor comparison and send it Monday."
+  },
+  "model_response": {
+    "commitments": [
+      {
+        "direction": "i_owe",
+        "counterparty": "Marcus Reed <mreed@example.com>",
+        "what": "vendor comparison",
+        "due_at": "Monday",
+        "due_is_explicit": true,
+        "estimated_minutes": 90,
+        "confidence": 0.91,
+        "evidence": "I'll put together the vendor comparison and send it Monday.",
+        "resolves": false,
+        "resolves_what": null
+      }
+    ]
+  },
+  "expect": {"inserted": 1, "deduped": 0, "superseded": 0, "review_queue": 0,
+             "due_at": ["2026-07-13"], "estimate_source": ["extracted"]}
+}

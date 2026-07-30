@@ -1,0 +1,30 @@
+{
+  "name": "a relative date in a message that is several weeks old",
+  "why": "CLAUDE.md rule 4. The message is three weeks old; 'by Friday' must resolve against the message date, not the run date. If this ever returns a Friday near today, date resolution has regressed to using the clock.",
+  "message": {
+    "id": "c02",
+    "from": "Marcus Reed <mreed@example.com>",
+    "to": "contactdharsan@gmail.com",
+    "subject": "Budget sheet",
+    "date": "Fri, 10 Jul 2026 16:40:00 -0700",
+    "body": "I'll send you the updated budget sheet by Friday."
+  },
+  "model_response": {
+    "commitments": [
+      {
+        "direction": "owed_to_me",
+        "counterparty": "Marcus Reed <mreed@example.com>",
+        "what": "updated budget sheet",
+        "due_at": "Friday",
+        "due_is_explicit": true,
+        "estimated_minutes": null,
+        "confidence": 0.88,
+        "evidence": "I'll send you the updated budget sheet by Friday.",
+        "resolves": false,
+        "resolves_what": null
+      }
+    ]
+  },
+  "expect": {"inserted": 1, "deduped": 0, "superseded": 0, "review_queue": 0,
+             "due_at": ["2026-07-17"], "estimate_source": [null]}
+}

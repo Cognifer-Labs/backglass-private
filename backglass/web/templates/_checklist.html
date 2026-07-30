@@ -1,0 +1,23 @@
+{% import "_macros.html" as m %}
+<section class="panel" id="panel-checklist">
+  {{ m.banner(d.checklist.title, d.checklist.meta.done ~ '/' ~ d.checklist.meta.total) }}
+  <div class="inner">
+    {% if d.checklist.empty %}
+      <p class="empty">No checklist items for today.</p>
+    {% else %}
+      {% for item in d.checklist.rows %}
+        {% set done = item['tick_id'] is not none %}
+        <div class="chk{% if done %} done{% endif %}">
+          {# Binary. docs/06: "Optimistic UI on ticks and resolutions, with rollback on
+             failure" — HTMX swaps the server truth back in, so a failed POST reverts. #}
+          <button class="box{% if done %} on{% endif %}" aria-pressed="{{ 'true' if done else 'false' }}"
+                  aria-label="{{ item['title'] }}"
+                  hx-post="/checklist/{{ item['id'] }}/{{ 'untick' if done else 'tick' }}"
+                  hx-target="#panel-checklist" hx-swap="outerHTML"></button>
+          <span class="nm">{{ item['title'] }}</span>
+          <span class="st">{{ 'Done' if done else '' }}</span>
+        </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+</section>

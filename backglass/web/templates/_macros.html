@@ -1,0 +1,66 @@
+{# Shared fragments. The class vocabulary is design/preview.html's, unchanged —
+   docs/06 §Visual specification: "Match it." #}
+
+{% macro chip(state) -%}
+  {#- design-system.md §4. Every chip is icon plus label plus ink, never colour alone
+      (§8 rule 3), and every fill carries a black keyline (§8 rule 2). -#}
+  {%- set map = {
+    'overdue':      ('k-verm',  '▲', 'Overdue'),
+    'due_today':    ('k-black', '●', 'Due today'),
+    'slipping':     ('k-gold',  '◆', 'Slipping'),
+    'awaiting':     ('k-turq',  '○', 'Awaiting'),
+    'done':         ('k-green', '✓', 'Done'),
+    'needs_review': ('k-dash',  '?', 'Review'),
+    'protected':    ('',        '▬', 'Protected'),
+  } -%}
+  {%- if state in map -%}
+    {%- set cls, glyph, label = map[state] -%}
+    <span class="chip {{ cls }}"><span aria-hidden="true">{{ glyph }}</span>{{ label }}</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro source_link(row) -%}
+  {#- docs/11 §Cross-cutting rule 1: provenance everywhere, no exceptions. Every claim on
+      every surface links to its source. -#}
+  {%- set sid = row['source_external_id'] -%}
+  {%- if row['source'] and row['source'].startswith('gmail') -%}
+    <a href="https://mail.google.com/mail/u/0/#all/{{ sid }}" rel="noreferrer">{{ row['source'] }} · {{ (row['source_occurred_at'] or '')[:10] }}</a>
+  {%- else -%}
+    {#- No external deep-link exists for this source; naming it without a fake href is
+        honest provenance. A dead /design/ link is worse than no link. -#}
+    <span>{{ row['source'] }} · {{ (row['source_occurred_at'] or '')[:10] }}</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro due_text(row, today) -%}
+  {%- if not row['due_at'] -%}no date
+  {%- elif row['state'] == 'overdue' -%}overdue
+  {%- elif row['state'] == 'due_today' -%}due today
+  {%- else -%}{{ row['due_at']|due(today) }}{%- endif -%}
+{%- endmacro %}
+
+{% macro banner(title, right='') -%}
+  <div class="banner"><span class="cond bt">{{ title }}</span>{% if right %}<span class="cond bc">{{ right }}</span>{% endif %}</div>
+{%- endmacro %}
+
+{% macro stale_chip(level, text) -%}
+  {#- G12: a day count, never a bare colour — and §8 rule 3: a colored fill carries a
+      glyph as well as its label. The plain (fresh) chip has no fill, so no glyph. -#}
+  {%- if level == 'serious' -%}
+    <span class="chip k-verm"><span aria-hidden="true">▲</span>{{ text }}</span>
+  {%- elif level == 'warn' -%}
+    <span class="chip k-gold"><span aria-hidden="true">◆</span>{{ text }}</span>
+  {%- else -%}
+    <span class="chip k-plain">{{ text }}</span>
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro kind_legend() -%}
+  {#- One legend for the day and week schedule views, so the two cannot drift. -#}
+  <div class="legend">
+    <span><i style="background:var(--cobalt)"></i>Work</span>
+    <span><i style="background:var(--turquoise)"></i>Small items</span>
+    <span><i style="background:var(--ink)"></i>Fixed</span>
+    <span><i class="hatch"></i>Protected</span>
+  </div>
+{%- endmacro %}

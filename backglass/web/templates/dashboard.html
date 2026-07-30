@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = 'dashboard' %}
+
+{% block meta %}{{ d.today.strftime('%A %d %B %Y') }} · {{ settings.default_tz }}{% endblock %}
+
+{% block mast_right %}
+  {# design-system.md §7: reel digits on at most three numbers per view. This view uses
+     one — the open-commitment count — so the treatment stays memorable. #}
+  <span class="reel" title="open commitments">
+    {%- for ch in '%03d'|format(d.board.rows|length) -%}<span>{{ ch }}</span>{%- endfor -%}
+  </span>
+{% endblock %}
+
+{% block content %}
+  {# The source-failure banner moved to the sidebar alerts block (_sidebar.html), which
+     is present on every page — a failure is now louder, not quieter: it follows the
+     owner to Schedule, People and Roadmaps instead of living only here. #}
+  {# Paired by height so the 2-column grid does not frame a void: the tall GOALS
+     panel sits beside SOURCES, and the short CHECKLIST takes the final half-row. #}
+  <div class="grid">
+    {% include "_today.html" %}
+    {% include "_board.html" %}
+    {% include "_awaiting.html" %}
+    {% include "_review.html" %}
+    {% include "_goals.html" %}
+    {% include "_sources.html" %}
+    {% include "_checklist.html" %}
+  </div>
+
+  <p class="note" style="padding:var(--sp-4) var(--sp-5)">
+    {# docs/06 §Interaction rules: "This is a tool used daily by one person who will learn
+       the keys." No tour, no tooltips — docs/11 §What has no flow. #}
+    <span class="kbd">j</span> <span class="kbd">k</span> move ·
+    <span class="kbd">x</span> resolve · <span class="kbd">d</span> drop ·
+    <span class="kbd">s</span> snooze · <span class="kbd">r</span> review queue
+  </p>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* docs/06 §Interaction rules: j/k to move between cards, x to resolve, r to open the
+   review queue. Learn once, use daily. Deliberately tiny and dependency-free — the whole
+   point of the stack choice is that there is no client framework to host this in. */
+(function () {
+  let index = -1;
+  const cards = () => Array.from(document.querySelectorAll('.card'));
+  function select(next) {
+    const list = cards();
+    if (!list.length) return;
+    index = Math.max(0, Math.min(next, list.length - 1));
+    list.forEach((c, i) => c.setAttribute('data-selected', i === index ? 'true' : 'false'));
+    list[index].scrollIntoView({ block: 'nearest' });
+    list[index].focus();
+  }
+  function act(selector) {
+    const list = cards();
+    if (index < 0 || index >= list.length) return;
+    const button = list[index].querySelector(selector);
+    if (button) button.click();
+  }
+  document.addEventListener('keydown', (event) => {
+    if (event.metaKey || event.ctrlKey || event.altKey) return;
+    const tag = (event.target.tagName || '').toLowerCase();
+    if (tag === 'input' || tag === 'textarea') return;
+    switch (event.key) {
+      case 'j': select(index + 1); break;
+      case 'k': select(index - 1); break;
+      case 'x': act('button.btn:not(.danger)'); break;
+      case 'd': act('button.btn.danger'); break;
+      case 's': act('button.btn:nth-of-type(2)'); break;
+      case 'r': document.getElementById('panel-review')
+                  .scrollIntoView({ behavior: 'smooth', block: 'start' }); break;
+      default: return;
+    }
+    event.preventDefault();
+  });
+})();
+</script>
+{% endblock %}

@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = 'roadmaps' %}
+
+{% block title %}Backglass — Roadmaps{% endblock %}
+{% block meta %}Career paths{% endblock %}
+
+{% block content %}
+<section class="sec">
+  {{ m.banner('Roadmaps', rows|length ~ ' started') }}
+  <div class="inner">
+    {% if not rows %}
+      <p class="empty">No roadmap started. Pick a path below — or run
+        <span class="kbd">backglass roadmap start &lt;path&gt;</span> for the
+        personalized interview.</p>
+    {% else %}
+      {% for r in rows %}
+        <div class="src">
+          <a class="nm" href="/roadmaps/{{ r['id'] }}">{{ r['title'] }}</a>
+          <span class="ts">{{ r['done_steps'] }}/{{ r['live_steps'] }} steps
+            {%- if r['target_date'] %} · target {{ r['target_date'][:10] }}{% endif %}</span>
+          {% if r['personalized'] %}<span class="chip">personalized</span>{% endif %}
+          {% if r['status'] == 'dropped' %}<span class="chip">dropped</span>
+          {% elif r['status'] == 'done' %}{{ m.chip('done') }}{% endif %}
+        </div>
+      {% endfor %}
+    {% endif %}
+
+    <details class="addform">
+      <summary class="lbl">Start a path</summary>
+      <div style="margin-top:12px">
+        {% for p in paths %}
+          <div class="row">
+            <div class="grow">
+              <p class="b1">{{ p.title }}</p>
+              <p class="b2">{{ p.steps|length }} steps · {{ p.horizon }} ·
+                done means: {{ p.definition_of_done }}</p>
+            </div>
+            <form method="post" action="/roadmaps/start/{{ p.id }}">
+              <button class="btn ok" type="submit">Start</button>
+            </form>
+          </div>
+        {% endfor %}
+        <p class="b2" style="margin-top:8px">Starting here uses the preset as written.
+          <span class="kbd">backglass roadmap start &lt;path&gt;</span> personalizes it
+          in a short interview first.</p>
+      </div>
+    </details>
+  </div>
+</section>
+{% endblock %}

@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% set active = 'goals' %}
+
+{% block title %}Backglass — Goals{% endblock %}
+{% block meta %}{{ day.strftime('%A %d %B %Y') }} · week of {{ week_start.strftime('%d %b') }}{% endblock %}
+
+{% block content %}
+{% include "_check_week.html" %}
+{% include "_goal_cards.html" %}
+{% endblock %}
