@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "No IPC — the window renders the local dashboard over HTTP only.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}
