@@ -486,3 +486,71 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
   font:700 10px/13px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
   padding:1px 6px}
 .legend .hatch{background:repeating-linear-gradient(45deg,transparent,transparent 2px,var(--rule) 2px,var(--rule) 3px)}
+
+/* ── Goals replan (2026-07) ────────────────────────────────────────────────
+ * The page reordered around the morning: today's boxes first, the week as
+ * evidence behind a fold, then the goals that need a decision. Nothing below
+ * introduces an ink; every rule here is geometry, weight and rhythm.
+ *
+ * The retired three-reel strip is why .kpis has no successor: two of its three
+ * numbers repeated the banner and the streak column, and the third moved into
+ * the fold's own summary where a collapsed section can still state its contents.
+ */
+
+/* (2) TODAY'S TICKS. The box grows 16px → 24px because this is the single
+ * control the page exists to be tapped for, and 24px is the smallest square that
+ * survives a thumb without a hit-area hack. The drawn check scales with it. */
+.tt{list-style:none;margin:var(--sp-4) 0 0;padding:0}
+.tt li{display:flex;align-items:center;gap:var(--sp-3);
+  padding:var(--sp-3) 0;border-bottom:1px solid var(--rule-hair)}
+.tt li:last-child{border-bottom:0}
+.tt .box{width:24px;height:24px;flex:0 0 24px;background:var(--paper);cursor:pointer}
+.tt .box.on{background:var(--green)}
+.tt .box.on:after{left:7px;top:2px;width:7px;height:13px;border-width:0 3px 3px 0}
+.tt .ttn{flex:1;min-width:0;font-size:15px;line-height:23px}
+/* C4: a bare tabular number at the row end. No flame, no copy, no ink. */
+.tt .tts{font:700 13px/18px ui-monospace,monospace;font-variant-numeric:tabular-nums;
+  color:var(--ink-muted);text-align:right;min-width:2ch}
+
+/* (3) THIS WEEK. A plain disclosure — the summary is a label line, not a banner,
+ * because a black bar on a section that is closed by default would spend the
+ * page's strongest mark on hidden content. */
+.wkfold{padding:var(--sp-4) 0}
+.wkfold > summary{cursor:pointer;list-style-position:outside;padding:0 var(--sp-5);
+  font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink)}
+.wkfold > summary:focus-visible{outline:3px solid var(--rule);outline-offset:2px}
+.wkfold .pace{font-variant-numeric:tabular-nums;color:var(--ink-muted)}
+.wkfold > .inner{padding-bottom:var(--sp-4)}
+
+/* (5) ON TRACK rows. One line each: title, its quiet staleness chip, the next
+ * cadence to tick, and the last checkpoint date. The whole card is inside the
+ * disclosure, unchanged — a healthy goal is folded, never abridged. */
+.alltrack{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;
+  text-transform:uppercase;color:var(--ink-muted);margin:var(--sp-4) 0 0}
+.goalrow{border-bottom:1px solid var(--rule-hair)}
+.goalrow > summary{cursor:pointer;display:flex;align-items:baseline;gap:var(--sp-3);
+  padding:var(--sp-3) 0}
+.goalrow > summary:focus-visible{outline:3px solid var(--rule);outline-offset:2px}
+.goalrow .gr-t{flex:1;min-width:0;font-size:15px;line-height:23px;
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.goalrow .gr-n{font:700 12px/16px ui-monospace,monospace;font-variant-numeric:tabular-nums;
+  color:var(--ink-muted);white-space:nowrap}
+.goalrow .gr-l{font:700 11px/14px ui-monospace,monospace;font-variant-numeric:tabular-nums;
+  color:var(--ink-muted);white-space:nowrap;min-width:9ch;text-align:right}
+.goalrow .gcard{margin-bottom:var(--sp-4)}
+
+/* (6) Wallpaper collapse. Inert goals are one counted line; the names are one
+ * click away rather than seven repeated sentences. */
+.inertfold{margin-top:var(--sp-4)}
+.inertfold > summary{cursor:pointer;font-size:13px;line-height:19px;color:var(--ink-muted)}
+.inertlist{margin:var(--sp-2) 0 0;padding-left:var(--sp-5);font-size:13px;line-height:19px;
+  color:var(--ink-muted)}
+
+/* The cross-page reference: a text link, not an embedded roadmap. */
+.gcard .grm{margin:var(--sp-1) 0 0;font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em}
+.gcard .grm a{color:var(--ink-muted);text-decoration:none}
+.gcard .grm a:hover{color:var(--ink);text-decoration:underline;text-underline-offset:2px}
+/* +1 is the write; the /wk buttons only declare the target. A hairline gap keeps
+ * the two jobs from reading as one five-button row. */
+.gcard .acts .tickone{margin-right:var(--sp-3)}

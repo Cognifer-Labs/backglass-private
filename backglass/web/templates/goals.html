@@ -5,6 +5,23 @@
 {% block meta %}{{ day.strftime('%A %d %B %Y') }} · week of {{ week_start.strftime('%d %b') }}{% endblock %}
 
 {% block content %}
-{% include "_check_week.html" %}
+{# Order is the argument: what gets tapped this morning, then the week as evidence,
+   then the goals that need a decision, then the ones that do not. #}
+{% include "_today_ticks.html" %}
+
+{# (3) THIS WEEK. The <details> wrapper is declared HERE, in the page, and is not
+   inside #today-ticks, #week-grid or #goal-cards — it is therefore never part of
+   any HTMX response and its open/closed state cannot be reset by a swap. That is
+   the whole mechanism: no server-rendered `open` attribute, no echo of client
+   state back through the wire. #}
+<section class="sec" id="this-week">
+  <details class="wkfold">
+    <summary class="cond">This week · {% include "_week_pace.html" %}</summary>
+    <div class="inner">
+      {% include "_check_week.html" %}
+    </div>
+  </details>
+</section>
+
 {% include "_goal_cards.html" %}
 {% endblock %}

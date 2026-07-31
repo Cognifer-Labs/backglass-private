@@ -1,90 +1,92 @@
-{% import "_macros.html" as m %}
-<section class="sec" id="check-week">
-  {{ m.banner('Daily checklist', grid.done_today ~ '/' ~ grid.total_today ~ ' today') }}
-  <div class="inner">
-    {% include "_kpis.html" %}
-    {% if grid.empty %}
-      <p class="empty">No checklist items. Add up to seven non-negotiables with
-        <span class="kbd">backglass checklist add</span>.</p>
-    {% else %}
-      <table class="wkg">
+{# The week grid and consistency heatmap, unchanged in content — only their frame
+   moved. They used to be a top-level <section> with the banner and KPI strip; they
+   are now the contents of the THIS WEEK <details> in goals.html.
+
+   This div is the swap target, and it is INSIDE the details element rather than
+   around it. That is the whole fold-persistence mechanism: HTMX replaces this,
+   never the <details>, so `open` survives without any server-rendered echo. #}
+<div id="week-grid"{% if week_oob|default(false) %} hx-swap-oob="outerHTML"{% endif %}>
+  {% if grid.empty %}
+    <p class="empty">No checklist items yet.</p>
+  {% else %}
+    <table class="wkg">
+      <thead>
+        <tr>
+          <th class="nm"></th>
+          {% for d in grid.days %}
+            <th{% if d == grid.today %} class="today"{% endif %}>
+              {{ d.strftime('%a') }}<br><span class="dnum">{{ d.strftime('%d') }}</span>
+            </th>
+          {% endfor %}
+          <th class="stk">Streak</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in grid.rows %}
+          <tr>
+            <td class="nm">{{ r.title }}</td>
+            {% for c in r.cells %}
+              <td{% if c.is_today %} class="today"{% endif %}>
+                {% if not c.scheduled %}
+                  <span class="off">–</span>
+                {% elif c.is_today %}
+                  {# Still the one interactive cell, but it now targets #today-ticks:
+                     the same write, the same server truth swapped back, and this
+                     grid returns out of band with it. #}
+                  <button class="box{% if c.ticked %} on{% endif %}"
+                          aria-pressed="{{ 'true' if c.ticked else 'false' }}"
+                          aria-label="{{ r.title }} today, week grid"
+                          hx-post="/goals/checklist/{{ r.item_id }}/{{ 'untick' if c.ticked else 'tick' }}"
+                          hx-target="#today-ticks" hx-swap="outerHTML"></button>
+                {% elif c.is_future %}
+                  <span class="box due"></span>
+                {% else %}
+                  <span class="box{% if c.ticked %} on{% endif %}"></span>
+                {% endif %}
+              </td>
+            {% endfor %}
+            {# C4: a number, nothing else. A broken streak is a smaller number. #}
+            <td class="stk">{{ r.streak if r.streak else '—' }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <div class="legend">
+      <span><i style="background:var(--green)"></i>Done</span>
+      <span><i></i>Open</span>
+      <span>– Not scheduled</span>
+    </div>
+
+    {% if not heat.empty %}
+      {# GitHub-contribution idiom, design-system §5 sequential magnitude: one
+         ink at stepped opacity, never a second hue. Each cell carries its
+         numbers in title + aria-label — rule 3, never color alone. #}
+      <h3 class="hmhd cond">Consistency · last {{ heat.weeks|length }} weeks</h3>
+      <table class="hm">
         <thead>
           <tr>
-            <th class="nm"></th>
-            {% for d in grid.days %}
-              <th{% if d == grid.today %} class="today"{% endif %}>
-                {{ d.strftime('%a') }}<br><span class="dnum">{{ d.strftime('%d') }}</span>
-              </th>
-            {% endfor %}
-            <th class="stk">Streak</th>
+            <th class="wk"></th>
+            {% for c in heat.weeks[0] %}<th>{{ c.day.strftime('%a') }}</th>{% endfor %}
           </tr>
         </thead>
         <tbody>
-          {% for r in grid.rows %}
+          {% for week in heat.weeks %}
             <tr>
-              <td class="nm">{{ r.title }}</td>
-              {% for c in r.cells %}
-                <td{% if c.is_today %} class="today"{% endif %}>
-                  {% if not c.scheduled %}
+              <td class="wk">{{ week[0].day.strftime('%d %b') }}</td>
+              {% for c in week %}
+                <td>
+                  {% if c.future or not c.denominator %}
                     <span class="off">–</span>
-                  {% elif c.is_today %}
-                    {# The one interactive cell. C2: binary; HTMX swaps the server
-                       truth back in, so a failed POST reverts. #}
-                    <button class="box{% if c.ticked %} on{% endif %}"
-                            aria-pressed="{{ 'true' if c.ticked else 'false' }}"
-                            aria-label="{{ r.title }} today"
-                            hx-post="/goals/checklist/{{ r.item_id }}/{{ 'untick' if c.ticked else 'tick' }}"
-                            hx-target="#check-week" hx-swap="outerHTML"></button>
-                  {% elif c.is_future %}
-                    <span class="box due"></span>
                   {% else %}
-                    <span class="box{% if c.ticked %} on{% endif %}"></span>
+                    <span class="hmf b{{ c.bucket }}" role="img"
+                          title="{{ c.label }}" aria-label="{{ c.label }}"></span>
                   {% endif %}
                 </td>
               {% endfor %}
-              {# C4: a number, nothing else. A broken streak is a smaller number. #}
-              <td class="stk">{{ r.streak if r.streak else '—' }}</td>
             </tr>
           {% endfor %}
         </tbody>
       </table>
-      <div class="legend">
-        <span><i style="background:var(--green)"></i>Done</span>
-        <span><i></i>Open</span>
-        <span>– Not scheduled</span>
-      </div>
-
-      {% if not heat.empty %}
-        {# GitHub-contribution idiom, design-system §5 sequential magnitude: one
-           ink at stepped opacity, never a second hue. Each cell carries its
-           numbers in title + aria-label — rule 3, never color alone. #}
-        <h3 class="hmhd cond">Consistency · last {{ heat.weeks|length }} weeks</h3>
-        <table class="hm">
-          <thead>
-            <tr>
-              <th class="wk"></th>
-              {% for c in heat.weeks[0] %}<th>{{ c.day.strftime('%a') }}</th>{% endfor %}
-            </tr>
-          </thead>
-          <tbody>
-            {% for week in heat.weeks %}
-              <tr>
-                <td class="wk">{{ week[0].day.strftime('%d %b') }}</td>
-                {% for c in week %}
-                  <td>
-                    {% if c.future or not c.denominator %}
-                      <span class="off">–</span>
-                    {% else %}
-                      <span class="hmf b{{ c.bucket }}" role="img"
-                            title="{{ c.label }}" aria-label="{{ c.label }}"></span>
-                    {% endif %}
-                  </td>
-                {% endfor %}
-              </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      {% endif %}
     {% endif %}
-  </div>
-</section>
+  {% endif %}
+</div>
