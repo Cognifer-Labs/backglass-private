@@ -189,7 +189,10 @@ class TestRoadmapPage:
         page = client.get(f"/roadmaps/{rid}").text
         assert 'id="roadmap-totals"' in page
         assert "0/8 steps" in page
-        assert "Next:" in page
+        # The next pending step is marked in the timetable now, not summarized in
+        # the masthead: a 4px black left rule plus a NEXT label on the row itself.
+        assert "nextstep" in page
+        assert '<p class="nextlbl">Next</p>' in page
         assert "Shadowing hours" in page
         assert "0/60 · 0%" in page
 

@@ -12,27 +12,34 @@
     <p class="cap">Done means: {{ r['definition_of_done'] }}
       {%- if r['personalized'] %} · personalized{% endif %}</p>
 
-    {% include "_roadmap_steps.html" %}
+    {# Masthead, then the log zone, then the timetable: the weekly read is
+       "where am I / log what I did", and the step list is the reference
+       material underneath it. #}
+    {% include "_roadmap_masthead.html" %}
     {% include "_roadmap_totals.html" %}
 
+    <p class="lbl sechd">Steps</p>
+    {% include "_roadmap_steps.html" %}
+
     {% if cadences %}
-      <div class="addform">
-        <p class="lbl">Weekly cadences</p>
-        {% for c in cadences %}
-          <div class="row">
-            <div class="grow">
-              <p class="b1">{{ c['title'] }}</p>
-              <p class="b2">{{ c['weekly_count'] }}/wk
-                {%- if c['estimated_minutes_each'] %} · {{ c['estimated_minutes_each'] }}m each{% endif %}</p>
-            </div>
+      {# Read-only here by design: cadences are ticked in exactly one place, the
+         Goals page, so a weekly countable never has two write surfaces. #}
+      <p class="lbl sechd">Weekly cadences</p>
+      {% for c in cadences %}
+        <div class="row">
+          <div class="grow">
+            <p class="b1">{{ c['title'] }}</p>
+            <p class="b2"><span class="tnum">{{ c['done_this_week'] }}/{{ c['weekly_count'] }}</span> this week
+              {%- if c['estimated_minutes_each'] %} · {{ c['estimated_minutes_each'] }}m each{% endif %}
+              · <a href="/goals">tick on Goals →</a></p>
           </div>
-        {% endfor %}
-      </div>
+        </div>
+      {% endfor %}
     {% endif %}
 
-    <form method="post" action="/roadmaps/{{ r['id'] }}/drop" style="margin-top:16px"
+    <form method="post" action="/roadmaps/{{ r['id'] }}/drop" class="dropform"
           onsubmit="return confirm('Drop this roadmap? The goal is dropped with it; nothing is deleted.')">
-      <button class="btn danger" type="submit">Drop roadmap</button>
+      <button class="lnk danger" type="submit">Drop roadmap</button>
     </form>
   </div>
 </section>

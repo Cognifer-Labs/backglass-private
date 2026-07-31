@@ -1,54 +1,70 @@
 {% import "_macros.html" as m %}
+{% if oob_masthead|default(false) %}{% include "_roadmap_masthead.html" %}{% endif %}
+{# The steps timetable (replan). Grouped by year when the path actually spans
+   years; one row per step with a date gutter, the shared due-state chip grammar
+   (_macros.due_state_chip — black is spent on literal today and nothing else),
+   and the next pending step marked by a 4px black left rule plus a NEXT label.
+
+   Controls: the next step alone carries boxed Done/Skip. Every other open step
+   gets text-weight action links plus one overflow disclosure for re-dating and
+   reordering, so the timetable rests as reading matter and no action is lost. #}
 <div id="roadmap-steps">
-  {# Progress header (Phase 10): where the roadmap stands, derived on read. Steps
-     done over live, the next pending step, and the goal's two health signals —
-     staleness and risk, separate lines, never merged (G11). #}
-  <div class="rprog">
-    <div class="hd">
-      {% set spct = (100 * done_steps / live_steps)|round|int if live_steps else 0 %}
-      <div class="track grow"><div class="fill" style="width:{{ spct }}%"></div></div>
-      <span class="pct tnum">{{ done_steps }}/{{ live_steps }} steps</span>
-      {% if stale %}{{ m.stale_chip(stale.level, stale.chip()) }}{% endif %}
-    </div>
-    <p class="b2">
-      {%- if next_step %}Next: {{ next_step['title'] }}
-        {%- if next_step['planned_date'] %} · {{ next_step['planned_date'][:10] }}{% endif %}
-      {%- else %}All live steps done.{% endif -%}
-    </p>
-    {% if risk and risk.sentence() %}
-      <p class="srisk{% if risk.at_risk %} bad{% endif %}">{{ risk.sentence().removeprefix(risk.goal_title ~ ': ') }}</p>
-    {% endif %}
-  </div>
+  {% set ns = namespace(year=None) %}
   {% for s in steps %}
-    <div class="row{% if s['status'] == 'skipped' %} skipped{% endif %}">
+    {% set year = (s['planned_date'] or '')[:4] %}
+    {% if multi_year and year and year != ns.year %}
+      <p class="yrhd">{{ year }}</p>
+      {% set ns.year = year %}
+    {% endif %}
+    {% set is_next = next_step and s['id'] == next_step['id'] %}
+    {% set open = s['status'] not in ('done', 'skipped') %}
+    <div class="row step{% if s['status'] == 'skipped' %} skipped{% endif %}
+                {%- if s['status'] == 'done' %} done{% endif %}
+                {%- if is_next %} nextstep{% endif %}">
       <span class="time">{{ (s['planned_date'] or '')[:10] or '—' }}</span>
       <div class="grow">
+        {% if is_next %}<p class="nextlbl">Next</p>{% endif %}
         <p class="b1">
           {%- if s['status'] == 'done' %}{{ m.chip('done') }} {% endif -%}
+          {%- if open -%}
+            {%- set due = m.due_state_chip((s['planned_date'] or '')[:10], today) -%}
+            {{ due }}{% if due|trim %} {% endif %}
+          {%- endif -%}
           {{ s['title'] }}
+          {%- if s['status'] == 'skipped' %} <span class="lbl">skipped</span>{% endif -%}
           {%- if s['origin'] != 'preset' %} <span class="kbd">{{ s['origin'] }}</span>{% endif -%}
         </p>
         {% if s['detail'] %}<p class="b2">{{ s['detail'] }}</p>{% endif %}
         <div class="acts">
-          {% if s['status'] not in ('done', 'skipped') %}
-            <button class="btn ok" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/done"
-                    hx-target="#roadmap-steps" hx-swap="outerHTML">Done</button>
-            <button class="btn defer" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/skip"
-                    hx-target="#roadmap-steps" hx-swap="outerHTML">Skip</button>
+          {% if open %}
+            {% if is_next %}
+              <button class="btn ok" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/done"
+                      hx-target="#roadmap-steps" hx-swap="outerHTML">Done</button>
+              <button class="btn defer" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/skip"
+                      hx-target="#roadmap-steps" hx-swap="outerHTML">Skip</button>
+            {% else %}
+              <button class="lnk" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/done"
+                      hx-target="#roadmap-steps" hx-swap="outerHTML">Done</button>
+              <button class="lnk" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/skip"
+                      hx-target="#roadmap-steps" hx-swap="outerHTML">Skip</button>
+            {% endif %}
+            <details class="more">
+              <summary class="lnk">Re-date · reorder</summary>
+              <div class="moreacts">
+                <input type="date" value="{{ (s['planned_date'] or '')[:10] }}" aria-label="Re-date"
+                       hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/date/"
+                       hx-trigger="change"
+                       hx-on::config-request="event.detail.path += this.value"
+                       hx-target="#roadmap-steps" hx-swap="outerHTML">
+                <button class="lnk" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/move/up"
+                        hx-target="#roadmap-steps" hx-swap="outerHTML" title="Move earlier">↑ earlier</button>
+                <button class="lnk" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/move/down"
+                        hx-target="#roadmap-steps" hx-swap="outerHTML" title="Move later">↓ later</button>
+              </div>
+            </details>
           {% elif s['status'] == 'skipped' %}
-            <button class="btn" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/unskip"
+            <button class="lnk" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/unskip"
                     hx-target="#roadmap-steps" hx-swap="outerHTML">Unskip</button>
-          {% endif %}
-          {% if s['status'] != 'done' %}
-            <button class="btn pin" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/move/up"
-                    hx-target="#roadmap-steps" hx-swap="outerHTML" title="Move earlier">↑</button>
-            <button class="btn pin" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/move/down"
-                    hx-target="#roadmap-steps" hx-swap="outerHTML" title="Move later">↓</button>
-            <input type="date" value="{{ (s['planned_date'] or '')[:10] }}" aria-label="Re-date"
-                   hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/date/"
-                   hx-trigger="change"
-                   hx-on::config-request="event.detail.path += this.value"
-                   hx-target="#roadmap-steps" hx-swap="outerHTML">
           {% endif %}
         </div>
       </div>

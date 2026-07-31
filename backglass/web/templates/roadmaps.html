@@ -7,25 +7,59 @@
 
 {% block content %}
 <section class="sec">
-  {{ m.banner('Roadmaps', rows|length ~ ' started') }}
+  {{ m.banner('Roadmaps', active_rows|length ~ ' active') }}
   <div class="inner">
     {% if not rows %}
       <p class="empty">No roadmap started. Pick a path below — or run
         <span class="kbd">backglass roadmap start &lt;path&gt;</span> for the
         personalized interview.</p>
-    {% else %}
-      {% for r in rows %}
-        <div class="src">
-          <a class="nm" href="/roadmaps/{{ r['id'] }}">{{ r['title'] }}</a>
-          <span class="ts">{{ r['done_steps'] }}/{{ r['live_steps'] }} steps
-            {%- if r['target_date'] %} · target {{ r['target_date'][:10] }}{% endif %}</span>
-          {% if r['personalized'] %}<span class="chip">personalized</span>{% endif %}
-          {% if r['status'] == 'dropped' %}<span class="chip">dropped</span>
-          {% elif r['status'] == 'done' %}{{ m.chip('done') }}{% endif %}
-        </div>
+    {% endif %}
+
+    {# Two lines per live path: what it is, then where it stands. The second line
+       is the whole point of the list — next step with the shared due-state chip,
+       steps figure, and the goal's headline accumulator — so "where does this
+       path stand" is answered without a click-through. #}
+    {% for r in active_rows %}
+      <div class="rmrow">
+        <p class="rmhd">
+          <a class="cond rmnm" href="/roadmaps/{{ r['id'] }}">{{ r['title'] }}</a>
+          {% if r['personalized'] %}<span class="chip k-plain">personalized</span>{% endif %}
+          {% set s = stale.get(r['goal_id']) %}
+          {% if s and s.level != 'fresh' %}{{ m.stale_chip(s.level, s.chip()) }}{% endif %}
+        </p>
+        <p class="rmst">
+          {%- if r['next_title'] -%}
+            Next: {{ r['next_title'] }}
+            {%- if r['next_date'] %} · {{ r['next_date'][:10] }}{% endif %}
+            {{ m.due_state_chip((r['next_date'] or '')[:10], today) }}
+          {%- else -%}
+            All live steps done.
+          {%- endif -%}
+          <span class="sep">·</span>
+          <span class="tnum">{{ r['done_steps'] }}/{{ r['live_steps'] }} steps</span>
+          {% set spct = (100 * r['done_steps'] / r['live_steps'])|round|int if r['live_steps'] else 0 %}
+          <span class="track wee"><span class="fill" style="width:{{ spct }}%"></span></span>
+          {% if r['total_title'] %}
+            <span class="sep">·</span>
+            <span class="rmtot">{{ r['total_title'] }}
+              <span class="tnum">{{ r['total_done'] }}/{{ r['total_count'] }}</span></span>
+          {% endif %}
+        </p>
+      </div>
+    {% endfor %}
+
+    {% if rows %}
+      <p class="lbl sechd">Closed</p>
+      {% for r in closed_rows %}
+        <p class="rmclosed"><a href="/roadmaps/{{ r['id'] }}">{{ r['title'] }}</a>
+          · {{ r['status'] }} · <span class="tnum">{{ r['done_steps'] }}/{{ r['live_steps'] }} steps</span></p>
+      {% else %}
+        <p class="rmclosed">—</p>
       {% endfor %}
     {% endif %}
 
+    {# Collapsed by design: the catalog is one tap away and holds no HTMX, so
+       there is no fold state to lose. #}
     <details class="addform">
       <summary class="lbl">Start a path</summary>
       <div style="margin-top:12px">
@@ -36,9 +70,16 @@
               <p class="b2">{{ p.steps|length }} steps · {{ p.horizon }} ·
                 done means: {{ p.definition_of_done }}</p>
             </div>
-            <form method="post" action="/roadmaps/start/{{ p.id }}">
-              <button class="btn ok" type="submit">Start</button>
-            </form>
+            {% if p.id in started %}
+              {# Structural guard: a live roadmap for this path cannot be started
+                 twice. Restarting means dropping the existing one first. #}
+              <a class="lnk started" href="/roadmaps/{{ started[p.id] }}">started →</a>
+            {% else %}
+              <form method="post" action="/roadmaps/start/{{ p.id }}"
+                    onsubmit="return confirm('Start {{ p.title }}? This creates a goal and its weekly cadences.')">
+                <button class="btn ok" type="submit">Start</button>
+              </form>
+            {% endif %}
           </div>
         {% endfor %}
         <p class="b2" style="margin-top:8px">Starting here uses the preset as written.

@@ -627,3 +627,101 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 /* +1 is the write; the /wk buttons only declare the target. A hairline gap keeps
  * the two jobs from reading as one five-button row. */
 .gcard .acts .tickone{margin-right:var(--sp-3)}
+/* ── roadmap replan ────────────────────────────────────────────────────────
+ * The two roadmap surfaces reworked against the judged plan. Three ideas:
+ *
+ *  1. Text-weight actions. A step list of 12 open steps was ~35 boxed buttons —
+ *     a control grid pretending to be a timetable. Only the NEXT step keeps
+ *     boxes; everything else is .lnk, an underlined action at label size, with
+ *     re-date/reorder behind one overflow disclosure per row. Nothing was
+ *     removed, so a batch replan after a schedule change is still one tap per
+ *     action.
+ *  2. Max contrast stays scarce. The next pending step gets a 4px black left
+ *     rule and a NEXT label — never an inverted row. Solid black is spent on
+ *     literal due-today (_macros.due_state_chip) and nothing else.
+ *  3. Absence is an em-dash, never a sentence (empty closed group, a total with
+ *     no entries yet).
+ */
+
+/* A button that reads as text: the action links on step rows, activity rows and
+ * the demoted Set-target control. Underlined so it is unmistakably interactive
+ * without a keyline; label size so it sits below the copy it acts on. */
+.lnk{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  background:none;border:0;padding:0;color:var(--ink);cursor:pointer;
+  text-decoration:underline;text-underline-offset:3px}
+.lnk:hover{background:var(--ink);color:var(--on-ink);text-decoration:none}
+/* Drop is the destructive action, demoted from a boxed danger button to a quiet
+ * link. Vermilion arrives as the underline and the hover fill, not as the text
+ * colour: #D03D37 on cream is 4.3:1, under AA for 11px, and the codebase already
+ * carries destructive ink as a keyline (.btn.reject) rather than as type. The
+ * word "Drop" plus the confirm dialog carry the meaning; the ink corroborates. */
+.lnk.danger{text-decoration-color:var(--vermilion);text-decoration-thickness:2px}
+.lnk.danger:hover{background:var(--vermilion);color:#000}
+.lnk.started{text-decoration:none;color:var(--ink-muted)}
+.lnk.started:hover{background:none;color:var(--ink);text-decoration:underline}
+.dropform{margin-top:var(--sp-5)}
+
+/* One overflow disclosure per open step. It sits inside the swap target, so the
+ * fold closes on the next write — acceptable: the fold holds the rare edits, and
+ * the swap has already re-rendered the row it belonged to. */
+.more{display:inline-block}
+.more summary{list-style:none;cursor:pointer}
+.more summary::-webkit-details-marker{display:none}
+.moreacts{display:flex;gap:var(--sp-3);align-items:center;flex-wrap:wrap;margin-top:var(--sp-2)}
+.moreacts input[type=date]{border:0;border-bottom:1px solid var(--rule);padding:2px 0}
+
+/* A section label that opens a block rather than a form. */
+.sechd{margin:var(--sp-5) 0 var(--sp-2)}
+
+/* Year headings in the steps timetable: a 1px rule and a neutral label. They
+ * appear only when the path actually spans years (routes: multi_year). */
+.yrhd{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-muted);margin:var(--sp-4) 0 0;padding-top:var(--sp-2);
+  border-top:1px solid var(--rule-hair)}
+.yrhd:first-child{margin-top:0}
+
+/* The next pending step. A 4px rule, not a fill: the strongest mark in the
+ * system belongs to today, and "next" may be two years out. */
+.row.nextstep{border-left:4px solid var(--ink);padding-left:var(--sp-3)}
+.nextlbl{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink);margin:0 0 var(--sp-1)}
+/* A finished step is settled: it keeps its line, at neutral weight. */
+.row.step.done .b1,.row.step.done .b2,.row.step.done .time{color:var(--ink-muted)}
+
+/* The masthead's reels. §7 budget for this view is spent exactly here — at most
+ * two lifetime totals — and nowhere else on the page. */
+.rreels{display:flex;gap:var(--sp-6);flex-wrap:wrap;margin-top:var(--sp-3)}
+.rreels .klbl{max-width:180px}
+/* G11: staleness and risk are two signals on two lines, never one score. */
+.rprog .rstale{margin:var(--sp-3) 0 0}
+
+/* Log zone. Borderless bottom-ruled inputs so the forms read as ledger lines
+ * rather than a settings panel; the provenance entries above them are never
+ * folded (rule 4). */
+.logzone{margin-top:var(--sp-4)}
+.track.thin{height:10px;border-width:1px}
+.logform.flow{flex-wrap:wrap;margin-top:var(--sp-2)}
+.logform.flow input,.logform.flow select{border:0;border-bottom:1px solid var(--rule);
+  padding:2px 0;background:none}
+.logform.flow input:focus,.logform.flow select:focus{outline:2px solid var(--rule);outline-offset:2px}
+.logform.quiet{gap:var(--sp-2);margin-top:var(--sp-2)}
+.logform.quiet input[type=number]{width:64px;border:0;border-bottom:1px solid var(--rule-hair);
+  padding:2px 0;background:none}
+
+/* Roadmaps list: two lines per live path, 16px of vertical air, hairline rules. */
+.rmrow{padding:16px 0;border-top:1px solid var(--rule-hair)}
+.rmrow:first-of-type{border-top:0}
+.rmhd{display:flex;align-items:center;gap:var(--sp-3);margin:0}
+.rmnm{font-size:19px;line-height:26px;color:var(--ink);text-decoration:none;flex:1;min-width:0}
+.rmnm:hover{text-decoration:underline;text-underline-offset:3px}
+.rmst{display:flex;align-items:center;gap:var(--sp-2);flex-wrap:wrap;
+  font-size:13px;line-height:19px;color:var(--ink-muted);margin:var(--sp-2) 0 0}
+.rmst .sep{color:var(--rule)}
+.rmst .tnum{color:var(--ink);font-variant-numeric:tabular-nums}
+.rmst .track.wee{display:inline-block;width:60px;height:8px;border:1px solid var(--rule);
+  background:var(--paper)}
+.rmst .track.wee .fill{display:block}
+.rmtot{color:var(--ink-muted)}
+/* Closed paths sink: one line, neutral, under their own label. Never mixed in. */
+.rmclosed{font-size:13px;line-height:19px;color:var(--ink-muted);margin:var(--sp-2) 0 0}
+.rmclosed a{color:var(--ink-muted);text-underline-offset:2px}

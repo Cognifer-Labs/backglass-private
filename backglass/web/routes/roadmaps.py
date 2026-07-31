@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
@@ -18,9 +18,27 @@ from fastapi.templating import Jinja2Templates
 
 from backglass.config import Settings
 from backglass.goals import activities, checkpoints, health
+from backglass.goals.targets import week_start_of
 from backglass.ledger import USER_ID
 from backglass.plan import timezones
 from backglass.roadmap import adjust, instantiate, presets
+
+
+# The list row's headline accumulator: the goal's first live total target. One
+# number per path, so the list answers "where does this stand" without a click.
+def _headline_total(col: str) -> str:
+    return (
+        f"SELECT t.{col} FROM target t WHERE t.goal_id = r.goal_id "
+        "AND t.kind = 'total' AND t.active = 1 ORDER BY t.id LIMIT 1"
+    )
+
+
+# The next pending step, by the same ordering the detail page uses.
+def _next_step(col: str) -> str:
+    return (
+        f"SELECT s.{col} FROM roadmap_step s WHERE s.roadmap_id = r.id "
+        "AND s.status = 'pending' ORDER BY s.sort_order LIMIT 1"
+    )
 
 
 def list_roadmaps(conn: sqlite3.Connection) -> list[dict[str, Any]]:
@@ -29,11 +47,31 @@ def list_roadmaps(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         "  (SELECT COUNT(*) FROM roadmap_step s WHERE s.roadmap_id = r.id "
         "   AND s.status = 'done') AS done_steps, "
         "  (SELECT COUNT(*) FROM roadmap_step s WHERE s.roadmap_id = r.id "
-        "   AND s.status != 'skipped') AS live_steps "
+        "   AND s.status != 'skipped') AS live_steps, "
+        f"  ({_next_step('title')}) AS next_title, "
+        f"  ({_next_step('planned_date')}) AS next_date, "
+        f"  ({_headline_total('title')}) AS total_title, "
+        f"  ({_headline_total('total_count')}) AS total_count, "
+        "  COALESCE((SELECT SUM(c.delta) FROM checkpoint c "
+        f"   WHERE c.target_id = ({_headline_total('id')})), 0) AS total_done "
         "FROM roadmap r JOIN goal g ON g.id = r.goal_id "
         "WHERE r.user_id = ? ORDER BY r.status = 'active' DESC, r.id",
         (USER_ID,),
     ).fetchall()
+
+
+def live_path_ids(conn: sqlite3.Connection) -> dict[str, int]:
+    """The structural double-start guard: a path with a non-dropped roadmap cannot
+    be started again from the list — the button becomes a link to what exists.
+    Enforced in the start route too, so the guard is structural, not cosmetic."""
+    return {
+        str(row["path_id"]): int(row["id"])
+        for row in conn.execute(
+            "SELECT path_id, MIN(id) AS id FROM roadmap "
+            "WHERE user_id = ? AND status != 'dropped' GROUP BY path_id",
+            (USER_ID,),
+        ).fetchall()
+    }
 
 
 def roadmap_detail(conn: sqlite3.Connection, roadmap_id: int) -> dict[str, Any] | None:
@@ -51,7 +89,8 @@ def roadmap_detail(conn: sqlite3.Connection, roadmap_id: int) -> dict[str, Any] 
         (roadmap_id,),
     ).fetchall()
     cadences = conn.execute(
-        "SELECT c.cadence_key, t.title, t.weekly_count, t.estimated_minutes_each "
+        "SELECT c.cadence_key, t.id AS target_id, t.title, t.weekly_count, "
+        "       t.estimated_minutes_each "
         "FROM roadmap_cadence c JOIN target t ON t.id = c.target_id "
         "WHERE c.roadmap_id = ?",
         (roadmap_id,),
@@ -106,7 +145,29 @@ def progress_context(
     detail["activities"] = activities.list_with_hours(conn)
     detail["categories"] = activities.CATEGORIES
     detail["amcas_slots"] = activities.AMCAS_SLOTS
+    detail["today"] = day
+    # Year headings only earn their rule when the timetable actually spans years —
+    # a lone "2026" over every row of a quarterly path is wallpaper.
+    detail["multi_year"] = (
+        len({str(s["planned_date"])[:4] for s in steps if s["planned_date"]}) > 1
+    )
+    # Cadences render read-only here with a live count: the one place to tick a
+    # weekly cadence is /goals, so every countable keeps a single write surface.
+    start = week_start_of(day, settings.week_start)
+    detail["cadences"] = [
+        {**dict(c), "done_this_week": _done_between(conn, int(c["target_id"]), start)}
+        for c in detail["cadences"]
+    ]
     return detail
+
+
+def _done_between(conn: sqlite3.Connection, target_id: int, start: date) -> int:
+    row = conn.execute(
+        "SELECT COALESCE(SUM(delta), 0) AS n FROM checkpoint WHERE target_id = ? "
+        "AND date(occurred_at) >= date(?) AND date(occurred_at) < date(?)",
+        (target_id, start.isoformat(), (start + timedelta(days=7)).isoformat()),
+    ).fetchone()
+    return int(row["n"] or 0)
 
 
 def build_router(
@@ -124,15 +185,21 @@ def build_router(
         detail["settings"] = settings
         return progress_context(conn, settings, today(), detail)
 
+    def _fragment(
+        request: Request, conn: sqlite3.Connection, roadmap_id: int, name: str
+    ) -> Any:
+        """The masthead now sits above the log zone, outside both swap targets, so
+        every fragment carries an out-of-band copy of it — a step tick moves the
+        steps figure, a logged hour moves the reels and the staleness chip."""
+        detail = _detail(conn, roadmap_id)
+        detail["oob_masthead"] = True
+        return templates.TemplateResponse(request, name, detail)
+
     def steps_fragment(request: Request, conn: sqlite3.Connection, roadmap_id: int) -> Any:
-        return templates.TemplateResponse(
-            request, "_roadmap_steps.html", _detail(conn, roadmap_id)
-        )
+        return _fragment(request, conn, roadmap_id, "_roadmap_steps.html")
 
     def totals_fragment(request: Request, conn: sqlite3.Connection, roadmap_id: int) -> Any:
-        return templates.TemplateResponse(
-            request, "_roadmap_totals.html", _detail(conn, roadmap_id)
-        )
+        return _fragment(request, conn, roadmap_id, "_roadmap_totals.html")
 
     def _total_target(
         conn: sqlite3.Connection, roadmap_id: int, target_id: int
@@ -150,11 +217,20 @@ def build_router(
 
     @router.get("/roadmaps", response_class=HTMLResponse)
     def roadmaps(request: Request, conn: sqlite3.Connection = Depends(get_conn)) -> Any:
+        day = today()
+        rows = list_roadmaps(conn)
+        stale = {s.goal_id: s for s in health.staleness(conn, settings, day)}
         return templates.TemplateResponse(
             request,
             "roadmaps.html",
             {
-                "rows": list_roadmaps(conn),
+                "rows": rows,
+                # Closed paths sink; they are never mixed into the active list.
+                "active_rows": [r for r in rows if r["status"] == "active"],
+                "closed_rows": [r for r in rows if r["status"] != "active"],
+                "stale": stale,
+                "started": live_path_ids(conn),
+                "today": day,
                 "paths": presets.list_paths(),
                 "settings": settings,
             },
@@ -252,7 +328,19 @@ def build_router(
     @router.post("/roadmaps/start/{path_id}", response_class=HTMLResponse)
     def start(path_id: str, conn: sqlite3.Connection = Depends(get_conn)) -> Any:
         """Un-personalized instantiation. The AI interview is CLI-only — it needs a
-        terminal conversation, and pretending otherwise in a form would be worse."""
+        terminal conversation, and pretending otherwise in a form would be worse.
+
+        Double-start is structurally impossible, not merely confirmed: a path that
+        already has a live roadmap redirects to it instead of instantiating a second
+        goal, its cadences, and its totals. Restarting means dropping first, which
+        the detail page owns."""
+        existing = conn.execute(
+            "SELECT id FROM roadmap WHERE user_id = ? AND path_id = ? "
+            "AND status != 'dropped' ORDER BY id LIMIT 1",
+            (USER_ID, path_id),
+        ).fetchone()
+        if existing is not None:
+            return RedirectResponse(url=f"/roadmaps/{existing['id']}", status_code=303)
         try:
             preset = presets.load(path_id)
         except presets.PresetError as exc:
