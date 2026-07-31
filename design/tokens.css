@@ -18,6 +18,12 @@
   --rule:         #000000;
   --rule-hair:    #c9c4b5;   /* neutral 200 */
 
+  /* mild surface fills — the neutral ramp is fixed-hex in both modes, so any
+     surface that should read as "slightly deeper than paper" needs these
+     theme-aware aliases, never a bare --n-50 (see dashboard.css's lesson). */
+  --fill-mild:    #f5eedb;   /* neutral 50 on paper */
+  --fill-mild-2:  #e4decd;   /* neutral 100 on paper */
+
   /* neutral ramp, hue 91 */
   --n-50:  #f5eedb;
   --n-100: #e4decd;
@@ -69,6 +75,8 @@
     --ink-muted:  #aca79b;   /* neutral 300 ·  8.75:1 */
     --rule:       #FAF3DF;
     --rule-hair:  #3d3c37;   /* neutral 700 */
+    --fill-mild:  #0e0d0b;   /* neutral 900 on black */
+    --fill-mild-2:#252421;   /* neutral 800 on black */
     /* inks unchanged — that is the point, not an omission */
   }
 }
@@ -82,4 +90,6 @@
   --ink-muted:  #aca79b;
   --rule:       #FAF3DF;
   --rule-hair:  #3d3c37;
+  --fill-mild:  #0e0d0b;
+  --fill-mild-2:#252421;
 }

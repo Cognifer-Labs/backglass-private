@@ -31,7 +31,7 @@ body{margin:0;background:var(--paper);color:var(--ink);
  * grid. The sidebar is navigation plus derived state (alerts, goal health,
  * roadmap progress); it never carries a claim the panels cannot substantiate. */
 .shell{display:grid;grid-template-columns:236px minmax(0,1fr);min-height:100vh}
-.side{border-right:2px solid var(--rule);padding:var(--sp-5) 0 var(--sp-6);
+.side{border-right:2px solid var(--rule);padding:var(--sp-5) 0 var(--sp-6);background:var(--fill-mild);
   position:sticky;top:0;align-self:start;max-height:100vh;overflow-y:auto}
 .side .brand{font-size:24px;line-height:26px;margin:0 var(--sp-5) var(--sp-4)}
 .snav{display:flex;flex-direction:column;border-top:2px solid var(--rule)}
@@ -254,25 +254,44 @@ button.box::before{content:"";position:absolute;inset:-6px}
 .row.k-fixed{border-left:3px solid var(--ink)}
 
 /* Schedule pages. */
-.pager{display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-3) 0;border-bottom:1px solid var(--rule-hair)}
+.pager{display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-2) var(--sp-3);background:var(--fill-mild);border:1px solid var(--rule-hair)}
 .pager .btn{text-decoration:none;display:inline-block}
-.weekgrid{display:grid;grid-template-columns:repeat(7,1fr);gap:0;border:2px solid var(--rule);margin-top:var(--sp-4)}
-@media(max-width:840px){.weekgrid{grid-template-columns:repeat(2,1fr)}}
-.wday{border-right:1px solid var(--rule-hair);padding:var(--sp-2);min-height:120px}
-.wday:last-child{border-right:0}
-/* Outline, not fill: a rule-hair fill matched the witem stripes in dark mode and
- * erased them. An inset keyline marks today without touching the stripes. */
-.wday.now{outline:2px solid var(--rule);outline-offset:-2px}
-.wday .hd{display:block;font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;
-  text-transform:uppercase;color:var(--ink);text-decoration:none;margin-bottom:var(--sp-2);
-  border-bottom:2px solid var(--rule);padding-bottom:var(--sp-1)}
-.witem{margin:0 0 var(--sp-1);font-size:12px;line-height:16px;overflow:hidden;text-overflow:ellipsis;
-  white-space:nowrap;border-left:3px solid var(--rule-hair);padding-left:var(--sp-2)}
-.witem.fixed{border-left-color:var(--ink)}
-.witem.k-work{border-left-color:var(--cobalt)}
-.witem.k-small{border-left-color:var(--turquoise)}
-.witem.k-protected{border-left-color:var(--ink);border-left-style:double}
-.wempty{color:var(--ink-muted);font-size:12px;margin:0}
+/* ── Week agenda grid (Phase 9) ────────────────────────────────────────────
+ * Replaced the stacked-list week view: seven proportional mini-timelines on one
+ * shared hour ruler (half a pixel per minute), the Notion/Excel weekly-agenda
+ * pattern. Same kind inks as the day view; today gets the inset-keyline idiom
+ * (outline, not fill — a fill erased the stripes in dark mode, Phase 8 lesson). */
+.wk7wrap{overflow-x:auto;margin-top:var(--sp-4)}
+.wk7{display:grid;grid-template-columns:44px repeat(7,minmax(96px,1fr));border:2px solid var(--rule);min-width:750px}
+.wk7 .corner{border-bottom:2px solid var(--rule);border-right:1px solid var(--rule-hair)}
+.whd{display:block;border-right:1px solid var(--rule-hair);border-bottom:2px solid var(--rule);
+  padding:var(--sp-2);text-decoration:none;color:var(--ink)}
+.whd .dn{display:block;font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase}
+.whd .dn b{font-variant-numeric:tabular-nums}
+.whd:hover .dn{text-decoration:underline;text-underline-offset:2px}
+.whd.now,.wcol.now{outline:2px solid var(--rule);outline-offset:-2px}
+.wcap{display:block;font:400 10px/14px system-ui,sans-serif;color:var(--ink-muted);
+  font-variant-numeric:tabular-nums;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wcap .over{background:var(--gold);border:1px solid var(--rule);padding:0 3px;font-weight:700;color:#000}
+.wkhrs{position:relative;border-right:1px solid var(--rule-hair)}
+.wkhrs span{position:absolute;left:0;padding:1px var(--sp-1) 0;
+  font:700 9px/12px ui-monospace,monospace;color:var(--ink-muted);font-variant-numeric:tabular-nums}
+.wcol{position:relative;border-right:1px solid var(--rule-hair);overflow:hidden}
+.wk7 > :last-child{border-right:0}
+.wcol i{position:absolute;left:0;right:0;border-top:1px solid var(--rule-hair)}
+.wev{position:absolute;left:2px;right:2px;border:1px solid var(--rule);background:var(--fill-mild);
+  font-size:10px;line-height:12px;color:var(--ink);text-decoration:none;
+  overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding:0 3px}
+.wev:hover{outline:2px solid var(--rule)}
+.wev.lane1{left:50%}
+.wev .et{font:700 9px/12px ui-monospace,monospace;color:var(--ink-muted);font-variant-numeric:tabular-nums}
+.wev.k-fixed{border-left:3px solid var(--ink)}
+.wev.k-work{border-left:3px solid var(--cobalt)}
+.wev.k-small{border-left:3px solid var(--turquoise)}
+.wev.k-buffer{border-style:dashed}
+.wev.k-buffer,.wev.k-buffer .et{color:var(--ink-muted)}
+.wev.k-protected{background:repeating-linear-gradient(45deg,transparent,transparent 5px,var(--rule-hair) 5px,var(--rule-hair) 6px) var(--paper)}
+.wnow{position:absolute;left:0;right:0;border-top:2px solid var(--ink);z-index:2}
 
 /* People page + inline forms. Inputs follow the button language: 2px keyline,
  * square corners, paper field. */
@@ -291,7 +310,7 @@ input[type=checkbox]:checked::after{content:"";position:absolute;left:3px;top:0;
 input:focus,textarea:focus,select:focus{outline:3px solid var(--rule);outline-offset:1px}
 .lbl{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
   color:var(--ink-muted)}
-.addform{margin-top:var(--sp-4);border-top:1px solid var(--rule-hair);padding-top:var(--sp-3)}
+.addform{margin-top:var(--sp-4);background:var(--fill-mild);border:1px solid var(--rule-hair);padding:var(--sp-3)}
 .addform summary{cursor:pointer}
 .addform form{display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-3)}
 .src .nm a,a.nm{color:var(--ink);text-decoration:none}
@@ -330,9 +349,9 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .empty{font-size:13px;line-height:19px;color:var(--ink-muted);padding:var(--sp-4) 0}
 .kbd{font:700 10px/13px ui-monospace,monospace;border:1px solid var(--rule-hair);
   padding:1px 4px;color:var(--ink-muted)}
-.card{cursor:pointer}
+.card{cursor:pointer;background:var(--fill-mild);border:1px solid var(--rule-hair);padding:12px;margin:0 0 8px;border-top:1px solid var(--rule-hair)}
 .card:focus-visible{outline:3px solid var(--rule);outline-offset:2px}
-.card[data-selected="true"]{background:var(--rule-hair)}
+.card[data-selected="true"]{background:var(--fill-mild-2)}
 .lane{margin:0 0 var(--sp-2);font:700 10px/13px system-ui,sans-serif;letter-spacing:.06em;
   text-transform:uppercase;color:var(--ink-muted);padding-top:var(--sp-3);
   border-top:1px solid var(--rule-hair)}
@@ -381,6 +400,60 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .gcard .gtgt .kind{font:700 10px/13px system-ui,sans-serif;letter-spacing:.06em;
   text-transform:uppercase;color:var(--ink-muted)}
 .gcard .acts{margin-top:var(--sp-2)}
+/* Cadence track + its number: the bar shows shape, the percent makes it a claim. */
+.trackrow{display:flex;align-items:center;gap:var(--sp-3)}
+.trackrow .pct{font:700 12px/16px ui-monospace,monospace;font-variant-numeric:tabular-nums;
+  color:var(--ink);flex:0 0 40px;text-align:right}
+/* The longer "62/150 · 41%" readouts on total targets need their natural width. */
+.trackrow .pct.tnum,.rprog .pct.tnum{flex:0 0 auto}
+/* A finished accumulator is done — §4's green, keyline carried by the track. */
+.fill.green{background:var(--green)}
+
+/* ── Roadmap progress + totals ledger (Phase 10) ───────────────────────────
+ * The roadmap page's claim about where things stand: steps done over live, the
+ * goal's two health signals (separate, per G11), and one block per lifetime
+ * total with its bar, its last log entries, and the log/set forms. */
+.rprog{padding:var(--sp-3) 0;border-bottom:2px solid var(--rule);margin-bottom:var(--sp-3)}
+.rprog .hd{display:flex;align-items:center;gap:var(--sp-3)}
+.rprog .b2{margin:var(--sp-2) 0 0}
+.rprog .srisk{margin:var(--sp-1) 0 0}
+.tot{padding:var(--sp-3) 0;border-top:1px solid var(--rule-hair)}
+.tot:first-of-type{border-top:0}
+.tot .hd{display:flex;align-items:center;gap:var(--sp-2);margin-bottom:var(--sp-2)}
+.tot .nm{font-size:15px;line-height:21px;flex:1;min-width:0}
+.tot .tent{margin:var(--sp-1) 0 0}
+.logform{display:flex;gap:var(--sp-2);align-items:center}
+.logform input[type=number]{width:72px}
+.logform input[type=text]{width:200px;max-width:40vw}
+
+/* ── Goals KPI strip (Phase 9) ─────────────────────────────────────────────
+ * The Excel-dashboard move: three numbers first, detail below. Reel treatment —
+ * and the §7 budget is exactly these three; nothing else on the page reels. */
+.kpis{display:flex;gap:var(--sp-6);padding:var(--sp-4) 0;border-bottom:1px solid var(--rule-hair);flex-wrap:wrap}
+.kpi{display:flex;align-items:center;gap:var(--sp-3)}
+.klbl{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-muted)}
+
+/* ── Consistency heatmap (Phase 9) ─────────────────────────────────────────
+ * §5 sequential magnitude: one ink at stepped opacity, never a second hue. The
+ * keyline sits on the cell and the fill on ::after, so the frame keeps full
+ * strength while the fill fades — and background:var(--ink) inverts with the
+ * theme, where a hardcoded rgba() would not (the --n-50 lesson). */
+.hmhd{font-size:12px;line-height:16px;color:var(--ink-muted);margin:var(--sp-5) 0 0}
+.hm{border-collapse:collapse;margin-top:var(--sp-2)}
+.hm th{font:700 9px/12px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-muted);padding:2px 3px;text-align:center}
+.hm td{padding:2px 3px;text-align:center}
+.hm td.wk,.hm th.wk{text-align:right;font:700 10px/13px ui-monospace,monospace;
+  color:var(--ink-muted);font-variant-numeric:tabular-nums;padding-right:var(--sp-2)}
+.hmf{display:inline-block;width:14px;height:14px;border:1px solid var(--rule-hair);
+  position:relative;vertical-align:middle}
+.hmf::after{content:"";position:absolute;inset:0;background:var(--ink);opacity:0}
+.hmf.b1::after{opacity:.25}
+.hmf.b2::after{opacity:.5}
+.hmf.b3::after{opacity:.75}
+.hmf.b4::after{opacity:1}
+.hm .off{color:var(--ink-muted)}
 
 /* ── Schedule day timeline (Phase 8) ───────────────────────────────────────
  * One pixel per minute. Gaps are free time made visible; the hour ruler is
@@ -392,7 +465,7 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
   font:700 10px/13px ui-monospace,monospace;letter-spacing:.04em;color:var(--ink-muted);
   font-variant-numeric:tabular-nums}
 .tl .ev{position:absolute;left:64px;right:var(--sp-3);border:2px solid var(--rule);
-  background:var(--paper);padding:3px var(--sp-2);overflow:hidden;
+  background:var(--fill-mild);padding:3px var(--sp-2);overflow:hidden;
   display:flex;flex-direction:column;gap:1px}
 .tl .ev.lane1{left:calc(50% + 32px)}
 .tl .ev .et{font:700 10px/13px ui-monospace,monospace;letter-spacing:.04em;
