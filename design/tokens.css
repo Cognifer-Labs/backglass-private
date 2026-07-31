@@ -24,6 +24,23 @@
   --fill-mild:    #f5eedb;   /* neutral 50 on paper */
   --fill-mild-2:  #e4decd;   /* neutral 100 on paper */
 
+  /* wash register — owner ruling 2026-07-31: a component that carries a color is
+     outlined in the saturated ink and filled with its pastel (~25% ink over paper).
+     Light theme only; dark keeps full-ink fills (the wash tokens resolve to the
+     inks there), so components styled through these tokens need no theme forks. */
+  --verm-wash:    #F2CBC1;
+  --gold-wash:    #F6E2B2;
+  --green-wash:   #C7DBBE;
+  --turq-wash:    #BEDCD5;
+  --cobalt-wash:  #C7D2E4;
+  --ink-wash:     var(--fill-mild-2);
+  --verm-line:    var(--vermilion);
+  --gold-line:    var(--gold);
+  --green-line:   var(--green);
+  --turq-line:    var(--turquoise);
+  --cobalt-line:  var(--cobalt);
+  --ink-line:     var(--ink);
+
   /* neutral ramp, hue 91 */
   --n-50:  #f5eedb;
   --n-100: #e4decd;
@@ -77,6 +94,20 @@
     --rule-hair:  #3d3c37;   /* neutral 700 */
     --fill-mild:  #0e0d0b;   /* neutral 900 on black */
     --fill-mild-2:#252421;   /* neutral 800 on black */
+    /* dark: washes resolve to the full inks and lines to the rule color, which
+       reproduces the pre-wash rendering exactly — no component forks per theme */
+    --verm-wash:  var(--vermilion);
+    --gold-wash:  var(--gold);
+    --green-wash: var(--green);
+    --turq-wash:  var(--turquoise);
+    --cobalt-wash:var(--cobalt);
+    --ink-wash:   var(--ink);
+    --verm-line:  var(--rule);
+    --gold-line:  var(--rule);
+    --green-line: var(--rule);
+    --turq-line:  var(--rule);
+    --cobalt-line:var(--rule);
+    --ink-line:   var(--rule);
     /* inks unchanged — that is the point, not an omission */
   }
 }
@@ -92,4 +123,16 @@
   --rule-hair:  #3d3c37;
   --fill-mild:  #0e0d0b;
   --fill-mild-2:#252421;
+  --verm-wash:  var(--vermilion);
+  --gold-wash:  var(--gold);
+  --green-wash: var(--green);
+  --turq-wash:  var(--turquoise);
+  --cobalt-wash:var(--cobalt);
+  --ink-wash:   var(--ink);
+  --verm-line:  var(--rule);
+  --gold-line:  var(--rule);
+  --green-line: var(--rule);
+  --turq-line:  var(--rule);
+  --cobalt-line:var(--rule);
+  --ink-line:   var(--rule);
 }

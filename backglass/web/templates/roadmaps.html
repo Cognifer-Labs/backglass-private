@@ -20,7 +20,8 @@
        steps figure, and the goal's headline accumulator — so "where does this
        path stand" is answered without a click-through. #}
     {% for r in active_rows %}
-      <div class="rmrow">
+      {% set nd = (r['next_date'] or '')[:10] %}
+      <div class="rmrow{% if r['next_title'] and nd %}{% if nd < today.isoformat() %} overdue{% elif nd == today.isoformat() %} duetoday{% endif %}{% endif %}">
         <p class="rmhd">
           <a class="cond rmnm" href="/roadmaps/{{ r['id'] }}">{{ r['title'] }}</a>
           {% if r['personalized'] %}<span class="chip k-plain">personalized</span>{% endif %}

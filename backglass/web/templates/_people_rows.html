@@ -5,7 +5,7 @@
   {% else %}
     {% for r in rows %}
       {% set t = touches.get(r['id']) %}
-      <div class="src">
+      <div class="src{% if t and t.level == 'cold' %} cold{% elif t and t.level == 'warn' %} warn{% endif %}">
         <a class="nm" href="/people/{{ r['id'] }}">{{ r['canonical_name'] }}</a>
         <span class="ts">
           {%- if r['role'] %}{{ r['role'] }}{% endif %}
