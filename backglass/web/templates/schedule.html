@@ -9,20 +9,54 @@
 <section class="sec">
   {{ m.banner('Schedule', view.day.isoformat()) }}
   <div class="inner">
-    <div class="pager">
-      <a class="btn" href="/schedule?date={{ prev }}">← prev</a>
-      <a class="btn" href="/schedule">today</a>
-      <a class="btn" href="/schedule?date={{ next }}">next →</a>
-      <span class="grow"></span>
-      <a class="btn" href="/schedule/week?start={{ week_start }}">week view</a>
-    </div>
-
-    {% if cap %}
-      {# docs/04 §4.3: one sentence. Overflow is a warning, never a footnote. #}
-      <p class="cap">{{ (cap['capacity_minutes'] // 60) }}h {{ '%02d' % (cap['capacity_minutes'] % 60) }}m available ·
-        {{ (cap['planned_minutes'] // 60) }}h {{ '%02d' % (cap['planned_minutes'] % 60) }}m planned
-        {%- if cap['overflow_count'] %} · <span class="over">{{ cap['overflow_count'] }} did not fit</span>{% endif %}</p>
+    {# The headline strip: what is happening now on the left, whether the day fits on
+       the right, closed by a 2px rule. No verdict chips — capacity is docs/04 §4.3's
+       sentence and the only chip here is the gold overflow warning. #}
+    {% if now_next or cap or notes.fully_booked or notes.fragmented %}
+      <div class="dstrip">
+        <div class="dstrip-top">
+          {% if now_next %}
+            <p class="dnow"><span class="lbl">{{ now_next.state }}</span>
+              <span class="nt">{{ now_next.title }}</span> · <span class="ntm">{{ now_next.detail }}</span></p>
+          {% endif %}
+          {% if cap %}
+            <p class="cap">{{ (cap['capacity_minutes'] // 60) }}h {{ '%02d' % (cap['capacity_minutes'] % 60) }}m available ·
+              {{ (cap['planned_minutes'] // 60) }}h {{ '%02d' % (cap['planned_minutes'] % 60) }}m planned
+              {%- if cap['overflow_count'] %}
+                <span class="over"><span aria-hidden="true">◆</span>{{ cap['overflow_count'] }} did not fit</span>
+              {%- endif %}</p>
+          {% endif %}
+        </div>
+        {# P3 and P9 in the planner's own words, as plain sentences. P9 especially is
+           the product: seeing it three days running is what changes meeting habits. #}
+        {% if notes.fully_booked %}
+          <p class="dnote">Fully booked — only due items listed.</p>
+        {% endif %}
+        {% if notes.fragmented %}
+          <p class="dnote">No deep work block available today, calendar is fragmented.</p>
+        {% endif %}
+      </div>
     {% endif %}
+
+    {% if gaps %}
+      {# Free time readable as fact, not as inference from whitespace. #}
+      <details class="fold">
+        <summary class="lbl">Gaps · {{ gaps|length }} free interval{{ '' if gaps|length == 1 else 's' }}</summary>
+        <ul class="gaplist">
+          {% for g in gaps %}
+            <li>{{ g.start_label }}–{{ g.end_label }} · {{ g.duration }} free</li>
+          {% endfor %}
+        </ul>
+      </details>
+    {% endif %}
+
+    {# Navigation is not the page's subject; four inked buttons said otherwise. #}
+    <p class="pager quiet">
+      <a href="/schedule?date={{ prev }}">← prev</a> ·
+      <a href="/schedule">today</a> ·
+      <a href="/schedule?date={{ next }}">next →</a> ·
+      <a href="/schedule/week?start={{ week_start }}">week</a>
+    </p>
 
     {% if view.empty %}
       <p class="empty">Nothing planned and no fixed events. The day planner runs at 05:45,
@@ -36,9 +70,15 @@
         {% endfor %}
 
         {% for e in tl.entries %}
-          <div class="ev k-{{ e.kind }}{% if e.lane %} lane1{% endif %}{% if e.slim %} slim{% endif %}"
-               style="top:{{ e.top }}px;height:{{ e.height }}px">
-            {% if e.kind == 'protected' %}
+          <div class="ev k-{{ e.kind }}{% if e.lane %} lane1{% endif %}{% if e.tiny %} tiny{% elif e.slim %} slim{% endif %}"
+               style="top:{{ e.top }}px;height:{{ e.height }}px"
+               {% if e.tiny or e.slim %}title="{{ e.start_label }}–{{ e.end_label }} {{ e.title }}"
+               aria-label="{{ e.start_label }}–{{ e.end_label }} {{ e.title }}"{% endif %}>
+            {% if e.tiny %}
+              {# Below 32px the title has nowhere to go but under the type floor, so it
+                 is deleted from the canvas rather than shrunk: stripe plus start time. #}
+              <span class="et">{{ e.start_label }}</span>
+            {% elif e.kind == 'protected' %}
               <span class="et">{{ e.start_label }}–{{ e.end_label }}</span>
               <span class="en cond">{{ e.title }}</span>
               {% if not e.slim %}{{ m.chip('protected') }}{% endif %}

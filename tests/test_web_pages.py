@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 
 import pytest
@@ -350,6 +351,148 @@ class TestScheduleTimeline:
         assert "6h 15m available" in page
         assert "5h 30m planned" in page
         assert "2 did not fit" in page
+        # The replan bans verdict chips: capacity is a sentence and the only chip on
+        # the page is the gold overflow warning.
+        assert "FITS" not in page
+        assert "FULLY BOOKED" not in page
+
+    def test_overflow_chip_stays_count_only(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """Staged: the DID NOT FIT table waits on the planner persisting bumped
+        items. Until then the count is the whole honest claim — no faked list."""
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, planned_minutes,"
+            " overflow_count, generated_at, status) VALUES ('2026-07-28',"
+            " 'America/Phoenix', 375, 330, 2, '2026-07-28T05:50:00', 'accepted')"
+        )
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, '2026-07-28T09:00:00-07:00', '2026-07-28T10:00:00-07:00',"
+            " 'work', 'Finish deck')"
+        )
+        conn.commit()
+        page = client.get("/schedule?date=2026-07-28").text
+        assert "2 did not fit" in page
+        assert "EST" not in page  # no staged table columns
+        assert "did not fit</summary>" not in page  # not a disclosure yet
+
+    def test_tiny_entries_drop_their_title_to_the_title_attribute(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """Under 32px there is no room for a readable line, so the words move to the
+        title attribute rather than under the 11px type floor."""
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, generated_at, status)"
+            " VALUES ('2026-07-28', 'America/Phoenix', 400, '2026-07-28T05:50:00', 'accepted')"
+        )
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, '2026-07-28T09:00:00-07:00', '2026-07-28T09:20:00-07:00',"
+            " 'small', 'Inbox sweep')"
+        )
+        conn.commit()
+        page = client.get("/schedule?date=2026-07-28").text
+        assert "height:20px" in page
+        assert "tiny" in page
+        assert 'title="09:00–09:20 Inbox sweep"' in page
+        # The title is not drawn on the canvas: only the attributes carry it.
+        assert ">Inbox sweep<" not in page
+
+    def test_now_next_strip_renders_only_for_today(
+        self, client: TestClient, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        from backglass.brief.daily import today_in
+
+        day = today_in(settings.default_tz)
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, generated_at,"
+            " status) VALUES (?, 'America/Phoenix', 400, '2026-07-28T05:50:00',"
+            " 'accepted')",
+            (day.isoformat(),),
+        )
+        # A block spanning the whole day so "now" lands inside it whatever the clock.
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, ?, ?, 'work', 'All day long')",
+            (f"{day.isoformat()}T00:00:00-07:00", f"{day.isoformat()}T23:59:00-07:00"),
+        )
+        conn.commit()
+        assert "NOW</span>" in client.get(f"/schedule?date={day.isoformat()}").text
+        other = client.get("/schedule?date=2026-07-28").text
+        assert "NOW</span>" not in other
+        assert "NEXT</span>" not in other
+
+    def test_gaps_disclosure_lists_the_free_intervals(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, generated_at, status)"
+            " VALUES ('2026-07-28', 'America/Phoenix', 400, '2026-07-28T05:50:00', 'accepted')"
+        )
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, '2026-07-28T09:00:00-07:00', '2026-07-28T10:15:00-07:00',"
+            " 'work', 'Finish deck')"
+        )
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, '2026-07-28T11:30:00-07:00', '2026-07-28T12:00:00-07:00',"
+            " 'small', 'Inbox sweep')"
+        )
+        conn.commit()
+        page = client.get("/schedule?date=2026-07-28").text
+        # 08:00–09:00, 10:15–11:30 and 12:00–19:00 are free; the ruler bounds the ends.
+        assert "Gaps · 3 free intervals" in page
+        assert "08:00–09:00 · 1h 00m free" in page
+        assert "10:15–11:30 · 1h 15m free" in page
+        assert "12:00–19:00 · 7h 00m free" in page
+
+    def test_fragmented_day_says_so_in_words(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """P9's sentence is the product, so it renders as body text, never a chip
+        and never folded. It is re-derived from the absence of a protected block."""
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, generated_at, status)"
+            " VALUES ('2026-07-28', 'America/Phoenix', 400, '2026-07-28T05:50:00', 'accepted')"
+        )
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, '2026-07-28T09:00:00-07:00', '2026-07-28T10:00:00-07:00',"
+            " 'work', 'Finish deck')"
+        )
+        conn.commit()
+        assert (
+            "No deep work block available today, calendar is fragmented"
+            in client.get("/schedule?date=2026-07-28").text
+        )
+        conn.execute(
+            "UPDATE plan_block SET kind = 'protected' WHERE title = 'Finish deck'"
+        )
+        conn.commit()
+        assert (
+            "No deep work block available today, calendar is fragmented"
+            not in client.get("/schedule?date=2026-07-28").text
+        )
+
+    def test_a_day_under_the_capacity_floor_says_fully_booked(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, generated_at, status)"
+            " VALUES ('2026-07-28', 'America/Phoenix', 30, '2026-07-28T05:50:00', 'accepted')"
+        )
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, '2026-07-28T09:00:00-07:00', '2026-07-28T17:00:00-07:00',"
+            " 'fixed', 'Conference')"
+        )
+        conn.commit()
+        page = client.get("/schedule?date=2026-07-28").text
+        assert "Fully booked — only due items listed" in page
+        # A sentence, not a chip: no new ink is spent on a verdict.
+        assert "chip k-black" not in page
 
 
 class TestGoalsKpis:
@@ -513,9 +656,31 @@ class TestWeekAgenda:
         # Shared ruler starts at 08:00; 09:00 at 0.5px/min sits 30px down, 45px tall.
         assert "top:30px;height:45px" in page
         assert 'class="wk7"' in page
-        assert "Finish deck" in page
+        # The block names its event to the pointer and to a screen reader, and to
+        # nothing else: a 9px ellipsized title on a 96px column is not information.
+        assert 'title="09:00–10:30 Finish deck"' in page
+        assert 'aria-label="09:00–10:30 Finish deck"' in page
+        assert ">Finish deck<" not in page
 
-    def test_capacity_line_per_day(
+    def test_week_blocks_carry_no_visible_text(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, generated_at, status)"
+            " VALUES ('2026-07-28', 'America/Phoenix', 400, '2026-07-28T05:50:00', 'accepted')"
+        )
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, '2026-07-28T09:00:00-07:00', '2026-07-28T10:30:00-07:00',"
+            " 'work', 'Finish deck')"
+        )
+        conn.commit()
+        page = client.get("/schedule/week?start=2026-07-27").text
+        blocks = re.findall(r'<a class="wev[^>]*>(.*?)</a>', page, re.S)
+        assert blocks, "expected at least one week block"
+        assert all(b.strip() == "" for b in blocks), blocks
+
+    def test_capacity_band_gives_every_day_a_cell(
         self, client: TestClient, conn: sqlite3.Connection
     ) -> None:
         conn.execute(
@@ -530,11 +695,37 @@ class TestWeekAgenda:
         )
         conn.commit()
         page = client.get("/schedule/week?start=2026-07-27").text
-        assert "5h30 planned" in page
-        assert "0h45 free" in page
-        assert "2 over" in page
-        # Unplanned days state their emptiness, not fake zeros.
-        assert "—" in page
+        band = page.split('class="wband"', 1)[1].split("</div>", 1)[0]
+        assert band.count('class="wbc') == 7
+        # Free hours are the headline number; 375 − 330 = 45 minutes.
+        assert '<span class="wbn">0h45</span>' in band
+        assert '<span class="wbn none">—</span>' in band  # six unplanned days
+        # Overflow is the one chip: gold, count only, inside the cell that owns it.
+        assert "2 over" in band
+        # Today is an outline, never the solid-black due-today mark.
+        assert "wbc now" not in band or "chip k-black" not in band
+
+    def test_week_verdict_speaks_only_when_the_week_is_over_committed(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, planned_minutes,"
+            " generated_at, status) VALUES ('2026-07-28', 'America/Phoenix', 375, 330,"
+            " '2026-07-28T05:50:00', 'accepted')"
+        )
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, '2026-07-28T09:00:00-07:00', '2026-07-28T10:00:00-07:00',"
+            " 'work', 'Finish deck')"
+        )
+        conn.commit()
+        assert "planned against" not in client.get("/schedule/week?start=2026-07-27").text
+        conn.execute("UPDATE day_plan SET planned_minutes = 500")
+        conn.commit()
+        assert (
+            "8h planned against 6h available this week"
+            in client.get("/schedule/week?start=2026-07-27").text
+        )
 
 
 class TestDueLabel:

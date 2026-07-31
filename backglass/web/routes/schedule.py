@@ -10,8 +10,9 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
@@ -82,6 +83,13 @@ class Entry:
         """Under 46px the three text lines cannot fit; render one compressed line."""
         return self.height < 46
 
+    @property
+    def tiny(self) -> bool:
+        """Under 32px even one 13px line plus its keylines does not fit. Rather than
+        shrink type below the 11px floor, the title is deleted from the canvas and
+        moved to the title attribute: stripe plus start time is all that renders."""
+        return self.height < 32
+
 
 @dataclass(frozen=True)
 class Timeline:
@@ -93,6 +101,10 @@ class Timeline:
 
 def _minutes(hhmm: str) -> int:
     return int(hhmm[:2]) * 60 + int(hhmm[3:5])
+
+
+def _clock(minute_of_day: int) -> str:
+    return f"{minute_of_day // 60:02d}:{minute_of_day % 60:02d}"
 
 
 #: (start_minute, duration, title, kind, outcome, travel)
@@ -143,8 +155,8 @@ def _place(raw: list[RawEntry], start_min: int, *, px: float, min_height: int) -
             Entry(
                 title=title,
                 kind=kind,
-                start_label=f"{start // 60:02d}:{start % 60:02d}",
-                end_label=f"{(start + dur) // 60:02d}:{(start + dur) % 60:02d}",
+                start_label=_clock(start),
+                end_label=_clock(start + dur),
                 top=round((start - start_min) * px),
                 height=max(round(dur * px), min_height),
                 lane=lane,
@@ -155,14 +167,15 @@ def _place(raw: list[RawEntry], start_min: int, *, px: float, min_height: int) -
     return entries
 
 
+def _now_minute(view: DayView) -> int:
+    now = datetime.now(ZoneInfo(view.tz))
+    return now.hour * 60 + now.minute
+
+
 def _now_top(view: DayView, today: date, start_min: int, end_min: int, px: float) -> int | None:
     if view.day != today:
         return None
-    from datetime import datetime
-    from zoneinfo import ZoneInfo
-
-    now = datetime.now(ZoneInfo(view.tz))
-    now_min = now.hour * 60 + now.minute
+    now_min = _now_minute(view)
     if start_min <= now_min <= end_min:
         return round((now_min - start_min) * px)
     return None
@@ -177,6 +190,90 @@ def timeline(view: DayView, *, today: date) -> Timeline:
         entries=_place(raw, start_min, px=PX_PER_MIN, min_height=14),
         now_top=_now_top(view, today, start_min, end_min, PX_PER_MIN),
     )
+
+
+# ── the headline strip: what is happening, what free time is left ─────────
+#
+# The strip answers the two questions asked at a glance — "what am I in right now"
+# and "does the day fit" — from the same entries the canvas below draws, so the two
+# can never disagree. Capacity stays the docs/04 §4.3 sentence; the only chip on the
+# page is the gold overflow warning. No verdict chips: §4 keeps green for done and
+# black for due-today, and a FITS badge would spend both on a mood.
+
+
+@dataclass(frozen=True)
+class NowNext:
+    state: str  # NOW | NEXT
+    title: str
+    detail: str  # 'until 10:30' for NOW, the start time for NEXT
+
+
+@dataclass(frozen=True)
+class Gap:
+    start_label: str
+    end_label: str
+    minutes: int
+
+    @property
+    def duration(self) -> str:
+        h, m = divmod(self.minutes, 60)
+        return f"{h}h {m:02d}m" if h else f"{m}m"
+
+
+@dataclass(frozen=True)
+class DayNotes:
+    """The two planner sentences the day page owes the owner, re-derived from what
+    was persisted (day_plan carries no notes column). P3 is capacity under the
+    configured floor; P9 is a planned day that got no protected block — the sentence
+    docs/04 calls the product, so it renders as visible body text, never folded."""
+
+    fully_booked: bool
+    fragmented: bool
+
+
+def now_next(view: DayView, *, today: date) -> NowNext | None:
+    """Today only: the block containing the current minute, else the next one to start."""
+    if view.day != today:
+        return None
+    now_min = _now_minute(view)
+    raw = _raw_entries(view)
+    for start, dur, title, _kind, _outcome, _travel in raw:
+        if start <= now_min < start + dur:
+            return NowNext("NOW", title, f"until {_clock(start + dur)}")
+    for start, _dur, title, _kind, _outcome, _travel in raw:
+        if start > now_min:
+            return NowNext("NEXT", title, _clock(start))
+    return None
+
+
+#: Anything shorter is a seam between back-to-back blocks, not usable free time.
+MIN_GAP_MINUTES = 15
+
+
+def gaps(view: DayView) -> list[Gap]:
+    """Free intervals inside the day's ruler — P9 fragmentation made countable."""
+    raw = _raw_entries(view)
+    if not raw:
+        return []
+    start_min, end_min = _window([raw])
+    out: list[Gap] = []
+    cursor = start_min
+    for start, dur, _title, _kind, _outcome, _travel in raw:
+        if start - cursor >= MIN_GAP_MINUTES:
+            out.append(Gap(_clock(cursor), _clock(start), start - cursor))
+        cursor = max(cursor, start + dur)
+    if end_min - cursor >= MIN_GAP_MINUTES:
+        out.append(Gap(_clock(cursor), _clock(end_min), end_min - cursor))
+    return out
+
+
+def day_notes(view: DayView, settings: Settings) -> DayNotes:
+    if not view.blocks:
+        return DayNotes(fully_booked=False, fragmented=False)
+    capacity_minutes = int(view.blocks[0]["capacity_minutes"])
+    fully_booked = capacity_minutes < settings.min_capacity_minutes
+    fragmented = not fully_booked and not any(b["kind"] == "protected" for b in view.blocks)
+    return DayNotes(fully_booked=fully_booked, fragmented=fragmented)
 
 
 # ── the week agenda grid ──────────────────────────────────────────────────
@@ -197,6 +294,14 @@ class WeekCol:
     now_top: int | None
     cap: dict[str, Any] | None
 
+    @property
+    def free_minutes(self) -> int | None:
+        """The capacity band's headline number. None means the day has no plan at
+        all — the band renders an em-dash there rather than a fake zero."""
+        if not self.cap:
+            return None
+        return max(int(self.cap["capacity_minutes"]) - int(self.cap["planned_minutes"]), 0)
+
 
 @dataclass(frozen=True)
 class WeekTimeline:
@@ -204,6 +309,25 @@ class WeekTimeline:
     height: int
     hour_px: int
     cols: list[WeekCol]
+
+    @property
+    def planned_minutes(self) -> int:
+        return sum(int(c.cap["planned_minutes"]) for c in self.cols if c.cap)
+
+    @property
+    def capacity_minutes(self) -> int:
+        return sum(int(c.cap["capacity_minutes"]) for c in self.cols if c.cap)
+
+    @property
+    def verdict(self) -> str | None:
+        """G5 where the week is visible — and only when it says something. An
+        unremarkable week has no line at all (docs/04 §4: sections vanish)."""
+        if self.planned_minutes <= self.capacity_minutes:
+            return None
+        return (
+            f"{self.planned_minutes // 60}h planned against "
+            f"{self.capacity_minutes // 60}h available this week"
+        )
 
 
 def week_timeline(views: list[DayView], *, today: date) -> WeekTimeline:
@@ -250,6 +374,9 @@ def build_router(
                 "view": view,
                 "tl": timeline(view, today=today()),
                 "cap": view.blocks[0] if view.blocks else None,
+                "now_next": now_next(view, today=today()),
+                "gaps": gaps(view),
+                "notes": day_notes(view, settings),
                 "prev": (day - timedelta(days=1)).isoformat(),
                 "next": (day + timedelta(days=1)).isoformat(),
                 "week_start": week_of(day).isoformat(),
