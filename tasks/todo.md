@@ -759,18 +759,18 @@ labels on cadence tracks, week view as proportional 7-column agenda grid with
 per-day capacity lines. Deliberately not doing: dense table second view of goals,
 drag/drop, streak flames, merged health scores.
 
-- [ ] 1. Goals KPI strip — 3 reels (done today / best streak / targets on pace),
+- [x] 1. Goals KPI strip — 3 reels (done today / best streak / targets on pace),
       OOB-swapped so tick + cadence fragments keep it live
-- [ ] 2. Consistency heatmap — 8 weeks × Mon–Sun under the week grid, inside the
+- [x] 2. Consistency heatmap — 8 weeks × Mon–Sun under the week grid, inside the
       #check-week fragment so ticks re-render it; aria-label per cell
-- [ ] 3. Percent labels on cadence tracks in _goal_cards.html
-- [ ] 4. Week view → proportional agenda grid (shared hour window, ~0.5px/min,
+- [x] 3. Percent labels on cadence tracks in _goal_cards.html
+- [x] 4. Week view → proportional agenda grid (shared hour window, ~0.5px/min,
       kind keylines, protected hatch, now-rule, links to day view)
-- [ ] 5. Per-day capacity line in week header cells (planned · free, overflow chip)
-- [ ] 6. CSS: .kpis / .hm / .trackrow .pct / .wk7 mini-timelines
-- [ ] 7. Tests in test_web_pages.py (KPI counts, heatmap buckets + labels,
+- [x] 5. Per-day capacity line in week header cells (planned · free, overflow chip)
+- [x] 6. CSS: .kpis / .hm / .trackrow .pct / .wk7 mini-timelines
+- [x] 7. Tests in test_web_pages.py (KPI counts, heatmap buckets + labels,
       week positioning, capacity text, pct labels)
-- [ ] 8. pytest + mypy strict + ruff + palette validator + both-theme screenshots
+- [x] 8. pytest + mypy strict + ruff + palette validator + both-theme screenshots
 
 ---
 
@@ -800,5 +800,13 @@ drag/drop, streak flames, merged health scores.
 - [x] S6 docs/13 activation runbook + `backglass doctor` (exit 1 while any check
       fails; the 4 current failures ARE the runbook's remaining owner steps)
 
-433 tests, mypy strict, ruff clean. What remains of Phase 8 is owner work:
-runbook steps 2–10 and the seven-day soak.
+437 tests, mypy strict, ruff clean. Verifier pass: 9/10 claims CONFIRMED, one
+REFUTED — the doctor's launchd check matched the app's GUI registration (false
+green) and missed the real com.cognifer.backglass.* labels (false fail forever).
+Fixed with exact-label matching + tests for both directions; lesson recorded.
+Verifier caveats accepted and recorded: DROP TABLE is not guarded (SQLite
+triggers cannot guard DDL; single-user local db — accepted), and the packaged
+app's cwd-relative db self-creation is by design (main.rs pins cwd to App
+Support).
+
+What remains of Phase 8 is owner work: runbook steps 2–10 and the seven-day soak.

@@ -927,6 +927,27 @@ def sources_enable(source: str) -> None:
 # ── Phase 8: doctor ───────────────────────────────────────────────────────
 
 
+#: The exact labels launchd/*.plist declare. Checked as whole labels, not a
+#: substring: the Phase 8 verifier caught the substring version passing on the
+#: desktop app's transient GUI registration (application.com.backglass.desktop…)
+#: while failing on the real com.cognifer.backglass.* jobs — wrong both ways.
+LAUNCHD_LABELS = (
+    "com.cognifer.backglass.sync",
+    "com.cognifer.backglass.brief",
+    "com.cognifer.backglass.plan",
+    "com.cognifer.backglass.shutdown",
+)
+
+
+def missing_launchd_jobs(launchctl_list_output: str) -> list[str]:
+    loaded = {
+        line.split()[-1]
+        for line in launchctl_list_output.splitlines()
+        if line.strip()
+    }
+    return [label for label in LAUNCHD_LABELS if label not in loaded]
+
+
 @app.command()
 def doctor() -> None:
     """Preflight for activation: one line per check, non-zero exit on any failure.
@@ -998,9 +1019,10 @@ def doctor() -> None:
 
     # ── scheduling ────────────────────────────────────────────────────────
     done = subprocess.run(["launchctl", "list"], capture_output=True, text=True)
-    loaded = "com.backglass" in done.stdout
-    check("launchd jobs loaded", loaded,
-          "install per launchd/README.md — without them nothing runs at 05:45/06:00")
+    missing = missing_launchd_jobs(done.stdout)
+    check("launchd jobs loaded", not missing,
+          f"missing {', '.join(missing)} — install per launchd/README.md; "
+          "without them nothing runs at 05:45/06:00")
 
     typer.echo("all clear" if not failures else f"{failures} check(s) failing")
     raise typer.Exit(code=1 if failures else 0)

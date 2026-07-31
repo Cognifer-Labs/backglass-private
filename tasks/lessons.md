@@ -38,3 +38,11 @@ what git tracks. An all-untracked repo cannot be shared safely at all.
 check, and "again" matched inside "against" in an unrelated capacity sentence. | Banned-
 word assertions need word boundaries. A substring check on short words fails on the
 innocent case and teaches you to loosen the test.
+
+2026-07-30 | The doctor's launchd check was wrong in both directions — a substring
+match went green on the desktop app's transient GUI registration (zero jobs
+installed) and would have stayed red against the real com.cognifer.backglass.*
+labels — and no test covered it, so every gate was green around a check that could
+never work. Found only by the fresh-context verifier. | A preflight check earns a
+test for BOTH its pass and its fail branch, against realistic output strings —
+a check nobody has seen fail is a check nobody has seen work.
