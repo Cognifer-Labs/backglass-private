@@ -216,6 +216,19 @@ class Settings(BaseSettings):
     apple_notes: bool = False
     apple_reminders: bool = False
 
+    # ── Phase A sources — spaced repetition (docs/14 F2) ─────────────────
+    #: Paths to the review apps' own local SQLite stores; empty disables. Opened
+    #: read-only+immutable like the Messages store. Only review counts and due
+    #: loads are ingested, never card content, so the docs/08 boundary has no
+    #: surface here — there are no addresses in a review tally.
+    anki_db_path: Path | None = None
+    avorio_db_path: Path | None = None
+    #: The cadence target that review-day checkpoints land on. Unset means the
+    #: connectors still ingest (brief and capacity keep working) but no
+    #: checkpoints are written — binding progress to a target is an owner choice,
+    #: not a default.
+    reviews_target_id: int | None = None
+
     # ── storage ───────────────────────────────────────────────────────────
     db_path: Path = Path("./data/backglass.db")
 

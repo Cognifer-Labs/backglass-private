@@ -76,7 +76,7 @@ CREATE TABLE goal (
 CREATE TABLE target (
   id                     INTEGER PRIMARY KEY,
   goal_id                INTEGER NOT NULL REFERENCES goal(id) ON DELETE CASCADE,
-  kind                   TEXT    NOT NULL, -- cadence|milestone|maintenance
+  kind                   TEXT    NOT NULL, -- cadence|milestone|maintenance|total (0006)
   title                  TEXT    NOT NULL,
   weekly_count           INTEGER,          -- NULL for milestone
   estimated_minutes_each INTEGER,          -- feeds the weekly capacity check
@@ -116,6 +116,8 @@ CREATE INDEX idx_commitment_goal ON commitment(goal_id) WHERE goal_id IS NOT NUL
 
 -- ─────────────────────────────────────────────────────────── checkpoints
 
+-- 0007 adds activity_id (nullable) and the activity registry table — hours logged
+-- against a total target can name the discrete extracurricular they belong to.
 CREATE TABLE checkpoint (
   id             INTEGER PRIMARY KEY,
   target_id      INTEGER NOT NULL REFERENCES target(id) ON DELETE CASCADE,
@@ -225,3 +227,6 @@ CREATE TABLE run (
   degraded          INTEGER NOT NULL DEFAULT 0,  -- 1 when spend cap forced triage-only
   errors_json       TEXT
 );
+
+-- 0008 adds the `fact` table — the personal knowledge base (subject/key/value with
+-- commitment-style supersession). See backglass/db/migrations/0008_facts.sql.

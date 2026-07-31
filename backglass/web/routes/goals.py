@@ -19,14 +19,15 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from backglass.config import Settings
 from backglass.db import query
-from backglass.goals import checklist, health
+from backglass.goals import checklist, checkpoints, health
 from backglass.ledger import USER_ID
+from backglass.plan import timezones
 from backglass.web import actions
 from backglass.web.panels import week_start_of
 
@@ -107,6 +108,98 @@ def week_grid(conn: sqlite3.Connection, settings: Settings, today: date) -> Week
     )
 
 
+HEAT_WEEKS = 8
+
+
+@dataclass(frozen=True)
+class HeatCell:
+    day: date
+    scheduled: int
+    ticked: int
+    future: bool
+
+    @property
+    def denominator(self) -> int:
+        """A tick on an unscheduled day is real work, not an impossible claim:
+        the denominator grows to meet it, so no cell ever reads over 100%."""
+        return max(self.scheduled, self.ticked)
+
+    @property
+    def bucket(self) -> int:
+        """0–4 fill step. §5 sequential magnitude: one ink, stepped opacity."""
+        if not self.denominator or not self.ticked:
+            return 0
+        share = self.ticked / self.denominator
+        if share >= 1:
+            return 4
+        if share >= 0.67:
+            return 3
+        if share >= 0.34:
+            return 2
+        return 1
+
+    @property
+    def label(self) -> str:
+        return f"{self.ticked}/{self.denominator} · {self.day.strftime('%d %b')}"
+
+
+@dataclass(frozen=True)
+class Heatmap:
+    weeks: list[list[HeatCell]]
+
+    @property
+    def empty(self) -> bool:
+        return not self.weeks
+
+
+def heat(conn: sqlite3.Connection, settings: Settings, today: date) -> Heatmap:
+    """Consistency over the last HEAT_WEEKS weeks, one cell per day.
+
+    Scheduled counts use today's active items and masks — the schedule has no
+    history table, so a mask edited last week recolors the past. Stated
+    approximation, same one the streak calculation already makes.
+    """
+    start = week_start_of(today, settings.week_start) - timedelta(weeks=HEAT_WEEKS - 1)
+    items = conn.execute(
+        "SELECT id, weekday_mask FROM checklist_item WHERE user_id = ? AND active = 1",
+        (USER_ID,),
+    ).fetchall()
+    if not items:
+        return Heatmap(weeks=[])
+    end = start + timedelta(days=HEAT_WEEKS * 7 - 1)
+    # Joined on active items: a deactivated item's history must not inflate a
+    # day past what the denominator (active items only) can substantiate.
+    ticked_by_day = {
+        str(r["local_date"]): int(r["n"])
+        for r in conn.execute(
+            "SELECT t.local_date, COUNT(*) AS n FROM checklist_tick t "
+            "JOIN checklist_item i ON i.id = t.checklist_item_id "
+            "WHERE i.user_id = ? AND i.active = 1 "
+            "AND t.local_date BETWEEN ? AND ? GROUP BY t.local_date",
+            (USER_ID, start.isoformat(), end.isoformat()),
+        )
+    }
+    weeks: list[list[HeatCell]] = []
+    for w in range(HEAT_WEEKS):
+        week: list[HeatCell] = []
+        for i in range(7):
+            day = start + timedelta(weeks=w, days=i)
+            week.append(
+                HeatCell(
+                    day=day,
+                    scheduled=sum(
+                        1
+                        for item in items
+                        if checklist.scheduled_on(int(item["weekday_mask"]), day)
+                    ),
+                    ticked=ticked_by_day.get(day.isoformat(), 0),
+                    future=day > today,
+                )
+            )
+        weeks.append(week)
+    return Heatmap(weeks=weeks)
+
+
 @dataclass(frozen=True)
 class GoalCard:
     goal_id: int
@@ -162,6 +255,28 @@ def goal_cards(conn: sqlite3.Connection, settings: Settings, today: date) -> Car
     return Cards(cards=cards, inert=inert)
 
 
+@dataclass(frozen=True)
+class Kpis:
+    """The page's three reel readouts — exactly three, §7's per-view budget."""
+
+    done_today: int
+    total_today: int
+    best_streak: int
+    on_pace: int
+    cadence_total: int
+
+
+def kpis(grid: WeekGrid, cards: Cards) -> Kpis:
+    cadence = [t for c in cards.cards for t in c.targets if t["weekly_count"]]
+    return Kpis(
+        done_today=grid.done_today,
+        total_today=grid.total_today,
+        best_streak=max((r.streak for r in grid.rows), default=0),
+        on_pace=sum(1 for t in cadence if t["done_this_week"] >= t["weekly_count"]),
+        cadence_total=len(cadence),
+    )
+
+
 def build_router(
     templates: Jinja2Templates,
     settings: Settings,
@@ -171,24 +286,48 @@ def build_router(
     router = APIRouter()
 
     def grid_fragment(request: Request, conn: sqlite3.Connection) -> Any:
+        """The tick swap re-renders the whole checklist section — KPI strip and
+        heatmap live inside it, so both stay truthful without OOB machinery."""
+        day = today()
+        grid = week_grid(conn, settings, day)
         return templates.TemplateResponse(
-            request, "_check_week.html", {"grid": week_grid(conn, settings, today())}
+            request,
+            "_check_week.html",
+            {
+                "grid": grid,
+                "heat": heat(conn, settings, day),
+                "k": kpis(grid, goal_cards(conn, settings, day)),
+            },
         )
 
     def cards_fragment(request: Request, conn: sqlite3.Connection) -> Any:
+        """A cadence change moves the on-pace KPI, which lives in the checklist
+        section — an OOB copy of the strip rides along with the cards swap."""
+        day = today()
+        cards = goal_cards(conn, settings, day)
         return templates.TemplateResponse(
-            request, "_goal_cards.html", {"g": goal_cards(conn, settings, today())}
+            request,
+            "_goal_cards.html",
+            {
+                "g": cards,
+                "k": kpis(week_grid(conn, settings, day), cards),
+                "kpi_oob": True,
+            },
         )
 
     @router.get("/goals", response_class=HTMLResponse)
     def goals(request: Request, conn: sqlite3.Connection = Depends(get_conn)) -> Any:
         day = today()
+        grid = week_grid(conn, settings, day)
+        cards = goal_cards(conn, settings, day)
         return templates.TemplateResponse(
             request,
             "goals.html",
             {
-                "grid": week_grid(conn, settings, day),
-                "g": goal_cards(conn, settings, day),
+                "grid": grid,
+                "g": cards,
+                "heat": heat(conn, settings, day),
+                "k": kpis(grid, cards),
                 "day": day,
                 "week_start": week_start_of(day, settings.week_start),
                 "settings": settings,
@@ -212,6 +351,33 @@ def build_router(
         except actions.ActionError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
         return grid_fragment(request, conn)
+
+    @router.post("/goals/targets/{target_id}/log", response_class=HTMLResponse)
+    def log_total(
+        target_id: int,
+        request: Request,
+        amount: int = Form(...),
+        note: str = Form(""),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        """Log against a lifetime total from the Goals page — the roadmap page's
+        endpoint scoped to any goal, so non-roadmap totals (a startup metric, a
+        reading count) are loggable where they render."""
+        if amount <= 0:
+            raise HTTPException(status_code=422, detail="amount must be positive")
+        row = conn.execute(
+            "SELECT t.id FROM target t JOIN goal g ON g.id = t.goal_id "
+            "WHERE t.id = ? AND g.user_id = ? AND t.kind = 'total' AND t.active = 1",
+            (target_id, USER_ID),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404)
+        checkpoints.record(
+            conn, target_id, source="manual",
+            occurred_at=timezones.local_now_iso(settings, today()),
+            note=note.strip() or None, delta=amount,
+        )
+        return cards_fragment(request, conn)
 
     @router.post("/goals/targets/{target_id}/weekly/{count}", response_class=HTMLResponse)
     def weekly(

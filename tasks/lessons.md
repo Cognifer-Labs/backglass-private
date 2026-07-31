@@ -46,3 +46,20 @@ labels — and no test covered it, so every gate was green around a check that c
 never work. Found only by the fresh-context verifier. | A preflight check earns a
 test for BOTH its pass and its fail branch, against realistic output strings —
 a check nobody has seen fail is a check nobody has seen work.
+
+2026-07-30 | Opened the Anki/Avorio stores with `immutable=1` copied from the iMessage
+connector, but both real stores are WAL — immutable makes SQLite skip the -wal file, so
+reads were either silently stale or failed with "no such table" while the app was open.
+Caught only by the fresh-context verifier probing the owner's real files. | `immutable=1`
+is only for files that truly cannot change (snapshots, archives). For a live store,
+`mode=ro` + busy_timeout; and check `PRAGMA journal_mode` of the actual production file
+before choosing an open mode, not the fixture's.
+
+2026-07-30 | Derived a source_item's external_id from a fetch batch's high-watermark
+(`reviews:<day>:<max-id>`), so a rescan spanning old batches re-emitted the same id with
+bigger numbers — an immutability conflict the 0002 trigger turns into a failed-looking
+sync. Same bug in a second shape: a due-count item hashed `occurred_at=now()`. | Under an
+immutable ledger, an external_id must name content that can never be recomputed
+differently: key it to the exact immutable row range it summarizes, and make every
+hashed field deterministic. "Deterministic given the db" is not enough — it must be
+deterministic given the id.

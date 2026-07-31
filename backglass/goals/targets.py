@@ -46,11 +46,17 @@ class TargetProgress:
     estimated_minutes_each: int | None
     done_this_week: int
     missed_weeks: int
+    # kind='total' only: the lifetime accumulator (Phase 10). total_count is the
+    # number to reach; lifetime_done is SUM(delta) with no week clamp.
+    total_count: int | None = None
+    lifetime_done: int = 0
 
     @property
     def complete(self) -> bool:
         if self.kind == "milestone":
             return self.done_this_week > 0
+        if self.kind == "total":
+            return self.total_count is not None and self.lifetime_done >= self.total_count
         return self.weekly_count is not None and self.done_this_week >= self.weekly_count
 
     @property
@@ -70,7 +76,7 @@ def progress(conn: sqlite3.Connection, settings: Settings, day: date) -> list[Ta
     start = week_start_of(day, settings.week_start)
     rows = conn.execute(
         "SELECT t.id, t.goal_id, t.kind, t.title, t.weekly_count, t.estimated_minutes_each, "
-        "       g.title AS goal_title "
+        "       t.total_count, g.title AS goal_title "
         "FROM target t JOIN goal g ON g.id = t.goal_id "
         "WHERE g.user_id = ? AND g.status = 'active' AND t.active = 1 "
         "ORDER BY g.id, t.id",
@@ -91,9 +97,21 @@ def progress(conn: sqlite3.Connection, settings: Settings, day: date) -> list[Ta
                 estimated_minutes_each=row["estimated_minutes_each"],
                 done_this_week=done,
                 missed_weeks=_consecutive_misses(conn, settings, row, start),
+                total_count=row["total_count"],
+                lifetime_done=_lifetime_done(conn, int(row["id"]))
+                if row["kind"] == "total"
+                else 0,
             )
         )
     return out
+
+
+def _lifetime_done(conn: sqlite3.Connection, target_id: int) -> int:
+    row = conn.execute(
+        "SELECT COALESCE(SUM(delta), 0) AS n FROM checkpoint WHERE target_id = ?",
+        (target_id,),
+    ).fetchone()
+    return int(row["n"] or 0)
 
 
 def _count_between(conn: sqlite3.Connection, target_id: int, start: date, end: date) -> int:

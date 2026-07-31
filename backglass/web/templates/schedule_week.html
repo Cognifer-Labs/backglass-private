@@ -17,21 +17,49 @@
       <a class="btn" href="/schedule">day view</a>
     </div>
 
-    <div class="weekgrid">
-      {% for v in days %}
-        <div class="wday{% if v.day == today %} now{% endif %}">
-          <a class="hd" href="/schedule?date={{ v.day.isoformat() }}">
-            {{ v.day.strftime('%a') }} <b>{{ v.day.strftime('%d') }}</b>
+    {# Seven proportional columns on one shared hour ruler. Whitespace is free
+       time made visible — the reason this is a timeline and not a list. #}
+    <div class="wk7wrap">
+      <div class="wk7">
+        <div class="corner"></div>
+        {% for c in wtl.cols %}
+          <a class="whd{% if c.view.day == today %} now{% endif %}"
+             href="/schedule?date={{ c.view.day.isoformat() }}">
+            <span class="dn">{{ c.view.day.strftime('%a') }} <b>{{ c.view.day.strftime('%d') }}</b></span>
+            {# docs/04 §4.3 in one breath per day: planned against free, overflow loud. #}
+            <span class="wcap">
+              {%- if c.cap -%}
+                {%- set free = [c.cap['capacity_minutes'] - c.cap['planned_minutes'], 0]|max -%}
+                {{ c.cap['planned_minutes'] // 60 }}h{{ '%02d' % (c.cap['planned_minutes'] % 60) }} planned
+                · {{ free // 60 }}h{{ '%02d' % (free % 60) }} free
+                {%- if c.cap['overflow_count'] %} <span class="over">{{ c.cap['overflow_count'] }} over</span>{% endif -%}
+              {%- else -%}—{%- endif -%}
+            </span>
           </a>
-          {% for e in v.fixed %}
-            <p class="witem fixed">{{ e.starts_at.strftime('%H:%M') }} {{ e.title or 'Busy' }}</p>
+        {% endfor %}
+
+        <div class="wkhrs" style="height:{{ wtl.height }}px">
+          {% for h in wtl.hours %}
+            <span style="top:{{ loop.index0 * wtl.hour_px }}px">{{ '%02d' % h }}</span>
           {% endfor %}
-          {% for b in v.blocks %}
-            <p class="witem k-{{ b['kind'] }}">{{ b['starts_at'][11:16] }} {{ b['title'] }}</p>
-          {% endfor %}
-          {% if v.empty %}<p class="wempty">—</p>{% endif %}
         </div>
-      {% endfor %}
+        {% for c in wtl.cols %}
+          <div class="wcol{% if c.view.day == today %} now{% endif %}" style="height:{{ wtl.height }}px">
+            {% for h in wtl.hours %}<i style="top:{{ loop.index0 * wtl.hour_px }}px"></i>{% endfor %}
+            {% for e in c.entries %}
+              <a class="wev k-{{ e.kind }}{% if e.lane %} lane1{% endif %}"
+                 style="top:{{ e.top }}px;height:{{ e.height }}px"
+                 href="/schedule?date={{ c.view.day.isoformat() }}"
+                 title="{{ e.start_label }}–{{ e.end_label }} {{ e.title }}">
+                <span class="et">{{ e.start_label }}</span> {{ e.title }}
+              </a>
+            {% endfor %}
+            {% if c.now_top is not none %}
+              <div class="wnow" style="top:{{ c.now_top }}px"></div>
+            {% endif %}
+          </div>
+        {% endfor %}
+      </div>
     </div>
     {{ m.kind_legend() }}
   </div>

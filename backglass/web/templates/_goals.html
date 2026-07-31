@@ -34,7 +34,9 @@
             <p class="tgt srisk{% if risk.at_risk %} bad{% endif %}">{{ risk.sentence().removeprefix(risk.goal_title ~ ': ') }}</p>
           {% endif %}
           <p class="tgt">
-            {% if t['weekly_count'] %}
+            {% if t['kind'] == 'total' and t['total_count'] %}
+              {{ t['lifetime_done'] }}/{{ t['total_count'] }} logged
+            {% elif t['weekly_count'] %}
               {{ t['done_this_week'] }}/{{ t['weekly_count'] }} this week
             {% else %}
               {{ t['kind'] }}
@@ -42,6 +44,12 @@
             {%- if t['last_checkpoint'] %} · last {{ t['last_checkpoint'][:10] }}
             {%- else %} · no checkpoints yet{% endif %}
           </p>
+          {% if t['kind'] == 'total' and t['total_count'] %}
+            {% set pct = (100 * t['lifetime_done'] / t['total_count'])|round|int %}
+            {# Phase 10 lifetime bar — read-only here; logging lives on the roadmap page. #}
+            <div class="track"><div class="fill{% if pct >= 100 %} green{% endif %}"
+                 style="width:{{ [pct, 100]|min }}%"></div></div>
+          {% endif %}
           {% if t['weekly_count'] %}
             {% set pct = (100 * t['done_this_week'] / t['weekly_count'])|round|int %}
             {# design-system.md §5: a single-series bar uses black, not cobalt. Gold only

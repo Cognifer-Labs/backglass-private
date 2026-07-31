@@ -1,5 +1,24 @@
 {% import "_macros.html" as m %}
 <div id="roadmap-steps">
+  {# Progress header (Phase 10): where the roadmap stands, derived on read. Steps
+     done over live, the next pending step, and the goal's two health signals —
+     staleness and risk, separate lines, never merged (G11). #}
+  <div class="rprog">
+    <div class="hd">
+      {% set spct = (100 * done_steps / live_steps)|round|int if live_steps else 0 %}
+      <div class="track grow"><div class="fill" style="width:{{ spct }}%"></div></div>
+      <span class="pct tnum">{{ done_steps }}/{{ live_steps }} steps</span>
+      {% if stale %}{{ m.stale_chip(stale.level, stale.chip()) }}{% endif %}
+    </div>
+    <p class="b2">
+      {%- if next_step %}Next: {{ next_step['title'] }}
+        {%- if next_step['planned_date'] %} · {{ next_step['planned_date'][:10] }}{% endif %}
+      {%- else %}All live steps done.{% endif -%}
+    </p>
+    {% if risk and risk.sentence() %}
+      <p class="srisk{% if risk.at_risk %} bad{% endif %}">{{ risk.sentence().removeprefix(risk.goal_title ~ ': ') }}</p>
+    {% endif %}
+  </div>
   {% for s in steps %}
     <div class="row{% if s['status'] == 'skipped' %} skipped{% endif %}">
       <span class="time">{{ (s['planned_date'] or '')[:10] or '—' }}</span>

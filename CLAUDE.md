@@ -103,3 +103,11 @@ Reason: the whole thing should be readable in an afternoon by one person a year 
 - Date-resolution tests specifically for relative dates across timezone changes, because
   the owner moves between UTC-7 and UTC+5:30.
 - No test may call a live API. Record fixtures instead.
+
+## Owner memory (Phase 12)
+
+Durable facts about the owner live in the `fact` table — the personal knowledge base.
+Before hunting through mail, files, or old sessions for who/what/where facts, run
+`uv run backglass memory export` (or read the Memory page). When you learn a new
+durable fact about the owner, write it back: `uv run backglass memory set <subject>
+<key> "<value>" --note "<evidence>"`. Supersession keeps history; never edit rows.

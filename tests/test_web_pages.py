@@ -352,6 +352,191 @@ class TestScheduleTimeline:
         assert "2 did not fit" in page
 
 
+class TestGoalsKpis:
+    """Phase 9: the Excel-dashboard KPI strip — three reels, live through both swaps."""
+
+    def test_strip_counts_match_the_seeded_state(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        from datetime import date
+
+        from backglass.goals import checklist as chk
+
+        item_id = chk.add(conn, "Morning pages")
+        chk.tick(conn, item_id, date.today())
+        conn.execute(
+            "INSERT INTO goal (user_id, title, horizon, definition_of_done, status,"
+            " created_at) VALUES (1, 'Write daily', 'annual', 'A shipped draft',"
+            " 'active', '2026-07-01T00:00:00Z')"
+        )
+        conn.execute(
+            "INSERT INTO target (goal_id, kind, title, weekly_count, created_at)"
+            " VALUES (1, 'cadence', 'Deep work sessions', 3, '2026-07-01T00:00:00Z')"
+        )
+        conn.commit()
+        page = client.get("/goals").text
+        assert 'id="gkpis"' in page
+        assert "done today" in page
+        assert "best streak" in page
+        # One cadence target, zero checkpoints this week: 0 on pace of 1.
+        assert "targets on pace" in page
+        assert "of 1" in page
+
+    def test_tick_swap_carries_the_strip(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        from backglass.goals import checklist as chk
+
+        item_id = chk.add(conn, "Morning pages")
+        conn.commit()
+        ticked = client.post(f"/goals/checklist/{item_id}/tick").text
+        # The strip lives inside #check-week, so the fragment includes it in place.
+        assert 'id="gkpis"' in ticked
+        assert "hx-swap-oob" not in ticked
+
+    def test_cadence_swap_sends_the_strip_out_of_band(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        conn.execute(
+            "INSERT INTO goal (user_id, title, horizon, definition_of_done, status,"
+            " created_at) VALUES (1, 'Write daily', 'annual', 'A shipped draft',"
+            " 'active', '2026-07-01T00:00:00Z')"
+        )
+        conn.execute(
+            "INSERT INTO target (goal_id, kind, title, weekly_count, created_at)"
+            " VALUES (1, 'cadence', 'Deep work sessions', 3, '2026-07-01T00:00:00Z')"
+        )
+        conn.commit()
+        tid = conn.execute("SELECT id FROM target").fetchone()["id"]
+        response = client.post(f"/goals/targets/{tid}/weekly/5").text
+        assert 'id="goal-cards"' in response
+        assert 'hx-swap-oob="outerHTML"' in response
+        assert 'id="gkpis"' in response
+
+
+class TestConsistencyHeatmap:
+    """Phase 9: §5 sequential magnitude — one ink, stepped opacity, numbers on
+    every cell. Absent entirely when there is nothing to be consistent about."""
+
+    def test_absent_without_checklist_items(self, client: TestClient) -> None:
+        assert "Consistency" not in client.get("/goals").text
+
+    def test_full_day_is_the_darkest_bucket(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        from datetime import date, timedelta
+
+        from backglass.goals import checklist as chk
+
+        item_id = chk.add(conn, "Morning pages")
+        yesterday = date.today() - timedelta(days=1)
+        chk.tick(conn, item_id, yesterday)
+        conn.commit()
+        page = client.get("/goals").text
+        assert "Consistency · last 8 weeks" in page
+        assert f'aria-label="1/1 · {yesterday.strftime("%d %b")}"' in page
+        assert 'class="hmf b4"' in page
+
+    def test_partial_day_is_a_middle_bucket(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        from datetime import date, timedelta
+
+        from backglass.goals import checklist as chk
+
+        first = chk.add(conn, "Morning pages")
+        chk.add(conn, "Evening review")
+        yesterday = date.today() - timedelta(days=1)
+        chk.tick(conn, first, yesterday)
+        conn.commit()
+        page = client.get("/goals").text
+        # 1 of 2 = 50% → bucket 2 of 4.
+        assert f'aria-label="1/2 · {yesterday.strftime("%d %b")}"' in page
+        assert 'class="hmf b2"' in page
+
+    def test_never_claims_more_than_100_percent(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """Verifier caveat, closed: a tick on an unscheduled day grows the
+        denominator; a deactivated item's history leaves the count entirely."""
+        from datetime import date, timedelta
+
+        from backglass.goals import checklist as chk
+
+        weekdays_only = chk.add(conn, "Morning pages", weekday_mask=31)
+        today = date.today()
+        saturday = today - timedelta(days=(today.weekday() - 5) % 7 or 7)
+        chk.tick(conn, weekdays_only, saturday)
+
+        retired = chk.add(conn, "Old habit")
+        yesterday = today - timedelta(days=1)
+        chk.tick(conn, retired, yesterday)
+        conn.execute("UPDATE checklist_item SET active = 0 WHERE id = ?", (retired,))
+        conn.commit()
+
+        page = client.get("/goals").text
+        # Saturday: 0 scheduled, 1 ticked → 1/1, never 1/0.
+        assert f'aria-label="1/1 · {saturday.strftime("%d %b")}"' in page
+        # Yesterday: the retired item's tick is gone from the numerator.
+        assert f'aria-label="0/1 · {yesterday.strftime("%d %b")}"' in page
+
+    def test_future_days_carry_no_claim(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        from backglass.goals import checklist as chk
+
+        chk.add(conn, "Morning pages")
+        conn.commit()
+        page = client.get("/goals").text
+        # 8 weeks × 7 days minus scheduled past-and-today cells: the rest are dashes.
+        assert 'class="hm"' in page
+        assert 'class="hmf b4"' not in page  # nothing ticked yet — no full cell anywhere
+
+
+class TestWeekAgenda:
+    """Phase 9: the week view is seven mini-timelines on one shared ruler."""
+
+    def test_blocks_are_positioned_at_half_scale(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, generated_at, status)"
+            " VALUES ('2026-07-28', 'America/Phoenix', 400, '2026-07-28T05:50:00', 'accepted')"
+        )
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, '2026-07-28T09:00:00-07:00', '2026-07-28T10:30:00-07:00',"
+            " 'work', 'Finish deck')"
+        )
+        conn.commit()
+        page = client.get("/schedule/week?start=2026-07-27").text
+        # Shared ruler starts at 08:00; 09:00 at 0.5px/min sits 30px down, 45px tall.
+        assert "top:30px;height:45px" in page
+        assert 'class="wk7"' in page
+        assert "Finish deck" in page
+
+    def test_capacity_line_per_day(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, planned_minutes,"
+            " overflow_count, generated_at, status) VALUES ('2026-07-28',"
+            " 'America/Phoenix', 375, 330, 2, '2026-07-28T05:50:00', 'accepted')"
+        )
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, '2026-07-28T09:00:00-07:00', '2026-07-28T10:00:00-07:00',"
+            " 'work', 'Finish deck')"
+        )
+        conn.commit()
+        page = client.get("/schedule/week?start=2026-07-27").text
+        assert "5h30 planned" in page
+        assert "0h45 free" in page
+        assert "2 over" in page
+        # Unplanned days state their emptiness, not fake zeros.
+        assert "—" in page
+
+
 class TestDueLabel:
     """Due dates render in words sized to their distance, not raw ISO."""
 

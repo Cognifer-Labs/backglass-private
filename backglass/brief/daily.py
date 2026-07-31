@@ -283,9 +283,32 @@ def goal_section(conn: sqlite3.Connection, today: date, settings: Settings) -> S
     section can emit both for the same goal rather than one blended verdict.
     """
     from backglass.goals import health
+    from backglass.goals import reviews as reviews_mod
     from backglass.goals import targets as targets_mod
 
     section = Section(priority=6, title="Goals")
+
+    # docs/14 F2: today's spaced-repetition load, one line, only when a due
+    # snapshot exists and carries work (B3 — a quiet day says nothing). Provenance
+    # is the snapshot item itself: the claim "140 due" is checkable against it.
+    snapshot = reviews_mod.due_snapshot(conn, today)
+    if snapshot and snapshot["due"]:
+        minutes, _ = reviews_mod.review_minutes(conn, today)
+        run = reviews_mod.streak(conn, settings, today)
+        text = f"Reviews: {snapshot['due']} due (~{minutes} min)."
+        if run:
+            text = f"Reviews: {snapshot['due']} due (~{minutes} min) · {run}-day streak."
+        section.lines.append(
+            Line(
+                text=text,
+                provenance=SourceRef(
+                    source=snapshot["source"],
+                    external_id=snapshot["external_id"],
+                    occurred_at=snapshot["occurred_at"],
+                    title=snapshot["title"],
+                ),
+            )
+        )
 
     for target in targets_mod.progress(conn, settings, today):
         if target.complete:

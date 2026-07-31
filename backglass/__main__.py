@@ -536,6 +536,23 @@ def _all_connectors(conn: sqlite3.Connection, settings: Settings) -> list[Connec
 
         built.append(RemindersConnector(boundary=boundary))
 
+    # ── Phase A sources — spaced repetition (docs/14 F2). No boundary: review
+    # tallies carry no addresses and no card content is ingested. ──
+    if settings.anki_db_path or settings.avorio_db_path:
+        from datetime import date as _date
+
+        from backglass.plan import timezones
+
+        tz = timezones.active_tz(settings, _date.today())
+        if settings.anki_db_path:
+            from backglass.connectors.anki import AnkiConnector
+
+            built.append(AnkiConnector(db_path=settings.anki_db_path, tz=tz))
+        if settings.avorio_db_path:
+            from backglass.connectors.avorio import AvorioConnector
+
+            built.append(AvorioConnector(db_path=settings.avorio_db_path, tz=tz))
+
     # The pause switch: a disabled source stays configured and keeps its cursor, but
     # never fetches. Config says what CAN run; the credential row says what DOES.
     disabled = credentials.disabled_sources(conn)
@@ -568,10 +585,6 @@ def _print_report(report: Any, *, dry_run: bool) -> None:
 
 def main() -> None:
     sys.exit(app())
-
-
-if __name__ == "__main__":
-    app()
 
 
 # ── Phase 6: people ───────────────────────────────────────────────────────
@@ -732,6 +745,115 @@ def add_commitment(
 
 roadmap_app = typer.Typer(help="Preset career-path roadmaps over the goal engine.")
 app.add_typer(roadmap_app, name="roadmap")
+
+goals_app = typer.Typer(help="Goal targets beyond what the dashboard edits.")
+app.add_typer(goals_app, name="goals")
+
+
+@goals_app.command("add-total")
+def goals_add_total(
+    goal_id: int,
+    title: str,
+    total: Annotated[int, typer.Argument(help="The lifetime number to reach")],
+) -> None:
+    """Attach a lifetime accumulator to any goal (Phase 10): hours, users, interviews.
+
+    Progress is logged as checkpoints (delta = amount) from the roadmap page or
+    `record()`; the bar renders wherever the goal's targets do.
+    """
+    from backglass.roadmap import instantiate
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    if conn.execute(
+        "SELECT 1 FROM goal WHERE id = ? AND user_id = 1", (goal_id,)
+    ).fetchone() is None:
+        typer.echo(f"no goal {goal_id}", err=True)
+        raise typer.Exit(code=1)
+    try:
+        target_id = instantiate.add_total(conn, goal_id, title, total)
+    except ValueError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    conn.commit()
+    typer.echo(f"target {target_id}: {title} — 0/{total}")
+
+
+@app.command("amcas-export")
+def amcas_export(
+    out: Annotated[
+        Path | None, typer.Option("--out", help="Write markdown here instead of stdout")
+    ] = None,
+) -> None:
+    """Assemble the Work & Activities raw material (docs/14 F1).
+
+    Evidence assembly, never authorship: every hour figure is a sum over named
+    checkpoints, the note stream is the owner's own words, and the 700/1325
+    character limits are AMCAS's — shown against the draft material, not enforced.
+    """
+    from backglass.goals import activities
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+
+    rows = activities.list_with_hours(conn)
+    if not rows:
+        typer.echo("no activities recorded — add them on the roadmap page", err=True)
+        raise typer.Exit(code=1)
+
+    meaningful = sum(1 for a in rows if a["most_meaningful"])
+    lines: list[str] = [
+        "# AMCAS Work & Activities — raw material",
+        "",
+        f"{len(rows)} of {activities.AMCAS_SLOTS} activity slots · "
+        f"{meaningful} of {activities.AMCAS_MOST_MEANINGFUL} most-meaningful marked",
+        "",
+        "Every hour figure below is a sum over the checkpoint ids listed with it.",
+        "",
+    ]
+    for a in rows:
+        entries = activities.entries_for(conn, int(a["id"]))
+        hour_entries = [e for e in entries if e["kind"] == "total"]
+        span = (
+            f"{a['first_logged'][:10]} → {a['last_logged'][:10]}"
+            if a["first_logged"]
+            else "no dates logged"
+        )
+        lines += [
+            f"## {a['title']}"
+            + (" · MOST MEANINGFUL" if a["most_meaningful"] else ""),
+            "",
+            f"- Category: {a['category']}",
+            f"- Organization: {a['org'] or '—'}" + (f" · {a['role']}" if a["role"] else ""),
+            f"- Contact: {a['contact_name'] or '— (add a supervisor entity)'}",
+            f"- Dates: {a['started_on'] or span}"
+            + (f" — {a['ended_on']}" if a["ended_on"] else " — ongoing"),
+            f"- Total hours: {a['hours']} "
+            f"(checkpoints {', '.join(str(e['id']) for e in hour_entries) or 'none'})",
+            "",
+        ]
+        notes = [e for e in entries if e["note"]]
+        material = " ".join(str(e["note"]) for e in notes)
+        limit = (
+            activities.AMCAS_MEANINGFUL_CHARS
+            if a["most_meaningful"]
+            else activities.AMCAS_DESCRIPTION_CHARS
+        )
+        lines.append(
+            f"Draft material: {len(material)} chars against the {limit}-char limit"
+            + (" (700 description + 1325 remarks)" if a["most_meaningful"] else "")
+        )
+        lines += [f"- {e['occurred_at'][:10]} · +{e['delta']} · {e['note']}" for e in notes]
+        lines.append("")
+
+    text = "\n".join(lines)
+    if out is not None:
+        out.write_text(text, encoding="utf-8")
+        typer.echo(f"wrote {out}")
+    else:
+        typer.echo(text)
 
 
 @roadmap_app.command("paths")
@@ -924,6 +1046,117 @@ def sources_enable(source: str) -> None:
     typer.echo(f"{source} resumed")
 
 
+# ── Phase A2: setup ───────────────────────────────────────────────────────
+
+
+@app.command()
+def setup(
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Enable everything found without asking")
+    ] = False,
+    env_path: Annotated[
+        Path, typer.Option("--env-path", help="Env file to write")
+    ] = Path(".env"),
+    reviews_target: Annotated[
+        int | None,
+        typer.Option("--reviews-target", help="Cadence target id for review checkpoints"),
+    ] = None,
+) -> None:
+    """Hook up every source this machine can offer, in one sitting.
+
+    Detection finds the local stores (Anki, Avorio, Messages, Obsidian, the Apple
+    bridges) at their well-known locations and writes the .env lines the owner
+    would otherwise hunt for; the token/OAuth sources get their exact remaining
+    step printed rather than pretended away. Read-only until confirmed, idempotent
+    once configured — running it again reports "configured" and writes nothing.
+    """
+    from backglass import envfile
+    from backglass.connectors import detect as detect_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    authed = {
+        str(row["source"])
+        for row in conn.execute(
+            "SELECT source FROM credential WHERE user_id = ? AND status = 'ok'", (USER_ID,)
+        )
+    }
+    detections = detect_mod.detect_all(settings, authed=authed)
+
+    marks = {
+        detect_mod.CONFIGURED: "ok ",
+        detect_mod.FOUND: "new",
+        detect_mod.NEEDS_SETUP: "…  ",
+        detect_mod.MISSING: "-- ",
+    }
+    for d in detections:
+        typer.echo(f"[{marks[d.status]}] {d.source:<18} {d.hint}")
+
+    updates: dict[str, str] = {}
+    for d in detections:
+        if d.status != detect_mod.FOUND or d.env_key is None or d.env_value is None:
+            continue
+        if yes or typer.confirm(f"enable {d.source}?", default=True):
+            updates[d.env_key] = d.env_value
+
+    # ── bind the reviews target while we are here (docs/14 F2) ────────────
+    wants_reviews = (
+        settings.reviews_target_id is None
+        and ("ANKI_DB_PATH" in updates or "AVORIO_DB_PATH" in updates
+             or settings.anki_db_path or settings.avorio_db_path)
+    )
+    if wants_reviews:
+        cadences = list(conn.execute(
+            "SELECT t.id, t.title, g.title AS goal FROM target t "
+            "JOIN goal g ON g.id = t.goal_id "
+            "WHERE t.kind = 'cadence' AND t.active = 1 AND g.status = 'active' "
+            "ORDER BY t.id"
+        ))
+        chosen: int | None = None
+        if reviews_target is not None:
+            chosen = reviews_target
+        elif cadences and not yes:
+            typer.echo("review-day checkpoints can advance a cadence target:")
+            for c in cadences:
+                typer.echo(f"  {c['id']:>4}  {c['goal']} — {c['title']}")
+            picked = typer.prompt("target id (0 to skip)", type=int, default=0)
+            chosen = picked or None
+        elif cadences:
+            typer.echo(
+                "REVIEWS_TARGET_ID not set — rerun with --reviews-target <id> to bind "
+                "review streaks to a goal (candidates: "
+                + ", ".join(f"{c['id']}={c['title']}" for c in cadences) + ")"
+            )
+        if chosen is not None:
+            if not any(int(c["id"]) == chosen for c in cadences):
+                typer.echo(f"no active cadence target {chosen}", err=True)
+                raise typer.Exit(code=1)
+            updates["REVIEWS_TARGET_ID"] = str(chosen)
+
+    if updates:
+        # The template beside the target file wins; the repo-root copy is the
+        # fallback so a run from outside the checkout still seeds the documented
+        # file instead of a two-line orphan.
+        template = env_path.with_name(".env.example")
+        if not template.exists():
+            template = Path(__file__).resolve().parent.parent / ".env.example"
+        changed = envfile.set_keys(env_path, updates, template=template)
+        for key in changed:
+            typer.echo(f"wrote {key} to {env_path}")
+        if changed:
+            typer.echo("restart the dashboard/sync for the new sources to load")
+    else:
+        typer.echo("nothing to write")
+
+    remaining = [d for d in detections if d.status == detect_mod.NEEDS_SETUP]
+    if remaining:
+        typer.echo("still needs a step only you can do:")
+        for d in remaining:
+            typer.echo(f"  {d.source}: {d.hint}")
+    typer.echo("finish with `backglass doctor`")
+
+
 # ── Phase 8: doctor ───────────────────────────────────────────────────────
 
 
@@ -1017,6 +1250,15 @@ def doctor() -> None:
         health = connector.health()
         check(f"connector {connector.name}", health.ok, health.detail or "")
 
+    # Informational, never failures: stores this machine has that one
+    # `backglass setup` run would hook up (Phase A2).
+    from backglass.connectors import detect as detect_mod
+
+    authed = {str(r["source"]) for r in rows if r["status"] == "ok"}
+    for d in detect_mod.detect_all(settings, authed=authed):
+        if d.status == detect_mod.FOUND:
+            typer.echo(f"[ -- ] {d.source} detected but not configured — `backglass setup`")
+
     # ── scheduling ────────────────────────────────────────────────────────
     done = subprocess.run(["launchctl", "list"], capture_output=True, text=True)
     missing = missing_launchd_jobs(done.stdout)
@@ -1026,3 +1268,93 @@ def doctor() -> None:
 
     typer.echo("all clear" if not failures else f"{failures} check(s) failing")
     raise typer.Exit(code=1 if failures else 0)
+
+
+memory_app = typer.Typer(
+    invoke_without_command=True,
+    help="The personal knowledge base: durable facts with provenance.",
+)
+app.add_typer(memory_app, name="memory")
+
+
+@memory_app.callback()
+def memory_list(ctx: typer.Context) -> None:
+    """List active facts, grouped by subject. Same read the Memory page runs."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from backglass import facts
+
+    conn = _open(get_settings())
+    migrate(conn)
+    current = None
+    rows = facts.recall(conn)
+    if not rows:
+        typer.echo("nothing remembered yet")
+        return
+    for f in rows:
+        if f.subject != current:
+            current = f.subject
+            typer.echo(f"\n[{current}]")
+        note = f"  — {f.note}" if f.note else ""
+        stamp = f"({f.source} · {f.created_at[:10]})"
+        typer.echo(f"  #{f.fact_id} {f.key}: {f.value}{note}  {stamp}")
+
+
+@memory_app.command("set")
+def memory_set(
+    subject: str,
+    key: str,
+    value: str,
+    note: Annotated[str | None, typer.Option("--note", help="Evidence, in words")] = None,
+) -> None:
+    """Remember a fact. The previous value for this subject+key is superseded, not lost."""
+    from backglass import facts
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    try:
+        fact_id = facts.remember(conn, settings, subject, key, value, note=note)
+    except facts.FactError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    conn.commit()
+    typer.echo(f"fact {fact_id}: {subject}/{key} = {value}")
+
+
+@memory_app.command("forget")
+def memory_forget(fact_id: int) -> None:
+    """Retract a fact. The row survives; only its claim is withdrawn."""
+    from backglass import facts
+
+    conn = _open(get_settings())
+    migrate(conn)
+    try:
+        facts.forget(conn, fact_id)
+    except facts.FactError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    conn.commit()
+    typer.echo(f"fact {fact_id} retracted")
+
+
+@memory_app.command("export")
+def memory_export(
+    out: Annotated[Path | None, typer.Option("--out", help="Write to a file")] = None,
+) -> None:
+    """The whole active memory as markdown — what an assistant loads instead of
+    searching mail."""
+    from backglass import facts
+
+    conn = _open(get_settings())
+    migrate(conn)
+    doc = facts.export_markdown(conn)
+    if out:
+        out.write_text(doc)
+        typer.echo(f"wrote {out}")
+    else:
+        typer.echo(doc)
+
+
+if __name__ == "__main__":
+    app()

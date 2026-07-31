@@ -40,15 +40,42 @@
             {# The .kind label in the header already names the kind — repeating it in
                the body line said "milestone" twice on every milestone row. #}
             <p class="tgt">
-              {% if t['weekly_count'] %}{{ t['done_this_week'] }}/{{ t['weekly_count'] }} this week ·{% endif %}
+              {% if t['kind'] == 'total' and t['total_count'] %}{{ t['lifetime_done'] }}/{{ t['total_count'] }} logged ·
+              {%- elif t['weekly_count'] %}{{ t['done_this_week'] }}/{{ t['weekly_count'] }} this week ·{% endif %}
               {%- if t['last_checkpoint'] %} last {{ t['last_checkpoint'][:10] }}
               {%- else %} no checkpoints yet{% endif %}
             </p>
+            {% if t['kind'] == 'total' and t['total_count'] %}
+              {% set pct = (100 * t['lifetime_done'] / t['total_count'])|round|int %}
+              {# Lifetime accumulator (Phase 10/11): black bar, green only when done.
+                 Loggable here too — a total on a goal with no roadmap has no other
+                 write surface. #}
+              <div class="trackrow">
+                <div class="track grow"><div class="fill{% if pct >= 100 %} green{% endif %}"
+                     style="width:{{ [pct, 100]|min }}%"></div></div>
+                <span class="pct">{{ [pct, 100]|min }}%</span>
+              </div>
+              <div class="acts">
+                <form class="logform" hx-post="/goals/targets/{{ t['target_id'] }}/log"
+                      hx-target="#goal-cards" hx-swap="outerHTML">
+                  <input type="number" name="amount" min="1" step="1" value="1" required
+                         aria-label="Amount for {{ t['target_title'] }}">
+                  <input type="text" name="note" placeholder="note · who"
+                         aria-label="Note for {{ t['target_title'] }}">
+                  <button class="btn ok" type="submit">Log</button>
+                </form>
+              </div>
+            {% endif %}
             {% if t['weekly_count'] %}
               {% set pct = (100 * t['done_this_week'] / t['weekly_count'])|round|int %}
-              {# design-system.md §5: single-series bar is black; gold only when behind. #}
-              <div class="track"><div class="fill{% if pct < 100 %} gold{% endif %}"
-                   style="width:{{ [pct, 100]|min }}%"></div></div>
+              {# design-system.md §5: single-series bar is black; gold only when behind.
+                 The percent label is the Notion/Excel progress-bar idiom: the bar shows
+                 shape, the number makes it a claim. #}
+              <div class="trackrow">
+                <div class="track grow"><div class="fill{% if pct < 100 %} gold{% endif %}"
+                     style="width:{{ [pct, 100]|min }}%"></div></div>
+                <span class="pct">{{ pct }}%</span>
+              </div>
               <div class="acts">
                 {% for n in [1, 2, 3, 5] %}
                   <button class="btn ok{% if n == t['weekly_count'] %} on{% endif %}"
@@ -68,3 +95,8 @@
     {% endfor %}
   </div>
 </section>
+{% if kpi_oob|default(false) %}
+  {# A cadence change moves "targets on pace", which renders inside #check-week —
+     this OOB copy keeps the strip truthful without re-rendering that section. #}
+  {% include "_kpis.html" %}
+{% endif %}

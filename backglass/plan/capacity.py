@@ -8,8 +8,10 @@
     fixed            = calendar events marked busy, minus declined
     buffer           = 10 min after any meeting >= 30 min, 5 min otherwise
     commute/travel   = any calendar event tagged travel, plus its buffer
-    capacity_minutes = working_window − fixed − buffer − travel − reserve
+    capacity_minutes = working_window − fixed − buffer − travel − reserve − reviews
     reserve          = configured slack, default 45 min/day, never zero
+    reviews          = today's spaced-repetition load (docs/14 F2), when a due
+                       snapshot exists; zero otherwise
 
 The reserve is the requirement most likely to be "optimised" away by someone trying to fit
 one more thing in. docs/04: "A plan that fills every minute is a plan that fails at 10:15
@@ -36,6 +38,12 @@ from backglass.plan import timezones
 #: as busy." Tentative counting as busy is the conservative direction — under-promising
 #: capacity costs one unscheduled hour, over-promising costs a missed commitment.
 BUSY_STATUSES = {"confirmed", "tentative", "busy"}
+
+#: Ceiling on the capacity reserved for spaced-repetition reviews (docs/14 F2). Two
+#: hours a day is a heavy but real review load; anything above it means a backlog
+#: the owner should triage deliberately rather than have the planner silently
+#: surrender the day to.
+REVIEW_CAP_MINUTES = 120
 
 
 @dataclass(frozen=True)
@@ -72,6 +80,10 @@ class Capacity:
     travel_minutes: int
     reserve_minutes: int
     capacity_minutes: int
+    #: Today's spaced-repetition load (docs/14 F2): due cards × the owner's own
+    #: trailing pace. Subtracted like the reserve — reviews happen whether or not
+    #: they are scheduled, so a plan that ignores them over-promises the day.
+    review_minutes: int = 0
     slots: list[Slot] = field(default_factory=list)
     fixed: list[FixedEvent] = field(default_factory=list)
 
@@ -197,10 +209,18 @@ def compute(
     slots = _free_slots(window_start, window_end, occupied, settings.min_block_minutes)
     reserve = max(1, settings.daily_reserve_minutes)  # "never zero"
     free_minutes = sum(slot.minutes for slot in slots)
+
+    from backglass.goals import reviews as reviews_mod
+
+    # Capped: a monster backlog is a planning decision the owner should see (the
+    # brief reports the uncapped estimate), not a silent zeroing of the whole day.
+    review_minutes = min(reviews_mod.review_minutes(conn, day)[0], REVIEW_CAP_MINUTES)
+
     capacity_minutes = max(
         0,
         min(free_minutes, window_minutes - fixed_minutes - travel_minutes - buffer_minutes)
-        - reserve,
+        - reserve
+        - review_minutes,
     )
 
     return Capacity(
@@ -212,6 +232,7 @@ def compute(
         travel_minutes=travel_minutes,
         reserve_minutes=reserve,
         capacity_minutes=capacity_minutes,
+        review_minutes=review_minutes,
         slots=slots,
         fixed=fixed,
         _min_capacity=settings.min_capacity_minutes,

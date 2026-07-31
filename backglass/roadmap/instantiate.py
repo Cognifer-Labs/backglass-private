@@ -75,6 +75,7 @@ def instantiate(
             conn, preset, goal_id, personalized=adjustments is not None
         )
         _insert_cadences(conn, preset, roadmap_id, goal_id)
+        _insert_totals(conn, preset, goal_id)
         _insert_steps(conn, preset, roadmap_id, goal_id, start_date)
         if adjustments is not None:
             apply_adjustments(conn, roadmap_id, adjustments)
@@ -141,6 +142,25 @@ def _insert_cadences(
             "INSERT INTO roadmap_cadence (roadmap_id, cadence_key, target_id) VALUES (?, ?, ?)",
             (roadmap_id, cadence.key, _last_id(conn)),
         )
+
+
+def _insert_totals(conn: sqlite3.Connection, preset: Preset, goal_id: int) -> None:
+    """Totals hang off the goal directly — no link table. The roadmap page finds
+    them through goal_id, and they survive step edits untouched."""
+    for total in preset.totals:
+        add_total(conn, goal_id, total.title, total.total_count)
+
+
+def add_total(conn: sqlite3.Connection, goal_id: int, title: str, total_count: int) -> int:
+    """Public: the CLI and any goal can attach a lifetime accumulator (Phase 10)."""
+    if total_count <= 0:
+        raise ValueError("total_count must be positive")
+    conn.execute(
+        "INSERT INTO target (goal_id, kind, title, total_count, active, created_at) "
+        "VALUES (?, 'total', ?, ?, 1, ?)",
+        (goal_id, title, total_count, now_iso()),
+    )
+    return _last_id(conn)
 
 
 def _insert_steps(

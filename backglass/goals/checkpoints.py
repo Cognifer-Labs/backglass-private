@@ -44,6 +44,7 @@ def record(
     commitment_id: int | None = None,
     note: str | None = None,
     delta: int = 1,
+    activity_id: int | None = None,
 ) -> Recorded:
     """G9. Every checkpoint says what produced it.
 
@@ -61,10 +62,17 @@ def record(
         raise CheckpointError("a commitment checkpoint must carry its commitment_id")
     if conn.execute("SELECT 1 FROM target WHERE id = ?", (target_id,)).fetchone() is None:
         raise CheckpointError(f"no target {target_id}")
+    if activity_id is not None and (
+        conn.execute(
+            "SELECT 1 FROM activity WHERE id = ? AND active = 1", (activity_id,)
+        ).fetchone()
+        is None
+    ):
+        raise CheckpointError(f"no active activity {activity_id}")
 
     conn.execute(
         "INSERT INTO checkpoint (target_id, occurred_at, source, source_item_id, "
-        " commitment_id, note, delta) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        " commitment_id, note, delta, activity_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
         (
             target_id,
             occurred_at or now_iso(),
@@ -73,6 +81,7 @@ def record(
             commitment_id,
             note,
             delta,
+            activity_id,
         ),
     )
     return Recorded(

@@ -6,7 +6,7 @@
   {{ m.banner(d.sources.title, ('%.0f%% killed'|format(d.sources.meta.kill_rate * 100)) if d.sources.meta.triaged else '') }}
   <div class="inner">
     {% if d.sources.empty %}
-      <p class="empty">No sources configured. Run <span class="kbd">backglass auth &lt;label&gt;</span>.</p>
+      <p class="empty">No sources configured. Run <span class="kbd">backglass setup</span>.</p>
     {% else %}
       {% for s in d.sources.rows %}
         {# docs/11 §8: "the row's keyline turns vermilion and stays that way" until fixed.
@@ -31,6 +31,19 @@
             <span class="kbd">backglass auth {{ s['source'].split(':')[-1] }}</span></p>
         {% endif %}
       {% endfor %}
+    {% endif %}
+
+    {# Phase A2: stores detected on this machine that one command would hook up.
+       Quiet informational rows — nothing is failing, so no alarm ink. #}
+    {% if d.sources.meta.found %}
+      {% for f in d.sources.meta.found %}
+        <div class="src paused">
+          <span class="sq" style="background:transparent" title="detected"></span>
+          <span class="nm">{{ f.source }}</span>
+          <span class="ts">found · {{ f.hint }}</span>
+        </div>
+      {% endfor %}
+      <p class="note">Detected on this Mac — run <span class="kbd">backglass setup</span> to connect.</p>
     {% endif %}
 
     {# Deliberately outside the has-credentials branch. The kill rate, the spend state and

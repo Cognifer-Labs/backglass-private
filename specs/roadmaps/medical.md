@@ -1,6 +1,6 @@
 ---
 id: medical
-version: 1
+version: 2
 title: Get into medical school and through the first two years
 horizon: annual
 definition_of_done: Matched into a residency-track programme with Step 1 passed.
@@ -77,6 +77,39 @@ annually; the offsets carry the real span.
       "weekly_count": 4,
       "estimated_minutes_each": 75
     }
+  ],
+  "totals": [
+    {
+      "key": "shadowing",
+      "title": "Shadowing hours",
+      "total_count": 60
+    },
+    {
+      "key": "clinical",
+      "title": "Clinical experience hours (paid or volunteer)",
+      "total_count": 150
+    },
+    {
+      "key": "volunteering",
+      "title": "Non-clinical volunteering hours",
+      "total_count": 100
+    },
+    {
+      "key": "research",
+      "title": "Research hours",
+      "total_count": 200
+    },
+    {
+      "key": "leadership",
+      "title": "Leadership and teaching hours",
+      "total_count": 50
+    }
   ]
 }
 ```
+
+Version 2 added the AMCAS-category hour totals. Defaults follow common admissions
+guidance (shadowing 60, clinical 150, non-clinical 100, research 200, leadership 50);
+every one is editable on the roadmap page after instantiation, and each logged entry
+should carry its org and supervisor in the note — that note stream is the raw material
+for the Work & Activities section later.

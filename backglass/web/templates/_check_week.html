@@ -2,6 +2,7 @@
 <section class="sec" id="check-week">
   {{ m.banner('Daily checklist', grid.done_today ~ '/' ~ grid.total_today ~ ' today') }}
   <div class="inner">
+    {% include "_kpis.html" %}
     {% if grid.empty %}
       <p class="empty">No checklist items. Add up to seven non-negotiables with
         <span class="kbd">backglass checklist add</span>.</p>
@@ -52,6 +53,38 @@
         <span><i></i>Open</span>
         <span>– Not scheduled</span>
       </div>
+
+      {% if not heat.empty %}
+        {# GitHub-contribution idiom, design-system §5 sequential magnitude: one
+           ink at stepped opacity, never a second hue. Each cell carries its
+           numbers in title + aria-label — rule 3, never color alone. #}
+        <h3 class="hmhd cond">Consistency · last {{ heat.weeks|length }} weeks</h3>
+        <table class="hm">
+          <thead>
+            <tr>
+              <th class="wk"></th>
+              {% for c in heat.weeks[0] %}<th>{{ c.day.strftime('%a') }}</th>{% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for week in heat.weeks %}
+              <tr>
+                <td class="wk">{{ week[0].day.strftime('%d %b') }}</td>
+                {% for c in week %}
+                  <td>
+                    {% if c.future or not c.denominator %}
+                      <span class="off">–</span>
+                    {% else %}
+                      <span class="hmf b{{ c.bucket }}" role="img"
+                            title="{{ c.label }}" aria-label="{{ c.label }}"></span>
+                    {% endif %}
+                  </td>
+                {% endfor %}
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% endif %}
     {% endif %}
   </div>
 </section>

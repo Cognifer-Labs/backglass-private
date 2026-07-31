@@ -108,7 +108,16 @@ def sync(
     _triage_pass(conn, ledger, settings, client, cap, report)
     _extract_pass(conn, ledger, settings, client, cap, report)
 
-    report.writes = ledger.writes
+    # Review-day tallies → checkpoints. Deterministic — the data arrives structured,
+    # so this is code, not a model call, and it costs nothing on the cap. Skipped on
+    # dry-run like every other write.
+    review_writes = 0
+    if not dry_run:
+        from backglass.goals import reviews as reviews_mod
+
+        review_writes = reviews_mod.sync_checkpoints(conn, settings)
+
+    report.writes = ledger.writes + review_writes
     report.spend_cents = round(cap.this_run_usd * 100)
     report.degraded = cap.reached
     report.commitments_inserted = ledger.stats.commitments_inserted

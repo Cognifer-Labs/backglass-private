@@ -7,6 +7,14 @@ doctor; the product half is the seven-day soak at the end.
 
 Owner-at-the-keyboard steps are marked **[you]**; everything else is a command.
 
+## 0. `backglass setup`
+
+One command finds every local store on the machine (Anki, Avorio, Messages,
+Obsidian, the Apple bridges) and writes the `.env` lines you would otherwise hunt
+for; token and OAuth sources get their exact remaining step printed. Run it first,
+run it again any time — it is idempotent and read-only until you confirm a write.
+`--yes` takes every find; `--reviews-target <id>` binds review streaks to a goal.
+
 ## 1. Clean slate
 
 - [ ] Quit Backglass.app if running.

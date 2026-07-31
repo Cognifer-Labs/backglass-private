@@ -206,18 +206,31 @@ def review_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:
     return Panel(title="Review queue", empty_text="Nothing to review.", rows=rows)
 
 
-def sources_panel(conn: sqlite3.Connection) -> Panel:
+def sources_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:
+    from backglass.connectors import detect
+
     rows = _rows(conn, "dashboard_sources", {"user_id": USER_ID})
     kill = conn.execute(query("triage_kill_rate"), {"user_id": USER_ID}).fetchone()
     total = int((kill or {}).get("total") or 0)
     rate = float((kill or {}).get("kill_rate") or 0.0)
     last = conn.execute("SELECT * FROM run ORDER BY id DESC LIMIT 1").fetchone()
 
+    # Stores sitting on this machine that one `backglass setup` run would hook up.
+    # Detection is stat-calls only, cheap enough for every render (Phase A2).
+    authed = {r["source"] for r in rows if r["status"] == "ok"}
+    configured = {r["source"] for r in rows}
+    found = [
+        {"source": d.source, "hint": d.hint}
+        for d in detect.detect_all(settings, authed=authed)
+        if d.status == detect.FOUND and d.source not in configured
+    ]
+
     return Panel(
         title="Sources",
-        empty_text="No sources configured. Run `backglass auth <label>`.",
+        empty_text="No sources configured. Run `backglass setup`.",
         rows=rows,
         meta={
+            "found": found,
             "kill_rate": rate,
             "triaged": total,
             # docs/06: "If it drops below 85 percent the rules have drifted and cost is
@@ -257,7 +270,7 @@ def sidebar(conn: sqlite3.Connection, settings: Settings, today: date) -> Sideba
 
     board = board_panel(conn, settings, today)
     review = review_panel(conn, settings)
-    sources = sources_panel(conn)
+    sources = sources_panel(conn, settings)
 
     staleness = {s.goal_id: s for s in health.staleness(conn, settings, today)}
     risks = {r.goal_id: r for r in health.risk(conn, settings, today)}
@@ -343,6 +356,6 @@ def everything(conn: sqlite3.Connection, settings: Settings, today: date) -> Das
         goals=goals_panel(conn, settings, today),
         checklist=checklist_panel(conn, today),
         review=review_panel(conn, settings),
-        sources=sources_panel(conn),
+        sources=sources_panel(conn, settings),
         lanes=swimlanes(board.rows),
     )

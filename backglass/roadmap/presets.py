@@ -52,6 +52,15 @@ class PresetCadence:
 
 
 @dataclass(frozen=True)
+class PresetTotal:
+    """A lifetime accumulator target (Phase 10): reach total_count, log against it."""
+
+    key: str
+    title: str
+    total_count: int
+
+
+@dataclass(frozen=True)
 class Preset:
     id: str
     version: str
@@ -60,6 +69,7 @@ class Preset:
     definition_of_done: str
     steps: list[PresetStep]
     cadences: list[PresetCadence]
+    totals: list[PresetTotal]
     path: Path
 
     @property
@@ -82,9 +92,11 @@ def load(path_id: str, base_dir: Path | None = None) -> Preset:
 
     steps = [_step(path, item) for item in _list(path, body, "steps")]
     cadences = [_cadence(path, item) for item in _list(path, body, "cadences")]
+    totals = [_total(path, item) for item in _list(path, body, "totals")]
 
     _no_duplicates(path, "step", [s.key for s in steps])
     _no_duplicates(path, "cadence", [c.key for c in cadences])
+    _no_duplicates(path, "total", [t.key for t in totals])
 
     known = {c.key for c in cadences}
     for step in steps:
@@ -102,6 +114,7 @@ def load(path_id: str, base_dir: Path | None = None) -> Preset:
         definition_of_done=meta["definition_of_done"],
         steps=steps,
         cadences=cadences,
+        totals=totals,
         path=path,
     )
 
@@ -182,6 +195,16 @@ def _cadence(path: Path, item: dict[str, Any]) -> PresetCadence:
         weekly_count=int(item["weekly_count"]),
         estimated_minutes_each=int(item["estimated_minutes_each"]),
     )
+
+
+def _total(path: Path, item: dict[str, Any]) -> PresetTotal:
+    for required in ("key", "title", "total_count"):
+        if required not in item:
+            raise PresetError(f"{path.name}: a total is missing {required!r}")
+    count = int(item["total_count"])
+    if count <= 0:
+        raise PresetError(f"{path.name}: total {item['key']!r} needs a positive total_count")
+    return PresetTotal(key=str(item["key"]), title=str(item["title"]), total_count=count)
 
 
 def _no_duplicates(path: Path, what: str, keys: list[str]) -> None:

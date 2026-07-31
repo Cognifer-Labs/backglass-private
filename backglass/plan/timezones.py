@@ -63,6 +63,16 @@ def parse_ranges(entries: list[str]) -> list[Stay]:
     return stays
 
 
+def local_now_iso(settings: Settings, day: date | None = None) -> str:
+    """Owner-local now, second precision, with the active zone's offset.
+
+    For provenance stamps on manual writes (quick-add, hours logged). `db.now_iso`
+    stays UTC for telemetry — but a claim the owner typed tonight in Phoenix must not
+    read as tomorrow, and P13's "stored UTC" is satisfied by the explicit offset."""
+    zone = active_tz(settings, day or datetime.now().date())
+    return datetime.now(ZoneInfo(zone)).replace(microsecond=0).isoformat()
+
+
 def active_tz(settings: Settings, day: date) -> str:
     """The zone in force on `day`. Later entries win on overlap.
 

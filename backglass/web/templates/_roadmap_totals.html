@@ -1,0 +1,102 @@
+{% import "_macros.html" as m %}
+{# The medical-application ledger view (Phase 10), generic to any goal with total
+   targets: cumulative bar + the log entries that substantiate it (rule 4 — the
+   number and its provenance travel together). Logging writes one checkpoint;
+   the bar is SUM(delta) computed on read (G3, G10). #}
+<div id="roadmap-totals">
+  {% if totals %}
+    <div class="addform" style="margin-top:var(--sp-5)">
+      <p class="lbl">Hours &amp; totals</p>
+      {% for t in totals %}
+        {% set pct = (100 * t['done'] / t['total_count'])|round|int %}
+        {% set behind = risk and risk.at_risk and t['done'] < t['total_count'] %}
+        <div class="tot">
+          <div class="hd">
+            <span class="nm">{{ t['title'] }}</span>
+            {% if t['done'] >= t['total_count'] %}{{ m.chip('done') }}
+            {% elif behind %}{{ m.chip('slipping') }}{% endif %}
+          </div>
+          <div class="trackrow">
+            <div class="track grow">
+              <div class="fill{% if t['done'] >= t['total_count'] %} green{% elif behind %} gold{% endif %}"
+                   style="width:{{ [pct, 100]|min }}%"></div>
+            </div>
+            <span class="pct tnum">{{ t['done'] }}/{{ t['total_count'] }} · {{ [pct, 100]|min }}%</span>
+          </div>
+          {% for e in t['entries'] %}
+            <p class="b2 tent">{{ e['occurred_at'][:10] }} · +{{ e['delta'] }}
+              {%- if e['activity'] %} · {{ e['activity'] }}{% endif %}
+              {%- if e['note'] %} · {{ e['note'] }}{% endif %}</p>
+          {% endfor %}
+          <div class="acts">
+            <form class="logform" hx-post="/roadmaps/{{ r['id'] }}/totals/{{ t['id'] }}/log"
+                  hx-target="#roadmap-totals" hx-swap="outerHTML">
+              <input type="number" name="amount" min="1" step="1" value="1" required
+                     aria-label="Amount for {{ t['title'] }}">
+              <input type="text" name="note" placeholder="org · supervisor"
+                     aria-label="Note for {{ t['title'] }}">
+              {% if activities %}
+                <select name="activity_id" aria-label="Activity for {{ t['title'] }}">
+                  <option value="0">no activity</option>
+                  {% for a in activities %}
+                    <option value="{{ a['id'] }}">{{ a['title'] }}</option>
+                  {% endfor %}
+                </select>
+              {% endif %}
+              <button class="btn ok" type="submit">Log</button>
+            </form>
+            <form class="logform" hx-post="/roadmaps/{{ r['id'] }}/totals/{{ t['id'] }}/set"
+                  hx-target="#roadmap-totals" hx-swap="outerHTML">
+              <input type="number" name="total" min="1" step="1" value="{{ t['total_count'] }}"
+                     aria-label="Target for {{ t['title'] }}">
+              <button class="btn" type="submit">Set target</button>
+            </form>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+
+    {# The activity registry (docs/14 F1): the discrete extracurriculars hour logs
+       file under. Hours are summed on read from each activity's checkpoints; the
+       15-slot and 3-most-meaningful figures are AMCAS's caps, surfaced never
+       enforced. #}
+    <div class="addform" style="margin-top:var(--sp-5)">
+      <p class="lbl">Activities
+        {%- if activities %} <span class="tnum">· {{ activities|length }} of {{ amcas_slots }} slots</span>{% endif %}</p>
+      {% for a in activities %}
+        <div class="tot">
+          <div class="hd">
+            <span class="nm">{{ a['title'] }}</span>
+            <span class="chip k-plain">{{ a['category'] }}</span>
+            {% if a['most_meaningful'] %}<span class="chip">most meaningful</span>{% endif %}
+          </div>
+          <p class="b2 tent">
+            {%- if a['org'] %}{{ a['org'] }}{% if a['role'] %} · {{ a['role'] }}{% endif %} · {% endif -%}
+            <span class="tnum">{{ a['hours'] }} h</span> across {{ a['entry_count'] }} entr{{ 'y' if a['entry_count'] == 1 else 'ies' }}
+            {%- if a['first_logged'] %} · {{ a['first_logged'][:10] }} → {{ a['last_logged'][:10] }}{% endif %}
+          </p>
+          <div class="acts">
+            <form class="logform"
+                  hx-post="/roadmaps/{{ r['id'] }}/activities/{{ a['id'] }}/meaningful"
+                  hx-target="#roadmap-totals" hx-swap="outerHTML">
+              <button class="btn" type="submit">
+                {{ 'Unmark meaningful' if a['most_meaningful'] else 'Mark meaningful' }}
+              </button>
+            </form>
+          </div>
+        </div>
+      {% endfor %}
+      <form class="logform" hx-post="/roadmaps/{{ r['id'] }}/activities"
+            hx-target="#roadmap-totals" hx-swap="outerHTML">
+        <input type="text" name="title" placeholder="activity title" required
+               aria-label="New activity title">
+        <input type="text" name="org" placeholder="organization" aria-label="Organization">
+        <input type="text" name="role" placeholder="role" aria-label="Role">
+        <select name="category" aria-label="Category">
+          {% for c in categories %}<option value="{{ c }}">{{ c }}</option>{% endfor %}
+        </select>
+        <button class="btn ok" type="submit">Add activity</button>
+      </form>
+    </div>
+  {% endif %}
+</div>

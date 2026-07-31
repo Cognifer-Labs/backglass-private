@@ -67,7 +67,12 @@ def staleness(conn: sqlite3.Connection, settings: Settings, day: date) -> list[S
     out: list[Staleness] = []
     for row in rows:
         if row["last_at"]:
-            days: int | None = (day - date.fromisoformat(str(row["last_at"]))).days
+            # Clamped at zero: occurred_at is stored UTC, so a checkpoint logged
+            # tonight can carry tomorrow's date in a western timezone — and
+            # "-1 days quiet" is an impossible claim on a provenance surface.
+            days: int | None = max(
+                0, (day - date.fromisoformat(str(row["last_at"]))).days
+            )
         else:
             days = None
         if days is None or days >= settings.stale_serious_days:
@@ -142,7 +147,11 @@ def risk(conn: sqlite3.Connection, settings: Settings, day: date) -> list[Risk]:
         "  (SELECT COALESCE(SUM(cp.delta), 0) FROM checkpoint cp "
         "   JOIN target t ON t.id = cp.target_id WHERE t.goal_id = g.id) AS total, "
         "  (SELECT COALESCE(SUM(t.weekly_count), 0) FROM target t "
-        "   WHERE t.goal_id = g.id AND t.active = 1 AND t.kind = 'cadence') AS weekly_needed "
+        "   WHERE t.goal_id = g.id AND t.active = 1 AND t.kind = 'cadence') AS weekly_needed, "
+        "  (SELECT COALESCE(SUM(MAX(t.total_count - COALESCE("
+        "     (SELECT SUM(cp.delta) FROM checkpoint cp WHERE cp.target_id = t.id), 0), 0)), 0) "
+        "   FROM target t WHERE t.goal_id = g.id AND t.active = 1 "
+        "   AND t.kind = 'total' AND t.total_count IS NOT NULL) AS totals_remaining "
         "FROM goal g WHERE g.user_id = ? AND g.status = 'active' ORDER BY g.id",
         (since.isoformat(), USER_ID),
     ).fetchall()
@@ -160,9 +169,11 @@ def risk(conn: sqlite3.Connection, settings: Settings, day: date) -> list[Risk]:
         else:
             weeks_left = (target_date - day).days / 7
 
-        # What still has to happen: the cadence the goal claims it needs, for the weeks
-        # that remain.
-        remaining = weekly_needed * weeks_left
+        # What still has to happen: the cadence the goal claims it needs for the weeks
+        # that remain, plus whatever its lifetime totals still lack (Phase 10). The
+        # observed rate already counts total-target checkpoints — SUM(delta) is blind
+        # to kind — so both sides of the projection speak the same units.
+        remaining = weekly_needed * weeks_left + float(row["totals_remaining"] or 0)
         required = (remaining / weeks_left) if weeks_left else 0.0
 
         if observed > 0 and remaining > 0:

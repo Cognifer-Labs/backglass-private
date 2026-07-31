@@ -206,6 +206,10 @@ class FakeModel:
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
+    # Behavior-shaping knobs are pinned to the documented defaults so the suite does
+    # not inherit the owner's live .env — personalizing WORKING_WINDOW must not move
+    # planner fixtures. Env *parsing* stays covered by tests/test_config.py, which
+    # reads the environment on purpose (the 2026-07-30 lesson).
     return Settings(
         owner_name="K",
         owner_emails=["contactdharsan@gmail.com", "dkesava2@asu.edu"],
@@ -213,6 +217,12 @@ def settings(tmp_path: Path) -> Settings:
         db_path=tmp_path / "backglass.db",
         model_backend="claude_cli",
         max_concurrency=1,
+        working_window="09:00-18:00",
+        peak_window="09:00-12:00",
+        default_tz="America/Phoenix",
+        alt_tz="Asia/Kolkata",
+        tz_ranges=[],
+        noise_senders=[],
     )
 
 

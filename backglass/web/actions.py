@@ -21,6 +21,7 @@ from typing import Any
 
 from backglass.db import now_iso
 from backglass.ledger import USER_ID
+from backglass.plan import timezones
 
 #: docs/11 §4: "Rejecting also records the reason category, one click: wrong date, not a
 #: commitment, not mine, already done. Four buttons, no free text."
@@ -344,7 +345,9 @@ def quick_add(
         "INSERT INTO source_item (user_id, source, external_id, fetched_at, occurred_at,"
         " author, title, body_text, content_hash, triage_verdict, extraction_version)"
         " VALUES (?, 'manual', ?, ?, ?, ?, 'Manual entry', ?, ?, 'keep', 'manual')",
-        (USER_ID, uuid.uuid4().hex, now_iso(), now_iso(),
+        # fetched_at is telemetry (UTC); occurred_at is the owner's claim and carries
+        # their local date — typed tonight in Phoenix must not read as tomorrow.
+        (USER_ID, uuid.uuid4().hex, now_iso(), timezones.local_now_iso(settings),
          (settings.owner_emails[0] if settings.owner_emails else settings.owner_name),
          body, sha256(body.encode()).hexdigest()),
     )

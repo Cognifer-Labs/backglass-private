@@ -1,0 +1,19 @@
+{% import "_macros.html" as m %}
+{# The Excel-dashboard KPI strip: three numbers, then detail below. Reel treatment
+   per §7 — exactly three per view, and this page has no other reels. Rendered
+   inside #check-week so tick swaps keep it live; cards_fragment sends an OOB
+   copy when a cadence change moves the on-pace count. #}
+<div class="kpis" id="gkpis"{% if kpi_oob|default(false) %} hx-swap-oob="outerHTML"{% endif %}>
+  <div class="kpi">
+    {{ m.reel(k.done_today) }}
+    <span class="klbl">done today<br>of {{ k.total_today }}</span>
+  </div>
+  <div class="kpi">
+    {{ m.reel(k.best_streak) }}
+    <span class="klbl">best streak<br>days</span>
+  </div>
+  <div class="kpi">
+    {{ m.reel(k.on_pace) }}
+    <span class="klbl">targets on pace<br>of {{ k.cadence_total }}</span>
+  </div>
+</div>

@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = 'memory' %}
+
+{% block title %}Backglass — Memory{% endblock %}
+{% block meta %}{{ count }} active fact{{ '' if count == 1 else 's' }}{% endblock %}
+
+{% block content %}
+<section class="sec" id="memory">
+  {{ m.banner('Memory', count ~ ' facts') }}
+  <div class="inner">
+    {% if not subjects %}
+      <p class="empty">Nothing remembered yet. Add a fact below, or
+        <span class="kbd">backglass memory set &lt;subject&gt; &lt;key&gt; &lt;value&gt;</span>.</p>
+    {% endif %}
+
+    {% for subject, rows in subjects.items() %}
+      <p class="lane">{{ subject }}</p>
+      {% for f in rows %}
+        <div class="row">
+          <span class="time">{{ f.key }}</span>
+          <div class="grow">
+            <p class="b1">{{ f.value }}</p>
+            <p class="b2">{% if f.note %}{{ f.note }} · {% endif -%}
+              {{ f.source }} · {{ f.created_at[:10] }}</p>
+          </div>
+          <form hx-post="/memory/{{ f.fact_id }}/forget" hx-target="#memory"
+                hx-swap="outerHTML" style="margin:0">
+            {# Retraction, not deletion — the row keeps its history. #}
+            <button class="btn defer" type="submit">Forget</button>
+          </form>
+        </div>
+      {% endfor %}
+    {% endfor %}
+
+    <div class="addform">
+      <p class="lbl">Remember something</p>
+      <form hx-post="/memory" hx-target="#memory" hx-swap="outerHTML">
+        <input type="text" name="subject" placeholder="subject (lane)" required
+               list="mem-subjects" aria-label="Subject">
+        <datalist id="mem-subjects">
+          {% for subject in subjects %}<option value="{{ subject }}">{% endfor %}
+        </datalist>
+        <input type="text" name="key" placeholder="key" required aria-label="Key">
+        <input type="text" name="value" placeholder="value" required aria-label="Value">
+        <input type="text" name="note" placeholder="evidence / note" aria-label="Note">
+        <button class="btn ok" type="submit">Remember</button>
+      </form>
+      <p class="note">Writing the same subject + key again replaces the old value and
+        keeps its history. Updating a fact is adding its replacement.</p>
+    </div>
+  </div>
+</section>
+{% endblock %}

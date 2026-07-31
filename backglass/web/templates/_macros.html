@@ -55,6 +55,11 @@
   {%- endif -%}
 {%- endmacro %}
 
+{% macro reel(value) -%}
+  {#- §7: each digit in its own paper window on a black plate. -#}
+  <span class="reel">{% for ch in value|string %}<span>{{ ch }}</span>{% endfor %}</span>
+{%- endmacro %}
+
 {% macro kind_legend() -%}
   {#- One legend for the day and week schedule views, so the two cannot drift. -#}
   <div class="legend">

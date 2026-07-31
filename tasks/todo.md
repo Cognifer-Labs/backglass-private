@@ -749,6 +749,116 @@ dashboard due labels + people checkbox render right.
 
 ---
 
+# Phase 12 — Personal knowledge base ("Memory")  (2026-07-31)
+(approved; plan: ~/.claude/plans/crispy-noodling-storm.md)
+
+Owner ask: a knowledge base backend so Backglass carries personal memory and nothing
+re-derives facts from mail every session. Fits the one idea: a fact is a typed claim
+with provenance and a lifecycle — the commitment pattern minus a due date. No vector
+store; subjects + keys are the index.
+
+- [x] Migration 0008 `fact` (subject/key/value/note/source/source_item_id/status/
+      superseded_by) + partial index on active; schema.sql pointer comment
+- [x] backglass/facts.py — remember (auto-supersedes same subject+key, local stamps),
+      recall, forget (retract, never DELETE), export_markdown (per-line provenance)
+- [x] Memory page /memory — subject lanes, add form (datalist of lanes), Forget
+      button; nav entry + key 6
+- [x] CLI: backglass memory / set / forget / export [--out]
+- [x] CLAUDE.md §Owner memory — assistants read `memory export` before searching
+      mail/files, write new durable facts back with `memory set`
+- [x] Seeded 18 facts from this session (source=assistant, evidence in notes):
+      identity, education (incl. Early Start DECLINED + unresolved Aug 5–15
+      attendance conflict), housing (Willow 502, move-in Aug 9 8am owner-stated),
+      premed cycle, Banner shift, OrgTruth, family, contacts, theme preference
+- [x] tests/test_facts.py — 8 tests (supersession chain, retraction survives in
+      table, export active-only, page round-trip, nav, 422); migration list → [1..8]
+- [x] 508 tests, ruff, mypy strict, palette clean; live: /memory renders seeded
+      lanes, `backglass memory export` prints the doc
+
+Not done (recorded): fact extraction from email at ingest (source='extraction'
+column ready — needs its own versioned prompt + fixtures; natural Phase 13); facts
+never enter the brief (memory is reference, not news).
+
+Concurrent-session note: activities layer (0007) untouched; shared files got
+additive edits only, re-read before each.
+
+---
+
+# Phase 11 — Personalize to Dharsan  (2026-07-30)
+(approved; plan: ~/.claude/plans/crispy-noodling-storm.md. Owner rulings: apply
+June 2029 / matriculate 2030; working window 10:00–22:00.)
+
+- [x] .env: OWNER_NAME=Dharsan (feeds extraction + interview + i_owe resolution),
+      WORKING_WINDOW=10:00-22:00, PEAK_WINDOW=10:00-13:00, NOISE_SENDERS = the two
+      parent-targeted ASU lists. BRIEF_TO deferred until RESEND_API_KEY exists.
+- [x] timezones.local_now_iso(): manual provenance stamps are owner-local with
+      explicit offset (P13 kept via absolutes). Used by quick-add source_item
+      occurred_at + both totals-log endpoints. Kills the "-1d"/tomorrow bug class
+      at the write site; telemetry stays UTC.
+- [x] POST /goals/targets/{id}/log — totals loggable from the Goals page (non-
+      roadmap goals had no write surface); 404 non-total/inactive, 422 amount<=0.
+- [x] Medical roadmap redated to the real cycle (data op, adjust.redate_step):
+      MCAT 2029-04-26, AMCAS 2029-06-15, Step 1 2032-06-01, match 2034-03-20;
+      goal target recomputed to 2034-03-20.
+- [x] Seeded "Barrett move-in: confirm slot and logistics" due 08 Aug (assumption:
+      sourced from the Barrett digest; owner should confirm the real date).
+- [x] Suite-vs-.env leakage fixed at the root: conftest settings fixture pins
+      behavior-shaping knobs (window/peak/tz/noise) to documented defaults — the
+      owner's live .env can no longer move planner fixtures. Env parsing stays
+      covered by test_config.py per the 2026-07-30 lesson.
+- [x] 456 tests, ruff, mypy strict, palette clean. Live-verified: new stamps land
+      2026-07-30T19:02-07:00; 6 log forms on /goals; provenance reads today.
+      Known remainder: rows written before the fix keep their UTC stamps
+      (immutable by design) — the one "-1d" on the awaiting panel ages out.
+
+---
+
+# Phase 10 — Hour-total targets, medical preset v2, roadmap progress view  (2026-07-30)
+(approved; plan: ~/.claude/plans/crispy-noodling-storm.md)
+
+Owner ask: roadmap that shows progress toward goals + medical extracurricular list
+with hour logging toward the application ("or my app among other things" → generic).
+Design: new target kind `total` — lifetime accumulator, total_count to reach,
+checkpoint.delta carries each logged amount, note carries org/supervisor (AMCAS
+raw material). Progress = SUM(delta) on read (G3/G10). Not doing: per-activity
+entities/AMCAS export (later read-only report), hours in capacity model,
+auto-extraction of hours (same source field makes it possible later).
+
+- [x] 1. Migration 0006 `target.total_count` + schema.sql kind comment
+- [x] 2. Engine: targets.progress lifetime_done + complete; health.risk remaining
+      += totals_remaining (observed rate already sums deltas); capacity ignores
+      totals (weekly_minutes 0)
+- [x] 3. Preset schema `totals` section + medical.md v2 (5 AMCAS categories:
+      shadowing 60 / clinical 150 / non-clinical 100 / research 200 / leadership 50)
+- [x] 4. Roadmap page: progress header (steps track, next step, staleness chip,
+      risk sentence) inside #roadmap-steps fragment; Hours & totals block with
+      cumulative bars (green done / gold behind-at-risk), last-3 log entries,
+      log + set-target forms → POST /roadmaps/{rid}/totals/{tid}/log|set
+- [x] 5. Goal cards + dashboard Goals panel render total targets ("4/60 logged",
+      lifetime bar; read-only echo — logging lives on the roadmap page)
+- [x] 6. CLI `backglass goals add-total <goal-id> "<title>" <n>` via
+      instantiate.add_total (generic to any goal)
+- [x] 7. tests/test_goals_totals.py — 14 tests: migration, lifetime sum,
+      threshold, behind-pace risk, finished-total no-risk, preset v2 shape,
+      instantiate counts + v2 stamp, page render, log/set round-trips, bad-write
+      404/422, goal-card echo, staleness clamp
+- [x] 8. Gates: 452 tests, ruff, mypy strict, palette exit 0; live demo-db pass
+      (medical v2 started as roadmap 2, hours logged, both themes screenshot)
+
+Fixes en route: staleness could read "-1 days quiet" (UTC occurred_at vs local
+today) — clamped at 0 with regression test. Phase 9 verifier caveat also closed
+this session: heatmap >100% claims (inactive-item ticks in numerator,
+unscheduled-day ticks) — active-join + denominator=max(scheduled,ticked), 2 tests.
+
+**Post-verify (same session):** verifier CONFIRMED all 8 claims (XSS-safe notes via
+autoescape, 0/0-steps guard, ownership 404s, clamps). It also surfaced a pre-existing
+CLI bug: `if __name__ == "__main__": app()` sat mid-file, above the people/roadmap/
+sources/goals sub-typer registrations, so `python -m backglass <sub-app>` saw no
+sub-commands (console script was unaffected). Guard moved to EOF; both entry points
+now expose all sub-apps. 452 tests green after.
+
+---
+
 # Phase 9 — Goals + Schedule: Notion/Excel-template upgrade pass
 (approved 2026-07-30; plan: ~/.claude/plans/crispy-noodling-storm.md)
 
@@ -810,3 +920,132 @@ app's cwd-relative db self-creation is by design (main.rs pins cwd to App
 Support).
 
 What remains of Phase 8 is owner work: runbook steps 2–10 and the seven-day soak.
+
+---
+
+# Med-student layer — PRD written  (2026-07-30)
+
+`docs/14-med-student-prd.md` — full planning/organization gap analysis for the
+med-school application track. Eight features: F1 activity registry + AMCAS Work &
+Activities export (P0), F2 Anki/Avorio spaced-repetition connectors (P0, Avorio
+facts confirmed against /Users/Dharsan/Avorio — local SQLite, FSRS-5, export-view
+integration recommended), F3 application cycle tracker (schools/secondaries/
+interviews as append-only events, extraction-driven), F4 `metric` target kind for
+MCAT FL trajectory, F5 letters-of-rec tracker, F6 prereq/GPA lens, F7 cycle-aware
+brief seasons, F8 interview prep packs. Sequenced A–D; five open questions need
+owner rulings (§7) before any phase is planned. Owner said "continue with planning
+and implementation" → Phase A approved, rulings below taken as working assumptions.
+
+---
+
+# Phase A — Activity registry + spaced-repetition connectors  (2026-07-30, built + verified)
+
+PRD F1 + F2 (`docs/14-med-student-prd.md`). Rulings taken (stated assumptions, owner
+can overturn):
+
+| PRD open question | Ruling for Phase A |
+|---|---|
+| Q1 Avorio surface | Direct read-only SQLite read WITH a schema guard: connector verifies expected tables/columns at open; mismatch → health degraded (rule 5), never a crash. Export view inside Avorio deferred — separate repo. Canonical db = the macOS one; per-device gap recorded in health note if sync ambiguity found. |
+| Q2 activity↔total linkage | `activity.category` TEXT keyed to preset total keys (shadowing/clinical/volunteering/research/leadership) + free `other`. No FK to target — survives roadmap re-instantiation. |
+| Reviews target binding | Config `REVIEWS_TARGET_ID` (int, optional). Deterministic post-sync step maps review-day source_items → checkpoints on that target. No model call — data already structured. Unset → connectors still ingest, no checkpoints. |
+| AMCAS export surface | CLI `backglass amcas-export` (markdown to stdout/--out). Report *page* deferred to a later pass — CLI proves the assembly first. |
+
+## Steps
+
+- [x] 1. Migration 0007: `activity` table + `checkpoint.activity_id` (nullable,
+      additive). schema.sql carries the 0007 comment (0006 convention — DDL lives
+      in the migration, schema.sql is the 0001 baseline).
+- [x] 2. `goals/activities.py`: add/toggle-meaningful/end/list_with_hours/entries_for;
+      hours = SUM(delta) over kind='total' checkpoints only, on read; 15-slot and
+      3-meaningful counts surfaced never enforced.
+- [x] 3. Roadmap page: Activities block + activity picker on the totals log form;
+      POST /roadmaps/{rid}/activities, POST .../activities/{aid}/meaningful;
+      totals entries now name their activity.
+- [x] 4. `backglass amcas-export [--out]`: per activity — org/role/contact/dates/
+      hours citing checkpoint ids, note stream as draft material with char count
+      vs 700/1325. Assembles evidence, never writes application prose.
+- [x] 5. `connectors/anki.py`: immutable read; cursor JSON {revlog: max id,
+      due_date}; per-day `reviews:<date>:<max-id>` tallies + once-a-day
+      `due:<date>` snapshot (immutability-safe by construction — no item's
+      content can ever need rewriting). ANKI_DB_PATH gates.
+- [x] 6. `connectors/avorio.py`: same shape; watermark = MAX(reviewed_at) full
+      precision (sub-second blind spot documented — UUID PK, no monotonic id);
+      required-column schema guard names drift in health(). AVORIO_DB_PATH gates.
+- [x] 7. Wiring: `goals/reviews.py` deterministic pass in sync (after extraction,
+      dry-run skipped, counted in report.writes); same-day later batches get
+      delta=0 markers so a day counts once; brief Goals line "Reviews: N due
+      (~M min) · K-day streak" with SourceRef provenance, omitted on quiet days;
+      capacity subtracts due × trailing sec/card (measured, 8s fallback),
+      new Capacity.review_minutes field.
+- [x] 8. Tests: tests/test_med_phase_a.py — 23 tests incl. second-fetch-yields-
+      nothing on both connectors (the 2026-07-30 cursor lesson, asserted
+      directly), zero-delta same-day batch, schema-drift naming, capacity
+      reduction by measured pace, brief line + quiet-day omission, web
+      round-trips. test_migrations version lists → [1..7].
+- [x] 9. Gates: 484 tests green, mypy strict clean, ruff clean, palette exit 0;
+      live demo-db pass (migrated to 0007, activity added + 4h logged through
+      the UI, amcas-export renders with checkpoint citation, both themes
+      screenshot via Safari). Uncommitted — owner has not asked for a commit.
+
+**Verifier pass:** 9/10 claims CONFIRMED on first pass; one REFUTED + two material
+findings, all fixed same session with regression tests (5 new, suite 479→484):
+1. Batch external_id `reviews:<day>:<max-id>` collided on rescan (immutability
+   conflict, reproduced through the real Ledger) → id now names the exact revlog
+   row range `<min>-<max>`; same id ⇒ same immutable rows ⇒ conflict impossible.
+   Due item hashed `occurred_at=now()` → pinned to the date's UTC midnight, count
+   moved into the id (`due:<date>:<count>`), reader takes newest per source.
+2. `immutable=1` vs WAL: both REAL stores are WAL; immutable skips the -wal (stale
+   or "no such table" reads, demonstrated live) → `mode=ro` + busy_timeout=2000.
+   Lesson recorded. **Same pattern lives in connectors/imessage.py (chat.db is
+   also WAL) — pre-existing Phase 7 code, needs its own ruling; not touched here.**
+3. Owner's real Avorio data ("8 reviews · 155 min", idle-inflated) drove pace to
+   1162 s/card and capacity to ZERO → pace clamped 2–60 s/card, capacity
+   reservation capped at 120 min (`REVIEW_CAP_MINUTES`); brief keeps the uncapped
+   estimate so the backlog is a visible decision, not a silent surrendered day.
+Minor fixes folded in: counted-day probe now filters source='extraction' (a manual
+tick no longer swallows the tally); schema.sql carries the 0007 comment only, per
+the 0006 convention (verifier flagged the drift; convention kept, recorded here).
+
+---
+
+# Phase A2 — Seamless connector setup  (2026-07-31, built + verified)
+
+**Verifier: CONFIRMED, all 7 claims** (incl. the populated-.env byte-survival probe
+and read-only detection proved by a full before/after tree snapshot). Two caveats
+fixed same session (+1 test, suite 500): a drifted obsidian.json vault entry could
+have 500'd every dashboard render (now degrades to missing, isinstance guard); the
+.env.example template was cwd-relative (now: beside the target file, repo-root
+fallback). Accepted + recorded, not bugs on the owner's actual LF/newline-terminated
+.env: no-change writes normalize CRLF→LF and add a trailing newline; `export`/
+indented keys append rather than rewrite (later-wins makes the value still correct);
+an inline comment on a rewritten line is dropped (documented behavior).
+
+Owner ask: "all the connectors set up as seamlessly and easily for user as possible."
+Design: auto-detection of well-known store locations + one interactive command that
+writes .env and binds the reviews target, surfaced everywhere the owner already looks.
+Credentials stay in the table (docs/07); paths/opt-ins stay .env — detection bridges
+the gap by *finding* the values so the owner never hunts for a path.
+
+- [x] 1. `connectors/detect.py` — probe registry: anki (newest Anki2 profile's
+      collection.anki2), avorio (App Support/Avorio/avorio.db), imessage
+      (~/Library/Messages/chat.db; invisible without Full Disk Access — hint says
+      so), obsidian (vault list from obsidian.json), apple notes/reminders
+      (osascript present), plus config-status rows for the token/OAuth sources
+      (gmail/calendar/drive/github/slack/canvas) with the exact next command.
+      Home dir injectable; no probe in tests touches the real home.
+- [x] 2. `envfile.py` — set keys in .env preserving order/comments; creates from
+      .env.example when absent; idempotent.
+- [x] 3. `backglass setup [--yes] [--env-path]` — table of detections, per-source
+      confirm (all-yes flag), writes .env, binds REVIEWS_TARGET_ID by listing
+      cadence targets to pick from, prints the exact remaining OAuth/token steps,
+      ends pointing at `backglass doctor`.
+- [x] 4. Doctor: informational "[ -- ] found but not configured" lines from the
+      same detection registry (never failures). Sources panel empty/footer text
+      names `backglass setup`.
+- [x] 5. Tests (tests/test_setup.py, 15): detection statuses against a fake home tree (newest-profile pick,
+      missing, configured), envfile round-trips, setup --yes end-to-end in a tmp
+      cwd, panel/doctor surfacing.
+- [x] 6. Gates (499 tests, mypy strict, ruff, all green) + docs/13 gains step 0
+      pointing at setup. Live dry-drive on the real machine (demo db, scratch
+      env): found the real Anki 'User 1' profile + Avorio store, listed the six
+      cadence candidates for --reviews-target, wrote nothing real.
