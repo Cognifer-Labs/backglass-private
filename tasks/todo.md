@@ -787,9 +787,18 @@ drag/drop, streak flames, merged health scores.
       04's count X is fixture staleness (model self-dedupes, backstop stays);
       github/slack renamed to `github:personal`/`slack:personal` pre-activation,
       protocol test now covers them
-- [ ] S2 slack thread replies + github notifications feed
-- [ ] S3 imessage attributedBody typedstream + tapback filter
-- [ ] S4 pypdf, vendored quote-stripper, docs/10 §Dependencies
-- [ ] S5 desktop sidecar (PyInstaller onedir via bundle.resources; REPO_ROOT
-      resolver; _find_claude; App Support data dir; build-sidecar.sh)
-- [ ] S6 activation runbook (docs/13) + `backglass doctor`; then the 7-day soak
+- [x] S2 slack thread replies (fan-out, pre-cursor-thread limitation documented) +
+      github notifications feed (two-leg fetch, byte-exact Last-Modified echo)
+- [x] S3 imessage attributedBody typedstream (vendored ~58-line NSString scan,
+      both length forms), tapback filter 2000–3005, edits stay conflicts
+- [x] S4 pypdf (drop folder + drive; needs_ocr flag; encrypted→unreadable count),
+      extract/quoting.py vendored from talon+email-reply-parser (with the
+      sign-off-needs-a-name-block deviation), docs/10 §Dependencies table
+- [x] S5 desktop sidecar — GATE MET: /Applications/Backglass.app serves from the
+      frozen tree (tokens.css 200), fresh App Support db w/ all 5 migrations,
+      clean sidecar exit, dev mode regression intact. 157 MB.
+- [x] S6 docs/13 activation runbook + `backglass doctor` (exit 1 while any check
+      fails; the 4 current failures ARE the runbook's remaining owner steps)
+
+433 tests, mypy strict, ruff clean. What remains of Phase 8 is owner work:
+runbook steps 2–10 and the seven-day soak.

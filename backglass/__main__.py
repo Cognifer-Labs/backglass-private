@@ -922,3 +922,85 @@ def sources_enable(source: str) -> None:
     migrate(conn)
     cred_mod.set_enabled(conn, source, True)
     typer.echo(f"{source} resumed")
+
+
+# ── Phase 8: doctor ───────────────────────────────────────────────────────
+
+
+@app.command()
+def doctor() -> None:
+    """Preflight for activation: one line per check, non-zero exit on any failure.
+
+    The runbook (docs/13) says run this after every setup step; a clean doctor is
+    the automation half of "activated" — the product half is the seven-day soak.
+    """
+    import shutil
+    import subprocess
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    failures = 0
+
+    def check(label: str, ok: bool, detail: str = "") -> None:
+        nonlocal failures
+        mark = "ok " if ok else "FAIL"
+        if not ok:
+            failures += 1
+        typer.echo(f"[{mark}] {label}" + (f" — {detail}" if detail and not ok else ""))
+
+    # ── config ────────────────────────────────────────────────────────────
+    check("owner emails configured", bool(settings.owner_emails),
+          "set OWNER_EMAILS in .env")
+    check("brief recipient configured", bool(settings.brief_to),
+          "set BRIEF_TO (and RESEND_API_KEY) for delivery")
+    check("google oauth client configured",
+          bool(settings.google_client_id and settings.google_client_secret),
+          "set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET")
+
+    # ── model access ──────────────────────────────────────────────────────
+    if settings.model_backend == "claude_cli":
+        try:
+            path = model_client._find_claude()
+            check("claude CLI reachable", True)
+            del path
+        except model_client.ModelError as exc:
+            check("claude CLI reachable", False, str(exc))
+    else:
+        check("deepinfra key configured", bool(settings.model_api_key),
+              "MODEL_BACKEND=deepinfra needs MODEL_API_KEY")
+
+    if settings.apple_triage:
+        listed = ""
+        if shutil.which("shortcuts"):
+            done = subprocess.run(["shortcuts", "list"], capture_output=True, text=True)
+            listed = done.stdout
+        check(f"shortcut '{settings.apple_triage_shortcut}' exists",
+              settings.apple_triage_shortcut in listed,
+              "create it in Shortcuts.app (Receive Text → Use Model → Stop and output)")
+
+    # ── credentials + connector health ────────────────────────────────────
+    rows = list(conn.execute(
+        "SELECT source, status, enabled FROM credential WHERE user_id = ?", (USER_ID,)
+    ))
+    check("at least one source has synced or authed", bool(rows),
+          "run `backglass auth <label>` then `backglass sync --dry-run`")
+    for row in rows:
+        if not row["enabled"]:
+            typer.echo(f"[ -- ] {row['source']} — paused by owner")
+            continue
+        check(f"credential {row['source']} healthy", row["status"] == "ok",
+              str(row["status"]))
+
+    for connector in _all_connectors(conn, settings):
+        health = connector.health()
+        check(f"connector {connector.name}", health.ok, health.detail or "")
+
+    # ── scheduling ────────────────────────────────────────────────────────
+    done = subprocess.run(["launchctl", "list"], capture_output=True, text=True)
+    loaded = "com.backglass" in done.stdout
+    check("launchd jobs loaded", loaded,
+          "install per launchd/README.md — without them nothing runs at 05:45/06:00")
+
+    typer.echo("all clear" if not failures else f"{failures} check(s) failing")
+    raise typer.Exit(code=1 if failures else 0)

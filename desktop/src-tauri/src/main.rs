@@ -21,6 +21,7 @@ fn server_running() -> bool {
 }
 
 // A Finder-launched app has a minimal PATH, so `uv` must be found explicitly.
+#[cfg(debug_assertions)]
 fn find_uv() -> PathBuf {
     if let Ok(explicit) = std::env::var("BACKGLASS_UV") {
         return PathBuf::from(explicit);
@@ -40,6 +41,7 @@ fn find_uv() -> PathBuf {
     PathBuf::from("uv")
 }
 
+#[cfg(debug_assertions)]
 fn project_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("BACKGLASS_DIR") {
         return PathBuf::from(dir);
@@ -48,16 +50,51 @@ fn project_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+// Dev builds run the checkout through uv; release builds run the PyInstaller
+// sidecar bundled under Resources/, with user data in Application Support so
+// the app works with the repo gone entirely.
+#[cfg(debug_assertions)]
+fn spawn_server() -> Child {
+    Command::new(find_uv())
+        .args(["run", "backglass", "dashboard"])
+        .current_dir(project_dir())
+        .spawn()
+        .expect("failed to start the backglass dashboard server")
+}
+
+#[cfg(not(debug_assertions))]
+fn spawn_server() -> Child {
+    let exe = std::env::current_exe().expect("no current exe");
+    let sidecar = exe
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|contents| {
+            contents
+                .join("Resources")
+                .join("sidecar")
+                .join("backglass-server")
+                .join("backglass-server")
+        })
+        .expect("could not resolve the bundled sidecar");
+    // cwd is the data home: pydantic-settings reads .env from it and the default
+    // db path ./data/backglass.db lands inside it. DB_PATH (absolute) still wins.
+    let data_home = std::env::var("HOME")
+        .map(PathBuf::from)
+        .expect("no HOME")
+        .join("Library/Application Support/Backglass");
+    std::fs::create_dir_all(&data_home).expect("could not create the data dir");
+    Command::new(sidecar)
+        .arg("dashboard")
+        .current_dir(data_home)
+        .spawn()
+        .expect("failed to start the bundled backglass server")
+}
+
 fn main() {
     let child: Mutex<Option<Child>> = Mutex::new(None);
 
     if !server_running() {
-        let spawned = Command::new(find_uv())
-            .args(["run", "backglass", "dashboard"])
-            .current_dir(project_dir())
-            .spawn()
-            .expect("failed to start the backglass dashboard server");
-        *child.lock().unwrap() = Some(spawned);
+        *child.lock().unwrap() = Some(spawn_server());
         for _ in 0..150 {
             if server_running() {
                 break;
