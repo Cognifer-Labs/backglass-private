@@ -32,6 +32,18 @@
   {%- endif -%}
 {%- endmacro %}
 
+{% macro due_state_chip(planned_date, today) -%}
+  {#- The panel's shared due-state grammar, used by roadmap steps and list rows.
+      §4 verbatim: overdue = vermilion fill + keyline + glyph + label; due today =
+      solid black (the strongest mark, spent ONLY on literal today); anything
+      future gets no ink at all — a date is not a state. -#}
+  {%- if planned_date and planned_date < today.isoformat() -%}
+    <span class="chip k-verm"><span aria-hidden="true">▲</span>Overdue</span>
+  {%- elif planned_date and planned_date == today.isoformat() -%}
+    <span class="chip k-black"><span aria-hidden="true">●</span>Due today</span>
+  {%- endif -%}
+{%- endmacro %}
+
 {% macro due_text(row, today) -%}
   {%- if not row['due_at'] -%}no date
   {%- elif row['state'] == 'overdue' -%}overdue
