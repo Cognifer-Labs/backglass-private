@@ -38,9 +38,13 @@ class FakeGithub(GithubConnector):
         super().__init__(token="t", **kwargs)
         self.pages = pages
         self.requested: list[str] = []
+        self.sent: list[dict[str, str]] = []
 
-    def _get_url(self, url: str) -> tuple[Any, dict[str, str]]:
+    def _get_url(
+        self, url: str, extra_headers: dict[str, str] | None = None
+    ) -> tuple[Any, dict[str, str]]:
         self.requested.append(url)
+        self.sent.append(dict(extra_headers or {}))
         for key, value in self.pages.items():
             if key in url:
                 return value
@@ -65,6 +69,42 @@ def an_issue(**kwargs: Any) -> dict[str, Any]:
 
 def one_page(issues: list[dict[str, Any]], **headers: str) -> dict[str, Any]:
     return {"/search/issues": ({"items": issues}, headers)}
+
+
+def a_notification(**kwargs: Any) -> dict[str, Any]:
+    repo = kwargs.pop("repo", "kesavan/backglass")
+    number = kwargs.pop("number", 41)
+    kind = kwargs.pop("subject_type", "PullRequest")
+    path = "issues" if kind == "Issue" else "pulls"
+    base: dict[str, Any] = {
+        "id": str(kwargs.pop("id", 900123)),
+        "reason": kwargs.pop("reason", "review_requested"),
+        "unread": True,
+        "updated_at": kwargs.pop("updated_at", "2026-07-29T18:40:00Z"),
+        "subject": {
+            "title": kwargs.pop("title", "Cap the extractor spend per run"),
+            "type": kind,
+            "url": kwargs.pop(
+                "subject_url", f"https://api.github.com/repos/{repo}/{path}/{number}"
+            ),
+        },
+        "repository": {"full_name": repo, "owner": {"login": repo.split("/")[0]}},
+    }
+    base.update(kwargs)
+    return base
+
+
+def feeds(
+    issues: list[dict[str, Any]],
+    notifications: list[dict[str, Any]],
+    *,
+    search_headers: dict[str, str] | None = None,
+    notification_headers: dict[str, str] | None = None,
+) -> dict[str, tuple[Any, dict[str, str]]]:
+    return {
+        "/search/issues": ({"items": issues}, search_headers or {}),
+        "/notifications": (notifications, notification_headers or {}),
+    }
 
 
 # ── mapping ───────────────────────────────────────────────────────────────
@@ -198,6 +238,154 @@ def test_an_exhausted_rate_limit_stops_cleanly(enforcing: Boundary) -> None:
     assert connector.rate_limited is True
     assert connector.cursor == "2026-07-28T09:15:32+00:00"
     assert not any("page=2" in url for url in connector.requested)
+
+
+# ── notifications ─────────────────────────────────────────────────────────
+
+
+def test_a_notification_carries_its_reason_into_the_body(enforcing: Boundary) -> None:
+    """docs/12 §5: `reason` is the obligation signal the search leg cannot see —
+    `review_requested` *is* a commitment, `subscribed` is noise, and only the
+    notifications feed says which one this was."""
+    connector = FakeGithub(feeds([], [a_notification(number=88)]), boundary=enforcing)
+    items = list(connector.fetch(None))
+
+    assert len(items) == 1
+    item = items[0]
+    assert item.external_id == "kesavan/backglass#88"
+    assert item.title == "[kesavan/backglass] Cap the extractor spend per run"
+    assert item.occurred_at == "2026-07-29T18:40:00+00:00"
+    assert item.author == "kesavan"
+    assert "Reason: review_requested" in str(item.body_text)
+    assert "Repository: kesavan/backglass" in str(item.body_text)
+    assert "Subject type: PullRequest" in str(item.body_text)
+
+
+def test_notifications_that_are_not_issues_or_pull_requests_are_skipped(
+    enforcing: Boundary,
+) -> None:
+    """A failing CI run is a notification, not something the owner owes anyone."""
+    connector = FakeGithub(
+        feeds(
+            [],
+            [
+                a_notification(
+                    subject_type="CheckSuite", subject_url=None, title="build failed"
+                ),
+                a_notification(subject_type="Release", subject_url=None, title="v2 shipped"),
+                a_notification(subject_type="Issue", number=12),
+            ],
+        ),
+        boundary=enforcing,
+    )
+    items = list(connector.fetch(None))
+    assert [item.external_id for item in items] == ["kesavan/backglass#12"]
+
+
+def test_the_same_issue_in_both_feeds_yields_once_and_keeps_the_search_version(
+    enforcing: Boundary,
+) -> None:
+    """Both legs derive `owner/repo#number`, so the overlap is a set membership check.
+    The search row wins because it carries state, labels, assignees and the body."""
+    connector = FakeGithub(
+        feeds(
+            [an_issue(number=41)],
+            [a_notification(number=41, reason="mention")],
+        ),
+        boundary=enforcing,
+    )
+    items = list(connector.fetch(None))
+
+    assert len(items) == 1
+    assert items[0].external_id == "kesavan/backglass#41"
+    assert "Assigned to: kesavan" in str(items[0].body_text), "the richer search row survived"
+    assert "Reason:" not in str(items[0].body_text)
+
+
+def test_a_304_yields_nothing_and_keeps_the_stored_last_modified(enforcing: Boundary) -> None:
+    """The whole point of the conditional poll: an unchanged run costs no rate limit, and
+    the watermark it sent is exactly the watermark it stores again."""
+    stamp = "Wed, 29 Jul 2026 18:40:00 GMT"
+    connector = FakeGithub(
+        {"/notifications": (None, {"X-Poll-Interval": "60"})},
+        boundary=enforcing,
+    )
+    items = list(connector.fetch(f"2026-07-28T09:15:32+00:00|{stamp}"))
+
+    assert items == []
+    assert connector.notifications_last_modified == stamp
+    assert connector.cursor == f"2026-07-28T09:15:32+00:00|{stamp}"
+    assert connector.poll_interval_seconds == 60, "recorded, and never slept on"
+    assert "/notifications" in connector.requested[1]
+    assert connector.sent[1] == {"If-Modified-Since": stamp}
+
+
+def test_the_cursor_round_trips_both_watermarks(enforcing: Boundary) -> None:
+    stamp = "Wed, 29 Jul 2026 18:41:00 GMT"
+    connector = FakeGithub(
+        feeds(
+            [an_issue(number=1, updated_at="2026-07-28T09:15:32Z")],
+            [a_notification(number=2)],
+            notification_headers={"Last-Modified": stamp},
+        ),
+        boundary=enforcing,
+    )
+    assert len(list(connector.fetch(None))) == 2
+    assert connector.cursor == f"2026-07-28T09:15:32+00:00|{stamp}"
+
+    # …and that cursor read back drives both legs on the next run.
+    second = FakeGithub(
+        feeds([], [], notification_headers={"Last-Modified": stamp}), boundary=enforcing
+    )
+    list(second.fetch(connector.cursor))
+    assert "updated%3A%3E2026-07-28T09%3A15%3A32%2B00%3A00" in second.requested[0]
+    assert second.sent[1] == {"If-Modified-Since": stamp}
+
+
+def test_a_legacy_bare_iso_cursor_still_parses_as_the_search_watermark(
+    enforcing: Boundary,
+) -> None:
+    """Cursors written before the notifications leg existed have no `|` in them. They mean
+    "search watermark only", and the first notification poll is simply unconditional."""
+    connector = FakeGithub(feeds([], []), boundary=enforcing)
+    list(connector.fetch("2026-07-28T09:15:32+00:00"))
+
+    assert "updated%3A%3E2026-07-28T09%3A15%3A32%2B00%3A00" in connector.requested[0]
+    assert connector.sent[1] == {}, "nothing to be conditional on yet"
+    assert connector.cursor == "2026-07-28T09:15:32+00:00"
+
+
+def test_notifications_are_never_marked_read(enforcing: Boundary) -> None:
+    """Read-only rule: an unread obligation stays unread in GitHub's UI. Nothing this
+    connector does is a write, so no request may be anything but a GET."""
+    connector = FakeGithub(feeds([], [a_notification()]), boundary=enforcing)
+    items = list(connector.fetch(None))
+    assert "all=false" in connector.requested[1]
+    assert json.loads(items[0].raw_json)["unread"] is True
+
+
+def test_a_spent_quota_skips_the_notification_leg(enforcing: Boundary) -> None:
+    connector = FakeGithub(
+        feeds(
+            [an_issue(number=1)],
+            [a_notification(number=2)],
+            search_headers={"X-RateLimit-Remaining": "0"},
+        ),
+        boundary=enforcing,
+    )
+    items = list(connector.fetch(None))
+    assert [item.external_id for item in items] == ["kesavan/backglass#1"]
+    assert connector.rate_limited is True
+    assert not any("/notifications" in url for url in connector.requested)
+
+
+def test_a_notification_quoting_a_client_address_is_excluded(enforcing: Boundary) -> None:
+    connector = FakeGithub(
+        feeds([], [a_notification(title="Re: dana@clientexample.gov WIC numbers")]),
+        boundary=enforcing,
+    )
+    assert list(connector.fetch(None)) == []
+    assert connector.excluded_by_rule == {"clientexample.gov": 1}
 
 
 # ── health ────────────────────────────────────────────────────────────────

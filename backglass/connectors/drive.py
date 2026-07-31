@@ -19,6 +19,7 @@ from typing import Any
 
 from backglass.connectors.base import Cursor, Health, SourceItem, content_hash
 from backglass.connectors.boundary import Boundary
+from backglass.connectors.files import pdf_text
 
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
@@ -189,6 +190,11 @@ class DriveConnector:
         except Exception:  # noqa: BLE001 - one unreadable file is not a source failure
             return ""
         if isinstance(raw, bytes):
+            if mime == "application/pdf":
+                # Before pypdf this branch UTF-8-decoded the bytes, which stores a PDF's
+                # object streams as if they were prose (docs/12 §2). One extractor, shared
+                # with the drop folder, so the two cannot drift.
+                return pdf_text(raw).text
             return raw.decode("utf-8", errors="replace")
         return str(raw or "")
 

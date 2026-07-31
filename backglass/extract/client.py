@@ -25,6 +25,7 @@ import urllib.error
 import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Protocol
 
 from backglass.config import Settings
@@ -240,6 +241,34 @@ class DeepInfraBackend:
 # ─────────────────────────────────────────────────────────────── helpers
 
 
+def _find_claude() -> str:
+    """Locate the claude CLI without relying on a shell PATH.
+
+    A Finder-launched app and a launchd job both get a minimal PATH, and the CLI
+    cannot be bundled (subscription auth, self-updating). Precedence: explicit
+    override, PATH, then the known install locations.
+    """
+    import os
+    import shutil
+
+    if explicit := os.environ.get("CLAUDE_BIN"):
+        return explicit
+    if found := shutil.which("claude"):
+        return found
+    home = Path(os.path.expanduser("~"))
+    for candidate in (
+        home / ".claude" / "local" / "claude",
+        home / ".local" / "bin" / "claude",
+        Path("/opt/homebrew/bin/claude"),
+        Path("/usr/local/bin/claude"),
+    ):
+        if candidate.exists():
+            return str(candidate)
+    raise ModelError(
+        "claude CLI not found on PATH or in known locations; set CLAUDE_BIN"
+    )
+
+
 def build(settings: Settings) -> ModelClient:
     primary: ModelClient
     if settings.model_backend == "deepinfra":
@@ -249,7 +278,7 @@ def build(settings: Settings) -> ModelClient:
             api_key=settings.model_api_key, base_url=settings.deepinfra_base_url
         )
     else:
-        primary = ClaudeCLIBackend()
+        primary = ClaudeCLIBackend(executable=_find_claude())
     if settings.apple_triage:
         return TriageRouter(
             primary=primary,

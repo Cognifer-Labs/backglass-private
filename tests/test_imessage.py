@@ -10,11 +10,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import struct
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from backglass.connectors import _typedstream
 from backglass.connectors.boundary import Boundary
 from backglass.connectors.imessage import IMessageConnector
 
@@ -31,6 +33,43 @@ def enforcing() -> Boundary:
     return Boundary(mode="exclude", deny_domains=DENY)
 
 
+def attributed_body(text: str) -> bytes:
+    """A real-shaped `attributedBody` typedstream blob carrying `text`.
+
+    Assembled from the format rather than captured from a store, so the bytes that matter
+    are visible: the `streamtyped` header, the class chain ending in the literal class
+    name `NSString`, the `+` type code for a length-prefixed byte array, the length (one
+    byte under 128, otherwise `\\x81` and a little-endian u16), then UTF-8. Anything after
+    that is styling — here an empty attribute run, as a one-attribute message really has.
+    """
+    body = text.encode("utf-8")
+    length = bytes([len(body)]) if len(body) < 0x80 else b"\x81" + struct.pack("<H", len(body))
+    return (
+        b"\x04\x0bstreamtyped\x81\xe8\x03\x84\x01\x40\x84\x84\x84"
+        b"\x19NSMutableAttributedString\x00\x84\x84\x12NSAttributedString"
+        b"\x00\x84\x84\x08NSObject\x00\x85\x92\x84\x84\x84\x08NSString"
+        b"\x01\x94\x84\x01+" + length + body + b"\x86\x84\x02\x69\x49\x01\x00"
+    )
+
+
+def test_extract_text_reads_the_nsstring_out_of_a_typedstream_blob() -> None:
+    assert _typedstream.extract_text(attributed_body("Deck by Friday?")) == "Deck by Friday?"
+
+
+def test_extract_text_reads_the_two_byte_length_form() -> None:
+    """Anything over 127 bytes switches to `\\x81` plus a little-endian u16."""
+    long_text = "Deck by Friday? " * 20
+    assert _typedstream.extract_text(attributed_body(long_text)) == long_text.strip()
+
+
+def test_extract_text_returns_none_rather_than_raising_on_garbage() -> None:
+    """A blob we cannot read must degrade to "no text", never to a failed sync."""
+    assert _typedstream.extract_text(b"") is None
+    assert _typedstream.extract_text(b"\x04\x0bstreamtyped nothing familiar here") is None
+    # NSString marker present, but the length runs off the end of the blob.
+    assert _typedstream.extract_text(b"\x84NSString\x01\x94\x84\x01+\x40short") is None
+
+
 def build_store(path: Path, messages: list[dict[str, Any]]) -> Path:
     """A minimal chat.db: only the columns the connector actually joins on.
 
@@ -45,6 +84,8 @@ def build_store(path: Path, messages: list[dict[str, Any]]) -> Path:
             ROWID INTEGER PRIMARY KEY,
             date INTEGER,
             text TEXT,
+            attributedBody BLOB,
+            associated_message_type INTEGER DEFAULT 0,
             is_from_me INTEGER,
             handle_id INTEGER
         );
@@ -64,12 +105,16 @@ def build_store(path: Path, messages: list[dict[str, Any]]) -> Path:
                 )
             handle_id = handles[handle]
         conn.execute(
-            "INSERT INTO message (ROWID, date, text, is_from_me, handle_id)"
-            " VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO message"
+            " (ROWID, date, text, attributedBody, associated_message_type,"
+            "  is_from_me, handle_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 spec["rowid"],
                 spec.get("date", NANOSECONDS_2026_07_10),
                 spec.get("text"),
+                spec.get("attributed_body"),
+                int(spec.get("associated_message_type", 0)),
                 int(spec.get("is_from_me", 0)),
                 handle_id,
             ),
@@ -171,10 +216,85 @@ def test_cursor_advances_and_the_second_run_fetches_nothing(
     assert second.cursor == "2", "an empty run holds the watermark rather than resetting it"
 
 
+def test_a_null_text_row_recovers_its_body_from_attributedbody(
+    tmp_path: Path, enforcing: Boundary
+) -> None:
+    """docs/12 §1. Post-Ventura most rows look like this, and `SELECT text` drops them."""
+    store = build_store(
+        tmp_path / "chat.db",
+        [
+            {
+                "rowid": 1,
+                "handle": "+14805551212",
+                "text": None,
+                "attributed_body": attributed_body("Deck by Friday?"),
+            }
+        ],
+    )
+    connector = IMessageConnector(db_path=store, boundary=enforcing)
+    items = list(connector.fetch(None))
+
+    assert [item.body_text for item in items] == ["Deck by Friday?"]
+
+
+def test_an_undecodable_blob_skips_the_row_without_raising(
+    tmp_path: Path, enforcing: Boundary
+) -> None:
+    """A failing blob degrades to a textless row — CLAUDE.md rule 5, at row scale."""
+    store = build_store(
+        tmp_path / "chat.db",
+        [
+            {
+                "rowid": 1,
+                "handle": "+14805551212",
+                "text": None,
+                "attributed_body": b"\xff\x00",
+            },
+            {"rowid": 2, "handle": "+14805551212", "text": "still here"},
+        ],
+    )
+    connector = IMessageConnector(db_path=store, boundary=enforcing)
+    items = list(connector.fetch(None))
+
+    assert [item.external_id for item in items] == ["2"]
+    assert connector.cursor == "2"
+
+
+def test_a_tapback_is_skipped_but_still_moves_the_watermark(
+    tmp_path: Path, enforcing: Boundary
+) -> None:
+    """A reaction is not a message. Its text reads like one, which is the whole problem."""
+    store = build_store(
+        tmp_path / "chat.db",
+        [
+            {"rowid": 1, "handle": "+14805551212", "text": "Deck by Friday?"},
+            {
+                "rowid": 2,
+                "handle": "+14805551212",
+                "text": "Loved “Deck by Friday?”",
+                "associated_message_type": 2000,
+                "is_from_me": 1,
+            },
+            {
+                "rowid": 3,
+                "handle": "+14805551212",
+                "text": "Removed a heart from “Deck by Friday?”",
+                "associated_message_type": 3000,
+                "is_from_me": 1,
+            },
+        ],
+    )
+    connector = IMessageConnector(db_path=store, boundary=enforcing)
+    items = list(connector.fetch(None))
+
+    assert [item.external_id for item in items] == ["1"]
+    assert connector.cursor == "3", "skipped tapbacks still advance the cursor"
+
+
 def test_null_text_rows_are_skipped_but_still_move_the_watermark(
     tmp_path: Path, enforcing: Boundary
 ) -> None:
-    """An attributedBody-only row has no decodable text and is not worth a dependency.
+    """A row with neither text nor a decodable blob has nothing worth a model call.
 
     It still advances the cursor: a skipped row that never moved the watermark would be
     re-read on every run for the life of the store.

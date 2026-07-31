@@ -48,7 +48,8 @@ def a_page(messages: list[dict[str, Any]], next_cursor: str = "") -> dict[str, A
 
 
 class FakeSlack:
-    """Serves canned `conversations.history` pages, in order, per channel.
+    """Serves canned `conversations.history` pages, in order, per channel — and canned
+    `conversations.replies` pages per (channel, parent ts) thread.
 
     Pages are consumed sequentially: the connector's `cursor` param selects the index, so a
     connector that ignores `next_cursor` visibly stops at page one.
@@ -58,9 +59,11 @@ class FakeSlack:
         self,
         pages: dict[str, list[dict[str, Any]]],
         *,
+        threads: dict[tuple[str, str], list[dict[str, Any]]] | None = None,
         auth: dict[str, Any] | None = None,
     ):
         self.pages = pages
+        self.threads = threads or {}
         self.auth = auth or {"ok": True, "user_id": "U0KAY", "team": "Backglass"}
         self.calls: list[tuple[str, dict[str, str]]] = []
 
@@ -70,16 +73,25 @@ class FakeSlack:
             return self.auth
         channel = params["channel"]
         index = int(params.get("cursor") or 0)
-        pages = self.pages.get(channel, [])
+        if method == "conversations.replies":
+            pages = self.threads.get((channel, params["ts"]), [])
+        else:
+            pages = self.pages.get(channel, [])
         if index >= len(pages):
             return a_page([])
         return pages[index]
 
     def history_params(self, channel: str) -> list[dict[str, str]]:
+        return self._params("conversations.history", channel)
+
+    def replies_params(self, channel: str) -> list[dict[str, str]]:
+        return self._params("conversations.replies", channel)
+
+    def _params(self, method: str, channel: str) -> list[dict[str, str]]:
         return [
             params
-            for method, params in self.calls
-            if method == "conversations.history" and params.get("channel") == channel
+            for called, params in self.calls
+            if called == method and params.get("channel") == channel
         ]
 
 
@@ -174,6 +186,151 @@ def test_pagination_follows_next_cursor_to_completion(enforcing: Boundary) -> No
     assert [item.body_text for item in items] == ["one", "two", "three"]
     assert len(transport.history_params(CHANNEL)) == 3
     assert all(params["limit"] == "200" for params in transport.history_params(CHANNEL))
+
+
+# ── thread replies ────────────────────────────────────────────────────────
+
+PARENT_TS = "1753800000.000200"
+
+
+def a_thread_page(
+    replies: list[dict[str, Any]],
+    *,
+    parent: dict[str, Any] | None = None,
+    next_cursor: str = "",
+) -> dict[str, Any]:
+    """`conversations.replies` re-serves the parent as item one — docs/12 §4."""
+    first = [parent] if parent is not None else []
+    return a_page(first + replies, next_cursor=next_cursor)
+
+
+def test_thread_replies_are_fetched_and_the_parent_is_not_duplicated(
+    enforcing: Boundary,
+) -> None:
+    """docs/12 §4: conversations.history returns parents only, so "yes, Friday" said inside
+    a thread is invisible without the fan-out."""
+    parent = a_message(ts=PARENT_TS, text="Can you own the scope doc?", reply_count=2)
+    transport = FakeSlack(
+        {CHANNEL: [a_page([parent])]},
+        threads={
+            (CHANNEL, PARENT_TS): [
+                a_thread_page(
+                    [
+                        a_message(ts="1753800100.000100", text="Yes — Friday."),
+                        a_message(ts="1753800200.000300", user="U0KAY", text="Thanks."),
+                    ],
+                    parent=parent,
+                )
+            ]
+        },
+    )
+    connector = a_connector(transport, enforcing)
+    items = list(connector.fetch(None))
+
+    assert [item.body_text for item in items] == [
+        "Can you own the scope doc?",
+        "Yes — Friday.",
+        "Thanks.",
+    ]
+    assert [item.external_id for item in items] == [
+        f"{CHANNEL}:{PARENT_TS}",
+        f"{CHANNEL}:1753800100.000100",
+        f"{CHANNEL}:1753800200.000300",
+    ]
+    assert len(set(item.external_id for item in items)) == 3, "the parent copy is dropped"
+
+    call = transport.replies_params(CHANNEL)[0]
+    assert call["ts"] == PARENT_TS
+    assert call["limit"] == "200"
+
+
+def test_a_reply_advances_the_watermark_past_its_parent(enforcing: Boundary) -> None:
+    parent = a_message(ts=PARENT_TS, reply_count=1)
+    transport = FakeSlack(
+        {CHANNEL: [a_page([parent])]},
+        threads={
+            (CHANNEL, PARENT_TS): [
+                a_thread_page(
+                    [a_message(ts="1753890000.000700", text="late reply")], parent=parent
+                )
+            ]
+        },
+    )
+    connector = a_connector(transport, enforcing)
+    list(connector.fetch(None))
+    assert connector.cursor == "1753890000.000700"
+
+
+def test_replies_are_paginated_and_filtered_like_parents(enforcing: Boundary) -> None:
+    parent = a_message(ts=PARENT_TS, text="parent", reply_count=3)
+    transport = FakeSlack(
+        {CHANNEL: [a_page([parent])]},
+        threads={
+            (CHANNEL, PARENT_TS): [
+                a_thread_page(
+                    [a_message(ts="1753800100.000100", bot_id="B0BOT", text="Deploy ok")],
+                    parent=parent,
+                    next_cursor="1",
+                ),
+                a_thread_page(
+                    [
+                        a_message(
+                            ts="1753800100.000200", subtype="channel_join", text="joined"
+                        ),
+                        a_message(ts="1753800100.000300", text="the real answer"),
+                    ]
+                ),
+            ]
+        },
+    )
+    items = list(a_connector(transport, enforcing).fetch(None))
+    assert [item.body_text for item in items] == ["parent", "the real answer"]
+    assert len(transport.replies_params(CHANNEL)) == 2
+
+
+def test_a_parent_with_no_replies_costs_no_request(enforcing: Boundary) -> None:
+    """The rate limit is 1 request/minute for new apps (docs/12 §4); a reply_count of zero
+    must not spend one."""
+    transport = FakeSlack({CHANNEL: [a_page([a_message(reply_count=0)])]})
+    assert len(list(a_connector(transport, enforcing).fetch(None))) == 1
+    assert transport.replies_params(CHANNEL) == []
+    assert {method for method, _ in transport.calls} == {"conversations.history"}
+
+
+def test_ratelimited_during_the_replies_fan_out_keeps_the_start_cursor(
+    enforcing: Boundary,
+) -> None:
+    class ThrottledThreads(FakeSlack):
+        def __call__(self, method: str, params: dict[str, str]) -> dict[str, Any]:
+            self.calls.append((method, dict(params)))
+            if method == "conversations.replies":
+                return {"ok": False, "error": "ratelimited"}
+            return super().__call__(method, params)
+
+    transport = ThrottledThreads(
+        {CHANNEL: [a_page([a_message(ts="1753890000.000300", reply_count=1)])]}
+    )
+    connector = a_connector(transport, enforcing)
+
+    items = list(connector.fetch("1753800000.000200"))  # no raise
+    assert len(items) == 1, "the parent already yielded stays yielded"
+    assert connector.rate_limited is True
+    assert connector.cursor == "1753800000.000200", "not advanced past an incomplete run"
+
+
+def test_replies_are_bounded_by_the_same_oldest_as_history(enforcing: Boundary) -> None:
+    cursor = "1753800000.000200"
+    parent = a_message(ts="1753800500.000100", reply_count=1)
+    transport = FakeSlack(
+        {CHANNEL: [a_page([parent])]},
+        threads={
+            (CHANNEL, "1753800500.000100"): [
+                a_thread_page([a_message(ts="1753800600.000100", text="reply")], parent=parent)
+            ]
+        },
+    )
+    list(a_connector(transport, enforcing).fetch(cursor))
+    assert transport.replies_params(CHANNEL)[0]["oldest"] == cursor
 
 
 # ── cursor ────────────────────────────────────────────────────────────────

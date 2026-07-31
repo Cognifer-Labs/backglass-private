@@ -25,6 +25,7 @@ from typing import Any
 
 from backglass.connectors.base import Cursor, Health, SourceItem, content_hash
 from backglass.connectors.boundary import Boundary, addresses_in
+from backglass.extract import quoting
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 
@@ -33,13 +34,6 @@ SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 #: This is a fetch filter, not a triage rule — it saves API calls, not model calls.
 DEFAULT_QUERY = "-in:chats -category:promotions -category:social -category:forums"
 
-_QUOTE_MARKERS = (
-    re.compile(r"^\s*On .+ wrote:\s*$", re.MULTILINE),
-    re.compile(r"^-{2,}\s*Original Message\s*-{2,}\s*$", re.MULTILINE | re.IGNORECASE),
-    re.compile(r"^_{5,}\s*$", re.MULTILINE),
-    re.compile(r"^\s*From:.*\n\s*Sent:.*$", re.MULTILINE),
-    re.compile(r"^\s*>?\s*-{3,}\s*Forwarded message\s*-{3,}\s*$", re.MULTILINE | re.IGNORECASE),
-)
 _TAG = re.compile(r"<[^>]+>")
 
 
@@ -49,18 +43,12 @@ def strip_quoted(body: str) -> str:
     docs/07 requires this to happen before hashing. The reason is the cost model: without
     it, every reply in a thread is a new content_hash, so every reply is a new
     source_item, and every one of them gets a model call for text that was already read.
+
+    The patterns live in `backglass.extract.quoting` — vendored from talon and
+    email-reply-parser per docs/12 §3 — because every text source has quoted history in
+    it, not just Gmail. This stays as the connector's seam; only the battery moved.
     """
-    cut = len(body)
-    for marker in _QUOTE_MARKERS:
-        found = marker.search(body)
-        if found and found.start() < cut:
-            cut = found.start()
-    head = body[:cut]
-    kept = [line for line in head.splitlines() if not line.lstrip().startswith(">")]
-    text = "\n".join(kept)
-    # `-- ` on its own line is the RFC 3676 signature separator.
-    text = re.split(r"^-- $", text, maxsplit=1, flags=re.MULTILINE)[0]
-    return text.strip()
+    return quoting.clean(body)
 
 
 def _headers(payload: dict[str, Any]) -> dict[str, str]:

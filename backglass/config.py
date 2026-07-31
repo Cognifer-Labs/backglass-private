@@ -13,7 +13,25 @@ from typing import Annotated, Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-REPO_ROOT = Path(__file__).resolve().parent.parent
+
+def _repo_root() -> Path:
+    """Where the runtime data files live (specs/, design/).
+
+    Three homes, in precedence order: an explicit override, the PyInstaller
+    extraction dir when frozen (the sidecar's --add-data mirrors the repo layout,
+    so _MEIPASS is a faux repo root), and the working checkout otherwise.
+    """
+    import os
+    import sys
+
+    if override := os.environ.get("BACKGLASS_RESOURCES"):
+        return Path(override)
+    if getattr(sys, "frozen", False):
+        return Path(getattr(sys, "_MEIPASS", "."))
+    return Path(__file__).resolve().parent.parent
+
+
+REPO_ROOT = _repo_root()
 
 
 def _csv(value: str | list[str] | None) -> list[str]:

@@ -749,6 +749,31 @@ dashboard due labels + people checkbox render right.
 
 ---
 
+# Phase 9 — Goals + Schedule: Notion/Excel-template upgrade pass
+(approved 2026-07-30; plan: ~/.claude/plans/crispy-noodling-storm.md)
+
+Patterns stolen from Notion/Excel template research, filtered through the design
+system: KPI strip (reel budget: exactly 3), GitHub-style consistency heatmap
+(§5 sequential magnitude — ink at stepped element-opacity, theme-safe), percent
+labels on cadence tracks, week view as proportional 7-column agenda grid with
+per-day capacity lines. Deliberately not doing: dense table second view of goals,
+drag/drop, streak flames, merged health scores.
+
+- [ ] 1. Goals KPI strip — 3 reels (done today / best streak / targets on pace),
+      OOB-swapped so tick + cadence fragments keep it live
+- [ ] 2. Consistency heatmap — 8 weeks × Mon–Sun under the week grid, inside the
+      #check-week fragment so ticks re-render it; aria-label per cell
+- [ ] 3. Percent labels on cadence tracks in _goal_cards.html
+- [ ] 4. Week view → proportional agenda grid (shared hour window, ~0.5px/min,
+      kind keylines, protected hatch, now-rule, links to day view)
+- [ ] 5. Per-day capacity line in week header cells (planned · free, overflow chip)
+- [ ] 6. CSS: .kpis / .hm / .trackrow .pct / .wk7 mini-timelines
+- [ ] 7. Tests in test_web_pages.py (KPI counts, heatmap buckets + labels,
+      week positioning, capacity text, pct labels)
+- [ ] 8. pytest + mypy strict + ruff + palette validator + both-theme screenshots
+
+---
+
 # Phase 8 — Consolidate, upgrade extraction, package, activate
 (approved 2026-07-30; plan: ~/.claude/plans/wobbly-kindling-crayon.md)
 

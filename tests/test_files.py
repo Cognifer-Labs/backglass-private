@@ -8,14 +8,18 @@ keeps full precision so the second run reads nothing.
 
 from __future__ import annotations
 
+import io
+import json
 import os
 from pathlib import Path
 
 import pytest
+from pypdf import PdfWriter
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from backglass.connectors.base import Connector
 from backglass.connectors.boundary import Boundary
-from backglass.connectors.files import FilesConnector
+from backglass.connectors.files import FilesConnector, pdf_text
 
 
 @pytest.fixture
@@ -36,6 +40,36 @@ def _write(path: Path, text: str, *, mtime: float | None = None) -> Path:
     if mtime is not None:
         os.utime(path, (mtime, mtime))
     return path
+
+
+def make_pdf(text: str | None = None, *, password: str | None = None) -> bytes:
+    """A one-page PDF, built with pypdf itself.
+
+    No binary fixture is checked in: a committed PDF is opaque, and a generated one says
+    in the test exactly what it contains. `text=None` gives a page with no text operators
+    at all — the shape a scan has, minus the image, which is the only part extraction does
+    not look at anyway.
+    """
+    writer = PdfWriter()
+    page = writer.add_blank_page(width=200, height=200)
+    if text is not None:
+        stream = DecodedStreamObject()
+        stream.set_data(f"BT /F1 12 Tf 10 100 Td ({text}) Tj ET".encode())
+        page[NameObject("/Contents")] = writer._add_object(stream)
+        font = DictionaryObject()
+        font[NameObject("/Type")] = NameObject("/Font")
+        font[NameObject("/Subtype")] = NameObject("/Type1")
+        font[NameObject("/BaseFont")] = NameObject("/Helvetica")
+        fonts = DictionaryObject()
+        fonts[NameObject("/F1")] = writer._add_object(font)
+        resources = DictionaryObject()
+        resources[NameObject("/Font")] = fonts
+        page[NameObject("/Resources")] = resources
+    if password is not None:
+        writer.encrypt(password)
+    buffer = io.BytesIO()
+    writer.write(buffer)
+    return buffer.getvalue()
 
 
 def test_it_satisfies_the_connector_protocol(folder: Path, enforcing: Boundary) -> None:
@@ -92,11 +126,11 @@ def test_the_mtime_is_the_anchor_when_nothing_dates_itself(
 def test_an_unsupported_extension_is_counted_never_stored(
     folder: Path, enforcing: Boundary
 ) -> None:
-    """No dependency in this repo extracts text from a .pdf or a .docx. Silently ignoring
-    a file the owner deliberately dropped in is the failure docs/11 §8 calls dangerous, so
+    """Nothing in this repo extracts text from a .docx or a .pages. Silently ignoring a
+    file the owner deliberately dropped in is the failure docs/11 §8 calls dangerous, so
     it is counted and surfaced instead."""
-    _write(folder / "contract.pdf", "%PDF-1.7 not really")
     _write(folder / "proposal.docx", "PK binary-ish")
+    _write(folder / "deck.pages", "also binary-ish")
     _write(folder / "keep.txt", "This one is readable.")
 
     connector = FilesConnector(folder_path=folder, boundary=enforcing)
@@ -170,3 +204,79 @@ def test_a_missing_folder_is_a_visible_failure(tmp_path: Path, enforcing: Bounda
     assert str(tmp_path / "nope") in str(health.detail)
     with pytest.raises(FileNotFoundError):
         list(connector.fetch(None))
+
+
+# ── PDF (docs/12 §2 — pypdf, and the needs_ocr guard instead of an OCR stack) ──
+
+
+def test_a_dropped_pdf_becomes_a_source_item(folder: Path, enforcing: Boundary) -> None:
+    (folder / "contract.pdf").write_bytes(make_pdf("Send Dana the signed scope by Friday"))
+
+    connector = FilesConnector(folder_path=folder, boundary=enforcing)
+    items = list(connector.fetch(None))
+
+    assert [item.external_id for item in items] == ["contract.pdf"]
+    assert "signed scope by Friday" in str(items[0].body_text)
+    assert items[0].title == "contract.pdf"
+    assert connector.excluded_by_rule == {}
+    assert "needs_ocr" not in json.loads(str(items[0].raw_json))
+
+
+def test_a_scanned_pdf_is_stored_and_flagged_for_ocr(folder: Path, enforcing: Boundary) -> None:
+    """docs/12 §2: below the chars-per-page threshold, flag `needs_ocr` and do not add an
+    OCR stack. The item is still stored — a scan is a document that arrived, and dropping
+    it would leave the owner with no record and no explanation."""
+    (folder / "scan.pdf").write_bytes(make_pdf(None))
+
+    connector = FilesConnector(folder_path=folder, boundary=enforcing)
+    items = list(connector.fetch(None))
+
+    assert [item.external_id for item in items] == ["scan.pdf"]
+    assert json.loads(str(items[0].raw_json))["needs_ocr"] is True
+    assert connector.excluded_by_rule == {}
+
+
+def test_an_encrypted_pdf_is_counted_unreadable_not_crashed(
+    folder: Path, enforcing: Boundary
+) -> None:
+    """CLAUDE.md rule 5: a failing item degrades, never blocks."""
+    (folder / "locked.pdf").write_bytes(make_pdf("secret", password="hunter2"))
+    _write(folder / "keep.txt", "This one is readable.")
+
+    connector = FilesConnector(folder_path=folder, boundary=enforcing)
+    items = list(connector.fetch(None))
+
+    assert [item.external_id for item in items] == ["keep.txt"]
+    assert connector.excluded_by_rule == {"unreadable": 1}
+    assert connector.excluded == 0
+
+
+def test_a_pdf_quoting_a_client_is_excluded_by_the_boundary(
+    folder: Path, enforcing: Boundary
+) -> None:
+    """docs/08 D1 runs on the extracted text, not on the container format."""
+    (folder / "printed.pdf").write_bytes(make_pdf("From: dana@clientexample.gov re WIC"))
+
+    connector = FilesConnector(folder_path=folder, boundary=enforcing)
+
+    assert list(connector.fetch(None)) == []
+    assert connector.excluded == 1
+    assert connector.excluded_by_rule == {"clientexample.gov": 1}
+
+
+def test_pdf_text_reads_pages_and_caps_at_the_ceiling() -> None:
+    extracted = pdf_text(make_pdf("Migration plan is due Monday"))
+
+    assert extracted.readable is True
+    assert extracted.pages == 1
+    assert extracted.needs_ocr is False
+    assert "Migration plan" in extracted.text
+
+    capped = pdf_text(make_pdf("Migration plan is due Monday"), max_chars=6)
+    assert len(capped.text) <= 6
+
+
+def test_pdf_text_says_unreadable_rather_than_raising() -> None:
+    assert pdf_text(b"%PDF-1.7 not really a pdf").readable is False
+    assert pdf_text(b"").readable is False
+    assert pdf_text(make_pdf("x", password="hunter2")).readable is False

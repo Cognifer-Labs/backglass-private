@@ -573,3 +573,68 @@ def test_source_names_are_unique_per_account() -> None:
         DriveConnector(label="personal", service=None, boundary=boundary).name,
     }
     assert names == {"calendar:personal", "calendar:asu", "drive:personal"}
+
+
+# ── Drive PDFs (docs/12 §2) ───────────────────────────────────────────────
+
+
+def test_drive_extracts_pdf_text_instead_of_decoding_the_bytes(enforcing: Boundary) -> None:
+    """Before pypdf this path UTF-8-decoded the download, which stored a PDF's object
+    streams as if they were prose. It now goes through the same extractor the drop folder
+    uses, so the two cannot drift."""
+    from tests.test_files import make_pdf
+
+    service = FakeDriveService(
+        [a_file(mimeType="application/pdf", name="Signed scope.pdf")],
+        {"f1": make_pdf("Countersigned scope due Friday")},
+    )
+    connector = DriveConnector(
+        label="personal",
+        service=service,
+        boundary=enforcing,
+        owner_emails=("contactdharsan@gmail.com",),
+    )
+    items = list(connector.fetch(None))
+
+    assert len(items) == 1
+    assert "Countersigned scope due Friday" in str(items[0].body_text)
+    assert "%PDF" not in str(items[0].body_text), "object streams are not prose"
+
+
+def test_a_drive_pdf_with_no_extractable_text_is_skipped(enforcing: Boundary) -> None:
+    """The drop folder stores a scan and flags needs_ocr because the owner put it there on
+    purpose. A Drive scan is one of thousands of files nobody pointed at, and _to_item
+    already drops anything with no text — so it stays dropped rather than filling the
+    ledger with empty items."""
+    from tests.test_files import make_pdf
+
+    service = FakeDriveService(
+        [a_file(mimeType="application/pdf")], {"f1": make_pdf(None)}
+    )
+    connector = DriveConnector(
+        label="personal",
+        service=service,
+        boundary=enforcing,
+        owner_emails=("contactdharsan@gmail.com",),
+    )
+    assert list(connector.fetch(None)) == []
+
+
+def test_an_unreadable_drive_pdf_does_not_break_the_run(enforcing: Boundary) -> None:
+    """CLAUDE.md rule 5: a failing item degrades, never blocks."""
+    service = FakeDriveService(
+        [
+            a_file(id="bad", mimeType="application/pdf"),
+            a_file(id="good", name="Plan"),
+        ],
+        {"bad": b"%PDF-1.7 truncated", "good": b"The migration plan is due Monday."},
+    )
+    connector = DriveConnector(
+        label="personal",
+        service=service,
+        boundary=enforcing,
+        owner_emails=("contactdharsan@gmail.com",),
+    )
+    items = list(connector.fetch(None))
+
+    assert [item.external_id for item in items] == ["good"]

@@ -27,6 +27,24 @@ past. That costs one HTTP round trip and zero model calls, because `content_hash
 re-served message a no-op write (docs/03). The alternative — a per-channel cursor map
 encoded into the opaque cursor string — buys nothing at this scale and adds a parser.
 
+**Threads.** `conversations.history` returns thread *parents* only (docs/12 §4), so a
+promise made inside a thread reply — the usual place a promise is made — is invisible to a
+history-only reader. Every parent with `reply_count > 0` therefore gets a
+`conversations.replies` fan-out with the same `oldest`, and the replies flow through the
+same filters, the same `channel:ts` external_id shape, the same boundary check, and the
+same watermark as parents. `replies` re-serves the parent as its first item; that copy is
+dropped by `ts` equality.
+
+*Known limitation, accepted for this pass.* The fan-out only reaches threads whose **parent
+message** appears in the current history window. A new reply to an old thread does not move
+the parent's `ts`, and Slack does not re-serve a parent into `conversations.history` because
+its `latest_reply` changed — history is ordered by the message's own `ts`. So a reply landing
+today on a thread started before the cursor is missed until that parent is re-served (a
+fresh backfill, or a cursor reset). Closing it properly means persisting per-thread
+`latest_reply` state (docs/12 §4's slackdump pattern); that is deliberately not built here,
+because it is a second cursor namespace and the daily-sync case — threads started within the
+window — is what carries the commitments.
+
 **Authors.** `author` is the raw Slack user ID (`U123ABC`). No `users.info` call is made to
 resolve display names: it would be one extra request per distinct author per run purely for
 cosmetics, and the entity resolution layer maps identifiers to people anyway.
@@ -129,15 +147,16 @@ class SlackConnector:
 
         for channel_id in self.channel_ids:
             try:
-                for message in self._history(channel_id, oldest):
-                    ts = str(message.get("ts") or "")
-                    if not ts or not _newer(ts, oldest):
-                        continue
-                    if _newer(ts, highest):
-                        highest = ts
-                    item = self._to_item(channel_id, message)
-                    if item is not None:
-                        yield item
+                for parent in self._history(channel_id, oldest):
+                    for message in self._thread(channel_id, parent, oldest):
+                        ts = str(message.get("ts") or "")
+                        if not ts or not _newer(ts, oldest):
+                            continue
+                        if _newer(ts, highest):
+                            highest = ts
+                        item = self._to_item(channel_id, message)
+                        if item is not None:
+                            yield item
             except SlackRateLimited:
                 # Stop cleanly, not loudly. The cursor stays where the run started so the
                 # unread tail of this channel is re-served next run; content_hash makes the
@@ -150,17 +169,49 @@ class SlackConnector:
             self.cursor = highest
 
     def _history(self, channel_id: str, oldest: str) -> Iterator[dict[str, Any]]:
-        """`conversations.history` for one channel, paginated to completion."""
+        """`conversations.history` for one channel, paginated to completion.
+
+        Thread parents only — see the module docstring and docs/12 §4.
+        """
         params = {"channel": channel_id, "limit": PAGE_LIMIT}
         if oldest:
             params["oldest"] = oldest
+        yield from self._paged("conversations.history", params)
+
+    def _thread(
+        self, channel_id: str, parent: dict[str, Any], oldest: str
+    ) -> Iterator[dict[str, Any]]:
+        """A history message, then its thread replies if it has any.
+
+        The fan-out is keyed on `reply_count` rather than `thread_ts == ts`, because a
+        parent carries `thread_ts` only once it has been replied to anyway, and a zero
+        count must cost zero requests.
+        """
+        yield parent
+
+        parent_ts = str(parent.get("ts") or "")
+        if not parent_ts or not parent.get("reply_count"):
+            return
+
+        params = {"channel": channel_id, "ts": parent_ts, "limit": PAGE_LIMIT}
+        if oldest:
+            params["oldest"] = oldest
+        for reply in self._paged("conversations.replies", params):
+            if str(reply.get("ts") or "") == parent_ts:
+                # docs/12 §4: `replies` re-serves the parent as its first item. History
+                # already yielded it; a second copy would be a duplicate external_id.
+                continue
+            yield reply
+
+    def _paged(self, method: str, params: dict[str, str]) -> Iterator[dict[str, Any]]:
+        """`messages` from a cursor-paginated Slack method, to completion."""
         next_cursor = ""
         seen_cursors: set[str] = set()
         while True:
             page = dict(params)
             if next_cursor:
                 page["cursor"] = next_cursor
-            payload = self._call("conversations.history", page)
+            payload = self._call(method, page)
             for message in payload.get("messages") or []:
                 if isinstance(message, dict):
                     yield message

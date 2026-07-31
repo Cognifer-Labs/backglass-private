@@ -21,11 +21,17 @@ point at a copied or archived store.
   * `chat_message_join` maps a message to a `chat`, which carries a display name for
     group threads. One-to-one chats usually have none, so the handle stands in.
   * `message.is_from_me` is the direction flag: 1 for the owner, 0 for the counterparty.
-  * `message.text` is NULL on newer rows whose content lives in `attributedBody`, an
-    NSAttributedString typedstream blob. Decoding it means either a typedstream parser or
-    a pyobjc dependency, and neither is worth it for a source that is already partial —
-    those rows are skipped rather than half-decoded. If the owner ever finds the gap
-    material, that is the place to look.
+  * `message.text` is NULL on a large share of post-Ventura rows, whose content lives in
+    `attributedBody` — an NSAttributedString typedstream blob. Those rows are recovered by
+    `_typedstream.extract_text`, a vendored NSString-marker scan rather than a dependency.
+    A blob that will not decode leaves the row textless, and it is skipped as before.
+  * `message.associated_message_type` is non-zero on tapbacks: 2000–2005 is a reaction
+    added, 3000–3005 the same reaction removed. They are real rows carrying real text
+    (`Loved “the deck is done”`), so unfiltered, a heart lands in the ledger as a message.
+  * Edited messages get no special handling, deliberately. An edit rewrites the content of
+    a ROWID that is already stored, so the ledger's upsert records it as an immutability
+    conflict — which is the right outcome, because what the owner was told at the time is
+    the evidence, and the edit is a later event rather than a correction of the record.
 
 The connection is opened `mode=ro&immutable=1`. Read-only is the obvious half; immutable
 is the load-bearing half, because it stops SQLite taking any lock at all on a database
@@ -42,6 +48,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+from backglass.connectors import _typedstream
 from backglass.connectors.base import Cursor, Health, SourceItem, content_hash
 from backglass.connectors.boundary import Boundary
 
@@ -51,14 +58,20 @@ APPLE_EPOCH = datetime(2001, 1, 1, tzinfo=UTC)
 #: Above this, `message.date` is nanoseconds; below it, seconds. See the module docstring.
 NANOSECOND_THRESHOLD = 100_000_000_000
 
+#: `associated_message_type` for a tapback: 2000–2005 added, 3000–3005 removed. Zero is an
+#: ordinary message; the range between the two blocks is unused, so one span covers both.
+TAPBACK_RANGE = range(2000, 3006)
+
 _QUERY = """
 SELECT
-    message.ROWID        AS rowid,
-    message.date         AS date,
-    message.text         AS text,
-    message.is_from_me   AS is_from_me,
-    handle.id            AS handle,
-    chat.display_name    AS chat_name
+    message.ROWID                          AS rowid,
+    message.date                           AS date,
+    message.text                           AS text,
+    message.attributedBody                 AS attributed_body,
+    message.associated_message_type        AS associated_message_type,
+    message.is_from_me                     AS is_from_me,
+    handle.id                              AS handle,
+    chat.display_name                      AS chat_name
 FROM message
 LEFT JOIN handle ON handle.ROWID = message.handle_id
 LEFT JOIN chat_message_join ON chat_message_join.message_id = message.ROWID
@@ -150,15 +163,20 @@ class IMessageConnector:
         return conn
 
     def _to_item(self, row: sqlite3.Row) -> SourceItem | None:
+        if int(row["associated_message_type"] or 0) in TAPBACK_RANGE:
+            # A tapback is a reaction to another message, not a message. Its text reads
+            # like one, which is exactly why it has to be dropped before anything else.
+            return None
+
         handle = (row["handle"] or "").strip()
         if not handle:
             # No handle means a system row — a group rename, someone leaving a thread.
             # There is no counterparty and no content worth a model call.
             return None
 
-        text = (row["text"] or "").strip()
+        text = _body_text(row)
         if not text:
-            # Either genuinely empty, or an attributedBody-only row. See the docstring.
+            # Genuinely empty, or a blob that would not decode. See the docstring.
             return None
 
         # D1/D4. Before persistence, before hashing, before any model call. The handle is
@@ -191,6 +209,19 @@ class IMessageConnector:
                 author=author, title=title, body_text=text, occurred_at=occurred_at
             ),
         )
+
+
+def _body_text(row: sqlite3.Row) -> str:
+    """`message.text` when it is there, the decoded `attributedBody` when it is not."""
+    text = (row["text"] or "").strip()
+    if text:
+        return text
+    blob = row["attributed_body"]
+    if isinstance(blob, memoryview):
+        blob = blob.tobytes()
+    if not isinstance(blob, bytes):
+        return ""
+    return _typedstream.extract_text(blob) or ""
 
 
 def apple_time_to_iso(value: int | float | None) -> str:

@@ -263,6 +263,32 @@ color change that breaks contrast or CVD separation cannot land silently.
 
 ---
 
+## Dependencies
+
+Every runtime dependency and why it earned its place. The bar: a dep must replace
+code that would be genuinely dangerous to hand-write, not merely tedious. What was
+rejected is recorded so the argument does not have to be re-had.
+
+| dep | why it earned its place | what rejecting it would have cost |
+|---|---|---|
+| typer | the whole CLI surface; argument parsing is a solved problem | hand-rolled argparse trees for 20+ commands |
+| pydantic (+settings) | extraction schemas ARE the pydantic models; `--json-schema` is generated from them | a second, driftable schema definition |
+| fastapi + uvicorn + jinja2 | the one-page dashboard; server-rendered, no build step | raw WSGI + string templates |
+| python-multipart | FastAPI form posts (quick-add, people forms) | none — it is FastAPI's documented form dep |
+| google-api-python-client + google-auth-oauthlib | Gmail/Calendar/Drive auth + discovery; OAuth token refresh is dangerous to hand-write | re-implementing OAuth refresh, the classic security foot-gun |
+| pypdf | drop-folder + Drive PDF text (docs/12 ruling: BSD-3, pure Python; PyMuPDF rejected on AGPL + 50 MB, pdfplumber as overkill) | "PDF support" that UTF-8-decodes binary noise |
+
+Dev-only: pytest, ruff, mypy, vcrpy (cassettes recorded at activation, docs/13).
+
+Deliberately vendored rather than depended on: quote/signature stripping regexes
+(talon, email-reply-parser — both unmaintained since ≤2022, Apache-2.0/MIT permit
+vendoring with attribution, in `extract/quoting.py`) and the iMessage typedstream
+text scan (`connectors/_typedstream.py`, technique from imessage_tools /
+imessage-exporter's format documentation). A dependency that no longer ships
+releases is a supply-chain liability wearing a convenience costume.
+
+---
+
 ## Layout
 
 ```
