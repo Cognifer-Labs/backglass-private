@@ -1,0 +1,40 @@
+{% import "_macros.html" as m %}
+{# (1) + (2). The banner's n/m and today's boxes are one swap target, because the
+   count is a claim about exactly these rows — splitting them is how a banner ends
+   up disagreeing with the list under it.
+
+   C1 bounds this at seven rows: the cap is on the checklist itself, so there is no
+   truncation here to keep in sync with it. C4: the streak is a bare number. #}
+<section class="sec" id="today-ticks">
+  {{ m.banner('Daily checklist', grid.done_today ~ '/' ~ grid.total_today ~ ' today') }}
+  <div class="inner">
+    {% if grid.empty %}
+      <p class="empty">No checklist items. Add up to seven non-negotiables with
+        <span class="kbd">backglass checklist add</span>.</p>
+    {% elif not grid.today_rows %}
+      <p class="empty">Nothing on the checklist today.</p>
+    {% else %}
+      <ul class="tt">
+        {% for r in grid.today_rows %}
+          <li>
+            {# C2: binary; HTMX swaps the server truth back in, so a failed POST
+               reverts. 24px because this is the one thing the page is tapped for. #}
+            <button class="box{% if r.ticked %} on{% endif %}"
+                    aria-pressed="{{ 'true' if r.ticked else 'false' }}"
+                    aria-label="{{ r.title }} today"
+                    hx-post="/goals/checklist/{{ r.item_id }}/{{ 'untick' if r.ticked else 'tick' }}"
+                    hx-target="#today-ticks" hx-swap="outerHTML"></button>
+            <span class="ttn">{{ r.title }}</span>
+            <span class="tts" title="Streak, days">{{ r.streak if r.streak else '—' }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+  </div>
+</section>
+{% if week_oob|default(false) %}
+  {# The week grid and heatmap moved under a tick too. They ride back out of band
+     so the THIS WEEK <details> wrapper — which lives above this response in
+     goals.html — is never replaced, and an open fold stays open. #}
+  {% include "_check_week.html" %}
+{% endif %}

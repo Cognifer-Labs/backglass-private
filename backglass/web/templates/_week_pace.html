@@ -1,0 +1,4 @@
+{# The one number the retired KPI strip carried that nothing else on the page shows.
+   It rides in the THIS WEEK summary so a collapsed section still states its own
+   contents; cadence writes send an OOB copy of this span (and only this span). #}
+<span class="pace" id="wk-pace"{% if pace_oob|default(false) %} hx-swap-oob="outerHTML"{% endif %}>{{ pace.on_pace }}/{{ pace.total }} targets on pace</span>

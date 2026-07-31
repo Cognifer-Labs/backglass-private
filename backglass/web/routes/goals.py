@@ -9,6 +9,21 @@ view. Two deliberate framings from the spec shape it:
 - The checklist renders as the current week, not just today, because a habit is a
   row over days. Streaks show as a bare count (C4: quiet), and the only interactive
   cell is today — the past is a record, not an editing surface.
+
+The replan (2026-07) reorders the page around what the morning actually needs, without
+changing any of that reasoning:
+
+- TODAY'S TICKS comes first: the week grid reduced to its today column, one 24px box
+  per item scheduled today, bounded at seven by C1. It is the page's first swap target.
+- THIS WEEK is a `<details>` whose wrapper lives in goals.html OUTSIDE every swap
+  target, so the fold survives a tick structurally — the tick response replaces
+  #today-ticks and refreshes the inner #week-grid out of band, and never touches the
+  details element. No server-rendered `open` echo is built or needed.
+- The three-reel KPI strip is retired: its only live number, "targets on pace", moves
+  into the THIS WEEK summary as #wk-pace, and the other two duplicated the banner.
+- Cards split into NEEDS ATTENTION (stale warn/serious, at risk, or behind on a
+  cadence this week) and ON TRACK. A flagged goal renders the full card; a healthy one
+  collapses to a single row that discloses the same card.
 """
 
 from __future__ import annotations
@@ -48,6 +63,20 @@ class GridRow:
     streak: int
     cells: list[Cell]
 
+    @property
+    def today_cell(self) -> Cell | None:
+        return next((c for c in self.cells if c.is_today), None)
+
+
+@dataclass(frozen=True)
+class TodayRow:
+    """One row of TODAY'S TICKS — the week grid's today column, on its own."""
+
+    item_id: int
+    title: str
+    streak: int
+    ticked: bool
+
 
 @dataclass(frozen=True)
 class WeekGrid:
@@ -60,6 +89,21 @@ class WeekGrid:
     @property
     def empty(self) -> bool:
         return not self.rows
+
+    @property
+    def today_rows(self) -> list[TodayRow]:
+        """Items scheduled today. C1 caps the checklist at seven, so this list is
+        bounded by the same rule that bounds the grid — no separate truncation."""
+        out = []
+        for r in self.rows:
+            cell = r.today_cell
+            if cell is not None and cell.scheduled:
+                out.append(
+                    TodayRow(
+                        item_id=r.item_id, title=r.title, streak=r.streak, ticked=cell.ticked
+                    )
+                )
+        return out
 
 
 def week_grid(conn: sqlite3.Connection, settings: Settings, today: date) -> WeekGrid:
@@ -210,6 +254,51 @@ class GoalCard:
     targets: list[dict[str, Any]]
     stale: Any
     risk: Any
+    roadmap_id: int | None = None
+    roadmap_title: str | None = None
+
+    @property
+    def cadence(self) -> list[dict[str, Any]]:
+        return [t for t in self.targets if t["weekly_count"]]
+
+    @property
+    def behind(self) -> list[dict[str, Any]]:
+        return [t for t in self.cadence if t["done_this_week"] < t["weekly_count"]]
+
+    @property
+    def flagged(self) -> bool:
+        """What puts a goal above the fold: it has gone quiet, its trajectory misses
+        its target date, or a cadence is behind this week.
+
+        G11 holds — the three are read independently and reported independently on the
+        card. This is a routing decision about which of two lists the card lands in,
+        not a merged health score, and nothing on the page renders it as a number.
+        """
+        return bool(
+            (self.stale is not None and self.stale.level in ("warn", "serious"))
+            or (self.risk is not None and self.risk.at_risk)
+            or self.behind
+        )
+
+    @property
+    def next_target(self) -> dict[str, Any] | None:
+        """The cadence the collapsed row names: the first one behind, else the first."""
+        if self.behind:
+            return self.behind[0]
+        return self.cadence[0] if self.cadence else None
+
+    @property
+    def week_done(self) -> int:
+        return sum(int(t["done_this_week"]) for t in self.cadence)
+
+    @property
+    def week_needed(self) -> int:
+        return sum(int(t["weekly_count"]) for t in self.cadence)
+
+    @property
+    def last_checkpoint(self) -> str | None:
+        stamps = [str(t["last_checkpoint"]) for t in self.targets if t["last_checkpoint"]]
+        return max(stamps) if stamps else None
 
 
 @dataclass(frozen=True)
@@ -221,6 +310,14 @@ class Cards:
     def empty(self) -> bool:
         return not self.cards and not self.inert
 
+    @property
+    def flagged(self) -> list[GoalCard]:
+        return [c for c in self.cards if c.flagged]
+
+    @property
+    def healthy(self) -> list[GoalCard]:
+        return [c for c in self.cards if not c.flagged]
+
 
 def goal_cards(conn: sqlite3.Connection, settings: Settings, today: date) -> Cards:
     start = week_start_of(today, settings.week_start)
@@ -230,6 +327,16 @@ def goal_cards(conn: sqlite3.Connection, settings: Settings, today: date) -> Car
     ).fetchall()
     staleness = {s.goal_id: s for s in health.staleness(conn, settings, today)}
     risks = {r.goal_id: r for r in health.risk(conn, settings, today)}
+    # The two pages cross-reference instead of merging: a roadmap-backed goal carries a
+    # text link to its roadmap, where the step ledger and clinical context live.
+    roadmaps = {
+        int(r["goal_id"]): (int(r["id"]), str(r["title"]))
+        for r in conn.execute(
+            "SELECT id, goal_id, title FROM roadmap "
+            "WHERE user_id = ? AND status = 'active' ORDER BY id",
+            (USER_ID,),
+        )
+    }
 
     cards: list[GoalCard] = []
     inert: list[dict[str, Any]] = []
@@ -239,6 +346,7 @@ def goal_cards(conn: sqlite3.Connection, settings: Settings, today: date) -> Car
             continue
         goal_id = int(row["goal_id"])
         if not cards or cards[-1].goal_id != goal_id:
+            roadmap = roadmaps.get(goal_id)
             cards.append(
                 GoalCard(
                     goal_id=goal_id,
@@ -249,6 +357,8 @@ def goal_cards(conn: sqlite3.Connection, settings: Settings, today: date) -> Car
                     targets=[],
                     stale=staleness.get(goal_id),
                     risk=risks.get(goal_id),
+                    roadmap_id=roadmap[0] if roadmap else None,
+                    roadmap_title=roadmap[1] if roadmap else None,
                 )
             )
         cards[-1].targets.append(dict(row))
@@ -256,24 +366,23 @@ def goal_cards(conn: sqlite3.Connection, settings: Settings, today: date) -> Car
 
 
 @dataclass(frozen=True)
-class Kpis:
-    """The page's three reel readouts — exactly three, §7's per-view budget."""
+class Pace:
+    """What the THIS WEEK summary carries, so the fold states its own contents.
 
-    done_today: int
-    total_today: int
-    best_streak: int
+    All that survives of the retired three-reel strip. "Done today" and "best streak"
+    were the banner's n/m and the grid's streak column read twice; this number is the
+    only one the collapsed section could not otherwise show.
+    """
+
     on_pace: int
-    cadence_total: int
+    total: int
 
 
-def kpis(grid: WeekGrid, cards: Cards) -> Kpis:
+def pace(cards: Cards) -> Pace:
     cadence = [t for c in cards.cards for t in c.targets if t["weekly_count"]]
-    return Kpis(
-        done_today=grid.done_today,
-        total_today=grid.total_today,
-        best_streak=max((r.streak for r in grid.rows), default=0),
+    return Pace(
         on_pace=sum(1 for t in cadence if t["done_this_week"] >= t["weekly_count"]),
-        cadence_total=len(cadence),
+        total=len(cadence),
     )
 
 
@@ -285,24 +394,25 @@ def build_router(
 ) -> APIRouter:
     router = APIRouter()
 
-    def grid_fragment(request: Request, conn: sqlite3.Connection) -> Any:
-        """The tick swap re-renders the whole checklist section — KPI strip and
-        heatmap live inside it, so both stay truthful without OOB machinery."""
+    def ticks_fragment(request: Request, conn: sqlite3.Connection) -> Any:
+        """A tick replaces #today-ticks (banner n/m included) and refreshes the week
+        grid out of band. The THIS WEEK <details> wrapper sits above both in
+        goals.html and is never in the response, so an open fold stays open."""
         day = today()
-        grid = week_grid(conn, settings, day)
         return templates.TemplateResponse(
             request,
-            "_check_week.html",
+            "_today_ticks.html",
             {
-                "grid": grid,
+                "grid": week_grid(conn, settings, day),
                 "heat": heat(conn, settings, day),
-                "k": kpis(grid, goal_cards(conn, settings, day)),
+                "today": day,
+                "week_oob": True,
             },
         )
 
     def cards_fragment(request: Request, conn: sqlite3.Connection) -> Any:
-        """A cadence change moves the on-pace KPI, which lives in the checklist
-        section — an OOB copy of the strip rides along with the cards swap."""
+        """A cadence write moves "targets on pace", which renders in the THIS WEEK
+        summary — an OOB copy of that one span rides along with the cards swap."""
         day = today()
         cards = goal_cards(conn, settings, day)
         return templates.TemplateResponse(
@@ -310,8 +420,9 @@ def build_router(
             "_goal_cards.html",
             {
                 "g": cards,
-                "k": kpis(week_grid(conn, settings, day), cards),
-                "kpi_oob": True,
+                "pace": pace(cards),
+                "today": day,
+                "pace_oob": True,
             },
         )
 
@@ -327,8 +438,9 @@ def build_router(
                 "grid": grid,
                 "g": cards,
                 "heat": heat(conn, settings, day),
-                "k": kpis(grid, cards),
+                "pace": pace(cards),
                 "day": day,
+                "today": day,
                 "week_start": week_start_of(day, settings.week_start),
                 "settings": settings,
             },
@@ -350,7 +462,7 @@ def build_router(
             fn(conn, item_id, today().isoformat())
         except actions.ActionError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
-        return grid_fragment(request, conn)
+        return ticks_fragment(request, conn)
 
     @router.post("/goals/targets/{target_id}/log", response_class=HTMLResponse)
     def log_total(
@@ -376,6 +488,34 @@ def build_router(
             conn, target_id, source="manual",
             occurred_at=timezones.local_now_iso(settings, today()),
             note=note.strip() or None, delta=amount,
+        )
+        return cards_fragment(request, conn)
+
+    @router.post("/goals/targets/{target_id}/tick", response_class=HTMLResponse)
+    def tick_cadence(
+        target_id: int,
+        request: Request,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        """+1 on a cadence target — the app's missing manual write.
+
+        G3 is the whole design of this endpoint: it records a checkpoint and never
+        touches progress, which stays a sum over checkpoints. It is deliberately NOT
+        idempotent, and that is not a violation of the idempotency rule: that rule
+        governs syncs, which re-read unchanged upstream state. Two presses of +1 are
+        two sessions done, so they are two checkpoints — an idempotent +1 would make
+        the second real session unrecordable. Removal is `checkpoints.delete`.
+        """
+        row = conn.execute(
+            "SELECT t.id FROM target t JOIN goal g ON g.id = t.goal_id "
+            "WHERE t.id = ? AND g.user_id = ? AND t.kind = 'cadence' AND t.active = 1",
+            (target_id, USER_ID),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404)
+        checkpoints.record(
+            conn, target_id, source="manual",
+            occurred_at=timezones.local_now_iso(settings, today()),
         )
         return cards_fragment(request, conn)
 

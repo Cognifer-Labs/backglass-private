@@ -1,102 +1,74 @@
 {% import "_macros.html" as m %}
+{% import "_gcard.html" as gc %}
 <section class="sec" id="goal-cards">
-  {{ m.banner('Goals', g.cards|length ~ ' active') }}
-  <div class="inner">
-    {% if g.empty %}
+  {% if g.empty %}
+    {{ m.banner('Goals', '0 active') }}
+    <div class="inner">
       {# docs/06 §Empty states, verbatim. #}
       <p class="empty">No targets set. A goal without a target is inert.</p>
+    </div>
+  {% endif %}
+
+  {% if g.flagged %}
+    {# (4) NEEDS ATTENTION. Membership is stale warn/serious OR at risk OR behind on
+       a cadence this week — read independently (G11), reported independently on the
+       card below, and never rendered as one merged score. #}
+    {{ m.banner('Needs attention', g.flagged|length ~ ' of ' ~ g.cards|length) }}
+    <div class="inner">
+      {% for card in g.flagged %}{{ gc.card(card) }}{% endfor %}
+    </div>
+  {% endif %}
+
+  {% if g.healthy %}
+    {% if g.flagged %}
+      {{ m.banner('On track', g.healthy|length) }}
+      <div class="inner">
+    {% else %}
+      {# Nothing needs attention: a black bar announcing that would spend the
+         page's strongest mark on the absence of news. One quiet line instead. #}
+      <div class="inner">
+        <p class="alltrack">All goals on track</p>
     {% endif %}
-
-    {% for card in g.cards %}
-      <article class="gcard">
-        <div class="ghd">
-          <div>
-            <h2 class="cond gtitle">{{ card.title }}</h2>
-            <p class="gmeta">{{ card.horizon }}{% if card.target_date %} · target {{ card.target_date }}{% endif %}</p>
-          </div>
-          {% if card.stale %}
-            {{ m.stale_chip(card.stale.level, card.stale.chip()) }}
-          {% endif %}
-        </div>
-
-        {# The anchor the card exists to serve: "a goal without one is a mood". #}
-        <p class="dod">{{ card.definition_of_done }}</p>
-
-        {% if card.risk and card.risk.sentence() %}
-          {# G13: risk as a projected date against the target date, in words. G11:
-             kept apart from the staleness chip, never merged into one score. #}
-          <p class="srisk{% if card.risk.at_risk %} bad{% endif %}">{{ card.risk.sentence().removeprefix(card.title ~ ': ') }}</p>
-        {% endif %}
-
-        {% for t in card.targets %}
-          <div class="gtgt">
-            <div class="hd">
-              <span class="nm">{{ t['target_title'] }}</span>
-              <span class="kind">{{ t['kind'] }}</span>
-              {% if t['weekly_count'] and t['done_this_week'] < t['weekly_count'] %}
-                {{ m.chip('slipping') }}
-              {% endif %}
-            </div>
-            {# The .kind label in the header already names the kind — repeating it in
-               the body line said "milestone" twice on every milestone row. #}
-            <p class="tgt">
-              {% if t['kind'] == 'total' and t['total_count'] %}{{ t['lifetime_done'] }}/{{ t['total_count'] }} logged ·
-              {%- elif t['weekly_count'] %}{{ t['done_this_week'] }}/{{ t['weekly_count'] }} this week ·{% endif %}
-              {%- if t['last_checkpoint'] %} last {{ t['last_checkpoint'][:10] }}
-              {%- else %} no checkpoints yet{% endif %}
-            </p>
-            {% if t['kind'] == 'total' and t['total_count'] %}
-              {% set pct = (100 * t['lifetime_done'] / t['total_count'])|round|int %}
-              {# Lifetime accumulator (Phase 10/11): black bar, green only when done.
-                 Loggable here too — a total on a goal with no roadmap has no other
-                 write surface. #}
-              <div class="trackrow">
-                <div class="track grow"><div class="fill{% if pct >= 100 %} green{% endif %}"
-                     style="width:{{ [pct, 100]|min }}%"></div></div>
-                <span class="pct">{{ [pct, 100]|min }}%</span>
-              </div>
-              <div class="acts">
-                <form class="logform" hx-post="/goals/targets/{{ t['target_id'] }}/log"
-                      hx-target="#goal-cards" hx-swap="outerHTML">
-                  <input type="number" name="amount" min="1" step="1" value="1" required
-                         aria-label="Amount for {{ t['target_title'] }}">
-                  <input type="text" name="note" placeholder="note · who"
-                         aria-label="Note for {{ t['target_title'] }}">
-                  <button class="btn ok" type="submit">Log</button>
-                </form>
-              </div>
+      {# (5) A healthy goal is one row that discloses the same card. Accepted and
+         stated: a write inside an open card re-renders #goal-cards and the fold
+         closes. No open-state echo is built — a rare write closing a disclosure is
+         cheaper than server-rendered `open` attributes on every swap. #}
+      {% for card in g.healthy %}
+        <details class="goalrow">
+          <summary>
+            <span class="gr-t">{{ card.title }}</span>
+            {% if card.stale and card.stale.days_quiet %}
+              {{ m.stale_chip(card.stale.level, card.stale.chip()) }}
             {% endif %}
-            {% if t['weekly_count'] %}
-              {% set pct = (100 * t['done_this_week'] / t['weekly_count'])|round|int %}
-              {# design-system.md §5: single-series bar is black; gold only when behind.
-                 The percent label is the Notion/Excel progress-bar idiom: the bar shows
-                 shape, the number makes it a claim. #}
-              <div class="trackrow">
-                <div class="track grow"><div class="fill{% if pct < 100 %} gold{% endif %}"
-                     style="width:{{ [pct, 100]|min }}%"></div></div>
-                <span class="pct">{{ pct }}%</span>
-              </div>
-              <div class="acts">
-                {% for n in [1, 2, 3, 5] %}
-                  <button class="btn ok{% if n == t['weekly_count'] %} on{% endif %}"
-                          aria-pressed="{{ 'true' if n == t['weekly_count'] else 'false' }}"
-                          hx-post="/goals/targets/{{ t['target_id'] }}/weekly/{{ n }}"
-                          hx-target="#goal-cards" hx-swap="outerHTML">{{ n }}/wk</button>
-                {% endfor %}
-              </div>
-            {% endif %}
-          </div>
-        {% endfor %}
-      </article>
-    {% endfor %}
+            <span class="gr-n">
+              {%- if card.next_target %}{{ card.next_target['target_title'] }} {{ card.week_done }}/{{ card.week_needed }} this week
+              {%- else %}—{% endif -%}
+            </span>
+            <span class="gr-l">
+              {%- if card.last_checkpoint %}last {{ card.last_checkpoint[:10] }}{% else %}—{% endif -%}
+            </span>
+          </summary>
+          {{ gc.card(card) }}
+        </details>
+      {% endfor %}
+    </div>
+  {% endif %}
 
-    {% for row in g.inert %}
-      <p class="note">{{ row['goal_title'] }}: no targets set. A goal without a target is inert.</p>
-    {% endfor %}
-  </div>
+  {% if g.inert %}
+    <div class="inner">
+      {# (6) Wallpaper collapse: one summary line, expanding to name them. #}
+      <details class="inertfold">
+        <summary>{{ g.inert|length }} goal{{ '' if g.inert|length == 1 else 's' }} without targets — a goal without a target is inert</summary>
+        <ul class="inertlist">
+          {% for row in g.inert %}<li>{{ row['goal_title'] }}</li>{% endfor %}
+        </ul>
+      </details>
+    </div>
+  {% endif %}
 </section>
-{% if kpi_oob|default(false) %}
-  {# A cadence change moves "targets on pace", which renders inside #check-week —
-     this OOB copy keeps the strip truthful without re-rendering that section. #}
-  {% include "_kpis.html" %}
+{% if pace_oob|default(false) %}
+  {# A cadence write moves "targets on pace", which renders in the THIS WEEK
+     summary. One OOB span keeps it truthful; the <details> around it is not in
+     this response, so the fold does not move. #}
+  {% include "_week_pace.html" %}
 {% endif %}

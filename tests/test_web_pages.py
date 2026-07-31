@@ -495,37 +495,68 @@ class TestScheduleTimeline:
         assert "chip k-black" not in page
 
 
-class TestGoalsKpis:
-    """Phase 9: the Excel-dashboard KPI strip — three reels, live through both swaps."""
+def _cadence_goal(
+    conn: sqlite3.Connection, title: str = "Write daily", weekly: int = 3
+) -> int:
+    """One active goal with one cadence target. Returns the target id."""
+    conn.execute(
+        "INSERT INTO goal (user_id, title, horizon, definition_of_done, status,"
+        " created_at) VALUES (1, ?, 'annual', 'A shipped draft',"
+        " 'active', '2026-07-01T00:00:00Z')",
+        (title,),
+    )
+    gid = conn.execute("SELECT id FROM goal ORDER BY id DESC LIMIT 1").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO target (goal_id, kind, title, weekly_count, created_at)"
+        " VALUES (?, 'cadence', 'Deep work sessions', ?, '2026-07-01T00:00:00Z')",
+        (gid, weekly),
+    )
+    conn.commit()
+    return int(
+        conn.execute("SELECT id FROM target ORDER BY id DESC LIMIT 1").fetchone()["id"]
+    )
 
-    def test_strip_counts_match_the_seeded_state(
+
+class TestGoalsTodayTicks:
+    """Replan §2: today's column is the first thing on the page and its own swap
+    target, banner count included."""
+
+    def test_today_rows_carry_a_box_and_a_bare_streak(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        from datetime import date, timedelta
+
+        from backglass.goals import checklist as chk
+
+        item_id = chk.add(conn, "Morning pages")
+        today = date.today()
+        for back in (1, 2, 3):
+            chk.tick(conn, item_id, today - timedelta(days=back))
+        conn.commit()
+        page = client.get("/goals").text
+        assert 'id="today-ticks"' in page
+        # The tappable box posts the existing endpoint and swaps the ticks section.
+        assert f'hx-post="/goals/checklist/{item_id}/tick"' in page
+        assert 'hx-target="#today-ticks"' in page
+        # C4: the streak is a number in its own cell, no copy around it.
+        assert '<span class="tts" title="Streak, days">3</span>' in page
+
+    def test_unscheduled_today_says_so_without_an_empty_grid(
         self, client: TestClient, conn: sqlite3.Connection
     ) -> None:
         from datetime import date
 
         from backglass.goals import checklist as chk
 
-        item_id = chk.add(conn, "Morning pages")
-        chk.tick(conn, item_id, date.today())
-        conn.execute(
-            "INSERT INTO goal (user_id, title, horizon, definition_of_done, status,"
-            " created_at) VALUES (1, 'Write daily', 'annual', 'A shipped draft',"
-            " 'active', '2026-07-01T00:00:00Z')"
-        )
-        conn.execute(
-            "INSERT INTO target (goal_id, kind, title, weekly_count, created_at)"
-            " VALUES (1, 'cadence', 'Deep work sessions', 3, '2026-07-01T00:00:00Z')"
-        )
+        # Scheduled on every weekday except today.
+        mask = 127 - (1 << date.today().weekday())
+        chk.add(conn, "Gym", weekday_mask=mask)
         conn.commit()
         page = client.get("/goals").text
-        assert 'id="gkpis"' in page
-        assert "done today" in page
-        assert "best streak" in page
-        # One cadence target, zero checkpoints this week: 0 on pace of 1.
-        assert "targets on pace" in page
-        assert "of 1" in page
+        assert "Nothing on the checklist today" in page
+        assert "0/0 today" in page
 
-    def test_tick_swap_carries_the_strip(
+    def test_tick_response_refreshes_the_week_grid_out_of_band(
         self, client: TestClient, conn: sqlite3.Connection
     ) -> None:
         from backglass.goals import checklist as chk
@@ -533,28 +564,199 @@ class TestGoalsKpis:
         item_id = chk.add(conn, "Morning pages")
         conn.commit()
         ticked = client.post(f"/goals/checklist/{item_id}/tick").text
-        # The strip lives inside #check-week, so the fragment includes it in place.
-        assert 'id="gkpis"' in ticked
-        assert "hx-swap-oob" not in ticked
+        assert 'id="today-ticks"' in ticked
+        assert 'id="week-grid" hx-swap-oob="outerHTML"' in ticked
+        assert "1/1 today" in ticked
 
-    def test_cadence_swap_sends_the_strip_out_of_band(
+
+class TestGoalsThisWeekFold:
+    """Replan §3: THIS WEEK folds, and the fold survives a tick structurally —
+    the <details> is outside every swap target, so no swap can reset it."""
+
+    def test_details_wrapper_is_outside_the_swapped_ids(
         self, client: TestClient, conn: sqlite3.Connection
     ) -> None:
-        conn.execute(
-            "INSERT INTO goal (user_id, title, horizon, definition_of_done, status,"
-            " created_at) VALUES (1, 'Write daily', 'annual', 'A shipped draft',"
-            " 'active', '2026-07-01T00:00:00Z')"
-        )
-        conn.execute(
-            "INSERT INTO target (goal_id, kind, title, weekly_count, created_at)"
-            " VALUES (1, 'cadence', 'Deep work sessions', 3, '2026-07-01T00:00:00Z')"
-        )
-        conn.commit()
-        tid = conn.execute("SELECT id FROM target").fetchone()["id"]
+        from backglass.goals import checklist as chk
+
+        chk.add(conn, "Morning pages")
+        _cadence_goal(conn)
+        page = client.get("/goals").text
+
+        # The details element opens before #week-grid and closes after it: the swap
+        # target is INSIDE the fold, never the other way round.
+        fold = page.index('<details class="wkfold">')
+        grid = page.index('id="week-grid"')
+        assert fold < grid < page.index("</details>", fold)
+        # And it is in neither of the page's other two swap targets.
+        assert fold < page.index('id="goal-cards"')
+        ticks_open = page.index('id="today-ticks"')
+        assert not ticks_open < fold < page.index("</section>", ticks_open)
+
+    def test_summary_carries_the_on_pace_count(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        _cadence_goal(conn)
+        page = client.get("/goals").text
+        assert "This week ·" in page
+        # One cadence target, no checkpoints this week: 0 of 1 on pace.
+        assert '<span class="pace" id="wk-pace">0/1 targets on pace</span>' in page
+        # The three-reel strip is retired; its other two numbers were duplicates.
+        assert 'id="gkpis"' not in page
+        assert "best streak" not in page
+
+    def test_cadence_write_sends_only_the_pace_span_out_of_band(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        tid = _cadence_goal(conn)
         response = client.post(f"/goals/targets/{tid}/weekly/5").text
         assert 'id="goal-cards"' in response
-        assert 'hx-swap-oob="outerHTML"' in response
-        assert 'id="gkpis"' in response
+        assert 'id="wk-pace" hx-swap-oob="outerHTML"' in response
+        # No <details> rides along: nothing in this response can move the fold.
+        assert "<details" not in response.split('id="goal-cards"')[0]
+
+
+class TestGoalsAttentionSplit:
+    """Replan §4/§5: flagged goals render the full card, healthy ones collapse to a
+    row that discloses the same card."""
+
+    def _behind(self, conn: sqlite3.Connection) -> int:
+        return _cadence_goal(conn, "Write daily", weekly=3)
+
+    def test_behind_goal_lands_in_needs_attention_with_the_full_card(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._behind(conn)
+        page = client.get("/goals").text
+        assert "Needs attention" in page
+        # Full card markup: definition of done, the track bar, the /wk buttons.
+        assert "A shipped draft" in page
+        assert "0/3 this week" in page
+        assert "3/wk" in page
+        assert "All goals on track" not in page
+
+    def test_on_pace_goal_collapses_to_one_row_that_still_holds_its_card(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        from datetime import date
+
+        from backglass.goals import checkpoints
+
+        tid = _cadence_goal(conn, "Write daily", weekly=1)
+        checkpoints.record(conn, tid, source="manual", occurred_at=date.today().isoformat())
+        conn.commit()
+        page = client.get("/goals").text
+        assert "Needs attention" not in page
+        assert "All goals on track" in page
+        assert '<details class="goalrow">' in page
+        # The row states the next tick target and the last checkpoint date.
+        assert "Deep work sessions 1/1 this week" in page
+        assert f"last {date.today().isoformat()}" in page
+        # And the same full card is disclosed inside it — same markup, both lists.
+        assert "A shipped draft" in page
+        assert "3/wk" in page
+
+    def test_absence_is_an_em_dash_not_a_sentence(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        _cadence_goal(conn)
+        page = client.get("/goals").text
+        # The target line: "0/3 this week · last —", never a wallpaper sentence.
+        assert "0/3 this week · last —" in " ".join(page.split())
+        # G12's goal-level chip keeps its own wording — it is a day count, not a
+        # repeated row, and "no checkpoints yet" is the honest reading of never.
+        assert "no checkpoints yet" in page
+
+    def test_inert_goals_collapse_to_one_counted_line(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        for title in ("Learn guitar", "Read more"):
+            conn.execute(
+                "INSERT INTO goal (user_id, title, horizon, definition_of_done, status,"
+                " created_at) VALUES (1, ?, 'annual', 'Someday', 'active',"
+                " '2026-07-01T00:00:00Z')",
+                (title,),
+            )
+        _cadence_goal(conn)
+        page = client.get("/goals").text
+        assert "2 goals without targets — a goal without a target is inert" in page
+        assert "Learn guitar" in page  # named inside the disclosure, not lost
+
+    def test_roadmap_backed_goal_links_across_instead_of_merging(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        _cadence_goal(conn)
+        gid = conn.execute("SELECT id FROM goal").fetchone()["id"]
+        conn.execute(
+            "INSERT INTO roadmap (user_id, path_id, path_version, title, goal_id,"
+            " status, created_at) VALUES (1, 'premed', '1', 'Pre-med', ?, 'active',"
+            " '2026-07-01T00:00:00Z')",
+            (gid,),
+        )
+        conn.commit()
+        rid = conn.execute("SELECT id FROM roadmap").fetchone()["id"]
+        page = client.get("/goals").text
+        assert f'href="/roadmaps/{rid}"' in page
+        assert "→ Pre-med" in page
+
+
+class TestCadenceTickEndpoint:
+    """Replan flow graft: the manual write cadence targets never had. G3 — it
+    records a checkpoint, it never sets progress."""
+
+    def test_plus_one_records_a_checkpoint_and_moves_the_count(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        tid = _cadence_goal(conn)
+        page = client.get("/goals").text
+        assert f'hx-post="/goals/targets/{tid}/tick"' in page
+
+        response = client.post(f"/goals/targets/{tid}/tick")
+        assert response.status_code == 200
+        assert "1/3 this week" in response.text
+        cp = conn.execute("SELECT * FROM checkpoint WHERE target_id = ?", (tid,)).fetchone()
+        assert cp["source"] == "manual"
+        assert cp["delta"] == 1
+
+    def test_each_press_is_a_real_checkpoint(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """Deliberately NOT idempotent: two sessions done is two checkpoints, and an
+        idempotent +1 would make the second one unrecordable."""
+        tid = _cadence_goal(conn)
+        client.post(f"/goals/targets/{tid}/tick")
+        second = client.post(f"/goals/targets/{tid}/tick")
+        assert "2/3 this week" in second.text
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) AS n FROM checkpoint WHERE target_id = ?", (tid,)
+            ).fetchone()["n"]
+            == 2
+        )
+
+    def test_unknown_and_non_cadence_targets_404(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        assert client.post("/goals/targets/9999/tick").status_code == 404
+        _cadence_goal(conn)
+        gid = conn.execute("SELECT id FROM goal").fetchone()["id"]
+        conn.execute(
+            "INSERT INTO target (goal_id, kind, title, total_count, created_at)"
+            " VALUES (?, 'total', 'Shadowing hours', 60, '2026-07-01T00:00:00Z')",
+            (gid,),
+        )
+        conn.commit()
+        total = conn.execute(
+            "SELECT id FROM target WHERE kind = 'total'"
+        ).fetchone()["id"]
+        assert client.post(f"/goals/targets/{total}/tick").status_code == 404
+
+    def test_inactive_target_is_not_tickable(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        tid = _cadence_goal(conn)
+        conn.execute("UPDATE target SET active = 0 WHERE id = ?", (tid,))
+        conn.commit()
+        assert client.post(f"/goals/targets/{tid}/tick").status_code == 404
 
 
 class TestConsistencyHeatmap:
