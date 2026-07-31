@@ -270,9 +270,8 @@ button.box::before{content:"";position:absolute;inset:-6px}
 .whd .dn b{font-variant-numeric:tabular-nums}
 .whd:hover .dn{text-decoration:underline;text-underline-offset:2px}
 .whd.now,.wcol.now{outline:2px solid var(--rule);outline-offset:-2px}
-.wcap{display:block;font:400 10px/14px system-ui,sans-serif;color:var(--ink-muted);
-  font-variant-numeric:tabular-nums;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.wcap .over{background:var(--gold);border:1px solid var(--rule);padding:0 3px;font-weight:700;color:#000}
+/* The per-header .wcap caption is gone: it clipped its own overflow badge inside a
+ * 96px column. Capacity now lives in the .wband cells above the grid. */
 .wkhrs{position:relative;border-right:1px solid var(--rule-hair)}
 .wkhrs span{position:absolute;left:0;padding:1px var(--sp-1) 0;
   font:700 9px/12px ui-monospace,monospace;color:var(--ink-muted);font-variant-numeric:tabular-nums}
@@ -284,12 +283,10 @@ button.box::before{content:"";position:absolute;inset:-6px}
   overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding:0 3px}
 .wev:hover{outline:2px solid var(--rule)}
 .wev.lane1{left:50%}
-.wev .et{font:700 9px/12px ui-monospace,monospace;color:var(--ink-muted);font-variant-numeric:tabular-nums}
 .wev.k-fixed{border-left:3px solid var(--ink)}
 .wev.k-work{border-left:3px solid var(--cobalt)}
 .wev.k-small{border-left:3px solid var(--turquoise)}
 .wev.k-buffer{border-style:dashed}
-.wev.k-buffer,.wev.k-buffer .et{color:var(--ink-muted)}
 .wev.k-protected{background:repeating-linear-gradient(45deg,transparent,transparent 5px,var(--rule-hair) 5px,var(--rule-hair) 6px) var(--paper)}
 .wnow{position:absolute;left:0;right:0;border-top:2px solid var(--ink);z-index:2}
 
@@ -486,3 +483,80 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
   font:700 10px/13px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
   padding:1px 6px}
 .legend .hatch{background:repeating-linear-gradient(45deg,transparent,transparent 2px,var(--rule) 2px,var(--rule) 3px)}
+
+/* ── Schedule replan ───────────────────────────────────────────────────────
+ * The audit's findings on the two schedule pages, fixed at template scale: a
+ * headline strip that answers "what now / does it fit" before the canvas, folds
+ * for reference material (gaps, legend), a type floor enforced by deleting text
+ * rather than shrinking it, and a week capacity band whose cells own their space
+ * so the overflow badge cannot clip. No new inks: the only chip on either page is
+ * the gold overflow warning, and today is an outline, never a fill.
+ */
+
+/* Shared fold: a details row that reads as a quiet label until opened. */
+.fold{border-top:1px solid var(--rule-hair);padding:var(--sp-2) 0;margin-top:var(--sp-3)}
+.fold > summary{cursor:pointer;list-style:none;display:inline-flex;align-items:center;gap:6px;
+  font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
+  color:var(--ink-muted)}
+.fold > summary::-webkit-details-marker{display:none}
+.fold > summary::before{content:"+";font:700 11px/14px ui-monospace,monospace}
+.fold[open] > summary::before{content:"−"}
+.fold .legend{margin-top:var(--sp-2)}
+
+/* The headline strip. 16px of padding, closed by the 2px rule §7 uses between
+ * sections — the strip is a section, not a caption. */
+.dstrip{padding:var(--sp-4) 0;border-bottom:2px solid var(--rule)}
+.dstrip-top{display:flex;gap:var(--sp-4);align-items:baseline;justify-content:space-between;flex-wrap:wrap}
+.dstrip .cap{padding:0;border-bottom:0;font-size:13px;line-height:19px}
+.dstrip .cap .over{display:inline-flex;align-items:center;gap:5px}
+/* NOW/NEXT at title scale: it is the one thing the page is asked at a glance. */
+.dnow{margin:0;font-size:19px;line-height:26px;font-weight:700;
+  font-variant-numeric:tabular-nums;display:flex;align-items:baseline;gap:var(--sp-2);
+  min-width:0;flex:1}
+.dnow .lbl{flex:0 0 auto}
+.dnow .nt{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dnow .ntm{font-weight:400;color:var(--ink-muted);flex:0 0 auto}
+/* P3 and P9 are sentences, not badges — body scale, full ink, never folded. */
+.dnote{margin:var(--sp-2) 0 0;font-size:15px;line-height:23px}
+
+.gaplist{margin:var(--sp-2) 0 0;padding:0;list-style:none;
+  font-size:13px;line-height:19px;color:var(--ink-muted);font-variant-numeric:tabular-nums}
+.gaplist li{padding:1px 0}
+
+/* Pager: navigation is not the subject of the page. Text links, no boxes. */
+.pager.quiet{display:block;background:none;border:0;padding:var(--sp-3) 0;margin:0;
+  font-size:13px;line-height:19px;color:var(--ink-muted)}
+.pager.quiet a{color:var(--ink-muted);text-underline-offset:2px}
+.pager.quiet a:hover{color:var(--ink)}
+
+/* content-box: the inline height is the ruler's span in minutes, and the 16px of
+ * bottom padding is added below it so the closing hour label stops clipping. */
+.tl{box-sizing:content-box;padding-bottom:16px}
+/* Under 32px: stripe plus start time, nothing else. The title moved to the title
+ * attribute rather than to 9px type. */
+.tl .ev.tiny{flex-direction:row;align-items:center;padding:0 var(--sp-2);gap:var(--sp-2)}
+.tl .ev.tiny .et{font-size:11px;line-height:14px}
+.tl .ev.slim .en{font-size:11px;line-height:14px}
+
+/* Week capacity band: seven equal cells, 8px gap, each owning its own space. */
+.wband{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:var(--sp-2);margin-top:var(--sp-4)}
+.wbc{display:block;border:2px solid var(--rule);padding:var(--sp-2);text-decoration:none;color:var(--ink)}
+.wbc .lbl{display:block}
+.wbc:hover{background:var(--fill-mild)}
+/* Today is an outline, not a fill: maximum contrast belongs to due-today alone. */
+.wbc.now{outline:2px solid var(--rule);outline-offset:-4px}
+/* Free hours at title scale, tabular — the headline number, not a reel (§7 keeps
+ * the reel treatment to three numbers per view, and this is seven). */
+.wbn{display:block;font-size:19px;line-height:26px;font-weight:700;font-variant-numeric:tabular-nums}
+.wbn.none{color:var(--ink-muted);font-weight:400}
+.wbc .wbf{display:block;color:var(--ink-muted)}
+/* Overflow keeps the gold warning treatment: fill, 2px keyline, glyph, label. */
+.wbc .over{display:inline-flex;align-items:center;gap:4px;margin-top:var(--sp-1);
+  background:var(--gold);border:2px solid var(--rule);padding:0 5px;color:#000;
+  font:700 10px/15px system-ui,sans-serif;letter-spacing:.04em}
+.wverdict{margin:var(--sp-3) 0 0;font-size:15px;line-height:23px}
+@media(max-width:840px){
+  .wband{grid-template-columns:repeat(4,minmax(0,1fr))}
+}
+/* Textless week blocks: shape plus a 3px kind stripe, words in the title attr. */
+.wev{padding:0;min-height:6px}

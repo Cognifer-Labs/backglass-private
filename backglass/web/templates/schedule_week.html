@@ -9,13 +9,39 @@
 <section class="sec">
   {{ m.banner('Week', first.isoformat()) }}
   <div class="inner">
-    <div class="pager">
-      <a class="btn" href="/schedule/week?start={{ prev }}">← prev</a>
-      <a class="btn" href="/schedule/week">this week</a>
-      <a class="btn" href="/schedule/week?start={{ next }}">next →</a>
-      <span class="grow"></span>
-      <a class="btn" href="/schedule">day view</a>
+    {# The capacity band: seven equal cells, each owning its own space so the overflow
+       badge can never clip the way the old inline caption did. Free hours are the
+       headline number at title scale — not a reel, the three-reel budget is not
+       spent on a calendar. #}
+    <div class="wband">
+      {% for c in wtl.cols %}
+        <a class="wbc{% if c.view.day == today %} now{% endif %}"
+           href="/schedule?date={{ c.view.day.isoformat() }}">
+          <span class="lbl">{{ c.view.day.strftime('%a') }} {{ c.view.day.strftime('%d') }}</span>
+          {% if c.free_minutes is none %}
+            {# Absence is an em-dash, never a fake zero or a sentence. #}
+            <span class="wbn none">—</span>
+          {% else %}
+            <span class="wbn">{{ c.free_minutes // 60 }}h{{ '%02d' % (c.free_minutes % 60) }}</span>
+            <span class="lbl wbf">free</span>
+          {% endif %}
+          {% if c.cap and c.cap['overflow_count'] %}
+            <span class="over"><span aria-hidden="true">◆</span>{{ c.cap['overflow_count'] }} over</span>
+          {% endif %}
+        </a>
+      {% endfor %}
     </div>
+
+    {% if wtl.verdict %}
+      <p class="wverdict">{{ wtl.verdict }}.</p>
+    {% endif %}
+
+    <p class="pager quiet">
+      <a href="/schedule/week?start={{ prev }}">← prev</a> ·
+      <a href="/schedule/week">this week</a> ·
+      <a href="/schedule/week?start={{ next }}">next →</a> ·
+      <a href="/schedule">day</a>
+    </p>
 
     {# Seven proportional columns on one shared hour ruler. Whitespace is free
        time made visible — the reason this is a timeline and not a list. #}
@@ -26,33 +52,28 @@
           <a class="whd{% if c.view.day == today %} now{% endif %}"
              href="/schedule?date={{ c.view.day.isoformat() }}">
             <span class="dn">{{ c.view.day.strftime('%a') }} <b>{{ c.view.day.strftime('%d') }}</b></span>
-            {# docs/04 §4.3 in one breath per day: planned against free, overflow loud. #}
-            <span class="wcap">
-              {%- if c.cap -%}
-                {%- set free = [c.cap['capacity_minutes'] - c.cap['planned_minutes'], 0]|max -%}
-                {{ c.cap['planned_minutes'] // 60 }}h{{ '%02d' % (c.cap['planned_minutes'] % 60) }} planned
-                · {{ free // 60 }}h{{ '%02d' % (free % 60) }} free
-                {%- if c.cap['overflow_count'] %} <span class="over">{{ c.cap['overflow_count'] }} over</span>{% endif -%}
-              {%- else -%}—{%- endif -%}
-            </span>
           </a>
         {% endfor %}
 
         <div class="wkhrs" style="height:{{ wtl.height }}px">
           {% for h in wtl.hours %}
-            <span style="top:{{ loop.index0 * wtl.hour_px }}px">{{ '%02d' % h }}</span>
+            {# Every second hour: at 30px an hour, a label on each one collided. #}
+            {% if loop.index0 % 2 == 0 %}<span style="top:{{ loop.index0 * wtl.hour_px }}px">{{ '%02d' % h }}</span>{% endif %}
           {% endfor %}
         </div>
         {% for c in wtl.cols %}
           <div class="wcol{% if c.view.day == today %} now{% endif %}" style="height:{{ wtl.height }}px">
             {% for h in wtl.hours %}<i style="top:{{ loop.index0 * wtl.hour_px }}px"></i>{% endfor %}
             {% for e in c.entries %}
+              {# Textless by design: a 9px ellipsized title is not information. The
+                 block is shape plus kind stripe; the words live in the title
+                 attribute, and one click lands on the day view where they are set
+                 at readable size. #}
               <a class="wev k-{{ e.kind }}{% if e.lane %} lane1{% endif %}"
                  style="top:{{ e.top }}px;height:{{ e.height }}px"
                  href="/schedule?date={{ c.view.day.isoformat() }}"
-                 title="{{ e.start_label }}–{{ e.end_label }} {{ e.title }}">
-                <span class="et">{{ e.start_label }}</span> {{ e.title }}
-              </a>
+                 aria-label="{{ e.start_label }}–{{ e.end_label }} {{ e.title }}"
+                 title="{{ e.start_label }}–{{ e.end_label }} {{ e.title }}"></a>
             {% endfor %}
             {% if c.now_top is not none %}
               <div class="wnow" style="top:{{ c.now_top }}px"></div>

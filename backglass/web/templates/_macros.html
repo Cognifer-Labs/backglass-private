@@ -73,11 +73,16 @@
 {%- endmacro %}
 
 {% macro kind_legend() -%}
-  {#- One legend for the day and week schedule views, so the two cannot drift. -#}
-  <div class="legend">
-    <span><i style="background:var(--cobalt)"></i>Work</span>
-    <span><i style="background:var(--turquoise)"></i>Small items</span>
-    <span><i style="background:var(--ink)"></i>Fixed</span>
-    <span><i class="hatch"></i>Protected</span>
-  </div>
+  {#- One legend for the day and week schedule views, so the two cannot drift. It
+      folds: a key is reference, consulted once and then known, and rest-state noise
+      on a page opened every morning is a real cost. -#}
+  <details class="fold">
+    <summary class="lbl">Legend</summary>
+    <div class="legend">
+      <span><i style="background:var(--cobalt)"></i>Work</span>
+      <span><i style="background:var(--turquoise)"></i>Small items</span>
+      <span><i style="background:var(--ink)"></i>Fixed</span>
+      <span><i class="hatch"></i>Protected</span>
+    </div>
+  </details>
 {%- endmacro %}
