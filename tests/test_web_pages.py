@@ -224,6 +224,179 @@ class TestRoadmapPages:
         assert conn.execute("SELECT COUNT(*) AS n FROM roadmap_step").fetchone()["n"] > 0
 
 
+class TestRoadmapReplan:
+    """The judged replan of the two roadmap surfaces: a masthead whose reels stay
+    inside §7's budget, a log zone first, a timetable that reads as a timetable
+    rather than a control grid, and a list that answers "where does this stand"."""
+
+    def _start(
+        self, client: TestClient, conn: sqlite3.Connection, path: str = "medical"
+    ) -> int:
+        client.post(f"/roadmaps/start/{path}", follow_redirects=True)
+        return int(conn.execute("SELECT id FROM roadmap").fetchone()["id"])
+
+    def _steps(self, conn: sqlite3.Connection, rid: int) -> list[sqlite3.Row]:
+        return conn.execute(
+            "SELECT id, title FROM roadmap_step WHERE roadmap_id = ? ORDER BY sort_order",
+            (rid,),
+        ).fetchall()
+
+    def _redate(self, conn: sqlite3.Connection, step_id: int, iso: str) -> None:
+        conn.execute("UPDATE roadmap_step SET planned_date = ? WHERE id = ?", (iso, step_id))
+        conn.commit()
+
+    def test_year_headings_appear_only_when_the_timetable_spans_years(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        rid = self._start(client, conn, "swe")
+        steps = self._steps(conn, rid)
+        for i, s in enumerate(steps):
+            self._redate(conn, s["id"], f"2027-0{1 + i % 9}-05")
+        page = client.get(f"/roadmaps/{rid}").text
+        assert "yrhd" not in page  # one year: a heading over every row is wallpaper
+
+        self._redate(conn, steps[-1]["id"], "2028-02-05")
+        page = client.get(f"/roadmaps/{rid}").text
+        assert '<p class="yrhd">2027</p>' in page
+        assert '<p class="yrhd">2028</p>' in page
+
+    def test_next_step_carries_the_rule_and_black_is_spent_only_on_today(
+        self, client: TestClient, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        from backglass.brief.daily import today_in
+
+        rid = self._start(client, conn)
+        steps = self._steps(conn, rid)
+        today = today_in(settings.default_tz)
+        # The next step is a year out, one step falls literally today, one is in
+        # the past, the rest are further out. Only the literal today earns the
+        # black chip — a date is not a state, and "next" is not "due".
+        for s in steps:
+            self._redate(conn, s["id"], today.replace(year=today.year + 2).isoformat())
+        self._redate(conn, steps[0]["id"], today.replace(year=today.year + 1).isoformat())
+        self._redate(conn, steps[1]["id"], today.isoformat())
+        self._redate(conn, steps[2]["id"], today.replace(year=today.year - 1).isoformat())
+        page = client.get(f"/roadmaps/{rid}").text
+
+        # The NEXT marker is a rule plus a label on the first pending step, never
+        # an inverted row and never the black chip.
+        assert page.count('<p class="nextlbl">Next</p>') == 1
+        assert page.count("nextstep") == 1
+        assert steps[0]["title"] in page
+        assert page.count("Due today") == 1
+        assert page.count("Overdue") == 1
+
+    def test_open_steps_collapse_to_two_boxes_plus_quiet_text(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        rid = self._start(client, conn)
+        page = client.get(f"/roadmaps/{rid}").text
+        steps = self._steps(conn, rid)
+        assert len(steps) == 8
+
+        # Exactly two boxed buttons on the whole timetable — Done and Skip on the
+        # next step. Every other open step keeps both actions as text links.
+        assert page.count('class="btn ok" hx-post="/roadmaps/') == 1
+        assert page.count('class="btn defer"') == 1
+        for step in steps[1:]:
+            for action in ("done", "skip"):
+                assert (
+                    f'class="lnk" hx-post="/roadmaps/{rid}/steps/{step["id"]}/{action}"'
+                    in page
+                )
+        # One overflow disclosure per open step holds re-date and reorder; nothing
+        # was removed, so a batch replan is still one tap per action.
+        assert page.count('<details class="more">') == len(steps)
+        for step in steps:
+            assert f"/roadmaps/{rid}/steps/{step['id']}/date/" in page
+            assert f"/roadmaps/{rid}/steps/{step['id']}/move/up" in page
+
+    def test_masthead_spends_at_most_two_reels(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        rid = self._start(client, conn)  # medical carries five lifetime totals
+        page = client.get(f"/roadmaps/{rid}").text
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM target t JOIN roadmap r ON r.goal_id = t.goal_id "
+            "WHERE r.id = ? AND t.kind = 'total'", (rid,)
+        ).fetchone()["n"] == 5
+        assert page.count('<span class="reel">') == 2
+        # G11 stays intact: the two health signals never merge into one score.
+        assert 'class="rstale"' in page or "no checkpoints yet" not in page
+
+    def test_step_writes_refresh_the_masthead_out_of_band(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        rid = self._start(client, conn)
+        step = self._steps(conn, rid)[0]["id"]
+        fragment = client.post(f"/roadmaps/{rid}/steps/{step}/done").text
+        # The masthead moved above both swap targets, so the fragment carries it.
+        assert 'id="roadmap-masthead"' in fragment
+        assert 'hx-swap-oob="outerHTML"' in fragment
+        assert "1/8 steps" in fragment
+
+    def test_list_rows_carry_the_next_step_and_the_headline_total(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        rid = self._start(client, conn)
+        tid = conn.execute(
+            "SELECT t.id FROM target t JOIN roadmap r ON r.goal_id = t.goal_id "
+            "WHERE r.id = ? AND t.kind = 'total' ORDER BY t.id LIMIT 1", (rid,)
+        ).fetchone()["id"]
+        client.post(f"/roadmaps/{rid}/totals/{tid}/log", data={"amount": "4", "note": ""})
+
+        page = client.get("/roadmaps").text
+        assert "1 active" in page
+        assert "Next: " + self._steps(conn, rid)[0]["title"] in page
+        assert "0/8 steps" in page
+        assert "Shadowing hours" in page
+        assert "4/60" in page
+
+    def test_closed_roadmaps_sink_to_their_own_group(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        page = client.get("/roadmaps").text
+        assert "Closed" not in page  # nothing started: no empty group either
+
+        rid = self._start(client, conn)
+        page = client.get("/roadmaps").text
+        assert "rmclosed\">—" in page  # absence is an em-dash, never a sentence
+
+        client.post(f"/roadmaps/{rid}/drop", follow_redirects=True)
+        page = client.get("/roadmaps").text
+        assert "0 active" in page
+        assert "rmclosed" in page and "dropped" in page
+
+    def test_a_live_path_cannot_be_started_twice(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        rid = self._start(client, conn)
+        page = client.get("/roadmaps").text
+        # The button is replaced by a link to what already exists.
+        assert "/roadmaps/start/medical" not in page
+        assert f'href="/roadmaps/{rid}">started →' in page
+        assert "/roadmaps/start/swe" in page  # untouched paths still start
+
+        # Structural, not cosmetic: posting the start anyway redirects instead of
+        # instantiating a second goal and its cadences.
+        again = client.post("/roadmaps/start/medical", follow_redirects=False)
+        assert again.status_code == 303
+        assert again.headers["location"] == f"/roadmaps/{rid}"
+        assert conn.execute("SELECT COUNT(*) AS n FROM roadmap").fetchone()["n"] == 1
+
+        # Dropping releases the path — restart is possible, but only after that.
+        client.post(f"/roadmaps/{rid}/drop", follow_redirects=True)
+        assert "/roadmaps/start/medical" in client.get("/roadmaps").text
+
+    def test_cadences_are_read_only_with_a_live_weekly_count(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        rid = self._start(client, conn)
+        page = client.get(f"/roadmaps/{rid}").text
+        assert "0/5</span> this week" in page  # MCAT practice sections, 5/wk
+        assert "tick on Goals →" in page
+
+
 class TestGoalsPage:
     """Phase 8: goals + checklist get their own page — cards per goal, week tick-grid."""
 

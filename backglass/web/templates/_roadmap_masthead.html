@@ -1,0 +1,31 @@
+{% import "_macros.html" as m %}
+{# The roadmap masthead (replan): where this path stands, derived on read. Steps
+   done over live with the black progress track, at most two lifetime totals in
+   reel treatment — §7's per-view reel budget is spent here and nowhere else on
+   the page — then the goal's two health signals on their own lines: staleness
+   (G12, a day count) and risk (G13, a sentence). Separate lines, never merged
+   into one score (G11).
+
+   It lives above both swap targets, so the fragments re-send it out of band. #}
+<div class="rprog" id="roadmap-masthead"
+     {%- if oob_masthead|default(false) %} hx-swap-oob="outerHTML"{% endif %}>
+  <div class="hd">
+    {% set spct = (100 * done_steps / live_steps)|round|int if live_steps else 0 %}
+    <div class="track grow"><div class="fill" style="width:{{ spct }}%"></div></div>
+    <span class="pct tnum">{{ done_steps }}/{{ live_steps }} steps</span>
+  </div>
+  {% if totals %}
+    <div class="rreels">
+      {% for t in totals[:2] %}
+        <div class="kpi">
+          {{ m.reel(t['done']) }}
+          <span class="klbl">{{ t['title'] }}<br>of {{ t['total_count'] }}</span>
+        </div>
+      {% endfor %}
+    </div>
+  {% endif %}
+  {% if stale %}<p class="rstale">{{ m.stale_chip(stale.level, stale.chip()) }}</p>{% endif %}
+  {% if risk and risk.sentence() %}
+    <p class="srisk{% if risk.at_risk %} bad{% endif %}">{{ risk.sentence().removeprefix(risk.goal_title ~ ': ') }}</p>
+  {% endif %}
+</div>
