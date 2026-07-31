@@ -1049,3 +1049,32 @@ the gap by *finding* the values so the owner never hunts for a path.
       pointing at setup. Live dry-drive on the real machine (demo db, scratch
       env): found the real Anki 'User 1' profile + Avorio store, listed the six
       cadence candidates for --reviews-target, wrote nothing real.
+
+---
+
+# UI replan — tournament-judged rebuild of schedule/goals/roadmap pages (2026-07-31)
+
+Three designers (glance / dense / flow philosophies) replanned five pages from
+scratch; three judges (daily-use, design-integrity, engineering) scored all four
+candidates including the shipping incumbent; synthesis picked winners per page.
+Verdict: glance won schedule-day, schedule-week, goals, roadmaps-list; dense won
+roadmap-detail (year-grouped steps); incumbent held nowhere but its timeline
+geometry, chip grammar, and G-rules survived inside every winner. Banned-ideas
+list enforced (no verdict chips, no reel-budget busts, black = literal due-today
+only, no write-backs on the read-only schedule).
+
+Built by three worktree-isolated executors, merged sequentially:
+- [x] schedule day: NOW/NEXT strip, GAPS ledger, tiny-tier entries, quiet pager,
+      P3/P9 as sentences derived from persisted planner state
+- [x] schedule week: seven-cell capacity band (free hours 19/26 tabular, gold
+      overflow chip in-cell, today outlined), textless grid blocks w/ title attrs
+- [x] goals: today's ticks first (#today-ticks), THIS WEEK fold outside swap
+      targets w/ OOB pace span, flagged/healthy card split, cadence tick endpoint
+- [x] roadmaps list: two-line next-step rows, headline accumulator, CLOSED group,
+      structural double-start guard (route redirects; did not previously exist)
+- [x] roadmap detail: masthead (≤2 reels + G11-separate staleness/risk), log zone
+      first w/ visible provenance, year-grouped steps, NEXT rule+label, 35→2
+      boxed-control collapse, read-only cadences linking to Goals
+
+537 tests (508 at checkpoint), mypy strict, ruff, palette validator all green.
+Shared due_state_chip macro in _macros.html is the one due-date grammar everywhere.
