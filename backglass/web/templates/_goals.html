@@ -73,5 +73,10 @@
     {% for g in d.goals.meta.goals_without_targets %}
       <p class="note">{{ g['goal_title'] }}: no targets set. A goal without a target is inert.</p>
     {% endfor %}
+    {% if d.goals.meta.quiet_milestones %}
+      {# The glance surface counts what has not moved; /goals holds the full list. #}
+      <p class="note">{{ d.goals.meta.quiet_milestones }} milestones not started ·
+        <a href="/goals">all goals →</a></p>
+    {% endif %}
   </div>
 </section>

@@ -16,16 +16,23 @@
   {# The source-failure banner moved to the sidebar alerts block (_sidebar.html), which
      is present on every page — a failure is now louder, not quieter: it follows the
      owner to Schedule, People and Roadmaps instead of living only here. #}
-  {# Paired by height so the 2-column grid does not frame a void: the tall GOALS
-     panel sits beside SOURCES, and the short CHECKLIST takes the final half-row. #}
-  <div class="grid">
-    {% include "_today.html" %}
-    {% include "_board.html" %}
-    {% include "_awaiting.html" %}
-    {% include "_review.html" %}
-    {% include "_goals.html" %}
-    {% include "_sources.html" %}
-    {% include "_checklist.html" %}
+  {# Two INDEPENDENT column stacks, not one grid: grid rows stretch both cells to
+     the taller panel, so any height mismatch frames a void in cream and rules.
+     Independent columns pack their own panels — a void is structurally impossible,
+     whatever the data does to panel heights. Morning priority: plan and debts left,
+     inbox-shaped work right. #}
+  <div class="cols">
+    <div class="col">
+      {% include "_today.html" %}
+      {% include "_awaiting.html" %}
+      {% include "_goals.html" %}
+    </div>
+    <div class="col">
+      {% include "_board.html" %}
+      {% include "_review.html" %}
+      {% include "_checklist.html" %}
+      {% include "_sources.html" %}
+    </div>
   </div>
 
   <p class="note" style="padding:var(--sp-4) var(--sp-5)">

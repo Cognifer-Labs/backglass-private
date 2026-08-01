@@ -164,13 +164,24 @@ def goals_panel(conn: sqlite3.Connection, settings: Settings, today: date) -> Pa
             "week_start": week_start_of(today, settings.week_start).isoformat(),
         },
     )
+    targeted = [r for r in rows if r["target_id"] is not None]
+    # The dashboard is the glance surface: cadences and anything that has moved
+    # show as rows; untouched milestones collapse to one counted line. Their full
+    # list lives on /goals — fourteen "no checkpoints yet" rows here was the
+    # wallpaper the audit condemned, doubled by every started roadmap.
+    quiet = [
+        r for r in targeted
+        if not r["weekly_count"] and not r["done_this_week"] and not r["last_checkpoint"]
+    ]
+    quiet_ids = {r["target_id"] for r in quiet}
     return Panel(
         title="Goals",
         # docs/06 §Empty states, verbatim. It is the sharpest line in the document and it
         # is doing real work: a goal with no target cannot be progressed against.
         empty_text="No targets set. A goal without a target is inert.",
-        rows=[r for r in rows if r["target_id"] is not None],
+        rows=[r for r in targeted if r["target_id"] not in quiet_ids],
         meta={
+            "quiet_milestones": len(quiet),
             "goals_without_targets": [r for r in rows if r["target_id"] is None],
             # docs/06 §Panels, Goals: "staleness chips, risk projections". Two separate
             # maps because G11 forbids merging the signals.

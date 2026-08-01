@@ -70,6 +70,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.middleware("http")
     async def sidebar_state(request: Request, call_next: Any) -> Any:
         request.state.sb = None
+        # One job for the masthead eyebrow on every page: temporal context.
+        # Pages with their own temporal frame (schedule day/week) override it.
+        request.state.eyebrow = f"{today().strftime('%A %d %B %Y')} · {resolved.default_tz}"
         wants_shell = (
             request.method == "GET"
             and "hx-request" not in request.headers

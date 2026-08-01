@@ -3,13 +3,12 @@
 {% set active = 'roadmaps' %}
 
 {% block title %}Backglass — {{ r['title'] }}{% endblock %}
-{% block meta %}{{ r['title'] }} · {{ r['path_id'] }} v{{ r['path_version'] }}{% endblock %}
 
 {% block content %}
 <section class="sec">
   {{ m.banner(r['title'], 'target ' ~ (r['target_date'] or '')[:10]) }}
   <div class="inner">
-    <p class="cap">Done means: {{ r['definition_of_done'] }}
+    <p class="cap">{{ r['path_id'] }} v{{ r['path_version'] }} · Done means: {{ r['definition_of_done'] }}
       {%- if r['personalized'] %} · personalized{% endif %}</p>
 
     {# Masthead, then the log zone, then the timetable: the weekly read is

@@ -785,3 +785,12 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
  * merged-score G11 forbids. Chips carry the state. If a card model ever
  * exposes exactly one active flag as a single field, that card alone may
  * take the matching pair; until then the body is neutral. */
+
+/* ── Page composition (2026-08-01): independent column stacks ──────────────
+ * .grid row-locks heights (a tall panel frames a void beside a short one);
+ * .cols packs each column independently, so composition survives any data. */
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:0;align-items:start}
+.cols .col{display:flex;flex-direction:column;min-width:0}
+.cols .col:first-child{border-right:2px solid var(--rule)}
+.cols .col .panel{border-right:0}
+@media(max-width:840px){.cols{grid-template-columns:1fr}.cols .col:first-child{border-right:0}}

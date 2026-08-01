@@ -44,7 +44,7 @@
   <div class="wrap">
     <header class="mast">
       <div>
-        <p class="meta">{% block meta %}{% endblock %}</p>
+        <p class="meta">{% block meta %}{{ request.state.eyebrow or '' }}{% endblock %}</p>
       </div>
       <div class="acts">
         {% block mast_right %}{% endblock %}
