@@ -1078,3 +1078,171 @@ Built by three worktree-isolated executors, merged sequentially:
 
 537 tests (508 at checkpoint), mypy strict, ruff, palette validator all green.
 Shared due_state_chip macro in _macros.html is the one due-date grammar everywhere.
+
+---
+
+## Cheap-acquisition arc (2026-08-01) — plan approved
+
+Full plan: ~/.claude/plans/bubbly-snacking-sunbeam.md. Seven phases, each one commit:
+
+- [x] 1. Structured-source bypass (anki/avorio rule-drop, free)
+- [x] 2. `backglass costs` CLI (measurement baseline)
+- [x] 3. Learned noise rules (migration 0009, `backglass noise`)
+- [x] 4. Template dedup (migration 0010, `noise templates --backfill`)
+- [x] 5. Batched triage (triage-batch prompt, escalation fallback)
+- [x] 6. AnthropicAPIBackend + prompt caching (pricing.py, prompts.split)
+- [x] 7. Batches API mode −50% (migration 0011, `backglass batch`)
+
+All seven built 2026-08-01; suite green (611 passed). Commits held: the tree carried
+unrelated uncommitted work (med-student Phase A + a concurrent session's instagram/
+app-launch files) intermingled in the same modified files — separate before committing.
+
+---
+
+## Instagram connector — friend plans (2026-08-01)
+
+Owner picked **both lanes** (export drop now, instagrapi flag-gated). Allowlist of
+chats/people only. Friend plans = lower brief priority unless birthday/special event.
+
+Design decisions (stated, not silent):
+- No schema migration. Category derived at read time: commitment JOIN source_item
+  WHERE source='instagram' → friend plan. Commitment table stays untouched.
+- Special detection = deterministic regex on `what` (birthday|bday|anniversary|
+  wedding|graduation|farewell|baby shower|engagement|housewarming) at brief time.
+  Special → stays in normal sections. Non-special → demoted out of Slipping/Awaiting
+  into new "Friend plans" section, priority 11 (last, truncated first — B1).
+- instagrapi session file path in config (experimental lane, not OAuth); cursor
+  still in credential row like every connector. Tests never touch live API.
+
+- [x] 1. `connectors/instagram.py` — InstagramExportConnector (Meta DYI folder,
+      mojibake fix, allowlist, timestamp_ms cursor) + InstagramLiveConnector
+      (lazy instagrapi import, injected client for tests, thread allowlist)
+- [x] 2. `config.py` — instagram_export_path, instagram_chats (NoDecode list),
+      instagram_username, instagram_session_file
+- [x] 3. `detect.py` + `__main__.py` wiring, `.env.example`
+- [x] 4. `db/queries/brief_friend_plans.sql` + `brief/daily.py`: special regex,
+      demotion filter in slipping/awaiting, friend_plans_section, assembly
+- [x] 5. `tests/test_instagram.py` — export fixture tree, allowlist, mojibake,
+      cursor idempotency, fake live client, brief demotion + birthday promotion
+- [x] 6. `docs/07-connectors.md` §Instagram
+
+---
+
+# Phase — Roadmap page: action timeline + edit-everything + unlog  (2026-08-01)
+
+Owner ask (/goal): steps as a clickable action-list timeline that expands per item
+for actions; titles and other fields editable; wrongly-logged hours removable.
+
+Design decisions (stated):
+- Timeline = `<details>` per step (no JS): summary row is the timeline entry
+  (square node on a vertical rail — no rounded corners), panel holds Done/Skip,
+  re-date, reorder, and an edit form (title + detail). Replaces the old
+  always-visible buttons + "Re-date · reorder" fold.
+- Rename a step syncs its milestone target's title (instantiate names the target
+  after the step; letting them diverge would make checkpoints unreadable).
+- Roadmap rename updates roadmap.title AND goal.title (instantiated as one name;
+  risk sentences read the goal). definition_of_done editable in the same form.
+- Unlog = `checkpoints.delete` (G10 already free — progress summed on read).
+  Route 404s unless the checkpoint belongs to that total target of that roadmap.
+  Totals show all entries (last 3 in the open, rest behind a fold), × per entry.
+
+- [x] 1. `roadmap/adjust.py` — rename_step (syncs target title), rename_roadmap
+- [x] 2. `web/routes/roadmaps.py` — POST /edit, /steps/{id}/edit,
+      /totals/{id}/title, /totals/{id}/unlog/{checkpoint_id}; totals_for carries
+      checkpoint ids + all entries
+- [x] 3. `_roadmap_steps.html` — details-timeline; `_roadmap_totals.html` —
+      unlog × + rename fold; `roadmap.html` — edit-roadmap fold
+- [x] 4. `dashboard.css` — .atl rail/node, .steppanel, .unlog, .edfold
+- [x] 5. Tests — unlog round-trip + 404, renames (step/target sync, roadmap+goal,
+      total), timeline renders, 422 empty title
+- [x] 6. Gates: pytest, ruff, mypy strict, palette validator
+
+---
+
+# Phase — Format audit: is each surface the right format for its content?  ⏳ PLANNED (2026-08-01)
+
+Owner ask (/goal): review how the page structure works and plan improvements by
+asking, for everything, "is this the best format for showing this?" Audit done
+against the live app (real db, all six pages screenshotted) plus a template/panels
+structure map. Below: per-surface verdict, then the plan. **Nothing implemented —
+plan awaits approval.**
+
+## The three cross-cutting defects (most findings reduce to these)
+
+**A. One fact renders in up to four places, styled as an alarm in each.**
+"Ship OrgTruth: no checkpoints yet / at risk" appears simultaneously in: sidebar
+ALERTS box, sidebar GOALS block (chip + bold risk sentence), dashboard Goals panel
+(chip + bold sentence + empty bar), and the Goals page NEEDS ATTENTION card. Four
+renderings, three of them alarm-styled, on every page, every day. This is the
+already-recorded open ruling ("what does ALERTS mean") — the audit answer: an
+alert is *abnormal + actionable + names its subject*; everything else is status
+and lives once, on the thing itself.
+
+**B. Alarm ink spent on "young data", not failure.** Vermilion currently marks
+"NO CHECKPOINTS YET" (a brand-new target) and "NO INTERACTIONS YET" (a person
+added yesterday, red-filled row — 8+ red rows on People from one class-roster
+import). Nothing is wrong in either case; the owner just hasn't started. Red
+should be reserved for broken/overdue (source failing, overdue commitment).
+"Not started yet" is a neutral fact → k-dash/k-plain chip. Today the People page
+looks like an incident report and the real alert (iMessage auth failure) has to
+share its ink with noise.
+
+**C. Rare controls rendered at the same weight as primary actions, always.**
+Per cadence target: four cadence-change buttons (1/wk…5/wk) sit next to +1 —
+on the dashboard panel AND the goals page. Changing a cadence is a
+once-a-quarter settings action; logging is the daily action. Same pattern:
+RENAME + SET target forms always open per total on the roadmap page; FORGET as
+a gold-boxed button on all 20 memory rows. Rule: one primary action visible at
+rest; rare/destructive actions behind the existing `<details>` fold idiom.
+
+## Per-surface verdicts
+
+| Surface | Is this the right format? | Verdict |
+|---|---|---|
+| Sidebar ALERTS | Boxes, but "A source is failing — views are incomplete" doesn't name the source | Right place, wrong copy: name subject + action ("iMessage: auth failed — run backglass auth imessage"). Drop goal-risk from ALERTS (lives in GOALS block). Cap at ~4, count overflow. |
+| Sidebar GOALS | Full chips + risk sentences per goal, repeated on every page | Compress: one line per goal (name + worst chip only); sentence only on hover/title. It is a nav aid, not a report. |
+| Dashboard Goals panel | Near-clone of the Goals page incl. cadence pickers | Demote to summary: per goal one line + worst target, no cadence buttons, no +1; "all goals →" carries the load. Dashboard is triage, Goals page is work. |
+| Dashboard Board | Cards + Resolve/Snooze/Drop, counterparty lanes | Format right. Keep. |
+| Awaiting | Age-first row + Received | Format right. Keep. |
+| Review queue | Dashed cards, accept/reject + reasons | Format right. Keep. |
+| Checklist (dashboard) | Binary boxes | Right. Keep. |
+| Sources | Status square + count + pause, error inline | Right. Keep (copy already names the fix command). |
+| Goals page: cadence targets | Bar + % + chip + bold "no observed progress" sentence + 0/N text = 4 encodings of one state | Two encodings max: bar + one chip. Sentence only when it adds info (a date). |
+| Goals page: milestones | Full-height row each, body = "last —" | Wrong format. Milestones are dates, not streams: collapse to a compact dated list (one line each) inside the goal card; "last —" never renders. |
+| Goals page: NEEDS ATTENTION | 3 of 3 goals flagged | When every goal qualifies the section discriminates nothing. Flag = worst N (say 2) by risk; rest under ON TRACK even if imperfect. |
+| Schedule day | Timeline + capacity headline + empty state naming the command | Right. Keep. |
+| Schedule week | Day-card strip **plus** a grid whose header repeats the same seven days; grid renders fully empty (framed void) | Merge: day cards become the grid header (one row, clickable). Empty week = one sentence + the strip, no 12-hour empty grid. |
+| People | Orgs/portals (ASU HOUSING, SALLIE MAE) listed as "people"; unranked; red rows for new imports | Split display: People / Orgs & services (derive: has role/org or human-name heuristic — display grouping only, no schema change). Sort by open count desc, then staleness. "No interactions yet" → neutral chip, no fill (defect B). |
+| Roadmaps list | Dense one-liner per roadmap (next step · date · steps bar · headline total) | Best-formatted list in the app. Keep; it is the model for the dashboard Goals rewrite. CLOSED "—" void → drop section when empty. |
+| Roadmap detail | Masthead + always-open log/set/rename forms + step timeline | Timeline right (new). Log form: keep amount+org+Log visible (daily action); SET target + RENAME into the fold (defect C). "manual" kbd tag needs a title/legend. |
+| Memory | Subject lanes, key→value+provenance | Right format. FORGET → quiet text button (defect C); gold = warning ink, not button chrome. |
+| Brief (email) | Out of scope this pass (docs/05 fixed format) | Untouched. |
+
+## Plan (order = highest leverage first)
+
+- [ ] 1. **Alert policy in code, not taste** — `panels.py sidebar()`: ALERTS =
+      abnormal+actionable only (source failed w/ name+command, spend cap, kill
+      rate, review backlog). Goal risk OUT of ALERTS (closes the open Phase 8b
+      ruling). Each alert names subject + one action. Cap 4 + "N more".
+- [ ] 2. **Retire vermilion for young data** — "no checkpoints yet" and "no
+      interactions yet" → k-plain/k-dash chip, no row fill. Vermilion audit:
+      grep every k-verm use, each must mean broken/overdue.
+- [ ] 3. **Dashboard Goals panel → summary** — one line per goal (title, worst
+      chip, thin bar), no cadence buttons, no logging; link to /goals. Roadmaps-
+      list row format is the template.
+- [ ] 4. **Goals page density** — milestones as compact dated list; cadence-
+      picker behind fold (+1 stays); one chip + bar per target (drop duplicate
+      bold sentence when it repeats chip); NEEDS ATTENTION = worst 2 by risk.
+- [ ] 5. **People page** — People vs Orgs & services grouping, open-count sort,
+      neutral new-profile chip. No schema change (display heuristic only —
+      recorded as such).
+- [ ] 6. **Week view merge** — day cards = grid header; empty week collapses
+      grid. Sidebar GOALS compression (one line per goal). Memory FORGET +
+      roadmap SET/RENAME behind folds.
+- [ ] 7. **Tests + gates** — update test_web_pages/test_dashboard assertions
+      (alert set, chip classes, milestone list, people grouping); pytest, ruff,
+      mypy strict, palette validator; live screenshot pass both themes.
+
+Deliberately NOT proposed: layout/grid rework (just shipped), new colors, new
+chart series, merging staleness+risk (G11 forbids), any brief change, any schema
+change.

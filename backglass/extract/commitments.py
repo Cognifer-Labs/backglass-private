@@ -33,16 +33,19 @@ class ApplyReport:
     date_notes: list[str] = field(default_factory=list)
 
 
-def extract(
-    item: dict[str, Any],
-    *,
-    prompt: Prompt,
-    client: ModelClient,
-    model: str,
-    budget_usd: float,
-    settings: Settings,
-) -> tuple[CommitmentExtraction, float]:
-    rendered = prompt.render(
+def render_parts(
+    item: dict[str, Any], *, prompt: Prompt, settings: Settings
+) -> tuple[str, str]:
+    """(system, user) for one item — the static instruction prefix rides in `system`
+    for prompt caching (prompts.Prompt.split). Shared with the batch path
+    (backglass/batch.py) so live and batched extraction cannot drift.
+
+    The owner line early in the prompt file shortens the cacheable prefix — accepted,
+    because restructuring the file would bump its version and re-extract everything.
+    """
+    static, _ = prompt.split()
+    system = f"{SYSTEM}\n\n{static}" if static else SYSTEM
+    rendered = prompt.render_dynamic(
         owner_name=settings.owner_name,
         # The prompt spec is written for a single address. The owner has two, and
         # direction is decided against both. Rendered as a list rather than editing a
@@ -54,8 +57,21 @@ def extract(
         title=item.get("title") or "",
         body_text=item.get("body_text") or "",
     )
+    return system, rendered
+
+
+def extract(
+    item: dict[str, Any],
+    *,
+    prompt: Prompt,
+    client: ModelClient,
+    model: str,
+    budget_usd: float,
+    settings: Settings,
+) -> tuple[CommitmentExtraction, float]:
+    system, rendered = render_parts(item, prompt=prompt, settings=settings)
     result = client.complete(
-        system=SYSTEM, user=rendered, schema=SCHEMA, model=model, budget_usd=budget_usd
+        system=system, user=rendered, schema=SCHEMA, model=model, budget_usd=budget_usd
     )
     try:
         parsed = CommitmentExtraction.model_validate(result.data)

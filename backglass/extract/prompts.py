@@ -56,6 +56,30 @@ class Prompt:
             raise PromptError(f"{self.id}: missing values for {sorted(missing)}")
         return _PLACEHOLDER.sub(lambda m: str(values[m.group(1)]), self.text)
 
+    def split(self) -> tuple[str, str]:
+        """(static prefix, dynamic remainder), split before the first placeholder line.
+
+        The static half is byte-identical across every item, so a caching backend can
+        mark it `cache_control` and pay for those tokens once instead of per call. The
+        prompt files are NOT edited for this — content and order are unchanged, so no
+        version bump and no re-extraction. A placeholder early in the file (the owner
+        line in extract-commitments.md) simply shortens the cacheable prefix; honesty
+        over restructuring.
+        """
+        lines = self.text.split("\n")
+        for i, line in enumerate(lines):
+            if _PLACEHOLDER.search(line):
+                return "\n".join(lines[:i]), "\n".join(lines[i:])
+        return self.text, ""
+
+    def render_dynamic(self, **values: object) -> str:
+        """Render only the dynamic half of `split()`. Same strictness as render()."""
+        _, dynamic = self.split()
+        missing = set(_PLACEHOLDER.findall(dynamic)) - set(values)
+        if missing:
+            raise PromptError(f"{self.id}: missing values for {sorted(missing)}")
+        return _PLACEHOLDER.sub(lambda m: str(values[m.group(1)]), dynamic)
+
 
 def load(name: str, directory: Path | None = None) -> Prompt:
     path = (directory or PROMPTS_DIR) / f"{name}.md"

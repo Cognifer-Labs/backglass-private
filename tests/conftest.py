@@ -172,6 +172,7 @@ class FakeModel:
         extract: dict[str, dict[str, Any]] | None = None,
         triage: dict[str, dict[str, Any]] | None = None,
         *,
+        triage_batch: dict[str, dict[str, Any]] | None = None,
         cost_usd: float = 0.001,
     ):
         # Keyed per tier, not per marker alone: the same subject line appears in both the
@@ -179,6 +180,7 @@ class FakeModel:
         # triage call an extraction-shaped response and fail validation.
         self.extract = extract or {}
         self.triage = triage or {}
+        self.triage_batch = triage_batch or {}
         self.cost_usd = cost_usd
         self.calls: list[tuple[str, str]] = []
 
@@ -186,18 +188,32 @@ class FakeModel:
         self, *, system: str, user: str, schema: dict[str, Any], model: str, budget_usd: float
     ) -> ModelResult:
         del system, budget_usd
-        tier = "triage" if "keep" in schema.get("properties", {}) else "extract"
+        props = schema.get("properties", {})
+        if "keep" in props:
+            tier = "triage"
+        elif "items" in props:
+            tier = "triage_batch"
+        else:
+            tier = "extract"
         self.calls.append((tier, model))
-        table = self.triage if tier == "triage" else self.extract
+        table = {
+            "triage": self.triage,
+            "triage_batch": self.triage_batch,
+            "extract": self.extract,
+        }[tier]
         for key, response in table.items():
             if key in user:
                 return ModelResult(data=response, cost_usd=self.cost_usd)
-        default: dict[str, Any] = (
+        default: dict[str, Any]
+        if tier == "triage":
             # triage.md: "When genuinely uncertain, return keep=true."
-            {"keep": True, "reason": "no fixture matched; defaulting to keep"}
-            if tier == "triage"
-            else {"commitments": []}
-        )
+            default = {"keep": True, "reason": "no fixture matched; defaulting to keep"}
+        elif tier == "triage_batch":
+            # An empty batch response escalates every item to the per-item pass, where
+            # the existing `triage` fixtures apply — batch-unaware tests keep working.
+            default = {"items": []}
+        else:
+            default = {"commitments": []}
         return ModelResult(data=default, cost_usd=self.cost_usd)
 
 

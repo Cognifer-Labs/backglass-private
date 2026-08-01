@@ -115,3 +115,17 @@ The three open phase-exit criteria are calendar time, not code. Track here:
 
 A wrong brief claim during the soak is a bug report: file it in tasks/todo.md
 with the source item id, fix, and restart the seven-day counter for Phase 2.
+
+## Optional: batch mode (−50% on extraction)
+
+Once the soak is stable and an Anthropic API key exists (`MODEL_BACKEND=anthropic`,
+key in `MODEL_API_KEY` or `ANTHROPIC_API_KEY`), extraction can move to the Message
+Batches API at half price:
+
+1. `cp launchd/com.cognifer.backglass.batch-*.plist ~/Library/LaunchAgents/` and load
+   them (submit 22:00, collect 05:30 — before plan and brief).
+2. Verify once by hand: `backglass batch submit`, then `backglass batch collect` the
+   next morning; `backglass batch status` shows the ledger.
+3. Failure policy is automatic: an expired or errored batch leaves its items pending
+   and the next `backglass sync` extracts them synchronously at full price. `doctor`
+   prints a note (never a failure) if a batch has been outstanding for more than 26h.

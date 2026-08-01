@@ -4,6 +4,10 @@
 -- rules are too permissive and the cost model breaks." Below 85 percent is the signal
 -- that the rule layer has drifted and cost is about to climb.
 --
+-- Structured-source drops (anki/avorio tallies) are excluded: they were never
+-- candidates for the model, so counting them would flatter the rate the 85% signal
+-- is watching.
+--
 -- Params: :user_id
 SELECT
   COUNT(*)                                                   AS total,
@@ -13,4 +17,5 @@ SELECT
     / NULLIF(COUNT(*), 0)                                    AS kill_rate
 FROM source_item
 WHERE user_id = :user_id
-  AND triage_verdict IS NOT NULL;
+  AND triage_verdict IS NOT NULL
+  AND (triage_reason IS NULL OR triage_reason NOT LIKE 'structured source%');

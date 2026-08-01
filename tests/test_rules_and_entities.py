@@ -56,6 +56,44 @@ def test_rules_never_return_keep() -> None:
     assert verdict.verdict in ("drop", "unclassified")
 
 
+def test_structured_sources_drop_before_anything_else() -> None:
+    """anki/avorio tallies are consumed deterministically; triaging them is pure spend."""
+    verdict = rules.classify(
+        headers={},
+        author="anki",
+        source="anki",
+        structured_sources=frozenset({"anki", "avorio"}),
+    )
+    assert verdict.dropped
+    assert verdict.reason is not None and "structured source" in verdict.reason
+
+
+def test_structured_sources_match_labelled_variants_by_prefix() -> None:
+    """One `calendar` entry covers `calendar:personal`, same as noise domains."""
+    verdict = rules.classify(
+        headers={},
+        author="",
+        source="calendar:personal",
+        structured_sources=frozenset({"calendar"}),
+    )
+    assert verdict.dropped
+
+
+def test_structured_sources_never_touch_other_sources() -> None:
+    verdict = rules.classify(
+        headers={"From": "dana@example.com"},
+        author="dana@example.com",
+        source="gmail:personal",
+        structured_sources=frozenset({"anki", "avorio"}),
+    )
+    assert not verdict.dropped
+    # And a prefix must be a label boundary, not a substring: "anki" != "ankiety".
+    verdict = rules.classify(
+        headers={}, author="", source="ankiety", structured_sources=frozenset({"anki"})
+    )
+    assert not verdict.dropped
+
+
 def test_known_noise_domains_are_configuration() -> None:
     verdict = rules.classify(
         headers={"From": "hello@newsletter.example"},

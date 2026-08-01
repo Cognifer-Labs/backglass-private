@@ -84,11 +84,13 @@ class Ledger:
         if self.dry_run:
             return self._pseudo_id(), True
 
+        from backglass.extract import templates
+
         cursor = self.conn.execute(
             "INSERT INTO source_item "
             "(user_id, source, external_id, fetched_at, occurred_at, author, title, "
-            " body_text, raw_json, content_hash, triage_verdict) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
+            " body_text, raw_json, content_hash, template_hash, triage_verdict) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)",
             (
                 USER_ID,
                 item.source,
@@ -100,6 +102,11 @@ class Ledger:
                 item.body_text,
                 item.raw_json,
                 item.content_hash,
+                # Derived at ingest, like content_hash but for the item's *shape*.
+                # Not part of the conflict check — recomputable, never authored.
+                templates.template_hash(
+                    author=item.author, title=item.title, body_text=item.body_text
+                ),
             ),
         )
         return int(cursor.lastrowid or 0), True

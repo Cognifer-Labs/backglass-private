@@ -1046,6 +1046,407 @@ def sources_enable(source: str) -> None:
     typer.echo(f"{source} resumed")
 
 
+# ── learned noise ────────────────────────────────────────────────────────
+
+noise_app = typer.Typer(
+    invoke_without_command=True,
+    help="Senders the triage model keeps dropping, promoted to free rule drops.",
+)
+app.add_typer(noise_app, name="noise")
+
+
+@noise_app.callback()
+def noise_list(ctx: typer.Context) -> None:
+    """Enabled learned rules, most recently promoted first."""
+    if ctx.invoked_subcommand is not None:
+        return
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    rows = list(
+        conn.execute(
+            "SELECT kind, value, evidence_count, promoted_at, promoted_by, enabled"
+            " FROM learned_noise WHERE user_id = ? ORDER BY promoted_at DESC",
+            (USER_ID,),
+        )
+    )
+    if not rows:
+        typer.echo("nothing learned yet — `backglass noise suggest` mines the history")
+        raise typer.Exit()
+    for r in rows:
+        mark = "·" if r["enabled"] else "×"
+        typer.echo(
+            f"{mark} {r['kind']:<7} {r['value']:<36} {r['evidence_count']:>3} drops"
+            f"  {r['promoted_at'][:10]} ({r['promoted_by']})"
+        )
+
+
+@noise_app.command("suggest")
+def noise_suggest(
+    min_evidence: Annotated[
+        int, typer.Option("--min-evidence", help="Model drops required")
+    ] = 5,
+) -> None:
+    """Dry-run: who would be promoted, with the evidence. Writes nothing."""
+    from backglass.extract import noise as noise_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    found = noise_mod.candidates(conn, settings, min_evidence=min_evidence)
+    if not found:
+        typer.echo("no candidates — every repeat-dropped sender is already covered")
+        raise typer.Exit()
+    typer.echo(
+        "candidates (zero keeps ever, no commitment ever; a sender's first real"
+        " ask after promotion would be lost — promote deliberately):"
+    )
+    for c in found:
+        window = f"{(c.first_seen or '')[:10]}..{(c.last_seen or '')[:10]}"
+        typer.echo(
+            f"  {c.kind:<7} {c.value:<36} {c.evidence_count:>3} model drops  {window}"
+            f"  e.g. {c.sample_reason or '—'}"
+        )
+    typer.echo("promote with: backglass noise promote <value> | --all")
+
+
+@noise_app.command("promote")
+def noise_promote(
+    value: Annotated[str | None, typer.Argument(help="Address or domain")] = None,
+    all_: Annotated[
+        bool, typer.Option("--all", help="Promote every address candidate")
+    ] = False,
+    min_evidence: Annotated[int, typer.Option("--min-evidence")] = 5,
+) -> None:
+    """Promote candidates into free tier-0 drops. Refuses any sender with a keep."""
+    from backglass.extract import noise as noise_mod
+
+    if not value and not all_:
+        typer.echo("give an address/domain, or --all for every address candidate", err=True)
+        raise typer.Exit(2)
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    found = noise_mod.candidates(conn, settings, min_evidence=min_evidence)
+    if all_:
+        chosen = [c for c in found if c.kind == "address"]
+    else:
+        chosen = [c for c in found if c.value == (value or "").strip().lower()]
+        if not chosen:
+            # Not a candidate: either unknown, insufficient evidence, or it has a keep
+            # somewhere in history. No --force by design — the env NOISE_SENDERS line
+            # remains the owner's unconditional override channel.
+            typer.echo(
+                f"{value!r} is not promotable: no candidate with {min_evidence}+ model"
+                " drops and zero keeps. NOISE_SENDERS in .env is the manual override.",
+                err=True,
+            )
+            raise typer.Exit(1)
+    written = noise_mod.promote(conn, chosen, by="cli")
+    conn.commit()
+    typer.echo(f"promoted {written} rule(s); future syncs drop them for free")
+
+
+@noise_app.command("templates")
+def noise_templates(
+    backfill: Annotated[
+        bool, typer.Option("--backfill", help="Hash rows that predate migration 0010")
+    ] = False,
+    limit: Annotated[int, typer.Option("--limit", help="Templates to show")] = 15,
+) -> None:
+    """Recurring mail shapes: counts, verdict mix, sample titles. Audit surface for
+    every `template:<hash8>` drop reason."""
+    from backglass.extract import templates as templates_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+
+    if backfill:
+        rows = list(
+            conn.execute(
+                "SELECT id, author, title, body_text FROM source_item"
+                " WHERE user_id = ? AND template_hash IS NULL",
+                (USER_ID,),
+            )
+        )
+        filled = 0
+        for r in rows:
+            th = templates_mod.template_hash(
+                author=r["author"], title=r["title"], body_text=r["body_text"]
+            )
+            if th is not None:
+                conn.execute(
+                    "UPDATE source_item SET template_hash = ? WHERE id = ?", (th, r["id"])
+                )
+                filled += 1
+        conn.commit()
+        typer.echo(f"backfilled {filled} of {len(rows)} unhashed row(s)")
+
+    top = list(
+        conn.execute(
+            "SELECT template_hash, COUNT(*) AS n,"
+            " SUM(CASE WHEN triage_verdict = 'drop' THEN 1 ELSE 0 END) AS dropped,"
+            " SUM(CASE WHEN triage_verdict = 'keep' THEN 1 ELSE 0 END) AS kept,"
+            " MAX(title) AS sample_title, MAX(author) AS sample_author"
+            " FROM source_item"
+            " WHERE user_id = ? AND template_hash IS NOT NULL"
+            " GROUP BY template_hash HAVING n > 1"
+            " ORDER BY n DESC LIMIT ?",
+            (USER_ID, limit),
+        )
+    )
+    if not top:
+        typer.echo("no repeated templates yet")
+        raise typer.Exit()
+    for t in top:
+        typer.echo(
+            f"{t['template_hash'][:8]}  ×{t['n']:<3} drop {t['dropped']}/keep {t['kept']}"
+            f"  {t['sample_author']}: {(t['sample_title'] or '')[:48]}"
+        )
+
+
+@noise_app.command("remove")
+def noise_remove(
+    value: Annotated[str, typer.Argument(help="Previously promoted value")],
+    requeue: Annotated[
+        bool, typer.Option("--requeue", help="Send its dropped items back to triage")
+    ] = False,
+) -> None:
+    """Disable a learned rule (row kept for audit). --requeue re-triages its drops."""
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    value = value.strip().lower()
+    cursor = conn.execute(
+        "UPDATE learned_noise SET enabled = 0 WHERE user_id = ? AND value = ?",
+        (USER_ID, value),
+    )
+    if cursor.rowcount == 0:
+        typer.echo(f"no learned rule for {value!r}", err=True)
+        raise typer.Exit(1)
+    requeued = 0
+    if requeue:
+        # Exactly the reasons rules.classify writes for a noise hit; migration 0002
+        # explicitly permits clearing triage columns back to NULL.
+        requeued = conn.execute(
+            "UPDATE source_item SET triage_verdict = NULL, triage_reason = NULL"
+            " WHERE user_id = ? AND triage_reason IN (?, ?)",
+            (
+                USER_ID,
+                f"known-noise sender: {value}",
+                f"known-noise domain: {value}",
+            ),
+        ).rowcount
+    conn.commit()
+    typer.echo(
+        f"disabled {value}"
+        + (f"; {requeued} item(s) back in the triage queue" if requeue else "")
+    )
+
+
+# ── costs ────────────────────────────────────────────────────────────────
+
+costs_app = typer.Typer(
+    invoke_without_command=True,
+    help="Where the model spend goes. Approximate below the run level.",
+)
+app.add_typer(costs_app, name="costs")
+
+
+@costs_app.callback()
+def costs_summary(ctx: typer.Context) -> None:
+    """Month-to-date spend vs cap, projection, and where the extraction money goes."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from backglass import costs as costs_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+
+    m = costs_mod.month(conn, settings)
+    pct = round(100 * m.spend_cents / m.cap_cents) if m.cap_cents else 0
+    over = "  ← projected to exceed the cap" if m.projected_cents > m.cap_cents else ""
+    typer.echo(
+        f"month-to-date  {m.spend_cents}c of {m.cap_cents}c cap ({pct}%)"
+        f" · projected {m.projected_cents}c by month end{over}"
+    )
+    avg = f"{m.avg_cents_per_item:.1f}c" if m.extracted else "—"
+    degraded = f" ({m.degraded_runs} degraded)" if m.degraded_runs else ""
+    typer.echo(
+        f"runs           {m.runs}{degraded} · extraction {m.extracted} items"
+        f" · ≈{avg} per extracted item"
+    )
+    if m.degraded_runs:
+        typer.echo(
+            "  ← spend cap was reached this month; extraction has been skipped", err=True
+        )
+
+    trend = costs_mod.kill_trend(conn)
+    if trend:
+        rates = " → ".join(f"{round(100 * (r['kill_rate'] or 0))}%" for r in reversed(trend))
+        typer.echo(
+            f"triage kill    {rates} (last {len(trend)} weeks; <85% means rules drifted)"
+        )
+
+    senders = costs_mod.top_senders(conn, m)
+    if senders:
+        typer.echo(
+            "\ntop senders by extraction volume (≈ items × avg — spend is recorded"
+            " per run,\nnot per item, so per-sender cost is an estimate):"
+        )
+        for s in senders:
+            typer.echo(
+                f"  {(s['author'] or '<unknown>'):<32} {s['items_extracted']:>4} items"
+                f"  ≈{s['approx_cents']}c  {s['commitments']} commitments"
+            )
+
+
+@costs_app.command("runs")
+def costs_runs(
+    limit: Annotated[int, typer.Option("--limit", help="How many runs")] = 15,
+) -> None:
+    """Spend and volume by run, newest first."""
+    from backglass import costs as costs_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    rows = costs_mod.by_run(conn, limit=limit)
+    if not rows:
+        typer.echo("no runs recorded yet")
+        raise typer.Exit()
+    for r in rows:
+        flags = ("degraded" if r["degraded"] else "") + (" errors" if r["had_errors"] else "")
+        typer.echo(
+            f"{r['started_at'][:16]}  fetched {r['items_fetched']:>4}"
+            f"  out {r['items_triaged_out']:>4}  extracted {r['items_extracted']:>3}"
+            f"  writes {r['writes']:>3}  {r['spend_cents']:>4}c  {flags.strip()}"
+        )
+
+
+@costs_app.command("senders")
+def costs_senders(
+    limit: Annotated[int, typer.Option("--limit", help="How many senders")] = 25,
+) -> None:
+    """Full top-senders table. Estimated cost — see the caveat in the summary."""
+    from backglass import costs as costs_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    m = costs_mod.month(conn, settings)
+    senders = costs_mod.top_senders(conn, m, limit=limit)
+    if not senders:
+        typer.echo("nothing extracted this month")
+        raise typer.Exit()
+    for s in senders:
+        typer.echo(
+            f"{(s['author'] or '<unknown>'):<40} {s['items_extracted']:>4} items"
+            f"  ≈{s['approx_cents']}c  {s['commitments']} commitments"
+        )
+
+
+# ── batch mode ───────────────────────────────────────────────────────────
+
+batch_app = typer.Typer(
+    help="Overnight extraction through the Message Batches API, at half price."
+)
+app.add_typer(batch_app, name="batch")
+
+
+def _require_anthropic_key(settings: Settings) -> None:
+    from backglass.extract.client import anthropic_api_key
+
+    if not anthropic_api_key(settings):
+        typer.echo(
+            "batch mode needs the Anthropic API — set MODEL_API_KEY or "
+            "ANTHROPIC_API_KEY (pairs best with MODEL_BACKEND=anthropic)",
+            err=True,
+        )
+        raise typer.Exit(2)
+
+
+@batch_app.command("submit")
+def batch_submit() -> None:
+    """Ingest + rules + triage now; package pending extraction into a batch."""
+    from backglass import batch as batch_mod
+
+    settings = get_settings()
+    _require_anthropic_key(settings)
+    conn = _open(settings)
+    migrate(conn)
+    connectors = _all_connectors(conn, settings)
+    report = batch_mod.submit(
+        conn, settings, connectors, model_client.build(settings)
+    )
+    typer.echo(
+        f"fetched {report.fetched} · triaged {report.triaged} · "
+        f"batched {report.batched}"
+        + (f" as {report.batch_id}" if report.batch_id else " (nothing to batch)")
+    )
+    if report.skipped_oversize or report.skipped_for_cap:
+        typer.echo(
+            f"skipped: {report.skipped_oversize} oversize, "
+            f"{report.skipped_for_cap} beyond the spend cap"
+        )
+    for error in report.errors:
+        typer.echo(f"  {error}", err=True)
+    raise typer.Exit(report.exit_code)
+
+
+@batch_app.command("collect")
+def batch_collect() -> None:
+    """Apply finished batch results through the same ledger paths sync uses."""
+    from backglass import batch as batch_mod
+
+    settings = get_settings()
+    _require_anthropic_key(settings)
+    conn = _open(settings)
+    migrate(conn)
+    report = batch_mod.collect(conn, settings)
+    if not report.batches and not report.still_processing and not report.errors:
+        typer.echo("no outstanding batches")
+        raise typer.Exit()
+    typer.echo(
+        f"collected {report.batches} batch(es) · extracted {report.extracted}"
+        f" ({report.already_done} already done, {report.failed_items} failed)"
+        f" · spend {report.spend_cents}c (batch −50%)"
+    )
+    if report.still_processing:
+        typer.echo(f"{report.still_processing} batch(es) still processing — retry later")
+    for error in report.errors:
+        typer.echo(f"  {error}", err=True)
+    raise typer.Exit(report.exit_code)
+
+
+@batch_app.command("status")
+def batch_status() -> None:
+    """Every batch, newest first."""
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    rows = list(
+        conn.execute(
+            "SELECT mb.batch_id, mb.status, mb.created_at, mb.spend_cents,"
+            " COUNT(mbi.id) AS items"
+            " FROM model_batch mb LEFT JOIN model_batch_item mbi"
+            "   ON mbi.batch_id = mb.batch_id"
+            " WHERE mb.user_id = ? GROUP BY mb.batch_id ORDER BY mb.id DESC LIMIT 20",
+            (USER_ID,),
+        )
+    )
+    if not rows:
+        typer.echo("no batches submitted yet")
+        raise typer.Exit()
+    for r in rows:
+        typer.echo(
+            f"{r['created_at'][:16]}  {r['batch_id']:<28} {r['status']:<10}"
+            f" {r['items']:>3} items  {r['spend_cents']:>4}c"
+        )
+
+
 # ── Phase A2: setup ───────────────────────────────────────────────────────
 
 
@@ -1212,6 +1613,23 @@ def doctor() -> None:
           bool(settings.google_client_id and settings.google_client_secret),
           "set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET")
 
+    # ── batch mode (informational — never a failure; the plists are optional) ──
+    from datetime import UTC as _utc
+    from datetime import datetime as _dt
+    from datetime import timedelta as _td
+
+    stuck_cutoff = (_dt.now(_utc) - _td(hours=26)).isoformat()
+    stuck = conn.execute(
+        "SELECT COUNT(*) AS n FROM model_batch"
+        " WHERE user_id = ? AND status = 'submitted' AND created_at < ?",
+        (USER_ID, stuck_cutoff),
+    ).fetchone()
+    if stuck and stuck["n"]:
+        typer.echo(
+            f"[note] {stuck['n']} batch(es) submitted >26h ago — "
+            "run `backglass batch collect` (items already fall back to sync)"
+        )
+
     # ── model access ──────────────────────────────────────────────────────
     if settings.model_backend == "claude_cli":
         try:
@@ -1220,6 +1638,10 @@ def doctor() -> None:
             del path
         except model_client.ModelError as exc:
             check("claude CLI reachable", False, str(exc))
+    elif settings.model_backend == "anthropic":
+        check("anthropic key configured",
+              bool(model_client.anthropic_api_key(settings)),
+              "MODEL_BACKEND=anthropic needs MODEL_API_KEY or ANTHROPIC_API_KEY")
     else:
         check("deepinfra key configured", bool(settings.model_api_key),
               "MODEL_BACKEND=deepinfra needs MODEL_API_KEY")

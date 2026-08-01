@@ -29,6 +29,23 @@ class TriageVerdict(Strict):
     reason: str
 
 
+class TriageBatchItem(Strict):
+    """One verdict inside a batched triage response (triage-batch.md)."""
+
+    id: int
+    keep: bool
+    reason: str
+    #: True when the 500-char excerpt was not enough to judge confidently. The item is
+    #: then re-read by the full per-item pass; this verdict is advisory only.
+    uncertain: bool = False
+
+
+class TriageBatchVerdict(Strict):
+    """specs/extraction-prompts/triage-batch.md §Output schema."""
+
+    items: list[TriageBatchItem] = Field(default_factory=list)
+
+
 class ExtractedCommitment(Strict):
     """One commitment as the model returns it, before post-processing.
 

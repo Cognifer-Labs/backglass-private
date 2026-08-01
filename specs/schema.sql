@@ -230,3 +230,16 @@ CREATE TABLE run (
 
 -- 0008 adds the `fact` table — the personal knowledge base (subject/key/value with
 -- commitment-style supersession). See backglass/db/migrations/0008_facts.sql.
+
+-- 0009 adds `learned_noise` — senders the tier-1 model kept dropping, promoted into
+-- free tier-0 drops. Evidence-gated in backglass/extract/noise.py; rows are disabled,
+-- never deleted. See backglass/db/migrations/0009_learned_noise.sql.
+
+-- 0010 adds `source_item.template_hash` — the item's shape with URLs/dates/digits
+-- stripped, for free rule-drops of recurring templated mail. Derived and recomputable,
+-- deliberately outside the 0002 immutability trigger. See
+-- backglass/db/migrations/0010_template_hash.sql and backglass/extract/templates.py.
+
+-- 0011 adds `model_batch` + `model_batch_item` — outstanding Message Batches and
+-- their item mapping, for `backglass batch` (extraction at half price overnight).
+-- See backglass/db/migrations/0011_model_batch.sql and backglass/batch.py.

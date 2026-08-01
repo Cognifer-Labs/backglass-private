@@ -26,6 +26,7 @@ from backglass.connectors import credentials
 from backglass.connectors.base import Connector
 from backglass.db import now_iso, query
 from backglass.extract import commitments as tier2
+from backglass.extract import noise as noise_mod
 from backglass.extract import prompts, rules
 from backglass.extract import triage as tier1
 from backglass.extract.client import ModelClient
@@ -33,6 +34,7 @@ from backglass.extract.schemas import CommitmentExtraction
 from backglass.ledger import USER_ID, Ledger
 
 TRIAGE_PROMPT = "triage"
+TRIAGE_BATCH_PROMPT = "triage-batch"
 EXTRACT_PROMPT = "extract-commitments"
 
 
@@ -44,6 +46,8 @@ class SyncReport:
     rule_dropped: int = 0
     model_triaged: int = 0
     triaged_out: int = 0
+    batched: int = 0
+    escalated: int = 0
     extracted: int = 0
     parked: int = 0
     commitments_inserted: int = 0
@@ -97,7 +101,11 @@ def sync(
     client: ModelClient,
     *,
     dry_run: bool = False,
+    extract: bool = True,
 ) -> SyncReport:
+    """Run the pipeline. `extract=False` stops after triage — the batch-mode submit
+    path (backglass/batch.py) reuses ingest, rules, and triage through here and hands
+    extraction to the Batches API instead."""
     report = SyncReport()
     ledger = Ledger(conn, settings, dry_run=dry_run)
     cap = SpendCap(conn, settings)
@@ -106,7 +114,23 @@ def sync(
     _ingest(conn, ledger, connectors, report, dry_run=dry_run)
     _rule_pass(conn, ledger, settings, report)
     _triage_pass(conn, ledger, settings, client, cap, report)
-    _extract_pass(conn, ledger, settings, client, cap, report)
+
+    # Learned-noise auto-promotion, default off. Runs after triage so today's verdicts
+    # count as evidence; promotions take effect on the *next* run's rule pass. Domain
+    # candidates are never auto-promoted — CLI only.
+    noise_writes = 0
+    if settings.noise_auto_promote and not dry_run:
+        addresses = [
+            c
+            for c in noise_mod.candidates(
+                conn, settings, min_evidence=settings.noise_promote_after
+            )
+            if c.kind == "address"
+        ]
+        noise_writes = noise_mod.promote(conn, addresses, by="auto")
+
+    if extract:
+        _extract_pass(conn, ledger, settings, client, cap, report)
 
     # Review-day tallies → checkpoints. Deterministic — the data arrives structured,
     # so this is code, not a model call, and it costs nothing on the cap. Skipped on
@@ -117,7 +141,7 @@ def sync(
 
         review_writes = reviews_mod.sync_checkpoints(conn, settings)
 
-    report.writes = ledger.writes + review_writes
+    report.writes = ledger.writes + review_writes + noise_writes
     report.spend_cents = round(cap.this_run_usd * 100)
     report.degraded = cap.reached
     report.commitments_inserted = ledger.stats.commitments_inserted
@@ -174,7 +198,10 @@ def _rule_pass(
     conn: sqlite3.Connection, ledger: Ledger, settings: Settings, report: SyncReport
 ) -> None:
     """Tier 0. Free, deterministic, and it is what keeps the model bill small."""
-    noise = frozenset(settings.noise_senders)
+    # Env-configured noise plus everything learned-and-promoted. classify's existing
+    # address and subdomain matching covers both, so learned rows cost no new rule code.
+    noise = frozenset(settings.noise_senders) | noise_mod.enabled_entries(conn)
+    structured = frozenset(settings.structured_sources)
     pending = list(conn.execute(query("pending_triage"), {"user_id": USER_ID}))
     for item in pending:
         headers = _headers_of(item)
@@ -183,11 +210,32 @@ def _rule_pass(
             author=str(item.get("author") or ""),
             raw_json=str(item.get("raw_json") or ""),
             noise_senders=noise,
+            source=str(item.get("source") or ""),
+            structured_sources=structured,
         )
         if verdict.dropped:
             ledger.record_triage(int(item["id"]), "drop", verdict.reason)
             report.rule_dropped += 1
             report.triaged_out += 1
+            continue
+
+        # Template dedup: a sibling of a shape that has only ever been dropped, at
+        # least `template_drop_after` times, dies here for free. One kept sibling,
+        # ever, disqualifies the template — precision is not for sale, and same-run
+        # cold starts (verdicts not yet written) simply escalate to the model.
+        template = item.get("template_hash")
+        if template:
+            siblings = conn.execute(
+                query("template_verdicts"),
+                {"user_id": USER_ID, "template_hash": template, "id": int(item["id"])},
+            ).fetchone()
+            if (
+                int(siblings["kept"]) == 0
+                and int(siblings["dropped"]) >= settings.template_drop_after
+            ):
+                ledger.record_triage(int(item["id"]), "drop", f"template:{template[:8]}")
+                report.rule_dropped += 1
+                report.triaged_out += 1
 
 
 def _triage_pass(
@@ -202,6 +250,17 @@ def _triage_pass(
     pending = list(conn.execute(query("pending_triage"), {"user_id": USER_ID}))
     if not pending:
         return
+
+    # Batch first when the queue is big enough to pay for itself: instruction tokens
+    # once per ~dozen items instead of once per item. Everything the batch cannot be
+    # trusted on — uncertain, missing, disagreeing, or a failed batch — falls through
+    # to the per-item loop below with the full 2000-char body, so nothing is ever
+    # dropped on a 500-char excerpt the model hedged about. Below the threshold the
+    # per-item path runs exactly as before.
+    if len(pending) >= settings.triage_batch_min:
+        pending = _batch_triage_pass(ledger, settings, client, cap, report, pending)
+        if not pending:
+            return
 
     def work(item: dict[str, Any]) -> tuple[int, tier1.TriageOutcome | Exception]:
         try:
@@ -228,6 +287,58 @@ def _triage_pass(
             report.triaged_out += 1
 
 
+def _batch_triage_pass(
+    ledger: Ledger,
+    settings: Settings,
+    client: ModelClient,
+    cap: SpendCap,
+    report: SyncReport,
+    pending: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Run the batched tier-1 pass; return the items that still need per-item triage."""
+    prompt = prompts.load(TRIAGE_BATCH_PROMPT)
+    size = max(2, settings.triage_batch_size)
+    chunks = [pending[i : i + size] for i in range(0, len(pending), size)]
+
+    def work(
+        chunk: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], tier1.BatchOutcome | Exception]:
+        try:
+            return chunk, tier1.triage_batch(
+                chunk,
+                prompt=prompt,
+                client=client,
+                model=settings.model_triage,
+                budget_usd=settings.per_call_budget_usd,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return chunk, exc
+
+    escalations: list[dict[str, Any]] = []
+    for chunk, outcome in _in_parallel(
+        work, chunks, settings.max_concurrency, cap, stop_on_cap=False
+    ):
+        if isinstance(outcome, Exception):
+            # A failed batch proves nothing about its items: all of them re-read
+            # per-item. Not an error — the fallback IS the failure handling.
+            escalations.extend(chunk)
+            report.escalated += len(chunk)
+            continue
+        cap.charge(outcome.cost_usd)
+        by_id = {int(item["id"]): item for item in chunk}
+        for item_id, verdict in outcome.verdicts.items():
+            ledger.record_triage(item_id, verdict.verdict, verdict.reason)
+            report.model_triaged += 1
+            report.batched += 1
+            if verdict.verdict == "drop":
+                report.triaged_out += 1
+        for item_id in outcome.escalate:
+            if item_id in by_id:
+                escalations.append(by_id[item_id])
+                report.escalated += 1
+    return escalations
+
+
 # ──────────────────────────────────────────────────────────────── stage 3
 
 
@@ -240,10 +351,17 @@ def _extract_pass(
     report: SyncReport,
 ) -> None:
     prompt = prompts.load(EXTRACT_PROMPT)
+    # "Unbatched": items riding a live `backglass batch` submission are excluded so
+    # the scheduled sync never re-extracts them at full price while the half-price
+    # batch is in flight. A batch older than 26h is presumed dead and its items
+    # reappear here automatically (the query's degrade valve).
+    from datetime import timedelta
+
+    cutoff = (datetime.now(UTC) - timedelta(hours=26)).isoformat()
     pending = list(
         conn.execute(
-            query("pending_extraction"),
-            {"user_id": USER_ID, "extraction_version": prompt.stamp},
+            query("pending_extraction_unbatched"),
+            {"user_id": USER_ID, "extraction_version": prompt.stamp, "cutoff": cutoff},
         )
     )
     if not pending:
@@ -356,7 +474,21 @@ def _headers_of(item: dict[str, Any]) -> dict[str, str]:
     return {str(k): str(v) for k, v in headers.items()}
 
 
-def _record_run(conn: sqlite3.Connection, report: SyncReport, started_at: str) -> None:
+def record_run(
+    conn: sqlite3.Connection,
+    *,
+    started_at: str,
+    fetched: int = 0,
+    triaged_out: int = 0,
+    excluded: int = 0,
+    extracted: int = 0,
+    writes: int = 0,
+    spend_cents: int = 0,
+    degraded: bool = False,
+    errors: list[str] | None = None,
+) -> None:
+    """One run row. Shared with batch.py so `costs`, `status`, and spend_this_month
+    see batch collections without knowing they exist."""
     import json
 
     conn.execute(
@@ -367,13 +499,28 @@ def _record_run(conn: sqlite3.Connection, report: SyncReport, started_at: str) -
             USER_ID,
             started_at,
             now_iso(),
-            report.fetched,
-            report.triaged_out,
-            report.excluded,
-            report.extracted,
-            report.writes,
-            report.spend_cents,
-            1 if report.degraded else 0,
-            json.dumps(report.errors) if report.errors else None,
+            fetched,
+            triaged_out,
+            excluded,
+            extracted,
+            writes,
+            spend_cents,
+            1 if degraded else 0,
+            json.dumps(errors) if errors else None,
         ),
+    )
+
+
+def _record_run(conn: sqlite3.Connection, report: SyncReport, started_at: str) -> None:
+    record_run(
+        conn,
+        started_at=started_at,
+        fetched=report.fetched,
+        triaged_out=report.triaged_out,
+        excluded=report.excluded,
+        extracted=report.extracted,
+        writes=report.writes,
+        spend_cents=report.spend_cents,
+        degraded=report.degraded,
+        errors=report.errors or None,
     )

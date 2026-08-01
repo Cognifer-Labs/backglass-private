@@ -15,7 +15,7 @@ from backglass.db import MigrationError, connect, migrate
 def test_init_creates_the_schema(tmp_path: Path) -> None:
     conn = connect(tmp_path / "a.db")
     applied = migrate(conn)
-    assert applied == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert applied == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
 
     tables = {
         row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -49,11 +49,11 @@ def test_init_is_idempotent(tmp_path: Path) -> None:
     """`backglass init` is safe to run repeatedly — the first assertion of rule 3."""
     path = tmp_path / "b.db"
     conn = connect(path)
-    assert migrate(conn) == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert migrate(conn) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     assert migrate(conn) == []
     assert migrate(conn) == []
     versions = [row["version"] for row in conn.execute("SELECT version FROM schema_version")]
-    assert versions == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert versions == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
     conn.close()
 
 

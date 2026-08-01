@@ -58,9 +58,13 @@ class TestDegradation:
     def test_cap_already_reached_makes_no_calls(
         self, conn: sqlite3.Connection, settings: Settings
     ) -> None:
+        from datetime import UTC, datetime
+
+        # SpendCap windows on the current calendar month, so the seeded spend must be
+        # "now", not a fixed date — a July 30th literal broke the suite on August 1st.
         conn.execute(
             "INSERT INTO run (started_at, spend_cents) VALUES (?, ?)",
-            ("2026-07-30T05:00:00+00:00", settings.monthly_spend_cap_cents),
+            (datetime.now(UTC).isoformat(), settings.monthly_spend_cap_cents),
         )
         client = ScriptedClient([QUESTIONS, ADJUSTMENTS])
         result = interview.run_interview(

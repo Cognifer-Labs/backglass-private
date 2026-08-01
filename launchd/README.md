@@ -30,9 +30,18 @@ Check they are registered:
 | `com.cognifer.backglass.plan.plist` | 05:45 local | `backglass plan` |
 | `com.cognifer.backglass.brief.plist` | 06:00 local | `backglass brief --send` |
 | `com.cognifer.backglass.shutdown.plist` | 18:00 local | `backglass shutdown` |
+| `com.cognifer.backglass.batch-submit.plist` | 22:00 local — **optional, batch mode only** | `backglass batch submit` |
+| `com.cognifer.backglass.batch-collect.plist` | 05:30 local — **optional, batch mode only** | `backglass batch collect` |
 
 The cadences come from docs/02 §Scheduling. `plan` runs fifteen minutes before `brief` so
 the brief has a plan to report.
+
+Batch mode (docs/02 §Cost control) trades latency for a 50% discount on extraction:
+`submit` runs ingest/rules/triage synchronously at 22:00 and hands the surviving items
+to the Message Batches API; `collect` applies the results at 05:30, before `plan` and
+`brief`. Both need an Anthropic API key (`MODEL_API_KEY` or `ANTHROPIC_API_KEY`) and
+pair best with `MODEL_BACKEND=anthropic`. Skip both plists to stay fully synchronous —
+`doctor` does not require them.
 
 ## When the laptop sleeps through 06:00
 

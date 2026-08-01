@@ -39,6 +39,21 @@ _NOREPLY = re.compile(
 
 _CALENDAR_MIME = "text/calendar"
 
+#: Every reason string this layer can produce starts with one of these. A stored drop
+#: whose reason matches none of them was therefore a *model* drop — the discrimination
+#: learned-noise mining (extract/noise.py) rests on. Kept here, next to the strings
+#: themselves, so a new rule reason and its prefix are a same-file edit.
+RULE_REASON_PREFIXES = (
+    "bulk header:",
+    "precedence:",
+    "auto-submitted",
+    "no-reply sender:",
+    "known-noise",
+    "calendar invite",
+    "structured source",
+    "template:",
+)
+
 
 @dataclass(frozen=True)
 class RuleVerdict:
@@ -62,7 +77,18 @@ def classify(
     author: str | None,
     raw_json: str | None = None,
     noise_senders: frozenset[str] = frozenset(),
+    source: str = "",
+    structured_sources: frozenset[str] = frozenset(),
 ) -> RuleVerdict:
+    # Cheapest rule first: items from a structured source (anki, avorio) are consumed
+    # deterministically by their own readers; a model would find nothing to extract.
+    if source:
+        for entry in structured_sources:
+            if source == entry or source.startswith(entry + ":"):
+                return RuleVerdict(
+                    "drop", f"structured source: {entry}; consumed deterministically"
+                )
+
     lowered = {key.lower(): value for key, value in headers.items()}
 
     for header in _BULK_HEADERS:

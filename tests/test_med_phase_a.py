@@ -527,3 +527,76 @@ class TestDownstream:
         page = client.post(f"/roadmaps/{rid}/activities/{aid}/meaningful")
         assert "most meaningful" in page.text
         assert "1 of 15 slots" in page.text
+
+
+# ─────────────────────────────────────────────── structured-source bypass
+
+
+class _TallyConnector:
+    """Minimal structured connector: one anki review-day tally, like the real one."""
+
+    def __init__(self, source: str = "anki") -> None:
+        self._source = source
+        self.cursor = None
+
+    @property
+    def name(self) -> str:
+        return self._source
+
+    def health(self):  # type: ignore[no-untyped-def]
+        from backglass.connectors.base import Health
+
+        return Health(name=self._source, ok=True)
+
+    def fetch(self, since):  # type: ignore[no-untyped-def]
+        from backglass.connectors.base import SourceItem, content_hash
+
+        raw = {"date": "2026-07-28", "reviews": 120, "minutes": 40}
+        body = json.dumps(raw, sort_keys=True)
+        yield SourceItem(
+            source=self._source,
+            external_id="reviews:2026-07-28:2026-07-28T20:00:00",
+            occurred_at="2026-07-28T20:00:00+00:00",
+            content_hash=content_hash(
+                author=self._source,
+                title="anki reviews · 2026-07-28",
+                body_text=body,
+                occurred_at="2026-07-28T20:00:00+00:00",
+            ),
+            author=self._source,
+            title="anki reviews · 2026-07-28",
+            body_text=body,
+            raw_json=body,
+        )
+
+
+class TestStructuredSourceBypass:
+    """Tier-0 drops structured tallies: zero model calls, downstream intact."""
+
+    def test_tally_is_rule_dropped_and_checkpoints_still_land(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        from backglass.sync import sync
+        from tests.conftest import FakeModel
+
+        _, target_id = _seed_goal_with_target(conn)
+        bound = settings.model_copy(update={"reviews_target_id": target_id})
+        model = FakeModel({})
+
+        report = sync(conn, bound, [_TallyConnector()], model)
+
+        assert report.rule_dropped == 1, "the tally must die in tier 0"
+        assert report.model_triaged == 0
+        assert model.calls == [], "no model call for a structured item, ever"
+        reason = conn.execute(
+            "SELECT triage_reason FROM source_item WHERE source = 'anki'"
+        ).fetchone()["triage_reason"]
+        assert "structured source" in reason
+        n = conn.execute(
+            "SELECT COUNT(*) AS n FROM checkpoint WHERE target_id = ?", (target_id,)
+        ).fetchone()["n"]
+        assert n == 1, "reviews checkpoint wiring must survive the rule drop"
+
+        second = sync(conn, bound, [_TallyConnector()], model)
+        assert second.writes == 0
+        assert model.calls == []

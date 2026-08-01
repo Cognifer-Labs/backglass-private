@@ -238,6 +238,160 @@ class DeepInfraBackend:
         )
 
 
+# ────────────────────────────────────────────────────────────── Anthropic API
+
+
+def build_request(
+    *,
+    system: str,
+    user: str,
+    schema: dict[str, Any],
+    model_id: str,
+    max_tokens: int,
+    tool_name: str = "emit",
+) -> dict[str, Any]:
+    """One request shape for both the live API and the Batches API (backglass/batch.py).
+
+    Forced tool use with the extraction schema as the tool's input schema — the same
+    enforcement docs/10 §Model layer specifies. The system block carries a
+    cache_control marker so the static prefix (SYSTEM + the prompt's instruction half,
+    see prompts.Prompt.split) is billed at the ~0.1x cache-read rate after the first
+    call. Honest economics: the cacheable minimum is model-dependent (sonnet-4-6
+    ~1024 tokens, haiku-4-5 ~4096), so haiku triage likely never caches — the marker
+    is harmless there; the real win is sonnet extraction. Verify with
+    usage.cache_read_input_tokens > 0 on a second call.
+    """
+    return {
+        "model": model_id,
+        "max_tokens": max_tokens,
+        "system": [
+            {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
+        ],
+        "messages": [{"role": "user", "content": user}],
+        "tools": [
+            {
+                "name": tool_name,
+                "description": "Return the extracted records.",
+                "input_schema": schema,
+            }
+        ],
+        "tool_choice": {"type": "tool", "name": tool_name},
+    }
+
+
+@dataclass(kw_only=True)
+class AnthropicAPIBackend:
+    """The Anthropic API directly, with prompt caching.
+
+    Same schema enforcement as DeepInfraBackend — a single forced tool whose input
+    schema is the extraction schema — plus cache_control on the static prefix. Cost is
+    computed from real usage token counts against extract/pricing.py, never estimated.
+
+    Budget semantics: the CLI backend's --max-budget-usd is a hard server-side
+    ceiling; here the guard is a pre-flight worst-case estimate (chars/3.5 ≈ tokens),
+    which parks pathological items before any spend. Softer than the CLI's, but
+    per_item_char_ceiling bounds input upstream and the monthly SpendCap in sync.py
+    remains the hard backstop.
+    """
+
+    api_key: str
+    timeout_seconds: float = 120.0
+    #: extract-commitments.md §Failure handling, same as ClaudeCLIBackend.
+    attempts: int = 2
+    max_tokens_triage: int = 1024
+    max_tokens_extract: int = 4096
+    tool_name: str = "emit"
+    client: Any | None = None  # injected in tests, like AppleShortcutBackend.runner
+
+    def _client(self) -> Any:
+        if self.client is None:
+            import anthropic
+
+            # SDK retries 408/429/5xx (incl. 529 overloaded) with backoff and honors
+            # retry-after; no hand-rolled loop.
+            self.client = anthropic.Anthropic(
+                api_key=self.api_key, max_retries=4, timeout=self.timeout_seconds
+            )
+        return self.client
+
+    def complete(
+        self, *, system: str, user: str, schema: dict[str, Any], model: str, budget_usd: float
+    ) -> ModelResult:
+        from backglass.extract import pricing
+
+        model_id = pricing.resolve(model)
+        # Triage schemas (single or batch) get the small output budget; extraction the
+        # large one. Discriminated on the schema, like every test double and router.
+        props = schema.get("properties", {})
+        max_tokens = (
+            self.max_tokens_triage
+            if "keep" in props or "items" in props
+            else self.max_tokens_extract
+        )
+
+        price = pricing.PRICES.get(model_id)
+        if price is not None:
+            worst_case = (
+                (len(system) + len(user)) / 3.5 * price.input
+                + max_tokens * price.output
+            ) / 1_000_000
+            if worst_case > budget_usd:
+                raise ModelError(
+                    f"estimated worst case ${worst_case:.3f} exceeds the per-call "
+                    f"budget ${budget_usd}; parked"
+                )
+
+        spent = 0.0
+        last: Exception | None = None
+        for attempt in range(self.attempts):
+            prompt = user if attempt == 0 else _restate(user, schema)
+            try:
+                data, cost = self._run(system, prompt, schema, model_id, max_tokens)
+                return ModelResult(data=data, cost_usd=spent + cost)
+            except ModelError as exc:
+                last = exc
+                spent += getattr(exc, "cost_usd", 0.0)
+        raise ModelError(
+            f"model returned an unusable response after {self.attempts} attempts: {last}"
+        )
+
+    def _run(
+        self,
+        system: str,
+        user: str,
+        schema: dict[str, Any],
+        model_id: str,
+        max_tokens: int,
+    ) -> tuple[dict[str, Any], float]:
+        from backglass.extract import pricing
+
+        params = build_request(
+            system=system,
+            user=user,
+            schema=schema,
+            model_id=model_id,
+            max_tokens=max_tokens,
+            tool_name=self.tool_name,
+        )
+        try:
+            response = self._client().messages.create(**params)
+        except ModelError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - anthropic.APIError et al → degrade path
+            raise ModelError(f"anthropic call failed: {type(exc).__name__}: {exc}") from exc
+
+        cost = pricing.cost_usd(model_id, getattr(response, "usage", None))
+        block = next(
+            (b for b in response.content if getattr(b, "type", "") == "tool_use"), None
+        )
+        data = getattr(block, "input", None)
+        if not isinstance(data, dict):
+            error = ModelError("response contained no usable tool call")
+            error.cost_usd = cost  # type: ignore[attr-defined]
+            raise error
+        return data, cost
+
+
 # ─────────────────────────────────────────────────────────────── helpers
 
 
@@ -269,6 +423,12 @@ def _find_claude() -> str:
     )
 
 
+def anthropic_api_key(settings: Settings) -> str:
+    import os
+
+    return settings.model_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+
+
 def build(settings: Settings) -> ModelClient:
     primary: ModelClient
     if settings.model_backend == "deepinfra":
@@ -277,6 +437,13 @@ def build(settings: Settings) -> ModelClient:
         primary = DeepInfraBackend(
             api_key=settings.model_api_key, base_url=settings.deepinfra_base_url
         )
+    elif settings.model_backend == "anthropic":
+        key = anthropic_api_key(settings)
+        if not key:
+            raise ModelError(
+                "MODEL_BACKEND=anthropic but MODEL_API_KEY and ANTHROPIC_API_KEY are empty"
+            )
+        primary = AnthropicAPIBackend(api_key=key)
     else:
         primary = ClaudeCLIBackend(executable=_find_claude())
     if settings.apple_triage:

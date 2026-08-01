@@ -63,3 +63,9 @@ immutable ledger, an external_id must name content that can never be recomputed
 differently: key it to the exact immutable row range it summarizes, and make every
 hashed field deterministic. "Deterministic given the db" is not enough — it must be
 deterministic given the id.
+
+- 2026-08-01 | batch collect wrote a run-level spend accumulator into each batch's
+  per-batch spend_cents row (verifier caught it; only surfaced with 2+ batches in one
+  collect) | when a loop both accumulates a total and writes per-group rows, keep two
+  variables — `group_x` reset inside the loop, `total_x` summed from it — and always
+  test the N>1-groups case, not just N=1.

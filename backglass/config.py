@@ -140,7 +140,7 @@ class Settings(BaseSettings):
     dashboard_base_url: str = "http://127.0.0.1:8765"
 
     # ── model + cost ──────────────────────────────────────────────────────
-    model_backend: Literal["claude_cli", "deepinfra"] = "claude_cli"
+    model_backend: Literal["claude_cli", "deepinfra", "anthropic"] = "claude_cli"
     model_triage: str = "haiku"
     model_extract: str = "sonnet"
     model_api_key: str = ""
@@ -183,6 +183,30 @@ class Settings(BaseSettings):
     # Domains or full addresses; a domain entry covers its subdomains. Every entry here is
     # a model call never made, so this is the cheapest lever on the bill.
     noise_senders: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    # Sources whose items are consumed deterministically (goals/reviews, capacity) and
+    # carry nothing extractable — anki/avorio review tallies. Rule-dropped in tier 0 so
+    # they never reach the triage model. A bare name covers its labelled variants
+    # ("calendar" covers "calendar:personal"). Calendar is not in the default because an
+    # event description can carry a commitment.
+    structured_sources: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["anki", "avorio"]
+    )
+    # Learned noise (extract/noise.py). Off by default: promotion converts a
+    # statistical judgment into a permanent free drop, so the default keeps a human in
+    # the loop (`backglass noise suggest` / `promote`). The evidence bar — N model
+    # drops, zero keeps ever, no commitment ever — is strict enough that auto mode is
+    # defensible for an owner who wants it.
+    noise_auto_promote: bool = False
+    noise_promote_after: int = 5
+    # Template dedup (extract/templates.py): a recurring templated mail is rule-dropped
+    # once this many prior siblings were all dropped and none was ever kept. Three paid
+    # drops ≈ a month of a weekly statement — evidence before the free pass.
+    template_drop_after: int = 3
+    # Batched triage (triage-batch.md): with this many or more items pending, tier 1
+    # packs them ~TRIAGE_BATCH_SIZE per call and pays the instruction tokens once.
+    # Uncertain/missing verdicts escalate to the full per-item pass automatically.
+    triage_batch_size: int = 12
+    triage_batch_min: int = 4
 
     # Which mailboxes to ingest. Each becomes a `credential` row with
     # source = "gmail:<label>", because credential is UNIQUE(user_id, source) and two
