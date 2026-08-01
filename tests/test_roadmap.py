@@ -70,7 +70,8 @@ def _goal_target_date(conn: sqlite3.Connection, roadmap_id: int) -> str:
 
 def test_all_presets_load() -> None:
     loaded = {p.id for p in presets.list_paths()}
-    assert loaded == {"founder", "swe", "pm", "medical", "app-launch"}
+    assert loaded == {"founder", "swe", "pm", "medical", "app-launch",
+                      "ship-blocked-product", "company-revenue"}
     for preset in presets.list_paths():
         assert 5 <= len(preset.steps) <= 8
         assert preset.horizon in ("annual", "quarterly")
