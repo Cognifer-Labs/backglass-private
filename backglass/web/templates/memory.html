@@ -3,7 +3,8 @@
 {% set active = 'memory' %}
 
 {% block title %}Backglass — Memory{% endblock %}
-{% block meta %}{{ count }} active fact{{ '' if count == 1 else 's' }}{% endblock %}
+{# No meta override: Memory keeps the global date/timezone eyebrow like every
+   other page — the banner already carries the fact count once. #}
 
 {% block content %}
 <section class="sec" id="memory">
@@ -26,8 +27,10 @@
           </div>
           <form hx-post="/memory/{{ f.fact_id }}/forget" hx-target="#memory"
                 hx-swap="outerHTML" style="margin:0">
-            {# Retraction, not deletion — the row keeps its history. #}
-            <button class="btn defer" type="submit">Forget</button>
+            {# Retraction, not deletion — the row keeps its history. Format-audit
+               ruling: a rare action rests quiet; twenty gold boxes made the page's
+               loudest ink a button nobody presses. #}
+            <button class="lnk" type="submit">Forget</button>
           </form>
         </div>
       {% endfor %}

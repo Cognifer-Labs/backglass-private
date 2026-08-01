@@ -38,7 +38,7 @@
           <summary>
             <span class="gr-t">{{ card.title }}</span>
             {% if card.stale and card.stale.days_quiet %}
-              {{ m.stale_chip(card.stale.level, card.stale.chip()) }}
+              {{ m.stale_chip(card.stale.ink_level, card.stale.chip()) }}
             {% endif %}
             <span class="gr-n">
               {%- if card.next_target %}{{ card.next_target['target_title'] }} {{ card.week_done }}/{{ card.week_needed }} this week

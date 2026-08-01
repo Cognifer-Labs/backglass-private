@@ -262,6 +262,16 @@ class GoalCard:
         return [t for t in self.targets if t["weekly_count"]]
 
     @property
+    def milestones(self) -> list[dict[str, Any]]:
+        """Format-audit ruling: milestones are dates, not streams. They render as
+        a compact list, not full-height target rows whose body is "last —"."""
+        return [t for t in self.targets if t["kind"] == "milestone"]
+
+    @property
+    def active_targets(self) -> list[dict[str, Any]]:
+        return [t for t in self.targets if t["kind"] != "milestone"]
+
+    @property
     def behind(self) -> list[dict[str, Any]]:
         return [t for t in self.cadence if t["done_this_week"] < t["weekly_count"]]
 
@@ -312,11 +322,32 @@ class Cards:
 
     @property
     def flagged(self) -> list[GoalCard]:
-        return [c for c in self.cards if c.flagged]
+        """The worst two, not everyone with a blemish.
+
+        Format-audit ruling: when every goal qualifies, a NEEDS ATTENTION section
+        discriminates nothing. Ranked by severity — trajectory miss first (a G13
+        at-risk is a claim about the target date), then staleness depth, then how
+        many cadences are behind — and capped, so the section always answers
+        "what do I look at first". The rest keep their chips under ON TRACK;
+        G11 holds, nothing is merged into a score, this is a routing order.
+        """
+        flagged = [c for c in self.cards if c.flagged]
+
+        def severity(c: GoalCard) -> tuple[int, int, int]:
+            stale_rank = {"serious": 2, "warn": 1}.get(c.stale.level if c.stale else "", 0)
+            return (
+                int(c.risk is not None and c.risk.at_risk),
+                stale_rank,
+                len(c.behind),
+            )
+
+        flagged.sort(key=severity, reverse=True)  # stable: ties keep goal order
+        return flagged[:2]
 
     @property
     def healthy(self) -> list[GoalCard]:
-        return [c for c in self.cards if not c.flagged]
+        above = {c.goal_id for c in self.flagged}
+        return [c for c in self.cards if c.goal_id not in above]
 
 
 def goal_cards(conn: sqlite3.Connection, settings: Settings, today: date) -> Cards:

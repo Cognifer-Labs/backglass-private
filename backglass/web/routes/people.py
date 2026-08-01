@@ -40,7 +40,20 @@ def build_router(
                 r for r in rows
                 if touches.get(r["id"]) and touches[r["id"]].level in ("warn", "cold")
             ]
-        return {"rows": rows, "touches": touches, "q": q or "", "tag": tag or "", "cold": cold}
+
+        # Format-audit ruling: rank by what needs the owner (open commitments,
+        # then how long quiet), and split people from service desks so the page
+        # called People reads as one. Display grouping only — see profiles.org_like.
+        def rank(r: dict[str, Any]) -> tuple[int, int, str]:
+            t = touches.get(r["id"])
+            days = t.days_since if t and t.days_since is not None else -1
+            return (-int(r["open_count"] or 0), -days, str(r["canonical_name"]).lower())
+
+        rows.sort(key=rank)
+        persons = [r for r in rows if not profiles.org_like(r)]
+        orgs = [r for r in rows if profiles.org_like(r)]
+        return {"rows": rows, "persons": persons, "orgs": orgs, "touches": touches,
+                "q": q or "", "tag": tag or "", "cold": cold}
 
     @router.get("/people", response_class=HTMLResponse)
     def people(

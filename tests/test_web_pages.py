@@ -84,12 +84,17 @@ class TestSidebar:
             " VALUES (1, 'cadence', 'Investor conversations', 3, '2026-07-01T00:00:00Z')"
         )
         conn.commit()
+        # Format audit: the dashboard panel is a per-goal summary — G12 chip and
+        # week aggregate, no G13 prose. The sentence lives on /goals, and the
+        # sidebar GOALS block appears on pages that don't already show the state.
         page = client.get("/").text
-        # G12: staleness is a chip with a day count (or its no-data words), never a
-        # bare colour. G13: risk is a projected date against the target, in words.
         assert "no checkpoints yet" in page
-        assert "target is" in page
-        assert 'id="side-goals"' in page
+        assert "0/3 this week" in page
+        assert "target is" not in page
+        goals_page = client.get("/goals").text
+        assert "target is" in goals_page
+        elsewhere = client.get("/schedule").text
+        assert 'id="side-goals"' in elsewhere
     def test_empty_day_names_the_planner_command(self, client: TestClient) -> None:
         page = client.get("/schedule?date=2026-07-30")
         assert page.status_code == 200
@@ -281,7 +286,7 @@ class TestRoadmapReplan:
 
         # The NEXT marker is a rule plus a label on the first pending step, never
         # an inverted row and never the black chip.
-        assert page.count('<p class="nextlbl">Next</p>') == 1
+        assert page.count('<span class="nextlbl">Next</span>') == 1
         assert page.count("nextstep") == 1
         assert steps[0]["title"] in page
         assert page.count("Due today") == 1
@@ -305,9 +310,10 @@ class TestRoadmapReplan:
                     f'class="lnk" hx-post="/roadmaps/{rid}/steps/{step["id"]}/{action}"'
                     in page
                 )
-        # One overflow disclosure per open step holds re-date and reorder; nothing
-        # was removed, so a batch replan is still one tap per action.
-        assert page.count('<details class="more">') == len(steps)
+        # Each step is one expandable timeline item whose panel holds re-date,
+        # reorder and the edit form; nothing was removed, so a batch replan is
+        # still one tap per action.
+        assert page.count('<details class="stepx') == len(steps)
         for step in steps:
             assert f"/roadmaps/{rid}/steps/{step['id']}/date/" in page
             assert f"/roadmaps/{rid}/steps/{step['id']}/move/up" in page
@@ -869,7 +875,9 @@ class TestGoalsAttentionSplit:
         rid = conn.execute("SELECT id FROM roadmap").fetchone()["id"]
         page = client.get("/goals").text
         assert f'href="/roadmaps/{rid}"' in page
-        assert "→ Pre-med" in page
+        # Fixed label: the roadmap shares the goal's name, so echoing the title
+        # under the title read as a stutter.
+        assert "roadmap &amp; step ledger →" in page
 
 
 class TestCadenceTickEndpoint:
@@ -1070,15 +1078,25 @@ class TestWeekAgenda:
         )
         conn.commit()
         page = client.get("/schedule/week?start=2026-07-27").text
-        band = page.split('class="wband"', 1)[1].split("</div>", 1)[0]
-        assert band.count('class="wbc') == 7
+        # Format audit: one set of day headers — capacity lives in the grid
+        # header cells, and the standalone band renders only on an empty week.
+        assert 'class="wband"' not in page
+        assert page.count('class="whd') == 7
         # Free hours are the headline number; 375 − 330 = 45 minutes.
-        assert '<span class="wbn">0h45</span>' in band
-        assert '<span class="wbn none">—</span>' in band  # six unplanned days
+        assert '<span class="wbn">0h45</span>' in page
+        assert page.count('<span class="wbn none">—</span>') == 6  # unplanned days
         # Overflow is the one chip: gold, count only, inside the cell that owns it.
-        assert "2 over" in band
-        # Today is an outline, never the solid-black due-today mark.
-        assert "wbc now" not in band or "chip k-black" not in band
+        assert "2 over" in page
+
+    def test_empty_week_is_a_sentence_not_a_framed_void(
+        self, client: TestClient
+    ) -> None:
+        page = client.get("/schedule/week?start=2026-07-27").text
+        # No plans at all: the capacity strip and one sentence, never a 12-hour
+        # empty grid.
+        assert 'class="wk7"' not in page
+        assert 'class="wband"' in page
+        assert "Nothing planned this week" in page
 
     def test_week_verdict_speaks_only_when_the_week_is_over_committed(
         self, client: TestClient, conn: sqlite3.Connection

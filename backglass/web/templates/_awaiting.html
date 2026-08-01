@@ -11,7 +11,10 @@
         <div class="row">
           <span class="time">{{ a['age_days'] }}d</span>
           <div class="grow">
-            <p class="b1 hang">{{ m.chip('awaiting') }}<span>{{ a['counterparty'] or 'unknown' }}: {{ a['what'] }}</span></p>
+            {# No per-row chip: every row here is 'awaiting' by definition — the panel
+               banner is the label and the row wash is the carrier (§8 rule 3 is met at
+               panel level). A hanging chip on every row only narrowed the text column. #}
+            <p class="b1">{{ a['counterparty'] or 'unknown' }}: {{ a['what'] }}</p>
             <p class="b2">
               {% if a['due_at'] %}{{ a['due_at']|due(d.today) }} · {% endif %}{{ m.source_link(a) }}
             </p>

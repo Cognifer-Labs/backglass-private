@@ -19,6 +19,16 @@
             <span class="nm">{{ t['title'] }}</span>
             {% if t['done'] >= t['total_count'] %}{{ m.chip('done') }}
             {% elif behind %}{{ m.chip('slipping') }}{% endif %}
+            <details class="edfold">
+              <summary class="lnk">rename</summary>
+              <form class="logform quiet"
+                    hx-post="/roadmaps/{{ r['id'] }}/totals/{{ t['id'] }}/title"
+                    hx-target="#roadmap-totals" hx-swap="outerHTML">
+                <input type="text" name="title" value="{{ t['title'] }}" required
+                       aria-label="Rename {{ t['title'] }}">
+                <button class="lnk" type="submit">Save</button>
+              </form>
+            </details>
           </div>
           <div class="trackrow">
             <div class="track thin grow">
@@ -27,13 +37,36 @@
             </div>
             <span class="pct tnum">{{ t['done'] }}/{{ t['total_count'] }} · {{ [pct, 100]|min }}%</span>
           </div>
-          {% for e in t['entries'] %}
+          {# Every entry carries its own × — a wrongly-entered log comes back out
+             (G10: the bar is summed on read, so removal recomputes for free).
+             The last three stay in the open per rule 4; older receipts fold. #}
+          {% for e in t['entries'][:3] %}
             <p class="b2 tent">{{ e['occurred_at'][:10] }} · +{{ e['delta'] }}
               {%- if e['activity'] %} · {{ e['activity'] }}{% endif %}
-              {%- if e['note'] %} · {{ e['note'] }}{% endif %}</p>
+              {%- if e['note'] %} · {{ e['note'] }}{% endif %}
+              <button class="lnk unlog" title="Remove this entry"
+                      aria-label="Unlog {{ e['delta'] }} from {{ t['title'] }}"
+                      hx-post="/roadmaps/{{ r['id'] }}/totals/{{ t['id'] }}/unlog/{{ e['id'] }}"
+                      hx-confirm="Remove this logged entry? The total recomputes without it."
+                      hx-target="#roadmap-totals" hx-swap="outerHTML">×</button></p>
           {% else %}
             <p class="b2 tent">—</p>
           {% endfor %}
+          {% if t['entries']|length > 3 %}
+            <details class="edfold">
+              <summary class="lnk">{{ t['entries']|length - 3 }} earlier entr{{ 'y' if t['entries']|length == 4 else 'ies' }}</summary>
+              {% for e in t['entries'][3:] %}
+                <p class="b2 tent">{{ e['occurred_at'][:10] }} · +{{ e['delta'] }}
+                  {%- if e['activity'] %} · {{ e['activity'] }}{% endif %}
+                  {%- if e['note'] %} · {{ e['note'] }}{% endif %}
+                  <button class="lnk unlog" title="Remove this entry"
+                          aria-label="Unlog {{ e['delta'] }} from {{ t['title'] }}"
+                          hx-post="/roadmaps/{{ r['id'] }}/totals/{{ t['id'] }}/unlog/{{ e['id'] }}"
+                          hx-confirm="Remove this logged entry? The total recomputes without it."
+                          hx-target="#roadmap-totals" hx-swap="outerHTML">×</button></p>
+              {% endfor %}
+            </details>
+          {% endif %}
           <div class="acts">
             <form class="logform flow" hx-post="/roadmaps/{{ r['id'] }}/totals/{{ t['id'] }}/log"
                   hx-target="#roadmap-totals" hx-swap="outerHTML">
@@ -51,13 +84,18 @@
                      aria-label="Note for {{ t['title'] }}">
               <button class="btn ok" type="submit">Log</button>
             </form>
-            <form class="logform quiet" hx-post="/roadmaps/{{ r['id'] }}/totals/{{ t['id'] }}/set"
-                  hx-target="#roadmap-totals" hx-swap="outerHTML">
-              <label class="lbl" for="tgt-{{ t['id'] }}">target</label>
-              <input type="number" id="tgt-{{ t['id'] }}" name="total" min="1" step="1"
-                     value="{{ t['total_count'] }}" aria-label="Target for {{ t['title'] }}">
-              <button class="lnk" type="submit">Set</button>
-            </form>
+            {# Format-audit ruling: logging is the daily action and stays at rest;
+               moving the goalposts is a settings action and folds, same idiom as
+               rename above. The summary reads as state. #}
+            <details class="fold">
+              <summary class="lnk">target {{ t['total_count'] }}</summary>
+              <form class="logform quiet" hx-post="/roadmaps/{{ r['id'] }}/totals/{{ t['id'] }}/set"
+                    hx-target="#roadmap-totals" hx-swap="outerHTML">
+                <input type="number" id="tgt-{{ t['id'] }}" name="total" min="1" step="1"
+                       value="{{ t['total_count'] }}" aria-label="Target for {{ t['title'] }}">
+                <button class="lnk" type="submit">Set</button>
+              </form>
+            </details>
           </div>
         </div>
       {% endfor %}

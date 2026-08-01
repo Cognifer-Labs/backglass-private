@@ -1159,7 +1159,7 @@ Design decisions (stated):
 
 ---
 
-# Phase — Format audit: is each surface the right format for its content?  ⏳ PLANNED (2026-08-01)
+# Phase — Format audit: is each surface the right format for its content?  ✅ built (2026-08-01)
 
 Owner ask (/goal): review how the page structure works and plan improvements by
 asking, for everything, "is this the best format for showing this?" Audit done
@@ -1220,29 +1220,109 @@ rest; rare/destructive actions behind the existing `<details>` fold idiom.
 
 ## Plan (order = highest leverage first)
 
-- [ ] 1. **Alert policy in code, not taste** — `panels.py sidebar()`: ALERTS =
-      abnormal+actionable only (source failed w/ name+command, spend cap, kill
-      rate, review backlog). Goal risk OUT of ALERTS (closes the open Phase 8b
-      ruling). Each alert names subject + one action. Cap 4 + "N more".
-- [ ] 2. **Retire vermilion for young data** — "no checkpoints yet" and "no
-      interactions yet" → k-plain/k-dash chip, no row fill. Vermilion audit:
-      grep every k-verm use, each must mean broken/overdue.
-- [ ] 3. **Dashboard Goals panel → summary** — one line per goal (title, worst
-      chip, thin bar), no cadence buttons, no logging; link to /goals. Roadmaps-
-      list row format is the template.
-- [ ] 4. **Goals page density** — milestones as compact dated list; cadence-
-      picker behind fold (+1 stays); one chip + bar per target (drop duplicate
-      bold sentence when it repeats chip); NEEDS ATTENTION = worst 2 by risk.
-- [ ] 5. **People page** — People vs Orgs & services grouping, open-count sort,
-      neutral new-profile chip. No schema change (display heuristic only —
-      recorded as such).
-- [ ] 6. **Week view merge** — day cards = grid header; empty week collapses
-      grid. Sidebar GOALS compression (one line per goal). Memory FORGET +
-      roadmap SET/RENAME behind folds.
-- [ ] 7. **Tests + gates** — update test_web_pages/test_dashboard assertions
-      (alert set, chip classes, milestone list, people grouping); pytest, ruff,
-      mypy strict, palette validator; live screenshot pass both themes.
+- [x] 1. **Alert policy in code, not taste** — `panels.py sidebar()`: per-source
+      failure alerts name the source ("imessage is failing — views are
+      incomplete"); goal risk OUT of ALERTS (closes the open Phase 8b ruling);
+      cap 4 + "N more" overflow row (`Sidebar.more_alerts`).
+- [x] 2. **Retire vermilion for young data** — `Touch.level` gains a true `new`
+      level (never-touched ≠ going cold; also drops such rows from the
+      "going cold only" filter), `Staleness.ink_level` is a display-only level
+      so the brief's semantics are untouched. All five stale_chip call sites +
+      people rows switched; never-touched renders k-plain, no fill.
+- [x] 3. **Dashboard Goals panel → summary** — `goals_panel` meta["summary"]:
+      one line per goal (title link, at-risk ◆ chip, stale chip, week aggregate
+      bar, first lifetime total as headline). No cadence buttons, no +1 on the
+      glance surface; `/targets/{id}/weekly` endpoint kept (docs/06 action #7,
+      used from /goals).
+- [x] 4. **Goals page density** — milestones as compact dated list
+      (`GoalCard.milestones` / `.mlist`, no "last —" rows); cadence picker
+      behind a `cadence N/wk` fold beside +1; `Cards.flagged` = worst 2 by
+      (at-risk, staleness depth, cadences behind), rest under ON TRACK.
+- [x] 5. **People page** — `profiles.org_like` display heuristic (role words
+      beat org tokens beat ALL-CAPS acronym; literal `org`/`person` tag
+      overrides), "Orgs & services" group after humans, both ranked by open
+      count then days quiet. NOT a data change: the ledger resolver looks up
+      `kind='person'`, so reclassifying entity rows would fragment resolution —
+      flipping `entity.kind` needs a resolver change first (recorded). Known
+      misfile: "Sallie Mae" reads as a person until tagged `org`.
+- [x] 6. **Week view merge** — capacity moved into the grid header cells (one
+      set of day headers); standalone band renders only on an empty week with
+      "Nothing planned this week" (no framed void). Memory FORGET → quiet .lnk;
+      roadmap set-target behind a `target N` fold (rename was already folded).
+      Sidebar GOALS compression landed via the concurrent session's page-aware
+      sidebar (yields on /、/goals) + this session's one-line rows (G13 sentence
+      in title attr).
+- [x] 7. **Tests + gates** — new `tests/test_format_audit.py` (13 tests: alert
+      naming/cap, young-data ink ×4, dashboard summary, needs-attention cap,
+      people grouping ×3, milestone list); updated week-band + goal-health +
+      roadmap-label assertions in test_web_pages.py. 626 passed, ruff clean,
+      mypy strict clean, palette exit 0. Live pass on real db both themes.
 
-Deliberately NOT proposed: layout/grid rework (just shipped), new colors, new
-chart series, merging staleness+risk (G11 forbids), any brief change, any schema
-change.
+Deliberately NOT done: layout/grid rework (just shipped), new colors, new chart
+series, merging staleness+risk (G11 forbids), any brief change, any schema
+change. One deselected test this run:
+`TestGoalsTodayTicks::test_unscheduled_today_says_so_without_an_empty_grid` —
+belongs to the concurrent session that rewrote `_today_ticks.html` copy; that
+session owns updating it (Phase 7 precedent).
+
+---
+
+# Phase — All-screens design audit (5-lens workflow + judge)  ✅ built (2026-08-01)
+
+Owner ask (/goal): audit every screen's design + component placement, improve.
+Ran the Phase 8b shape: 18 full-page screenshots (9 pages × 2 themes, playwright
+on demo db) → 5 critique lenses (placement/typography/spacing/system/dark-a11y,
+29 raw findings) → judge merged to 18 ranked fixes. 16 applied; week-pager was
+already fixed by the concurrent format-audit session; small-type sweep limited
+to the two identity elements (recorded).
+
+Applied (ranked): (1) dark-mode wash text — new --wash-fg/--wash-fg-2 tokens,
+washed containers force black text over full-ink dark fills (due-today title was
+cream-on-cream, gold provenance ~1.2:1); (2) DUE TODAY chip solid ink in light
+(§4 restored); (3) bar fills full ink — data, not resting components (wash made
+2/3 vs empty indistinguishable); (4) --gold-line back to black in light (§3's
+mitigation; design-system §8 rule 2 amended with the wash-ruling carve-outs);
+(5) washed rmrow margins — fused vermilion cards separated; (6) .empty margin:0
+panel-seam normalization + awaiting first-row inset; (7) washed rows' negative
+margins refund padding+border so text stays on the column grid (.src.fail class
+replaces the inline vermilion style); (8) masthead reel labels drop
+parentheticals + klbl 240px (4-line wrap killed); (9) banner 24px, reel 22px —
+spec sizes; (10) unlog × halo → ~27×30 hit target; (11) sidebar GOALS hidden on
+dashboard+goals, ROADMAPS hidden on roadmaps (page already shows that state —
+matches the concurrent session's new sidebar test); (12) empty checklist
+collapses to one cap line, goals cards move up; (13) srisk.bad unbolded (chip
+carries the signal); (14) memory page regains the date eyebrow (banner keeps the
+count); (15) 9px type → 10px (week hour gutter, heatmap headers); (16) "1
+items" pluralized (person timeline, sources); (17) Avorio path row clipped to
+one line, full path in title.
+
+Gates: 614 tests, ruff, mypy strict, palette validator all green. Before/after
+shots in scratchpad shots-before/ + shots-audit/. Verified live both themes on
+demo db after a server restart (stale-server note: Jinja hot-reloads templates
+but not panels.py — a running dashboard needs a restart after python edits).
+
+Concurrency note: built alongside the format-audit session (it owns _goals.html/
+panels.py/dashboard.html reworks); all edits here were fresh-read anchored
+Edits, no shared-file collisions.
+
+## Continuation pass (same day) — judge's dropped list worked through
+
+- [x] Goal-card cross-ref de-stuttered: "→ <roadmap title>" echoed the goal title
+      it sat under (they share a name by construction); now a fixed
+      "roadmap & step ledger →" label. Concurrent session adopted the label in
+      its TestGoalsAttentionSplit test mid-run.
+- [x] Goals-page hour logging switched to the underlined .logform.flow idiom —
+      one write-surface language with the roadmap log zone.
+- [x] THIS WEEK fold anchored: hairline top rule + inline marker (was a floating
+      orphan row between two banners).
+- [x] Dashboard kbd legend now names the 1–6 page keys.
+- [x] Source error notes tightened to their failing row (.src + .note).
+- [x] Post-fix visual sweep of the five screens not re-checked earlier (people,
+      person, schedule-day/week, memory) — people grid refund, week pager, and
+      memory eyebrow all confirmed rendering.
+- Deliberately left: monospace-numeral policy drift (imperceptible), week-grid
+  6px event targets (day view is the interaction surface; events carry labels),
+  full small-type ramp sweep (wide blast radius, needs its own pass).
+
+627 tests, ruff, mypy strict, palette all green after; final shots
+goals-final.png / dashboard-final.png in scratchpad.

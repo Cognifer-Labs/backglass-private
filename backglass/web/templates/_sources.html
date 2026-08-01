@@ -12,11 +12,11 @@
         {# docs/11 §8: "the row's keyline turns vermilion and stays that way" until fixed.
            A paused source is neither ok nor failing: hollow square, muted row, no
            vermilion — the owner chose this state, so it carries no alarm ink. #}
-        <div class="src{% if not s['enabled'] %} paused{% endif %}"{% if s['status'] != 'ok' and s['enabled'] %} style="border-left:3px solid var(--vermilion);padding-left:9px"{% endif %}>
+        <div class="src{% if not s['enabled'] %} paused{% endif %}{% if s['status'] != 'ok' and s['enabled'] %} fail{% endif %}">
           <span class="sq" style="background:{{ 'transparent' if not s['enabled'] else 'var(--green)' if s['status'] == 'ok' else 'var(--vermilion)' }}"
                 title="{{ 'paused' if not s['enabled'] else s['status'] }}"></span>
           <span class="nm">{{ s['source'] }}</span>
-          <span class="ts">{{ s['item_count'] }} items · {{ s['last_item_at']|relative }}</span>
+          <span class="ts">{{ s['item_count'] }} item{{ '' if s['item_count'] == 1 else 's' }} · {{ s['last_item_at']|relative }}</span>
           <button class="btn{% if s['enabled'] %} defer{% endif %}"
                   hx-post="/sources/{{ s['source'] }}/{{ 'disable' if s['enabled'] else 'enable' }}"
                   hx-target="#panel-sources" hx-swap="outerHTML">
@@ -40,7 +40,9 @@
         <div class="src paused">
           <span class="sq" style="background:transparent" title="detected"></span>
           <span class="nm">{{ f.source }}</span>
-          <span class="ts">found · {{ f.hint }}</span>
+          {# Full hint (often a filesystem path) lives in the tooltip; the row
+             keeps the one-line rhythm of the panel via CSS ellipsis. #}
+          <span class="ts clip" title="{{ f.hint }}">found · {{ f.hint }}</span>
         </div>
       {% endfor %}
       <p class="note">Detected on this Mac — run <span class="kbd">backglass setup</span> to connect.</p>

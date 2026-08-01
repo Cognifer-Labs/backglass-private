@@ -111,10 +111,12 @@ def totals_for(conn: sqlite3.Connection, goal_id: int) -> list[dict[str, Any]]:
     ).fetchall()
     totals: list[dict[str, Any]] = []
     for row in rows:
+        # All entries, id included: every logged hour must be individually
+        # removable (unlog), not just the last three the summary shows.
         entries = conn.execute(
-            "SELECT c.occurred_at, c.delta, c.note, a.title AS activity "
+            "SELECT c.id, c.occurred_at, c.delta, c.note, a.title AS activity "
             "FROM checkpoint c LEFT JOIN activity a ON a.id = c.activity_id "
-            "WHERE c.target_id = ? ORDER BY c.occurred_at DESC, c.id DESC LIMIT 3",
+            "WHERE c.target_id = ? ORDER BY c.occurred_at DESC, c.id DESC",
             (row["id"],),
         ).fetchall()
         totals.append({**dict(row), "entries": entries})
@@ -324,6 +326,77 @@ def build_router(
         _total_target(conn, roadmap_id, target_id)
         conn.execute("UPDATE target SET total_count = ? WHERE id = ?", (total, target_id))
         return totals_fragment(request, conn, roadmap_id)
+
+    @router.post(
+        "/roadmaps/{roadmap_id}/totals/{target_id}/title", response_class=HTMLResponse
+    )
+    def total_title(
+        roadmap_id: int,
+        target_id: int,
+        request: Request,
+        title: str = Form(...),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        if not title.strip():
+            raise HTTPException(status_code=422, detail="title must not be empty")
+        _total_target(conn, roadmap_id, target_id)
+        conn.execute(
+            "UPDATE target SET title = ? WHERE id = ?", (title.strip(), target_id)
+        )
+        return totals_fragment(request, conn, roadmap_id)
+
+    @router.post(
+        "/roadmaps/{roadmap_id}/totals/{target_id}/unlog/{checkpoint_id}",
+        response_class=HTMLResponse,
+    )
+    def total_unlog(
+        roadmap_id: int,
+        target_id: int,
+        checkpoint_id: int,
+        request: Request,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        """A mis-entered log comes back out. G10 makes this safe: progress is
+        SUM(delta) on read, so the bar recomputes the moment the row is gone.
+        The checkpoint must belong to this total of this roadmap — anything
+        else is a 404, never a delete of someone else's receipt."""
+        _total_target(conn, roadmap_id, target_id)
+        row = conn.execute(
+            "SELECT 1 FROM checkpoint WHERE id = ? AND target_id = ?",
+            (checkpoint_id, target_id),
+        ).fetchone()
+        if row is None:
+            raise HTTPException(status_code=404)
+        checkpoints.delete(conn, checkpoint_id)
+        return totals_fragment(request, conn, roadmap_id)
+
+    @router.post("/roadmaps/{roadmap_id}/edit", response_class=HTMLResponse)
+    def roadmap_edit(
+        roadmap_id: int,
+        title: str = Form(...),
+        definition_of_done: str = Form(""),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        """Rename lands on roadmap AND goal (one name at instantiation; the goal's
+        is the one the brief and risk sentences speak). Plain redirect: the title
+        lives in the banner, outside both HTMX fragments."""
+        _detail(conn, roadmap_id)
+        _adjust(adjust.rename_roadmap, conn, roadmap_id, title, definition_of_done)
+        return RedirectResponse(url=f"/roadmaps/{roadmap_id}", status_code=303)
+
+    @router.post(
+        "/roadmaps/{roadmap_id}/steps/{step_id}/edit", response_class=HTMLResponse
+    )
+    def step_edit(
+        roadmap_id: int,
+        step_id: int,
+        request: Request,
+        title: str = Form(...),
+        detail: str = Form(""),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        _adjust(adjust.rename_step, conn, step_id, title, detail)
+        return steps_fragment(request, conn, roadmap_id)
 
     @router.post("/roadmaps/start/{path_id}", response_class=HTMLResponse)
     def start(path_id: str, conn: sqlite3.Connection = Depends(get_conn)) -> Any:

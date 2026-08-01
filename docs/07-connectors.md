@@ -42,6 +42,33 @@ Unresolved: which app. This changes the connector meaningfully.
 **Recommendation: Obsidian.** Roughly a tenth the work of the alternatives. If the owner
 has not committed to a notes app yet, this decision is effectively free.
 
+## Instagram
+
+Friend plans live in DMs. There is no official API for a personal account's inbox (the
+Basic Display API died December 2024; the Graph API reads only professional accounts),
+so this connector has two lanes behind one allowlist:
+
+- **Export lane** (`instagram`, the default): the owner periodically requests Meta's
+  "Download Your Information" export in JSON format and points `INSTAGRAM_EXPORT_PATH`
+  at the unzipped folder. Official, no credential, zero ban risk; data is as fresh as
+  the last export. Cursor is the highest `timestamp_ms` seen, so re-dropping a newer
+  export on the same path yields only what is new.
+- **Live lane** (`instagram:live`, experimental): instagrapi against the private mobile
+  API. Fresh every run, but it violates Instagram ToS and can get the account
+  checkpointed or banned. Enabled only when both `INSTAGRAM_USERNAME` and
+  `INSTAGRAM_SESSION_FILE` are set; the session file is created once so routine runs
+  never perform a fresh login.
+
+**Allowlist, not inbox.** `INSTAGRAM_CHATS` names the only group-chat titles and people
+either lane reads — the Slack rule again: a personal tool reads the handful of threads
+the owner names. Everything else is counted (`allowlist` rule) and never stored.
+
+**Friend plans ride low.** Commitments whose evidence came from Instagram are demoted
+out of Slipping/Awaiting into a last-priority "Friend plans" brief section — unless the
+text names a birthday or special event (deterministic keyword test in `brief/daily.py`),
+in which case they keep full priority. Category is derived from provenance at query
+time; the commitment table is untouched.
+
 ## Calendar
 
 - Google Calendar API for personal, Microsoft Graph for the work tenant if enabled.

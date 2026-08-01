@@ -19,12 +19,14 @@
       {% for t in totals[:2] %}
         <div class="kpi">
           {{ m.reel(t['done']) }}
-          <span class="klbl">{{ t['title'] }}<br>of {{ t['total_count'] }}</span>
+          {# Parenthetical qualifiers stay on the log zone below; a reel label is
+             a caption, and four wrapped lines break the paired-KPI read. #}
+          <span class="klbl">{{ t['title'].split(' (')[0] }}<br>of {{ t['total_count'] }}</span>
         </div>
       {% endfor %}
     </div>
   {% endif %}
-  {% if stale %}<p class="rstale">{{ m.stale_chip(stale.level, stale.chip()) }}</p>{% endif %}
+  {% if stale %}<p class="rstale">{{ m.stale_chip(stale.ink_level, stale.chip()) }}</p>{% endif %}
   {% if risk and risk.sentence() %}
     <p class="srisk{% if risk.at_risk %} bad{% endif %}">{{ risk.sentence().removeprefix(risk.goal_title ~ ': ') }}</p>
   {% endif %}

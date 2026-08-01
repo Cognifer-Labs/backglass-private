@@ -54,6 +54,14 @@ class Staleness:
             return "no checkpoints yet"
         return f"{self.days_quiet} day{'' if self.days_quiet == 1 else 's'} quiet"
 
+    @property
+    def ink_level(self) -> str:
+        """Display ink only. A target that has never had a checkpoint is young
+        data, not a lapse — the chip says "no checkpoints yet" in neutral ink
+        instead of vermilion. `level` keeps its meaning for the brief and for
+        needs-attention ordering; only the pigment changes here."""
+        return "new" if self.days_quiet is None else self.level
+
 
 def staleness(conn: sqlite3.Connection, settings: Settings, day: date) -> list[Staleness]:
     rows = conn.execute(

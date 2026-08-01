@@ -57,7 +57,7 @@
 {# Full-width: the third panel in a 2-col grid guaranteed a framed void on every
    person. A timeline is a list; it reads better wide anyway. #}
 <section class="sec">
-  {{ m.banner('Timeline', timeline|length ~ ' items') }}
+  {{ m.banner('Timeline', timeline|length ~ ' item' ~ ('' if timeline|length == 1 else 's')) }}
   <div class="inner">
     {% if not timeline %}
       <p class="empty">No interactions on record.</p>

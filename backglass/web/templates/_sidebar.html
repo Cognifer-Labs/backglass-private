@@ -18,28 +18,35 @@
         {%- elif a.level == 'gold' %}<span aria-hidden="true">◆ </span>{% endif -%}
         {{ a.text }}</a>
     {% endfor %}
+    {% if sb.more_alerts %}
+      {# Capped, not dropped: the count keeps the overflow honest. #}
+      <a class="salert k-dash" href="/#panel-sources">{{ sb.more_alerts }} more</a>
+    {% endif %}
   </div>
 {% endif %}
 
-{% if sb.goals %}
+{# The sidebar summarizes what the current page cannot: on Dashboard the Goals
+   panel and on /goals the goal cards already show this state in the same
+   viewport, so the block yields rather than doubling it. Alerts stay global. #}
+{% if sb.goals and active not in ('dashboard', 'goals') %}
   <div class="sblock" id="side-goals">
     <span class="shd cond">Goals</span>
     {% for g in sb.goals %}
-      <div class="sgoal">
+      {# Format audit: the sidebar is a nav aid, not a report — one line per goal,
+         worst chip only. The G13 sentence rides in the title attribute; the full
+         prose lives on /goals, where the work happens. ◆ marks at-risk without
+         repeating the sentence (rule 3: never color/glyph-free). #}
+      <div class="sgoal"{% if g.risk_sentence %} title="{{ g.risk_sentence }}"{% endif %}>
         <div class="hd">
-          <a class="nm" href="/#panel-goals">{{ g.title }}</a>
+          <a class="nm" href="/goals">{% if g.at_risk %}<span aria-hidden="true">◆ </span>{% endif %}{{ g.title }}</a>
           {{ m.stale_chip(g.staleness_level, g.staleness_chip) }}
         </div>
-        {% if g.risk_sentence %}
-          {# G13: risk in words, projected date against target date. #}
-          <p class="srisk{% if g.at_risk %} bad{% endif %}">{{ g.risk_sentence }}</p>
-        {% endif %}
       </div>
     {% endfor %}
   </div>
 {% endif %}
 
-{% if sb.roadmaps %}
+{% if sb.roadmaps and active != 'roadmaps' %}
   <div class="sblock" id="side-roadmaps">
     <span class="shd cond">Roadmaps</span>
     {% for r in sb.roadmaps %}

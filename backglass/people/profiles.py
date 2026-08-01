@@ -20,6 +20,47 @@ def _like(term: str | None) -> str | None:
     return f"%{term.strip().lower()}%"
 
 
+#: Name tokens that mark a service desk, portal, or institution rather than a
+#: human. Display heuristic only — extraction writes kind='person' for every
+#: counterparty (the resolver looks up kind='person', so reclassifying rows would
+#: fragment resolution; recorded in tasks/todo.md format-audit phase).
+_ORG_TOKENS = frozenset(
+    {"portal", "housing", "transportation", "office", "services", "admissions",
+     "registrar", "financial", "aid", "loan", "loans", "bank", "university",
+     "college", "department", "dept", "program", "support", "billing"}
+)
+#: Role words that mean "an unnamed human in a role", which outranks org tokens —
+#: "college counselor" is a person you talk to, not a service you log into.
+_ROLE_TOKENS = frozenset(
+    {"coordinator", "counselor", "advisor", "adviser", "manager", "professor",
+     "instructor", "teacher", "recruiter", "agent"}
+)
+
+
+def org_like(record: dict[str, Any]) -> bool:
+    """Does this profile read as an org/service rather than a person?
+
+    Owner override first: a literal `org` tag decides. Then: a curated role/org
+    means a person; a role word in the name means an unnamed person; an org token
+    or an all-caps acronym (ASU, MLSBE) means a service. Misfiles are harmless —
+    the row renders identically, only the display group moves — and taggable.
+    """
+    tags = {str(t).lower() for t in record.get("tags") or []}
+    if "org" in tags:
+        return True
+    if "person" in tags:
+        return False
+    if record.get("role"):
+        return False
+    words = str(record.get("canonical_name") or "").replace("/", " ").split()
+    lowered = {w.strip(".,").lower() for w in words}
+    if lowered & _ROLE_TOKENS:
+        return False
+    if lowered & _ORG_TOKENS:
+        return True
+    return any(len(w) >= 2 and w.isalpha() and w.isupper() for w in words)
+
+
 def search(
     conn: sqlite3.Connection, *, q: str | None = None, tag: str | None = None
 ) -> list[dict[str, Any]]:

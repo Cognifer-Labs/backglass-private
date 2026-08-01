@@ -519,6 +519,35 @@ def _all_connectors(conn: sqlite3.Connection, settings: Settings) -> list[Connec
             IMessageConnector(db_path=settings.imessage_db_path, boundary=boundary)
         )
 
+    if settings.instagram_chats and (
+        settings.instagram_export_path
+        or (settings.instagram_username and settings.instagram_session_file)
+    ):
+        from backglass.connectors.instagram import (
+            Allowlist,
+            InstagramExportConnector,
+            InstagramLiveConnector,
+        )
+
+        allowlist = Allowlist(settings.instagram_chats)
+        if settings.instagram_export_path:
+            built.append(
+                InstagramExportConnector(
+                    export_path=settings.instagram_export_path,
+                    allowlist=allowlist,
+                    boundary=boundary,
+                )
+            )
+        if settings.instagram_username and settings.instagram_session_file:
+            built.append(
+                InstagramLiveConnector(
+                    username=settings.instagram_username,
+                    session_file=settings.instagram_session_file,
+                    allowlist=allowlist,
+                    boundary=boundary,
+                )
+            )
+
     if settings.inbox_folder_path:
         from backglass.connectors.files import FilesConnector
 

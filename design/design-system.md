@@ -225,7 +225,12 @@ Rules:
 ## 8. Rules that are not negotiable
 
 1. Color means state. Nothing decorative gets an ink.
-2. Every colored fill carries a black keyline (paper on black surfaces).
+2. Every colored fill carries a keyline. Amended by the 2026-07-31 wash ruling:
+   a resting component wears the pastel wash with a keyline in its own saturated
+   ink — except gold, whose keyline stays black, because §3 permits gold's
+   sub-3:1 only with the black keyline as mitigation. Data fills (progress bars,
+   chart marks) are not resting components: they stay full ink with the black
+   keyline on the track. On black surfaces the keyline is paper.
 3. Status ships as icon plus label, never color alone.
 4. Every generated claim links to its source.
 5. Low confidence renders as a dashed outline, never as a confident statement.

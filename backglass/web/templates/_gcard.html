@@ -13,12 +13,14 @@
       <h2 class="cond gtitle">{{ card.title }}</h2>
       <p class="gmeta">{{ card.horizon }}{% if card.target_date %} · target {{ card.target_date }}{% endif %}</p>
       {% if card.roadmap_id %}
-        {# The pages cross-reference rather than merge: the step ledger stays there. #}
-        <p class="grm"><a href="/roadmaps/{{ card.roadmap_id }}">→ {{ card.roadmap_title }}</a></p>
+        {# The pages cross-reference rather than merge: the step ledger stays
+           there. Fixed label — the roadmap shares the goal's name, so echoing
+           the title directly under the title read as a stutter. #}
+        <p class="grm"><a href="/roadmaps/{{ card.roadmap_id }}">roadmap &amp; step ledger →</a></p>
       {% endif %}
     </div>
     {% if card.stale %}
-      {{ m.stale_chip(card.stale.level, card.stale.chip()) }}
+      {{ m.stale_chip(card.stale.ink_level, card.stale.chip()) }}
     {% endif %}
   </div>
 
@@ -31,7 +33,7 @@
     <p class="srisk{% if card.risk.at_risk %} bad{% endif %}">{{ card.risk.sentence().removeprefix(card.title ~ ': ') }}</p>
   {% endif %}
 
-  {% for t in card.targets %}
+  {% for t in card.active_targets %}
     <div class="gtgt">
       <div class="hd">
         <span class="nm">{{ t['target_title'] }}</span>
@@ -40,9 +42,7 @@
           {{ m.chip('slipping') }}
         {% endif %}
       </div>
-      {# The .kind label in the header already names the kind — repeating it in
-         the body line said "milestone" twice on every milestone row.
-         Absence is an em-dash, not a sentence: seven rows of "no checkpoints
+      {# Absence is an em-dash, not a sentence: seven rows of "no checkpoints
          yet" was wallpaper, and "last —" says the same thing in one glyph. #}
       <p class="tgt">
         {% if t['kind'] == 'total' and t['total_count'] %}{{ t['lifetime_done'] }}/{{ t['total_count'] }} logged ·
@@ -61,7 +61,9 @@
           <span class="pct">{{ [pct, 100]|min }}%</span>
         </div>
         <div class="acts">
-          <form class="logform" hx-post="/goals/targets/{{ t['target_id'] }}/log"
+          {# .flow: same underlined ledger-line idiom as the roadmap log zone —
+             one write surface language everywhere hours are logged. #}
+          <form class="logform flow" hx-post="/goals/targets/{{ t['target_id'] }}/log"
                 hx-target="#goal-cards" hx-swap="outerHTML">
             <input type="number" name="amount" min="1" step="1" value="1" required
                    aria-label="Amount for {{ t['target_title'] }}">
@@ -88,15 +90,37 @@
                   aria-label="Log one {{ t['target_title'] }}"
                   hx-post="/goals/targets/{{ t['target_id'] }}/tick"
                   hx-target="#goal-cards" hx-swap="outerHTML">+1</button>
-          {% for n in [1, 2, 3, 5] %}
-            <button class="btn ok{% if n == t['weekly_count'] %} on{% endif %}"
-                    aria-pressed="{{ 'true' if n == t['weekly_count'] else 'false' }}"
-                    hx-post="/goals/targets/{{ t['target_id'] }}/weekly/{{ n }}"
-                    hx-target="#goal-cards" hx-swap="outerHTML">{{ n }}/wk</button>
-          {% endfor %}
+          {# Format-audit ruling: logging is the daily action and stays at rest;
+             changing the cadence is a settings action and folds. The summary
+             reads as state ("cadence 3/wk"), the same idiom as the legend fold. #}
+          <details class="fold cadfold">
+            <summary class="lbl">cadence {{ t['weekly_count'] }}/wk</summary>
+            <span class="cadopts">
+              {% for n in [1, 2, 3, 5] %}
+                <button class="btn ok{% if n == t['weekly_count'] %} on{% endif %}"
+                        aria-pressed="{{ 'true' if n == t['weekly_count'] else 'false' }}"
+                        hx-post="/goals/targets/{{ t['target_id'] }}/weekly/{{ n }}"
+                        hx-target="#goal-cards" hx-swap="outerHTML">{{ n }}/wk</button>
+              {% endfor %}
+            </span>
+          </details>
         </div>
       {% endif %}
     </div>
   {% endfor %}
+  {% if card.milestones %}
+    {# Milestones are dates, not streams: one line each, no bars, no "last —". #}
+    <div class="gtgt">
+      <div class="hd"><span class="kind">milestones</span></div>
+      <ul class="mlist">
+        {% for t in card.milestones %}
+          <li>
+            <span class="nm">{{ t['target_title'] }}</span>
+            {% if t['last_checkpoint'] %}<span class="ts">done {{ t['last_checkpoint'][:10] }}</span>{% endif %}
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  {% endif %}
 </article>
 {%- endmacro %}

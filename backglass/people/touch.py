@@ -26,7 +26,7 @@ class Touch:
     role: str | None
     org: str | None
     days_since: int | None  # None when there has never been an interaction
-    level: str  # fresh | warn | cold
+    level: str  # new | fresh | warn | cold
     # Provenance of the most recent interaction; None only when days_since is None.
     source_row: dict[str, Any] | None
 
@@ -44,7 +44,12 @@ def cold(conn: sqlite3.Connection, settings: Settings, day: date) -> list[Touch]
             days: int | None = (day - date.fromisoformat(str(row["last_touch_at"])[:10])).days
         else:
             days = None
-        if days is None or days >= settings.people_touch_cold_days:
+        if days is None:
+            # Never interacted is young data, not a lapsed relationship: a class
+            # roster imported yesterday must not render as a wall of alarm ink.
+            # Format-audit ruling: vermilion means broken/overdue, nothing else.
+            level = "new"
+        elif days >= settings.people_touch_cold_days:
             level = "cold"
         elif days >= settings.people_touch_warn_days:
             level = "warn"

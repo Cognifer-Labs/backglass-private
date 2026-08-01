@@ -174,6 +174,30 @@ def goals_panel(conn: sqlite3.Connection, settings: Settings, today: date) -> Pa
         if not r["weekly_count"] and not r["done_this_week"] and not r["last_checkpoint"]
     ]
     quiet_ids = {r["target_id"] for r in quiet}
+
+    # Format-audit ruling: the dashboard panel is a per-goal summary, not a clone
+    # of /goals. One line per goal — week aggregate across its cadence targets,
+    # first lifetime total as the headline number — and no controls: logging and
+    # cadence changes live on /goals, where the work happens.
+    summary: list[dict[str, Any]] = []
+    by_goal: dict[int, dict[str, Any]] = {}
+    for r in targeted:
+        g = by_goal.setdefault(
+            int(r["goal_id"]),
+            {"goal_id": int(r["goal_id"]), "title": r["goal_title"],
+             "week_done": 0, "week_total": 0, "headline": None},
+        )
+        if r["weekly_count"]:
+            g["week_done"] += int(r["done_this_week"] or 0)
+            g["week_total"] += int(r["weekly_count"])
+        elif r["kind"] == "total" and r["total_count"] and g["headline"] is None:
+            g["headline"] = {
+                "title": r["target_title"],
+                "done": int(r["lifetime_done"] or 0),
+                "total": int(r["total_count"]),
+            }
+    summary = list(by_goal.values())
+
     return Panel(
         title="Goals",
         # docs/06 §Empty states, verbatim. It is the sharpest line in the document and it
@@ -181,6 +205,7 @@ def goals_panel(conn: sqlite3.Connection, settings: Settings, today: date) -> Pa
         empty_text="No targets set. A goal without a target is inert.",
         rows=[r for r in targeted if r["target_id"] not in quiet_ids],
         meta={
+            "summary": summary,
             "quiet_milestones": len(quiet),
             "goals_without_targets": [r for r in rows if r["target_id"] is None],
             # docs/06 §Panels, Goals: "staleness chips, risk projections". Two separate
@@ -272,6 +297,8 @@ class Sidebar:
     goals: list[dict[str, Any]] = field(default_factory=list)
     roadmaps: list[dict[str, Any]] = field(default_factory=list)
     counts: dict[str, int] = field(default_factory=dict)
+    #: Alerts beyond the display cap — shown as "N more" rather than dropped silently.
+    more_alerts: int = 0
 
 
 def sidebar(conn: sqlite3.Connection, settings: Settings, today: date) -> Sidebar:
@@ -297,7 +324,7 @@ def sidebar(conn: sqlite3.Connection, settings: Settings, today: date) -> Sideba
             "goal_id": goal_id,
             "title": s.goal_title,
             "staleness_chip": s.chip(),
-            "staleness_level": s.level,
+            "staleness_level": s.ink_level,
             "at_risk": bool(risks.get(goal_id) and risks[goal_id].at_risk),
             "risk_sentence": risk_line(goal_id, s.goal_title),
         }
@@ -315,13 +342,18 @@ def sidebar(conn: sqlite3.Connection, settings: Settings, today: date) -> Sideba
         if r["status"] == "active"
     ]
 
+    # An ALERT is abnormal AND actionable AND names its subject. Goal risk is
+    # status, not an alert — it lives in the GOALS block below (and on /goals),
+    # so sustained_risk no longer duplicates itself here. Format-audit ruling.
     alerts: list[dict[str, str]] = []
-    if sources.meta["any_failed"]:
-        alerts.append(
-            # docs/11 §Cross-cutting rule 4: failures are louder than successes.
-            {"level": "verm", "text": "A source is failing — views are incomplete",
-             "href": "/#panel-sources"}
-        )
+    for s in sources.rows:
+        if s["status"] != "ok" and s["enabled"]:
+            # docs/11 §Cross-cutting rule 4: failures are louder than successes —
+            # but an alarm that does not name its subject is a mystery, not a cue.
+            alerts.append(
+                {"level": "verm", "text": f"{s['source']} is failing — views are incomplete",
+                 "href": "/#panel-sources"}
+            )
     if sources.meta["degraded"]:
         alerts.append(
             {"level": "gold", "text": "Spend cap reached — extraction paused, triage only",
@@ -332,11 +364,6 @@ def sidebar(conn: sqlite3.Connection, settings: Settings, today: date) -> Sideba
             {"level": "gold", "text": "Triage kill rate below 85% — rules have drifted",
              "href": "/#panel-sources"}
         )
-    for r in health.sustained_risk(conn, settings, today):
-        alerts.append(
-            {"level": "gold", "text": f"{r.goal_title}: at risk two weeks running",
-             "href": "/#panel-goals"}
-        )
     if review.rows:
         n = len(review.rows)
         alerts.append(
@@ -345,8 +372,12 @@ def sidebar(conn: sqlite3.Connection, settings: Settings, today: date) -> Sideba
              "href": "/#panel-review"}
         )
 
+    # Cap the block so a bad morning cannot push the goals out of the sidebar.
+    cap = 4
+    more = max(0, len(alerts) - cap)
+
     return Sidebar(
-        alerts=alerts,
+        alerts=alerts[:cap],
         goals=goals,
         roadmaps=roadmaps,
         counts={
@@ -354,6 +385,7 @@ def sidebar(conn: sqlite3.Connection, settings: Settings, today: date) -> Sideba
             "follow_ups": len(touch.needing_follow_up(conn, settings, today)),
             "roadmaps": len(roadmaps),
         },
+        more_alerts=more,
     )
 
 

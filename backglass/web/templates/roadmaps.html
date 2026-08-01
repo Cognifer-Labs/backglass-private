@@ -25,7 +25,7 @@
           <a class="cond rmnm" href="/roadmaps/{{ r['id'] }}">{{ r['title'] }}</a>
           {% if r['personalized'] %}<span class="chip k-plain">personalized</span>{% endif %}
           {% set s = stale.get(r['goal_id']) %}
-          {% if s and s.level != 'fresh' %}{{ m.stale_chip(s.level, s.chip()) }}{% endif %}
+          {% if s and s.level != 'fresh' %}{{ m.stale_chip(s.ink_level, s.chip()) }}{% endif %}
         </p>
         <p class="rmst">
           {%- if r['next_title'] -%}

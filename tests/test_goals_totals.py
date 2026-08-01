@@ -192,7 +192,7 @@ class TestRoadmapPage:
         # The next pending step is marked in the timetable now, not summarized in
         # the masthead: a 4px black left rule plus a NEXT label on the row itself.
         assert "nextstep" in page
-        assert '<p class="nextlbl">Next</p>' in page
+        assert '<span class="nextlbl">Next</span>' in page
         assert "Shadowing hours" in page
         assert "0/60 · 0%" in page
 
@@ -330,3 +330,136 @@ class TestLocalStamps:
         client.post(f"/goals/targets/{tid}/log", data={"amount": "1", "note": ""})
         cp = conn.execute("SELECT occurred_at FROM checkpoint").fetchone()
         assert cp["occurred_at"][:10] == self._phx_today()
+
+
+class TestRoadmapEditsAndUnlog:
+    """The owner's words and receipts are editable: rename the roadmap, a step,
+    or a total, and take a wrongly-entered log back out (G10 — progress is
+    summed on read, so removal recomputes by construction)."""
+
+    def _start_medical(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> tuple[int, int]:
+        client.post("/roadmaps/start/medical", follow_redirects=True)
+        rid = conn.execute("SELECT id FROM roadmap").fetchone()["id"]
+        tid = conn.execute(
+            "SELECT t.id FROM target t JOIN roadmap r ON r.goal_id = t.goal_id "
+            "WHERE r.id = ? AND t.kind = 'total' ORDER BY t.id LIMIT 1",
+            (rid,),
+        ).fetchone()["id"]
+        return rid, tid
+
+    def test_unlog_removes_the_entry_and_the_bar_recomputes(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        rid, tid = self._start_medical(client, conn)
+        client.post(f"/roadmaps/{rid}/totals/{tid}/log", data={"amount": "6", "note": "typo"})
+        cid = conn.execute("SELECT id FROM checkpoint").fetchone()["id"]
+        fragment = client.post(f"/roadmaps/{rid}/totals/{tid}/unlog/{cid}").text
+        assert conn.execute("SELECT COUNT(*) AS n FROM checkpoint").fetchone()["n"] == 0
+        assert "0/60 · 0%" in fragment
+
+    def test_unlog_refuses_a_checkpoint_of_another_target(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        rid, tid = self._start_medical(client, conn)
+        other = conn.execute(
+            "SELECT t.id FROM target t JOIN roadmap r ON r.goal_id = t.goal_id "
+            "WHERE r.id = ? AND t.kind = 'total' AND t.id != ? ORDER BY t.id LIMIT 1",
+            (rid, tid),
+        ).fetchone()["id"]
+        client.post(f"/roadmaps/{rid}/totals/{other}/log", data={"amount": "2", "note": ""})
+        cid = conn.execute("SELECT id FROM checkpoint").fetchone()["id"]
+        # Addressed through the wrong target: 404, and the receipt survives.
+        assert client.post(f"/roadmaps/{rid}/totals/{tid}/unlog/{cid}").status_code == 404
+        assert conn.execute("SELECT COUNT(*) AS n FROM checkpoint").fetchone()["n"] == 1
+
+    def test_rename_total_changes_the_targets_title(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        rid, tid = self._start_medical(client, conn)
+        response = client.post(
+            f"/roadmaps/{rid}/totals/{tid}/title", data={"title": "Shadowing (Banner)"}
+        )
+        assert response.status_code == 200
+        row = conn.execute("SELECT title FROM target WHERE id = ?", (tid,)).fetchone()
+        assert row["title"] == "Shadowing (Banner)"
+        assert (
+            client.post(
+                f"/roadmaps/{rid}/totals/{tid}/title", data={"title": "   "}
+            ).status_code
+            == 422
+        )
+
+    def test_step_edit_updates_step_and_syncs_its_milestone_target(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        rid, _ = self._start_medical(client, conn)
+        step = conn.execute(
+            "SELECT id, target_id FROM roadmap_step WHERE roadmap_id = ? "
+            "AND target_id IS NOT NULL ORDER BY sort_order LIMIT 1",
+            (rid,),
+        ).fetchone()
+        response = client.post(
+            f"/roadmaps/{rid}/steps/{step['id']}/edit",
+            data={"title": "Retake MCAT", "detail": "aim 520"},
+        )
+        assert response.status_code == 200
+        row = conn.execute(
+            "SELECT title, detail FROM roadmap_step WHERE id = ?", (step["id"],)
+        ).fetchone()
+        assert (row["title"], row["detail"]) == ("Retake MCAT", "aim 520")
+        # The milestone target was named after the step at instantiation; the
+        # rename moves it too, so checkpoints stay filed under the shown name.
+        target = conn.execute(
+            "SELECT title FROM target WHERE id = ?", (step["target_id"],)
+        ).fetchone()
+        assert target["title"] == "Retake MCAT"
+        assert (
+            client.post(
+                f"/roadmaps/{rid}/steps/{step['id']}/edit", data={"title": ""}
+            ).status_code
+            == 422
+        )
+
+    def test_roadmap_edit_renames_roadmap_and_goal_together(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        rid, _ = self._start_medical(client, conn)
+        response = client.post(
+            f"/roadmaps/{rid}/edit",
+            data={"title": "MD by 2034", "definition_of_done": "Matched."},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        roadmap = conn.execute(
+            "SELECT title, goal_id FROM roadmap WHERE id = ?", (rid,)
+        ).fetchone()
+        goal = conn.execute(
+            "SELECT title, definition_of_done FROM goal WHERE id = ?",
+            (roadmap["goal_id"],),
+        ).fetchone()
+        assert roadmap["title"] == "MD by 2034"
+        assert goal["title"] == "MD by 2034"
+        assert goal["definition_of_done"] == "Matched."
+
+    def test_steps_render_as_an_expandable_timeline(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        rid, _ = self._start_medical(client, conn)
+        page = client.get(f"/roadmaps/{rid}").text
+        n_steps = conn.execute(
+            "SELECT COUNT(*) AS n FROM roadmap_step WHERE roadmap_id = ?", (rid,)
+        ).fetchone()["n"]
+        assert page.count('<details class="stepx') == n_steps
+        assert page.count('class="logform editform"') == n_steps
+        assert 'class="atl"' in page
+
+    def test_wrongly_logged_entry_shows_an_unlog_control(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        rid, tid = self._start_medical(client, conn)
+        client.post(f"/roadmaps/{rid}/totals/{tid}/log", data={"amount": "4", "note": ""})
+        cid = conn.execute("SELECT id FROM checkpoint").fetchone()["id"]
+        page = client.get(f"/roadmaps/{rid}").text
+        assert f"/roadmaps/{rid}/totals/{tid}/unlog/{cid}" in page

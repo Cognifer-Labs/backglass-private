@@ -232,6 +232,15 @@ class Settings(BaseSettings):
     #: macOS Messages store. Empty disables. Requires Full Disk Access for the
     #: process running the sync.
     imessage_db_path: Path | None = None
+    #: Instagram DMs (docs/07 §Instagram). The allowlist names the *only* group-chat
+    #: titles and people either lane reads — same deliberate narrowness as Slack.
+    #: Export lane: an unzipped Meta "Download Your Information" folder.
+    instagram_export_path: Path | None = None
+    instagram_chats: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    #: Live lane (experimental, ToS-violating, ban risk — see docs/07): both must be
+    #: set to enable. The session file is created once via instagrapi dump_settings.
+    instagram_username: str = ""
+    instagram_session_file: Path | None = None
     #: A drop folder: every file in it becomes a source item.
     inbox_folder_path: Path | None = None
     #: Apple-native sources via the OS automation bridge (JXA/osascript). Boolean
@@ -266,12 +275,14 @@ class Settings(BaseSettings):
         "boundary_deny_addresses",
         "gmail_accounts",
         "noise_senders",
+        "structured_sources",
         "working_days",
         "calendar_accounts",
         "drive_accounts",
         "estimate_defaults",
         "tz_ranges",
         "slack_channels",
+        "instagram_chats",
         mode="before",
     )
     @classmethod

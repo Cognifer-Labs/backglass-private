@@ -13,6 +13,7 @@ not a stub — there genuinely is no capacity line before there is a capacity mo
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import date, timedelta
 from typing import Any
@@ -27,6 +28,28 @@ from backglass.ledger import USER_ID
 SLIPPING_HORIZON_DAYS = 2
 #: docs/05 §7. "Items rolling over a third time."
 ROLLOVER_THRESHOLD = 3
+#: docs/07 §Instagram. How far ahead the Friend plans section looks. Wider than
+#: slipping's two days because a Saturday plan made on Monday should be visible all week.
+FRIEND_PLANS_HORIZON_DAYS = 14
+
+#: A friend plan that is *not* one of these demotes to the Friend plans section; one
+#: that is stays in the normal sections at full priority. Deterministic on purpose —
+#: a keyword test is checkable against the `what` it matched, a model judgment is not.
+_SPECIAL_EVENT = re.compile(
+    r"\b(birthday|b[- ]?day|anniversary|wedding|graduation|farewell|engagement"
+    r"|baby\s*shower|housewarming)\b",
+    re.IGNORECASE,
+)
+
+
+def _demoted_friend_plan(row: dict[str, Any]) -> bool:
+    """True when a commitment's evidence is an Instagram DM and nothing about it is
+    special — the owner's rule: friend plans ride low unless it's a birthday or a
+    special event."""
+    source = str(row["source"])
+    if source != "instagram" and not source.startswith("instagram:"):
+        return False
+    return not _SPECIAL_EVENT.search(str(row["what"] or ""))
 
 
 def today_in(tz: str) -> date:
@@ -239,6 +262,8 @@ def slipping_section(conn: sqlite3.Connection, today: date, settings: Settings) 
             "confidence_threshold": settings.confidence_threshold,
         },
     ):
+        if _demoted_friend_plan(row):
+            continue  # rides in friend_plans_section instead
         who = f" to {row['counterparty']}" if row["counterparty"] else ""
         section.lines.append(
             Line(
@@ -262,6 +287,8 @@ def awaiting_section(conn: sqlite3.Connection, today: date, settings: Settings) 
             "confidence_threshold": settings.confidence_threshold,
         },
     ):
+        if _demoted_friend_plan(row):
+            continue  # rides in friend_plans_section instead
         who = row["counterparty"] or "unknown"
         age = int(row["age_days"] or 0)
         section.lines.append(
@@ -443,6 +470,42 @@ def checklist_section(conn: sqlite3.Connection, today: date, settings: Settings)
     return section
 
 
+def friend_plans_section(
+    conn: sqlite3.Connection, today: date, settings: Settings
+) -> Section:
+    """docs/07 §Instagram. Plans made in DMs, deliberately last.
+
+    Priority 11 puts this below everything, so under the B1 word cap it is the first
+    section truncated — which is the owner's rule ("lower priority") expressed in the
+    brief's own mechanics. Special events never reach here: `_demoted_friend_plan` is
+    False for them, so they stay in Slipping/Awaiting at full priority and this section
+    skips them to avoid saying the same thing twice.
+    """
+    section = Section(priority=11, title="Friend plans")
+    horizon = today + timedelta(days=FRIEND_PLANS_HORIZON_DAYS)
+    for row in _rows(
+        conn,
+        "brief_friend_plans",
+        {
+            "user_id": USER_ID,
+            "horizon": horizon.isoformat(),
+            "confidence_threshold": settings.confidence_threshold,
+        },
+    ):
+        if not _demoted_friend_plan(row):
+            continue  # special events ride the normal sections
+        who = f" with {row['counterparty']}" if row["counterparty"] else ""
+        section.lines.append(
+            Line(
+                text=f"{row['what']}{who}. {_due_phrase(row['due_at'], today)}.",
+                provenance=_source_of(row),
+                status=_status_of(row["due_at"], today),
+                commitment_id=int(row["id"]),
+            )
+        )
+    return section
+
+
 def review_section(conn: sqlite3.Connection, today: date, settings: Settings) -> Section:
     """docs/05 §8. Guesses, rendered as questions.
 
@@ -491,6 +554,7 @@ def build(conn: sqlite3.Connection, settings: Settings, for_date: date | None = 
         follow_up_section(conn, today, settings),
         checklist_section(conn, today, settings),
         review_section(conn, today, settings),
+        friend_plans_section(conn, today, settings),
     ):
         brief.add(section)  # B3
 

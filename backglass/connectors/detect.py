@@ -63,6 +63,7 @@ def detect_all(
         _anki(settings, home),
         _avorio(settings, home),
         _imessage(settings, home),
+        _instagram(settings, home),
         _obsidian(settings, home),
         _apple("apple_notes", "APPLE_NOTES", settings.apple_notes),
         _apple("apple_reminders", "APPLE_REMINDERS", settings.apple_reminders),
@@ -107,6 +108,47 @@ def _avorio(settings: Settings, home: Path) -> Detection:
         return Detection("avorio", MISSING, hint="Avorio has no local store here")
     return Detection(
         "avorio", FOUND, env_key="AVORIO_DB_PATH", env_value=str(store), hint=str(store)
+    )
+
+
+def _instagram(settings: Settings, home: Path) -> Detection:
+    if settings.instagram_export_path:
+        return Detection(
+            "instagram", CONFIGURED, hint=str(settings.instagram_export_path)
+        )
+    # Meta's export unzips to a folder that keeps this prefix; newest wins if the
+    # owner has requested more than one.
+    exports = sorted(
+        (
+            p
+            for p in home.glob("Downloads/instagram-*")
+            if p.is_dir()
+            and any(
+                (p / root).is_dir()
+                for root in (
+                    "your_instagram_activity/messages/inbox",
+                    "messages/inbox",
+                )
+            )
+        ),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True,
+    )
+    if not exports:
+        return Detection(
+            "instagram",
+            MISSING,
+            hint=(
+                "no Meta export found — request one (JSON format) at "
+                "accountscenter.instagram.com, unzip into ~/Downloads"
+            ),
+        )
+    return Detection(
+        "instagram",
+        FOUND,
+        env_key="INSTAGRAM_EXPORT_PATH",
+        env_value=str(exports[0]),
+        hint=f"export '{exports[0].name}' — also set INSTAGRAM_CHATS to the chats to read",
     )
 
 

@@ -5,33 +5,38 @@
 
    C1 bounds this at seven rows: the cap is on the checklist itself, so there is no
    truncation here to keep in sync with it. C4: the streak is a bare number. #}
+{% if grid.empty or not grid.today_rows %}
+  {# An empty checklist does not spend a full black banner plus an empty band on
+     the page's prime position — one quiet line says the same thing, and the
+     goals underneath move up. The id stays: it is the HTMX swap target. #}
+  <section class="sec" id="today-ticks">
+    <p class="cap">Daily checklist · {{ grid.done_today }}/{{ grid.total_today }} today —
+      {%- if grid.empty %} No checklist items. Add up to seven non-negotiables with
+        <span class="kbd">backglass checklist add</span>.
+      {%- else %} Nothing on the checklist today.{% endif %}</p>
+  </section>
+{% else %}
 <section class="sec" id="today-ticks">
   {{ m.banner('Daily checklist', grid.done_today ~ '/' ~ grid.total_today ~ ' today') }}
   <div class="inner">
-    {% if grid.empty %}
-      <p class="empty">No checklist items. Add up to seven non-negotiables with
-        <span class="kbd">backglass checklist add</span>.</p>
-    {% elif not grid.today_rows %}
-      <p class="empty">Nothing on the checklist today.</p>
-    {% else %}
-      <ul class="tt">
-        {% for r in grid.today_rows %}
-          <li>
-            {# C2: binary; HTMX swaps the server truth back in, so a failed POST
-               reverts. 24px because this is the one thing the page is tapped for. #}
-            <button class="box{% if r.ticked %} on{% endif %}"
-                    aria-pressed="{{ 'true' if r.ticked else 'false' }}"
-                    aria-label="{{ r.title }} today"
-                    hx-post="/goals/checklist/{{ r.item_id }}/{{ 'untick' if r.ticked else 'tick' }}"
-                    hx-target="#today-ticks" hx-swap="outerHTML"></button>
-            <span class="ttn">{{ r.title }}</span>
-            <span class="tts" title="Streak, days">{{ r.streak if r.streak else '—' }}</span>
-          </li>
-        {% endfor %}
-      </ul>
-    {% endif %}
+    <ul class="tt">
+      {% for r in grid.today_rows %}
+        <li>
+          {# C2: binary; HTMX swaps the server truth back in, so a failed POST
+             reverts. 24px because this is the one thing the page is tapped for. #}
+          <button class="box{% if r.ticked %} on{% endif %}"
+                  aria-pressed="{{ 'true' if r.ticked else 'false' }}"
+                  aria-label="{{ r.title }} today"
+                  hx-post="/goals/checklist/{{ r.item_id }}/{{ 'untick' if r.ticked else 'tick' }}"
+                  hx-target="#today-ticks" hx-swap="outerHTML"></button>
+          <span class="ttn">{{ r.title }}</span>
+          <span class="tts" title="Streak, days">{{ r.streak if r.streak else '—' }}</span>
+        </li>
+      {% endfor %}
+    </ul>
   </div>
 </section>
+{% endif %}
 {% if week_oob|default(false) %}
   {# The week grid and heatmap moved under a tick too. They ride back out of band
      so the THIS WEEK <details> wrapper — which lives above this response in

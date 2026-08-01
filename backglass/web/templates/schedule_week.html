@@ -9,29 +9,6 @@
 <section class="sec">
   {{ m.banner('Week', first.isoformat()) }}
   <div class="inner">
-    {# The capacity band: seven equal cells, each owning its own space so the overflow
-       badge can never clip the way the old inline caption did. Free hours are the
-       headline number at title scale — not a reel, the three-reel budget is not
-       spent on a calendar. #}
-    <div class="wband">
-      {% for c in wtl.cols %}
-        <a class="wbc{% if c.view.day == today %} now{% endif %}"
-           href="/schedule?date={{ c.view.day.isoformat() }}">
-          <span class="lbl">{{ c.view.day.strftime('%a') }} {{ c.view.day.strftime('%d') }}</span>
-          {% if c.free_minutes is none %}
-            {# Absence is an em-dash, never a fake zero or a sentence. #}
-            <span class="wbn none">—</span>
-          {% else %}
-            <span class="wbn">{{ c.free_minutes // 60 }}h{{ '%02d' % (c.free_minutes % 60) }}</span>
-            <span class="lbl wbf">free</span>
-          {% endif %}
-          {% if c.cap and c.cap['overflow_count'] %}
-            <span class="over"><span aria-hidden="true">◆</span>{{ c.cap['overflow_count'] }} over</span>
-          {% endif %}
-        </a>
-      {% endfor %}
-    </div>
-
     {% if wtl.verdict %}
       <p class="wverdict">{{ wtl.verdict }}.</p>
     {% endif %}
@@ -43,6 +20,29 @@
       <a href="/schedule">day</a>
     </p>
 
+    {# Format-audit ruling: one set of day headers, not two. The capacity band IS
+       the grid header — day, free hours, overflow in the same clickable cell. And
+       an empty week is a sentence plus the header strip, never a 12-hour framed
+       void: the grid earns its ink only when something is on it. #}
+    {% set busy = wtl.cols|selectattr('entries')|list %}
+    {% if not busy %}
+      <div class="wband">
+        {% for c in wtl.cols %}
+          <a class="wbc{% if c.view.day == today %} now{% endif %}"
+             href="/schedule?date={{ c.view.day.isoformat() }}">
+            <span class="lbl">{{ c.view.day.strftime('%a') }} {{ c.view.day.strftime('%d') }}</span>
+            {% if c.free_minutes is none %}
+              {# Absence is an em-dash, never a fake zero or a sentence. #}
+              <span class="wbn none">—</span>
+            {% else %}
+              <span class="wbn">{{ c.free_minutes // 60 }}h{{ '%02d' % (c.free_minutes % 60) }}</span>
+              <span class="lbl wbf">free</span>
+            {% endif %}
+          </a>
+        {% endfor %}
+      </div>
+      <p class="empty">Nothing planned this week. The day planner runs at 05:45.</p>
+    {% else %}
     {# Seven proportional columns on one shared hour ruler. Whitespace is free
        time made visible — the reason this is a timeline and not a list. #}
     <div class="wk7wrap">
@@ -52,6 +52,15 @@
           <a class="whd{% if c.view.day == today %} now{% endif %}"
              href="/schedule?date={{ c.view.day.isoformat() }}">
             <span class="dn">{{ c.view.day.strftime('%a') }} <b>{{ c.view.day.strftime('%d') }}</b></span>
+            {% if c.free_minutes is none %}
+              <span class="wbn none">—</span>
+            {% else %}
+              <span class="wbn">{{ c.free_minutes // 60 }}h{{ '%02d' % (c.free_minutes % 60) }}</span>
+              <span class="lbl wbf">free</span>
+            {% endif %}
+            {% if c.cap and c.cap['overflow_count'] %}
+              <span class="over"><span aria-hidden="true">◆</span>{{ c.cap['overflow_count'] }} over</span>
+            {% endif %}
           </a>
         {% endfor %}
 
@@ -83,6 +92,7 @@
       </div>
     </div>
     {{ m.kind_legend() }}
+    {% endif %}
   </div>
 </section>
 {% endblock %}

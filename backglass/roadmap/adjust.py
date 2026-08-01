@@ -116,6 +116,52 @@ def move_step(conn: sqlite3.Connection, step_id: int, direction: str) -> StepRes
     return StepResult(step_id, str(step["status"]), _text(step["done_at"]))
 
 
+def rename_step(
+    conn: sqlite3.Connection, step_id: int, title: str, detail: str | None = None
+) -> StepResult:
+    """The step's words are the owner's too. The linked milestone target was named
+    after the step at instantiation, so its title moves with the rename — a
+    checkpoint filed under a title the page no longer shows would be unreadable."""
+    title = title.strip()
+    if not title:
+        raise AdjustError("a step needs a title")
+    step = _step(conn, step_id)
+    conn.execute(
+        "UPDATE roadmap_step SET title = ?, detail = ? WHERE id = ?",
+        (title, (detail or "").strip() or None, step_id),
+    )
+    if step["target_id"] is not None:
+        conn.execute(
+            "UPDATE target SET title = ? WHERE id = ?", (title, step["target_id"])
+        )
+    return StepResult(step_id, str(step["status"]), _text(step["done_at"]))
+
+
+def rename_roadmap(
+    conn: sqlite3.Connection,
+    roadmap_id: int,
+    title: str,
+    definition_of_done: str | None = None,
+) -> None:
+    """Roadmap and goal were instantiated under one name and the goal's title is
+    what risk sentences and the brief say aloud, so a rename moves both."""
+    title = title.strip()
+    if not title:
+        raise AdjustError("a roadmap needs a title")
+    row = conn.execute(
+        "SELECT goal_id FROM roadmap WHERE id = ?", (roadmap_id,)
+    ).fetchone()
+    if row is None:
+        raise AdjustError(f"no roadmap {roadmap_id}")
+    conn.execute("UPDATE roadmap SET title = ? WHERE id = ?", (title, roadmap_id))
+    conn.execute("UPDATE goal SET title = ? WHERE id = ?", (title, row["goal_id"]))
+    if definition_of_done is not None and definition_of_done.strip():
+        conn.execute(
+            "UPDATE goal SET definition_of_done = ? WHERE id = ?",
+            (definition_of_done.strip(), row["goal_id"]),
+        )
+
+
 def set_cadence(
     conn: sqlite3.Connection, roadmap_id: int, cadence_key: str, weekly_count: int
 ) -> None:
