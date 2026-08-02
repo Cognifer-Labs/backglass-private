@@ -183,3 +183,13 @@ deterministic given the id.
   and assert what is true at that instant. And a fixture that "sets up the broken
   precondition" must be proven to have set it up: assert the precondition is real before
   exercising the code, or the test is testing nothing.
+
+- 2026-08-02 | Three separate HIGH defects across two verification rounds, all the same
+  mistake: the guard went in at the CLI call site, and the dashboard's own write path —
+  the one the app's error messages point owners at — walked straight past it. Overflow
+  bound, duplicate-title check, ordering fix: each "fixed", each still fully reachable
+  through the web form. | When a rule protects DATA, put it where the data is written,
+  not where a user happens to type. Before writing any validation, find every caller of
+  the function that does the INSERT and ask which of them the check will cover — if the
+  answer is not "all of them", it belongs one layer down. A guard on one of two doors is
+  not a guard, and the test that covers only that door will stay green forever.
