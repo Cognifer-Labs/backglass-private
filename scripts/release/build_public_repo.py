@@ -33,7 +33,7 @@ runs on your machine.
 
 See README.md for the product framing and GETTING_STARTED.md for setup.
 
-Copyright (c) 2026 Dharsan Kesavan. MIT licensed, see LICENSE.
+MIT licensed, see LICENSE.
 """
 
 
@@ -151,19 +151,22 @@ def main() -> int:
 
     run(["git", "init"], cwd=out_dir)
     run(["git", "add", "-A"], cwd=out_dir)
-    run(
-        [
-            "git",
-            "-c",
-            "user.name=contactdharsan-blip",
-            "-c",
-            "user.email=contactdharsan@gmail.com",
-            "commit",
-            "-m",
-            COMMIT_MESSAGE,
-        ],
-        cwd=out_dir,
+    # No -c user.name/user.email override here: the scratch dir has no local git
+    # config of its own, so `git commit` falls through to whatever identity is
+    # configured (global or system) on the machine running this script — the
+    # repo's own default identity on this machine, and the right identity for
+    # any future fork running its own release from its own global config.
+    identity = subprocess.run(
+        ["git", "config", "--get", "user.email"], cwd=out_dir, capture_output=True, text=True
     )
+    if identity.returncode != 0 or not identity.stdout.strip():
+        print(
+            "error: no git identity configured (user.name/user.email) — "
+            "set it globally before running this script",
+            file=sys.stderr,
+        )
+        return 2
+    run(["git", "commit", "-m", COMMIT_MESSAGE], cwd=out_dir)
 
     rev_count = subprocess.run(
         ["git", "-C", str(out_dir), "rev-list", "--count", "HEAD"],
