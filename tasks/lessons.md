@@ -204,3 +204,30 @@ deterministic given the id.
   Python-side comparison of the same field coexist; write `_norm()` once and route both
   through it. Corollary: a test that exercises the rule directly will not catch this —
   only one that drives the real door does.
+
+- 2026-08-02 | Wrote a page-wide failure banner containing a `chip k-verm`, which broke a
+  design test asserting a healthy page carries no vermilion — first inside the markup,
+  then again from the inline JS string once the chip was built dynamically. | Alarm ink
+  belongs to the alarm, not to the page that might raise one: build the alarmed element
+  at failure time, and put its class names in a served .js file rather than inline, so a
+  page with nothing wrong contains the string nowhere. Also: when a test that looks like
+  it is "about markup" fails on a script, check the test's intent before weakening it —
+  moving the code was right, editing the assertion would have hidden a real rule.
+
+- 2026-08-02 | Fixed a timezone boundary case a verifier flagged, and the fix broke the
+  mirror boundary — which the next verifier flagged. The two instants were structurally
+  identical (the night before an eastward stay begins vs. the day before one); the two
+  verifiers simply had opposite intuitions about which zone the owner was "really" in,
+  and the config could not tell them apart. | When two correctness demands are the same
+  situation viewed from opposite sides, stop looking for the answer that satisfies both
+  — there isn't one. Decide on CONSEQUENCE instead: which error is recoverable? Here,
+  too-early is a wait and too-late writes a future-dated row into an accumulator with no
+  delete path, so the tie goes early, and the docstring says why. And when a fix targets
+  one edge of a boundary, write the test for BOTH edges in the same change — the
+  regression shipped precisely because only the arrival day was pinned.
+
+- 2026-08-02 | Used backticks inside a `git commit -m "..."` message; zsh executed them
+  as command substitution and silently dropped two phrases from the committed body. |
+  Commit messages containing backticks, `$`, or `!` go through a heredoc to a file and
+  `git commit -F`, never `-m` with double quotes. Check `git log -1 --format=%B` after
+  writing a long message — a swallowed word is invisible until someone reads the history.
