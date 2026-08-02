@@ -32,11 +32,11 @@ def env_settings(**values: str) -> Settings:
 def test_comma_separated_lists_parse_from_the_environment() -> None:
     settings = env_settings(
         OWNER_EMAILS="alex.rivera@example.com, arivera@example.edu",
-        GMAIL_ACCOUNTS="personal,asu",
+        GMAIL_ACCOUNTS="personal,work",
         BOUNDARY_DENY_DOMAINS="clientexample.gov, wic-partner.org",
     )
     assert settings.owner_emails == ["alex.rivera@example.com", "arivera@example.edu"]
-    assert settings.gmail_accounts == ["personal", "asu"]
+    assert settings.gmail_accounts == ["personal", "work"]
     assert settings.boundary_deny_domains == ["clientexample.gov", "wic-partner.org"]
 
 
@@ -50,7 +50,7 @@ def test_both_owner_addresses_count_as_the_owner() -> None:
     """Direction (i_owe vs owed_to_me) is decided against every address here.
 
     The Cc fixture in tests/fixtures/commitments/07 is the case this exists for: the
-    owner is reachable at the ASU address and must not be read as a third party.
+    owner is reachable at the second address and must not be read as a third party.
     """
     settings = env_settings(OWNER_EMAILS="alex.rivera@example.com,arivera@example.edu")
     assert settings.owns("alex.rivera@example.com")

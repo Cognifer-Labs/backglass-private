@@ -115,7 +115,7 @@ class GmailConnector:
 
     `label` distinguishes accounts: `credential` is UNIQUE(user_id, source), so two
     mailboxes cannot both be `source='gmail'`. They become `gmail:personal` and
-    `gmail:asu`. See tasks/todo.md §Deviations #2.
+    `gmail:work`.
     """
 
     label: str

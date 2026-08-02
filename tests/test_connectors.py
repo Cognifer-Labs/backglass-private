@@ -605,10 +605,10 @@ def test_source_names_are_unique_per_account() -> None:
     boundary = Boundary(mode="full_scope")
     names = {
         CalendarConnector(label="personal", service=None, boundary=boundary).name,
-        CalendarConnector(label="asu", service=None, boundary=boundary).name,
+        CalendarConnector(label="work", service=None, boundary=boundary).name,
         DriveConnector(label="personal", service=None, boundary=boundary).name,
     }
-    assert names == {"calendar:personal", "calendar:asu", "drive:personal"}
+    assert names == {"calendar:personal", "calendar:work", "drive:personal"}
 
 
 # ── Drive PDFs (docs/12 §2) ───────────────────────────────────────────────

@@ -175,19 +175,19 @@ def test_a_failing_source_degrades_and_does_not_block(
     broken_service = FakeGmailService(messages)
     broken_service.profile_raises = True
     broken_service.history_raises = True
-    broken = GmailConnector(label="asu", service=broken_service, boundary=boundary)
+    broken = GmailConnector(label="work", service=broken_service, boundary=boundary)
     # _full_scan calls getProfile, so a raising profile fails the whole fetch.
     healthy = make_connector(messages, boundary, label="personal")
 
     model = FakeModel(MODEL_RESPONSES)
     report = sync(conn, settings, [broken, healthy], model)
 
-    assert "gmail:asu" in report.failed_sources
+    assert "gmail:work" in report.failed_sources
     assert report.exit_code == 1
     assert report.fetched == 3, "the healthy mailbox still ingested"
 
     row = conn.execute(
-        "SELECT status, last_error FROM credential WHERE source = 'gmail:asu'"
+        "SELECT status, last_error FROM credential WHERE source = 'gmail:work'"
     ).fetchone()
     assert row["status"] == "failed"
     assert row["last_error"]

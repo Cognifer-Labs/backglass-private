@@ -42,7 +42,7 @@ def org_like(record: dict[str, Any]) -> bool:
 
     Persisted kind first: a row flipped to kind='org' is decided. Then the owner
     tag override, then: a curated role/org means a person; a role word in the name
-    means an unnamed person; an org token or an all-caps acronym (ASU, MLSBE)
+    means an unnamed person; an org token or an all-caps acronym (NASA, ACME)
     means a service. Misfiles are harmless — the row renders identically, only the
     display group moves — and taggable.
     """

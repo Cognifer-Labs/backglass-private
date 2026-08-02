@@ -23,7 +23,7 @@
   <rect x="4" y="162" width="632" height="44" fill="#000000"/>
   <text x="24" y="192"
         font-family="'Helvetica Neue Condensed','Arial Narrow',system-ui,sans-serif"
-        font-weight="700" font-size="24" letter-spacing="0.6" fill="#FAF3DF">MFD. BY COGNIFER LABS</text>
+        font-weight="700" font-size="24" letter-spacing="0.6" fill="#FAF3DF">MFD. BY BACKGLASS LABS</text>
 
   <!-- score reel: black housing, paper wheels — constant in both modes -->
   <g transform="translate(502 170)">

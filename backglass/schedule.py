@@ -1,7 +1,7 @@
 """launchd job scheduling. docs/10 §Scheduling: files, not an in-process scheduler.
 
 The six jobs used to ship as static `launchd/*.plist` files with one machine's absolute
-paths baked in (`/Users/Dharsan/Downloads/backglass`, `/Users/Dharsan/.local/bin/uv`) —
+paths baked in (e.g. `/Users/example/backglass`, `/Users/example/.local/bin/uv`) —
 which meant they were never actually installable anywhere else. They now live as
 templates at `launchd/templates/*.plist.tmpl` with `{{REPO_DIR}}`, `{{UV_BIN}}`, and
 `{{HOME}}` placeholders. `render()` fills those in for whichever machine is running this;

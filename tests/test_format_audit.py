@@ -171,7 +171,7 @@ class TestPeopleGrouping:
         )
         conn.execute(
             "INSERT INTO entity (user_id, kind, canonical_name) VALUES"
-            " (1, 'person', 'ASU Transportation Portal')"
+            " (1, 'person', 'Acme Transportation Portal')"
         )
         conn.commit()
         body = client.get("/people").text
@@ -179,7 +179,7 @@ class TestPeopleGrouping:
         # The org lands after the group header; the human before it.
         human_pos = body.index("Jordan Blake")
         header_pos = body.index("Orgs &amp; services")
-        org_pos = body.index("ASU Transportation Portal")
+        org_pos = body.index("Acme Transportation Portal")
         assert human_pos < header_pos < org_pos
 
     def test_open_commitments_rank_first(
@@ -210,7 +210,7 @@ class TestPeopleGrouping:
     def test_org_like_heuristic_and_tag_override(self) -> None:
         from backglass.people.profiles import org_like
 
-        assert org_like({"canonical_name": "ASU Housing", "tags": []})
+        assert org_like({"canonical_name": "Acme Housing", "tags": []})
         assert org_like({"canonical_name": "Financial Aid Office", "tags": []})
         assert not org_like({"canonical_name": "college counselor", "tags": []})
         assert not org_like(
@@ -218,7 +218,7 @@ class TestPeopleGrouping:
         )
         # The owner's tag beats the heuristic in both directions.
         assert org_like({"canonical_name": "Sallie Mae", "tags": ["org"]})
-        assert not org_like({"canonical_name": "ASU Housing", "tags": ["person"]})
+        assert not org_like({"canonical_name": "Acme Housing", "tags": ["person"]})
         # Persisted kind beats everything — a flipped row is decided.
         assert org_like({"canonical_name": "Sallie Mae", "kind": "org", "tags": []})
 
