@@ -46,10 +46,17 @@ Check they are registered:
 | `com.backglass.brief.plist.tmpl` | 06:00 local | `backglass brief --send` |
 | `com.backglass.shutdown.plist.tmpl` | 18:00 local | `backglass shutdown` |
 | `com.backglass.batch-submit.plist.tmpl` | 22:00 local — **optional, batch mode only** | `backglass batch submit` |
+| `com.backglass.backup.plist.tmpl` | 02:00 local | `backglass backup` |
 | `com.backglass.batch-collect.plist.tmpl` | 05:30 local — **optional, batch mode only** | `backglass batch collect` |
 
 The cadences come from docs/02 §Scheduling. `plan` runs fifteen minutes before `brief` so
 the brief has a plan to report.
+
+`backup` snapshots the ledger to `~/Library/Application Support/Backglass/backups`
+(override with `BACKUP_DIR`) and rotates to seven dailies plus four weeklies. It runs at
+02:00, after the day's writes and before the morning jobs. The database is the only copy
+of the record and docs/08 keeps `data/` out of every cloud sync, so `doctor` treats this
+job as required and fails if the newest snapshot is more than 48 hours old.
 
 Batch mode (docs/02 §Cost control) trades latency for a 50% discount on extraction:
 `submit` runs ingest/rules/triage synchronously at 22:00 and hands the surviving items

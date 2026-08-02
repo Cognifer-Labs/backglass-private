@@ -1671,6 +1671,89 @@ def setup(
     typer.echo("finish with `backglass doctor`")
 
 
+# ── backup and restore (audit #23) ────────────────────────────────────────
+
+
+@app.command()
+def backup() -> None:
+    """Snapshot the ledger, then delete snapshots outside the keep window.
+
+    The database is the only copy of the record and docs/08 keeps `data/` out of every
+    cloud sync, so this is the safety net. Runs daily at 02:00 via
+    `launchd/templates/com.backglass.backup.plist.tmpl`.
+    """
+    from backglass import backup as backup_mod
+
+    settings = get_settings()
+    try:
+        path = backup_mod.snapshot(settings.db_path, settings.backup_dir)
+    except backup_mod.BackupError as exc:
+        # Rule 5 shape: the reason, not a traceback. A scheduled run lands this in
+        # data/backup.err, where a stack trace would bury the one useful line.
+        typer.echo(f"backup failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    except OSError as exc:
+        typer.echo(f"backup failed: cannot write to {settings.backup_dir} ({exc})", err=True)
+        raise typer.Exit(code=1) from exc
+
+    typer.echo(f"snapshot {path}")
+    removed = backup_mod.rotate(settings.backup_dir)
+    if removed:
+        typer.echo(f"rotated out {len(removed)} older snapshot(s)")
+
+
+@app.command()
+def restore(
+    snapshot: Annotated[Path, typer.Argument(help="A backglass-*.db snapshot file")],
+    yes: Annotated[
+        bool, typer.Option("--yes", help="Actually swap. Without it, nothing is written.")
+    ] = False,
+) -> None:
+    """Replace the live database with a snapshot. Destructive; needs `--yes`.
+
+    Three guards, in order: the snapshot must pass its own integrity check, the current
+    database is snapshotted first so the restore itself is reversible, and without
+    `--yes` this prints the plan and writes nothing.
+    """
+    from backglass import backup as backup_mod
+
+    settings = get_settings()
+    if not snapshot.exists():
+        typer.echo(f"no such snapshot: {snapshot}", err=True)
+        raise typer.Exit(code=1)
+    if not backup_mod.verify(snapshot):
+        typer.echo(
+            f"refusing to restore: {snapshot} is not a readable SQLite database or "
+            "fails PRAGMA integrity_check",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+
+    if not yes:
+        typer.echo(f"would restore {snapshot}")
+        typer.echo(f"          onto {settings.db_path}")
+        if settings.db_path.exists():
+            typer.echo(f"  after snapshotting the current database into {settings.backup_dir}")
+        typer.echo("nothing written — rerun with --yes")
+        return
+
+    if settings.db_path.exists():
+        try:
+            safety = backup_mod.snapshot(settings.db_path, settings.backup_dir)
+        except (backup_mod.BackupError, OSError) as exc:
+            typer.echo(f"refusing to restore: cannot snapshot the current database ({exc})",
+                       err=True)
+            raise typer.Exit(code=1) from exc
+        typer.echo(f"current database saved to {safety}")
+
+    try:
+        backup_mod.restore_into(snapshot, settings.db_path)
+    except OSError as exc:
+        typer.echo(f"restore failed: {exc}", err=True)
+        raise typer.Exit(code=1) from exc
+    typer.echo(f"restored {settings.db_path} from {snapshot}")
+
+
 # ── Phase 8: doctor ───────────────────────────────────────────────────────
 
 
@@ -1684,6 +1767,7 @@ LAUNCHD_LABELS = (
     "com.backglass.plan",
     "com.backglass.plan-catchup",
     "com.backglass.shutdown",
+    "com.backglass.backup",
 )
 
 
@@ -1801,6 +1885,17 @@ def doctor() -> None:
     check("launchd jobs loaded", not missing,
           f"missing {', '.join(missing)} — run `backglass schedule install`; "
           "without them nothing runs at 05:45/06:00")
+
+    # ── backups (audit #23) ───────────────────────────────────────────────
+    from backglass import backup as backup_mod
+
+    level, detail = backup_mod.freshness(
+        settings.backup_dir, job_installed="com.backglass.backup" not in missing
+    )
+    if level == "note":
+        typer.echo(f"[note] {detail}")
+    else:
+        check("ledger backup is fresh", level == "ok", detail)
 
     typer.echo("all clear" if not failures else f"{failures} check(s) failing")
     raise typer.Exit(code=1 if failures else 0)

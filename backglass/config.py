@@ -264,6 +264,16 @@ class Settings(BaseSettings):
 
     # ── storage ───────────────────────────────────────────────────────────
     db_path: Path = Path("./data/backglass.db")
+    #: Where `backglass backup` writes snapshots. Outside the checkout on purpose: a
+    #: backup inside `data/` dies with the same `rm -rf` as the original, and one inside
+    #: the repo is bait for the cloud-sync exclusion docs/08 §Storage relies on.
+    backup_dir: Path = Field(
+        default_factory=lambda: Path.home()
+        / "Library"
+        / "Application Support"
+        / "Backglass"
+        / "backups"
+    )
 
     # NoDecode above is load-bearing: pydantic-settings JSON-decodes complex types from
     # the environment before validators run, so a comma-separated OWNER_EMAILS raises a

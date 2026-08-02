@@ -1,7 +1,7 @@
 """B6: `backglass schedule install`. launchd/templates/*.plist.tmpl -> real files.
 
 `render()` reads the actual shipped templates (no override for the template
-directory), so most of these exercise the real seven files with fake substitution
+directory), so most of these exercise the real eight files with fake substitution
 values — the fastest way to catch a template that silently doesn't fill in.
 """
 
@@ -16,7 +16,7 @@ from backglass import schedule
 
 def test_every_template_renders_with_no_placeholder_left() -> None:
     rendered = schedule.render(Path("/fake/repo/backglass"), "/fake/bin/uv", Path("/fake/home"))
-    assert len(rendered) == 7
+    assert len(rendered) == 8
     for filename, text in rendered.items():
         assert filename.endswith(".plist")
         assert not filename.endswith(".plist.tmpl")
@@ -71,6 +71,17 @@ def test_the_scheduled_plan_job_always_regenerates() -> None:
     assert "<key>Hour</key><integer>5</integer>" in plan
 
 
+def test_the_backup_job_runs_daily_at_two() -> None:
+    # Audit #23: the ledger is the only copy of the record, so this job existing on the
+    # right cadence is the whole safety net.
+    import plistlib
+
+    rendered = schedule.render(Path("/r"), "/u", Path("/h"))
+    backup = plistlib.loads(rendered["com.backglass.backup.plist"].encode())
+    assert backup["ProgramArguments"][-1] == "backup"
+    assert backup["StartCalendarInterval"] == {"Hour": 2, "Minute": 0}
+
+
 def test_every_rendered_label_is_com_backglass() -> None:
     rendered = schedule.render(Path("/r"), "/u", Path("/h"))
     for filename in rendered:
@@ -104,7 +115,7 @@ def test_dry_run_renders_but_writes_and_loads_nothing(monkeypatch) -> None:
 
     rendered = schedule.install(dry_run=True, uv_bin="/fake/uv")
 
-    assert len(rendered) == 7
+    assert len(rendered) == 8
     assert writes == []
     assert loads == []
 
@@ -121,5 +132,5 @@ def test_real_run_writes_and_loads_each_job(monkeypatch, tmp_path) -> None:
     written_dir = tmp_path / "LaunchAgents"
     for filename in rendered:
         assert (written_dir / filename).read_text() == rendered[filename]
-    assert len(loads) == 7
+    assert len(loads) == 8
     assert all(cmd[:2] == ["launchctl", "load"] for cmd in loads)
