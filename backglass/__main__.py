@@ -322,12 +322,24 @@ def plan(
     accept: Annotated[
         bool, typer.Option("--accept", help="Mark the proposal accepted")
     ] = False,
+    if_missing: Annotated[
+        bool,
+        typer.Option(
+            "--if-missing",
+            help="Do nothing if the day already has a live plan (catch-up runs)",
+        ),
+    ] = False,
 ) -> None:
     """Propose a day. docs/04 §1.
 
     A proposal, never an imposition — docs/04 §6 rules out automatic calendar writes, so
     this writes a `day_plan` and nothing else. Regenerating supersedes the prior plan and
     keeps it (§3).
+
+    `--if-missing` makes the run a no-op when the day already has a live plan. That is
+    what the login catch-up job (`com.backglass.plan-catchup`) uses: a machine that was
+    shut down at 05:45 gets its plan when it is next opened, and a machine that was
+    awake keeps the 05:45 plan — including any edits or acceptance — untouched.
     """
     from datetime import date as _date
 
@@ -338,6 +350,10 @@ def plan(
     conn = _open(settings)
     migrate(conn)
     day = _date.fromisoformat(for_date) if for_date else _today(settings)
+
+    if if_missing and planner.current_plan_id(conn, day) is not None:
+        typer.echo(f"{day}: already planned — nothing to do")
+        return
 
     proposal = planner.propose(
         conn, settings, day, at_risk_goals=health.at_risk_goal_ids(conn, settings, day)
@@ -1657,6 +1673,7 @@ LAUNCHD_LABELS = (
     "com.backglass.sync",
     "com.backglass.brief",
     "com.backglass.plan",
+    "com.backglass.plan-catchup",
     "com.backglass.shutdown",
 )
 

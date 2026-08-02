@@ -95,7 +95,7 @@ a pipeline you turn off.
 |---|---|
 | ingest | every 30 min |
 | extract | queue-driven, as items arrive |
-| day plan | 05:45 local |
+| day plan | 05:45 local, plus a login catch-up if the day has no plan yet |
 | brief | 06:00 local |
 | evening shutdown prompt | end of working window |
 | weekly Monday planning | replaces Monday brief |

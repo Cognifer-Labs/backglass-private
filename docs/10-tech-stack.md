@@ -173,10 +173,17 @@ small extra weight).
 **launchd on macOS**, one plist per job, each invoking the CLI.
 
 ```
-com.backglass.sync.plist     every 30 min
-com.backglass.plan.plist     05:45 local
-com.backglass.brief.plist    06:00 local
+com.backglass.sync.plist          every 30 min
+com.backglass.plan.plist          05:45 local
+com.backglass.plan-catchup.plist  at login (RunAtLoad), plan --if-missing
+com.backglass.brief.plist         06:00 local
 ```
+
+The catch-up job exists because `StartCalendarInterval` covers a *sleeping* machine (it
+fires the missed run on wake) but not a *powered-off* one. Login is the first moment an
+off machine is opened, so the day gets its plan there instead of not at all. It is safe
+to fire at every login because `--if-missing` writes nothing when the day already has a
+live `day_plan`.
 
 **Do not use an in-process scheduler** (APScheduler, `schedule`, a `while True` loop). It
 dies silently with the process and you find out three days later when you notice the brief

@@ -42,6 +42,7 @@ Check they are registered:
 |---|---|---|
 | `com.backglass.sync.plist.tmpl` | every 30 min | `backglass sync` |
 | `com.backglass.plan.plist.tmpl` | 05:45 local | `backglass plan` |
+| `com.backglass.plan-catchup.plist.tmpl` | at login (`RunAtLoad`) | `backglass plan --if-missing` |
 | `com.backglass.brief.plist.tmpl` | 06:00 local | `backglass brief --send` |
 | `com.backglass.shutdown.plist.tmpl` | 18:00 local | `backglass shutdown` |
 | `com.backglass.batch-submit.plist.tmpl` | 22:00 local — **optional, batch mode only** | `backglass batch submit` |
@@ -65,6 +66,15 @@ a schedule with the SQLite file in a private repo or on object storage."
 `StartCalendarInterval` fires on wake if the machine was asleep at the scheduled time, so
 a closed lid usually produces a late brief rather than no brief. A *shut down* machine
 produces neither, and that is the signal to move.
+
+The plan is the exception, because a day without a plan is worse than a late one:
+`com.backglass.plan-catchup` runs `backglass plan --if-missing` at login (`RunAtLoad`),
+which is the first moment a powered-off machine is opened. Between the two, the plan
+exists by the time the machine is usable — 05:45 if it was awake, on wake if it slept,
+at login if it was off. `--if-missing` is what makes running at every login safe: it
+exits without writing when the day already has a live `day_plan`, so the 05:45 plan and
+any acceptance or edits on it survive. The brief has no equivalent catch-up on purpose
+— a brief that arrives at 14:00 is noise, an unplanned day is not.
 
 Note that the timezone follows the machine, not `TZ_RANGES` — launchd fires at 06:00
 wherever the laptop thinks it is. The brief itself resolves the active zone correctly

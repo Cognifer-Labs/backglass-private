@@ -333,6 +333,20 @@ def propose(
     return proposal
 
 
+def current_plan_id(conn: sqlite3.Connection, day: date) -> int | None:
+    """The live (non-superseded) `day_plan` for `day`, or None if the day has none.
+
+    Same `status != 'superseded'` predicate the brief reads a day's plan with
+    (`brief/daily.py`), so "already planned" means the same thing in both places.
+    """
+    row = conn.execute(
+        "SELECT id FROM day_plan WHERE user_id = ? AND local_date = ? "
+        "AND status != 'superseded' ORDER BY id DESC LIMIT 1",
+        (USER_ID, day.isoformat()),
+    ).fetchone()
+    return int(row["id"]) if row else None
+
+
 def persist(conn: sqlite3.Connection, settings: Settings, proposal: Proposal) -> int:
     """Write the proposal as a new `day_plan`, superseding any prior one for that date.
 

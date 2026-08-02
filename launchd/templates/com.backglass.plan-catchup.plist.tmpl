@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.backglass.plan-catchup</string>
+
+  <!-- Absolute paths: launchd has no shell and no useful PATH. -->
+  <key>WorkingDirectory</key><string>{{REPO_DIR}}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{UV_BIN}}</string>
+    <string>run</string>
+    <string>backglass</string>
+    <string>plan</string>
+    <string>--if-missing</string>
+  </array>
+
+  <!-- The missed-05:45 catch-up. A LaunchAgent loads at login, so RunAtLoad fires the
+       first time the machine is opened after a shutdown — exactly the case
+       StartCalendarInterval cannot cover (a sleeping machine gets its missed 05:45 on
+       wake; a powered-off one gets nothing). The `if-missing` flag above is what makes
+       running at every login safe: if the day already has a live plan it exits without
+       writing, so an accepted or edited plan is never replaced.
+       (No double hyphen appears in this comment on purpose: XML forbids it.) -->
+  <key>RunAtLoad</key><true/>
+
+  <key>StandardOutPath</key><string>{{REPO_DIR}}/data/plan-catchup.log</string>
+  <key>StandardErrorPath</key><string>{{REPO_DIR}}/data/plan-catchup.err</string>
+</dict>
+</plist>

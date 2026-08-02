@@ -82,8 +82,8 @@ scrubbed of content, tests still never touch the network.
 
 ## 8. Scheduling
 
-- [ ] Install the launchd jobs per `launchd/README.md` (05:45 plan, 06:00 brief,
-      30-minute sync).
+- [ ] Install the launchd jobs per `launchd/README.md` (05:45 plan, login plan
+      catch-up, 06:00 brief, 30-minute sync).
 - [ ] `backglass doctor` — the launchd check flips green.
 
 ## 9. The app

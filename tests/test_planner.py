@@ -757,3 +757,88 @@ def test_g13_a_cross_year_projection_carries_its_year(conn, sett: Settings) -> N
     assert risky.at_risk
     assert "target is 28 Sep 2026" in sentence
     assert re.search(r"on pace for \d+ \w+ 20\d\d", sentence), sentence
+
+
+# ─────────────────────────────────────── the login catch-up run (--if-missing)
+
+
+class TestCatchUpPlan:
+    """`plan --if-missing`, the command `com.backglass.plan-catchup` runs at login.
+
+    A LaunchAgent fires `RunAtLoad` on every login, and `StartCalendarInterval` cannot
+    cover a machine that was powered off at 05:45. So the catch-up must plan a day that
+    has no plan and must be a no-op on one that does — otherwise opening the laptop at
+    10:00 would silently supersede a plan already half-worked.
+    """
+
+    def _plan(self, conn, sett: Settings):  # type: ignore[no-untyped-def]
+        proposal = planner.propose(conn, sett, THURSDAY, at_risk_goals=set())
+        return planner.persist(conn, sett, proposal)
+
+    def _run(  # type: ignore[no-untyped-def]
+        self, sett: Settings, monkeypatch: pytest.MonkeyPatch, *args: str
+    ):
+        from typer.testing import CliRunner
+
+        import backglass.__main__ as cli
+
+        monkeypatch.setattr(cli, "get_settings", lambda: sett)
+        return CliRunner().invoke(cli.app, ["plan", "--date", THURSDAY.isoformat(), *args])
+
+    def test_no_live_plan_before_anything_is_planned(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        assert planner.current_plan_id(conn, THURSDAY) is None
+
+    def test_the_live_plan_is_the_newest_non_superseded_one(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        add_commitment(conn, sett, "a thing", n=1, due=THURSDAY)
+        first = self._plan(conn, sett)
+        second = self._plan(conn, sett)
+        assert first != second
+        assert planner.current_plan_id(conn, THURSDAY) == second
+
+    def test_a_plan_for_another_day_does_not_count(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        self._plan(conn, sett)
+        assert planner.current_plan_id(conn, FRIDAY) is None
+
+    def test_it_plans_a_day_that_has_none(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = self._run(sett, monkeypatch, "--if-missing")
+        assert result.exit_code == 0, result.output
+        assert planner.current_plan_id(conn, THURSDAY) is not None
+
+    def test_a_second_run_writes_nothing(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Idempotency (CLAUDE.md rule 3) is what makes RunAtLoad safe at every login.
+        self._run(sett, monkeypatch, "--if-missing")
+        before = planner.current_plan_id(conn, THURSDAY)
+        rows = conn.execute("SELECT COUNT(*) AS n FROM day_plan").fetchone()["n"]
+
+        result = self._run(sett, monkeypatch, "--if-missing")
+
+        assert result.exit_code == 0, result.output
+        assert "already planned" in result.output
+        assert planner.current_plan_id(conn, THURSDAY) == before
+        assert conn.execute("SELECT COUNT(*) AS n FROM day_plan").fetchone()["n"] == rows
+
+    def test_it_never_replaces_an_accepted_plan(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._run(sett, monkeypatch, "--accept")
+        accepted = planner.current_plan_id(conn, THURSDAY)
+
+        self._run(sett, monkeypatch, "--if-missing")
+
+        row = conn.execute("SELECT status FROM day_plan WHERE id = ?", (accepted,)).fetchone()
+        assert row["status"] == "accepted"
+        assert planner.current_plan_id(conn, THURSDAY) == accepted
+
+    def test_without_the_flag_a_rerun_still_regenerates(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The 05:45 job carries no --if-missing: an explicit `backglass plan` must keep
+        # superseding, or the owner could never ask for a fresh plan after a re-sync.
+        self._run(sett, monkeypatch)
+        first = planner.current_plan_id(conn, THURSDAY)
+        self._run(sett, monkeypatch)
+        assert planner.current_plan_id(conn, THURSDAY) != first
