@@ -674,3 +674,85 @@ def test_an_unreadable_drive_pdf_does_not_break_the_run(enforcing: Boundary) -> 
     items = list(connector.fetch(None))
 
     assert [item.external_id for item in items] == ["good"]
+
+
+# ── every connector is wired all the way through ──────────────────────────
+#
+# A connector that fetches perfectly but is missing one of these is invisible: never
+# constructed, never configurable, never documented, or never detected. docs/07's whole
+# claim is that the protocol is the contract — these keep that claim true mechanically
+# rather than by memory. The richer version of this sweep, with the runtime half
+# (credential health, silent sources, unmanaged evidence), lives in the
+# `backglass-sources` skill's audit script.
+
+#: Words that stand for a connector in prose, where the class name does not.
+_CONNECTOR_ALIASES = {
+    "AppleNotesConnector": ("apple notes", "apple-notes"),
+    "NotesConnector": ("obsidian",),
+    "FilesConnector": ("inbox", "drop folder"),
+    "IMessageConnector": ("imessage",),
+    "InstagramExportConnector": ("instagram",),
+    "InstagramLiveConnector": ("instagram",),
+}
+
+
+def _connector_classes() -> list[tuple[str, str]]:
+    """(class name, module stem) for every shipped connector."""
+    import ast
+
+    from backglass.config import REPO_ROOT
+
+    found = []
+    directory = Path(REPO_ROOT, "backglass", "connectors")
+    for path in sorted(directory.glob("*.py")):
+        if path.name in {"base.py", "boundary.py", "credentials.py", "detect.py"}:
+            continue
+        for node in ast.parse(path.read_text()).body:
+            if isinstance(node, ast.ClassDef) and node.name.endswith("Connector"):
+                found.append((node.name, path.stem))
+    return found
+
+
+def _tokens(cls: str, stem: str) -> tuple[str, ...]:
+    return _CONNECTOR_ALIASES.get(cls, (stem.replace("_", " "), stem.replace("_", "-"), stem))
+
+
+def test_every_connector_is_constructed_by_the_registry() -> None:
+    import ast
+
+    from backglass.config import REPO_ROOT
+
+    text = Path(REPO_ROOT, "backglass", "__main__.py").read_text()
+    tree = ast.parse(text)
+    registry = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_all_connectors"
+    )
+    # Calls, not a substring: the import line inside the function names every class, so a
+    # `in text` check would go green on a connector nothing constructs — the same false
+    # pass the doctor's launchd check once shipped with (tasks/lessons.md 2026-07-30).
+    built = {
+        node.func.id
+        for node in ast.walk(registry)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+    }
+    for cls, _ in _connector_classes():
+        assert cls in built, f"{cls} is never constructed in _all_connectors()"
+
+
+def test_every_connector_is_documented_in_docs_07() -> None:
+    import re
+
+    from backglass.config import REPO_ROOT
+
+    # Env keys stripped first: a connector named only as `ANKI_DB_PATH=` in a config
+    # block is configured, not documented.
+    prose = re.sub(
+        r"\b[A-Z][A-Z0-9_]{2,}\b", " ", Path(REPO_ROOT, "docs", "07-connectors.md").read_text()
+    ).lower()
+    for cls, stem in _connector_classes():
+        assert any(token in prose for token in _tokens(cls, stem)), (
+            f"{cls} ships but docs/07-connectors.md does not mention it — "
+            f"a source that is not in that file is a source nobody audits"
+        )

@@ -91,3 +91,32 @@ deterministic given the id.
   counts before/after any browser QA session.
 
 2026-08-02 | Scout claimed git history was PII-clean; direct re-grep of all revisions found 376 file-hits of the owner's email — and later, a fresh-context verifier caught two leak classes (owner's project names in goal contexts, dangling private-doc citations in shipped --help/comments) that both the scrub gate's banned list and the manual grep missed | Scrub lists are provisional by nature: verify scouted claims that decisions hinge on yourself, and always run an independent adversarial sweep with freshly-derived terms (project names, doc-reference patterns, username-shaped fixtures) before anything ships publicly.
+
+- 2026-08-02 | The public-release scrub rewrote a *comment* inside an already-applied
+  migration (`0007_activities.sql`, dropping a `docs/14` citation). Byte-checksummed
+  migrations mean a comment is not cosmetic: every `backglass` command against the
+  owner's db died on MigrationError, and the day planner silently stopped producing
+  plans for two days. Found only by smoke-testing an unrelated feature against a copy
+  of the real db. | Migration files are frozen bytes, not source — a scrub, a typo fix,
+  a reflow all brick every existing database. `tests/test_migrations.py::FROZEN_CHECKSUMS`
+  now fails in CI on any edit; when a shipped migration genuinely must change, add a new
+  one. And: any repo-wide text pass (scrub, rename, lint) must exclude
+  `backglass/db/migrations/`.
+
+- 2026-08-02 | Wrote a launchd plist whose XML comment explained the `--if-missing` flag
+  by name; XML forbids `--` inside a comment, so the file would have been rejected at
+  load with only a syslog line to show for it. The existing template test only checked
+  that no `{{PLACEHOLDER}}` survived. | Renders-without-placeholders is not validity:
+  `tests/test_schedule.py` now `plistlib.loads()` every rendered template. Any generated
+  file format gets parsed by its own parser in a test, never eyeballed.
+
+- 2026-08-02 | Five connectors (github, imessage, reminders, anki, avorio) shipped without
+  ever being added to docs/07-connectors.md — the file the reading order calls the
+  connector contract — and nothing noticed because the only checks were per-connector
+  tests. Separately, 200 hand-imported `calendar:asu` items cited into the brief while
+  the Sources panel showed nothing, because `dashboard_sources.sql` reads FROM credential
+  and an import has no credential row. | Wiring is a contract with more than one end:
+  registry, gate, .env.example, detect, docs, tests. `tests/test_connectors.py` now
+  asserts the registry and docs ends mechanically, and `unmanaged_sources.sql` names
+  evidence that no connector owns. If a surface reads FROM one table to describe "all of
+  X", ask what X can exist without a row in that table.

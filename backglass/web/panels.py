@@ -267,6 +267,10 @@ def sources_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:
         rows=rows,
         meta={
             "found": found,
+            # Evidence with no connector behind it: quick-adds, imports, a source whose
+            # credential row is gone. It cites into the brief like anything else, so it
+            # is named here rather than left invisible. See unmanaged_sources.sql.
+            "unmanaged": _rows(conn, "unmanaged_sources", {"user_id": USER_ID}),
             "kill_rate": rate,
             "triaged": total,
             # docs/06: "If it drops below 85 percent the rules have drifted and cost is

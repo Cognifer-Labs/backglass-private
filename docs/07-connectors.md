@@ -92,6 +92,43 @@ Optional and last. The original request that seeded this project.
   Account → Settings → Approved Integrations before building. If absent, the fallback is
   the ICS feed, which loses submission state.
 
+## Local and later-phase sources
+
+The sections above are the network sources the first phases were built around. These
+were added after, share the same `Connector` protocol, and are gated the same way — one
+env key, no key means the connector is never constructed. They are listed here because
+the protocol is the contract: a source that is not in this file is a source nobody
+audits.
+
+| source name | gate | cursor | boundary | how it fails |
+|---|---|---|---|---|
+| `imessage` | `IMESSAGE_DB_PATH` | max `message.ROWID` | yes — handles are addresses | macOS hides `chat.db` without Full Disk Access, so the error is `unable to open database file`, not "denied" |
+| `apple-notes` | `APPLE_NOTES=1` | modification-date watermark | yes — note bodies carry addresses | Automation permission denied, reported by `health()` |
+| `reminders` | `APPLE_REMINDERS=1` | fetch-window watermark (no mtime exists) | yes | same Automation prompt as Notes |
+| `files` | `INBOX_FOLDER_PATH` | mtime watermark | yes | unsupported file types are counted and reported, never silently skipped |
+| `github` | `GITHUB_TOKEN` | two watermarks in one string: search time + notifications `Last-Modified` | yes | 401 on a revoked token; the search quota is per-minute, so requests stay serialized |
+| `anki` | `ANKI_DB_PATH` | revlog row range | none — tallies carry no addresses and no card text | Anki holding the write lock past the busy timeout degrades the source for one cycle |
+| `avorio` | `AVORIO_DB_PATH` | `MAX(reviews.reviewed_at)` | none, same reason | schema drift; `health()` verifies every required table and column, not just the file |
+
+Two rules those local stores exist to teach:
+
+- **Open a live SQLite store `mode=ro` with a busy timeout, never `immutable=1`.** All
+  three of these stores are WAL; `immutable` makes SQLite skip the `-wal` file, so a read
+  is either silently stale or fails with "no such table" while the app is open.
+- **An `external_id` must name content that cannot be recomputed differently.** Key a
+  batch item to the exact immutable row range it summarizes. A high-watermark id
+  (`reviews:<day>:<max-id>`) re-emits the same id with different content after a rescan,
+  which the 0002 immutability trigger turns into a failed-looking sync.
+
+## Sources with no connector
+
+`manual` quick-adds and one-off imports write `source_item` rows without a credential
+row behind them. They cite into the brief like anything else and no sync will ever
+refresh them, so the Sources panel and `backglass status` name them explicitly
+(`unmanaged_sources.sql`) rather than reading FROM `credential` and showing nothing.
+An import that quietly looks like a live feed is the docs/11 §8 failure — a view that
+looks complete and is not.
+
 ## Credentials
 
 Stored in the `credential` table, not environment variables:

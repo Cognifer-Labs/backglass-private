@@ -140,3 +140,75 @@ def test_source_item_is_immutable_except_the_three_extraction_columns(tmp_path: 
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
             conn.execute(f"UPDATE source_item SET {column} = ? WHERE id = 1", (value,))
     conn.close()
+
+
+# ── the shipped migrations are byte-frozen ────────────────────────────────
+
+#: sha256 of every migration file, as applied to the owner's database. `migrate()`
+#: refuses to start when a recorded checksum and the file on disk disagree, so an
+#: edit to an already-applied migration bricks every existing database — including
+#: one made for a reason that looks harmless. It happened on 2026-08-02: the
+#: public-release scrub rewrote a *comment* in 0007 to drop a private-doc citation,
+#: and every `backglass` command against the owner's db died on MigrationError until
+#: the recorded checksum was resealed. The runtime guard above only fires on a
+#: machine that already has the old bytes; this one fires in CI, before the edit
+#: ships. Add a line here when you add a migration; never change one.
+FROZEN_CHECKSUMS = {
+    "0001_initial.sql": ("0bbd99e163d1cd119b7cdf97856f8b5934baadea4769e21722022336a8a4c879"),
+    "0002_source_item_immutable.sql": (
+        "e96c9786f0a3d099e0d71dbadd1db5ba19e122b57bbbb0d05817d33b71f2c014"
+    ),
+    "0003_career_layer.sql": (
+        "8aa612cc1bc42d4a8484a2a9fe08fb34ba7452d7d267f78c6de800c7ac94c841"
+    ),
+    "0004_source_toggle.sql": (
+        "a4afec673f6ca51ed748fed271c1ecb44aa39c504d9a3f2768de674d3934887d"
+    ),
+    "0005_source_item_delete_guard.sql": (
+        "8c7495872d47097945df185489bc430f565961d71ff76d1a4898719eaa72b0b9"
+    ),
+    "0006_total_targets.sql": (
+        "6788815070cdac5593b5657abdf57ff734e57c181ebd6cc9970eb28d167d52be"
+    ),
+    "0007_activities.sql": ("c8f4fa7383caf410a08b5ba4dd01f240e9ed4d11eb732951baa3f01675adac67"),
+    "0008_facts.sql": ("b52dc047f4c0699dc6af2d4404cde42133b9f2d9260f54b5c4ce29f1dc4d4aed"),
+    "0009_learned_noise.sql": (
+        "4a0efb2386673f7feca8046ac261bc4f7fccb82e07ba5cf7691725ad9146f0bc"
+    ),
+    "0010_template_hash.sql": (
+        "8252bc7825d6e371c68e2ea8c724b9dd209b1dbbce9aebba39ba3040f12f79bc"
+    ),
+    "0011_model_batch.sql": (
+        "9c42a187902517ca3117740f19d7617d058ee5885dc41478a76196a4f6b6277e"
+    ),
+}
+
+
+def _migration_dir() -> Path:
+    from backglass.db import MIGRATIONS_DIR
+
+    return MIGRATIONS_DIR
+
+
+def test_no_shipped_migration_has_been_edited() -> None:
+    import hashlib
+
+    for path in sorted(_migration_dir().glob("*.sql")):
+        expected = FROZEN_CHECKSUMS.get(path.name)
+        if expected is None:
+            continue  # a new migration; the next test makes sure it gets a line here
+        actual = hashlib.sha256(path.read_bytes()).hexdigest()
+        assert actual == expected, (
+            f"{path.name} was edited. Migrations are immutable once applied — every "
+            f"database that already ran it will refuse to start. Add a new migration "
+            f"instead; if the edit is genuinely unshipped, update FROZEN_CHECKSUMS."
+        )
+
+
+def test_every_migration_is_frozen() -> None:
+    on_disk = {path.name for path in _migration_dir().glob("*.sql")}
+    assert on_disk == set(FROZEN_CHECKSUMS), (
+        "a migration is missing from FROZEN_CHECKSUMS (or listed there but deleted) — "
+        "an unfrozen migration can be edited silently, which is the exact failure this "
+        "pair of tests exists to stop"
+    )

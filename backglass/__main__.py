@@ -177,6 +177,15 @@ def status() -> None:
         if row["last_error"]:
             typer.echo(f"         {row['last_error']}")
 
+    # Sources with evidence but no credential row — quick-adds, imports, a connector
+    # whose credential was removed. They cite into the brief like anything else and no
+    # sync will ever refresh them, so `status` names them instead of reading "none".
+    for row in conn.execute(query("unmanaged_sources"), {"user_id": USER_ID}):
+        typer.echo(
+            f"  [ -- ] {row['source']}  {row['item_count']} item(s), no connector — "
+            f"last {row['last_item_at']}"
+        )
+
     kill = conn.execute(query("triage_kill_rate"), {"user_id": USER_ID}).fetchone()
     if kill and kill["total"]:
         rate = float(kill["kill_rate"] or 0.0)

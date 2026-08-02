@@ -79,3 +79,57 @@ def test_paused_failing_source_raises_no_sidebar_alert(
     credentials.set_enabled(conn, "gmail:personal", False)
     conn.commit()
     assert "views are incomplete" not in client.get("/").text
+
+
+# ── evidence with no connector behind it ──────────────────────────────────
+
+
+def _item(conn: sqlite3.Connection, source: str, external_id: str) -> None:
+    from backglass.db import now_iso
+    from backglass.ledger import USER_ID
+
+    conn.execute(
+        "INSERT INTO source_item (user_id, source, external_id, fetched_at, occurred_at, "
+        " title, body_text, raw_json, content_hash, triage_verdict) "
+        "VALUES (?, ?, ?, ?, '2026-07-30T09:00:00-07:00', 't', 'b', '{}', ?, 'keep')",
+        (USER_ID, source, external_id, now_iso(), f"h-{source}-{external_id}"),
+    )
+
+
+def test_a_source_with_items_but_no_credential_is_still_named(
+    conn: sqlite3.Connection, settings: Settings
+) -> None:
+    """docs/11 §8: the dangerous failure is a view that looks complete and is not.
+
+    `dashboard_sources` reads FROM credential, so an import script's rows — or a source
+    whose credential was deleted — would cite into the brief while appearing nowhere in
+    the Sources panel, and no sync would ever refresh them.
+    """
+    from backglass.web import panels
+
+    _item(conn, "calendar:campus", "campus-f26-hon-171")
+    _item(conn, "calendar:campus", "campus-f26-psy-101")
+    _item(conn, "manual", "quick-1")
+    credentials.save_cursor(conn, "notes", "123.0")
+    _item(conn, "notes", "note-1")
+
+    panel = panels.sources_panel(conn, settings)
+    unmanaged = {row["source"]: row for row in panel.meta["unmanaged"]}
+
+    assert unmanaged["calendar:campus"]["item_count"] == 2
+    assert "manual" in unmanaged
+    # `notes` has a credential row, so it belongs to the connector-owned list instead.
+    assert "notes" not in unmanaged
+
+
+def test_unmanaged_sources_raise_no_failure_alarm(
+    client: TestClient, conn: sqlite3.Connection
+) -> None:
+    # Nothing to reconnect and nothing to resume: an import is not a broken connector,
+    # so it must not turn the panel's keyline vermilion or fire the sidebar alert.
+    _item(conn, "calendar:campus", "campus-f26-hon-171")
+    conn.commit()
+    body = client.get("/").text
+    assert "calendar:campus" in body
+    assert "no connector" in body
+    assert "views are incomplete" not in body

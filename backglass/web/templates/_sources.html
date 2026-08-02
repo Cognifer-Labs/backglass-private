@@ -48,6 +48,21 @@
       <p class="note">Detected on this Mac — run <span class="kbd">backglass setup</span> to connect.</p>
     {% endif %}
 
+    {# Evidence with no connector behind it. Not failing and not paused — there is
+       nothing to reconnect and nothing to resume — but it is cited in the brief like
+       any other source, so it is named rather than left invisible. #}
+    {% if d.sources.meta.unmanaged %}
+      {% for u in d.sources.meta.unmanaged %}
+        <div class="src paused">
+          <span class="sq" style="background:transparent" title="no connector"></span>
+          <span class="nm">{{ u['source'] }}</span>
+          <span class="ts">{{ u['item_count'] }} item{{ '' if u['item_count'] == 1 else 's' }} ·
+            no connector · last {{ u['last_item_at']|relative }}</span>
+        </div>
+      {% endfor %}
+      <p class="note">Imported or hand-entered — no sync refreshes these, so they age in place.</p>
+    {% endif %}
+
     {# Deliberately outside the has-credentials branch. The kill rate, the spend state and
        the last run are properties of the pipeline, not of whether a credential row
        happens to exist — and a run that ingested nothing because there are no credentials
