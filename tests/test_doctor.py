@@ -14,7 +14,13 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from backglass import backup
-from backglass.__main__ import LAUNCHD_LABELS, missing_launchd_jobs
+from backglass.__main__ import (
+    LAUNCHD_LABELS,
+    _boundary_verdict,
+    _unauthed_remote_sources,
+    missing_launchd_jobs,
+)
+from backglass.config import Settings
 
 #: What `launchctl list` actually prints: PID, exit status, label.
 APP_ONLY = """\
@@ -108,3 +114,104 @@ def test_labels_match_the_shipped_plist_templates() -> None:
             if f"<string>{label}</string>" in text:
                 plist_labels.add(label)
     assert plist_labels == set(LAUNCHD_LABELS)
+
+
+# ── configured-but-never-authed sources ──────────────────────────────────
+#
+# A source with no credential row is invisible to every other doctor check: the health
+# loop iterates credentials, so a Gmail account named in .env that never finished OAuth
+# reads exactly like one nobody ever asked for. Both directions pinned.
+
+
+def _cfg(**over: object) -> Settings:
+    return Settings(_env_file=None, **over)  # type: ignore[call-arg,arg-type]
+
+
+def test_a_configured_gmail_account_that_never_authed_is_named() -> None:
+    settings = _cfg(gmail_accounts=["personal", "school"])
+    unauthed = dict(_unauthed_remote_sources(settings, known=set()))
+    assert set(unauthed) == {"gmail:personal", "gmail:school"}
+    assert "backglass auth gmail:personal" in unauthed["gmail:personal"]
+
+
+def test_an_authed_account_is_not_reported() -> None:
+    # The false positive that would make this line noise: a source with a credential
+    # row is already covered by the health loop and must not be listed twice.
+    settings = _cfg(gmail_accounts=["personal"], drive_accounts=["personal"])
+    unauthed = dict(_unauthed_remote_sources(settings, known={"gmail:personal"}))
+    assert set(unauthed) == {"drive:personal"}
+
+
+def test_token_sources_need_a_sync_not_an_auth_flow() -> None:
+    # Canvas/GitHub/Slack have no OAuth dance — their credential row appears on the
+    # first sync, so telling the owner to "auth" them would send them nowhere.
+    settings = _cfg(
+        canvas_base_url="https://example.instructure.com",
+        canvas_token="t",
+        github_token="t",
+        slack_token="t",
+        slack_channels=["general"],
+    )
+    unauthed = dict(_unauthed_remote_sources(settings, known=set()))
+    assert set(unauthed) == {"canvas", "github", "slack"}
+    assert all("backglass sync" in needs for needs in unauthed.values())
+
+
+def test_a_half_configured_token_source_is_not_reported() -> None:
+    # A token with no base URL (or a Slack token with no channels) cannot sync at all;
+    # reporting it as "never authed" would blame the wrong missing piece.
+    settings = _cfg(canvas_token="t", slack_token="t")
+    assert _unauthed_remote_sources(settings, known=set()) == []
+
+
+def test_nothing_configured_reports_nothing() -> None:
+    assert _unauthed_remote_sources(_cfg(), known=set()) == []
+
+
+# ── the data boundary (docs/08, CLAUDE.md rule 6) ────────────────────────
+#
+# The check that exists because the machinery was correct and the deployment was inert
+# for weeks (audit #18). Silent until it applies, red until the owner decides.
+
+
+def test_no_boundary_scoped_source_means_no_verdict() -> None:
+    # Local stores are the owner's own writing — asking about a client-data boundary
+    # over Apple Notes would be noise, and noise is how a legal-weight check gets skimmed.
+    settings = _cfg(boundary_mode="exclude")
+    creds = [("apple-notes", True), ("reminders", True), ("imessage", True)]
+    assert _boundary_verdict(settings, creds) is None
+
+
+def test_an_enabled_mail_source_with_an_empty_denylist_fails() -> None:
+    settings = _cfg(boundary_mode="exclude")
+    ok, detail = _boundary_verdict(settings, [("gmail:personal", True)])  # type: ignore[misc]
+    assert not ok
+    assert "gmail" in detail
+    assert "full_scope" in detail
+
+
+def test_a_populated_denylist_passes() -> None:
+    settings = _cfg(boundary_mode="exclude", boundary_deny_domains=["client.example"])
+    ok, _ = _boundary_verdict(settings, [("gmail:personal", True)])  # type: ignore[misc]
+    assert ok
+
+
+def test_full_scope_is_the_other_legitimate_answer() -> None:
+    # docs/08 Option B: ingesting everything is allowed, provided it was chosen.
+    settings = _cfg(boundary_mode="full_scope")
+    ok, _ = _boundary_verdict(settings, [("drive:personal", True)])  # type: ignore[misc]
+    assert ok
+
+
+def test_a_paused_source_does_not_trigger_the_check() -> None:
+    # Nothing is being ingested through it, so there is nothing to decide yet.
+    settings = _cfg(boundary_mode="exclude")
+    assert _boundary_verdict(settings, [("gmail:personal", False)]) is None
+
+
+def test_the_detail_names_every_live_scoped_source_once() -> None:
+    settings = _cfg(boundary_mode="exclude")
+    creds = [("gmail:personal", True), ("gmail:school", True), ("slack", True)]
+    ok, detail = _boundary_verdict(settings, creds)  # type: ignore[misc]
+    assert not ok
+    assert detail.split(" enabled")[0] == "gmail, slack"

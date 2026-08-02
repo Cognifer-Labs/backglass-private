@@ -11,6 +11,7 @@ import ipaddress
 import json
 import sqlite3
 import sys
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -1780,6 +1781,68 @@ def missing_launchd_jobs(launchctl_list_output: str) -> list[str]:
     return [label for label in LAUNCHD_LABELS if label not in loaded]
 
 
+def _unauthed_remote_sources(
+    settings: Settings, known: set[str]
+) -> list[tuple[str, str]]:
+    """Sources the owner has configured but never authed, and the step each still needs.
+
+    A source with no credential row is invisible everywhere else — the health loop
+    iterates credentials and the Sources panel renders them, so a Gmail account listed
+    in `.env` that never completed OAuth reads as if it were never asked for. That is
+    the difference between "widened intake" and "believed I widened intake."
+    """
+    wanted: list[tuple[str, str]] = []
+    for label in settings.gmail_accounts:
+        wanted.append((f"gmail:{label}", f"run `backglass auth gmail:{label}`"))
+    for label in settings.calendar_accounts:
+        wanted.append((f"calendar:{label}", f"run `backglass auth calendar:{label}`"))
+    for label in settings.drive_accounts:
+        wanted.append((f"drive:{label}", f"run `backglass auth drive:{label}`"))
+    if settings.canvas_base_url and settings.canvas_token:
+        wanted.append(("canvas", "run `backglass sync` once to record the credential"))
+    if settings.github_token:
+        wanted.append(("github", "run `backglass sync` once to record the credential"))
+    if settings.slack_token and settings.slack_channels:
+        wanted.append(("slack", "run `backglass sync` once to record the credential"))
+    return [(source, needs) for source, needs in wanted if source not in known]
+
+
+#: Sources that can carry another party's mail, files or messages, and therefore the
+#: ones docs/08's boundary exists for. A local note store is the owner's own writing;
+#: a shared inbox is not.
+BOUNDARY_SCOPED = ("gmail", "drive", "slack", "github", "calendar")
+
+
+def _boundary_verdict(
+    settings: Settings, credentials: Sequence[tuple[str, bool]]
+) -> tuple[bool, str] | None:
+    """`(ok, detail)` for the boundary check, or None when it does not apply yet.
+
+    The machinery in connectors/boundary.py is correct and well-tested, but its default
+    is inert: `exclude` with an empty denylist excludes nothing while reading as a
+    deliberate setting. docs/08 has two legitimate answers — a populated denylist, or
+    `full_scope` with the obligations that carries — and "never decided" is neither.
+    So this stays silent until a source that can actually carry client data is live,
+    and then it fails until the owner has chosen. Rule 6 is the one with legal weight.
+    """
+    scoped = sorted({
+        source.split(":")[0]
+        for source, enabled in credentials
+        if enabled and source.split(":")[0] in BOUNDARY_SCOPED
+    })
+    if not scoped:
+        return None
+    decided = (
+        Boundary.from_settings(settings).enforcing
+        or settings.boundary_mode == "full_scope"
+    )
+    return decided, (
+        f"{', '.join(scoped)} enabled with BOUNDARY_MODE=exclude and an empty denylist "
+        "— excluding nothing. Set BOUNDARY_DENY_DOMAINS / BOUNDARY_DENY_ADDRESSES, or "
+        "BOUNDARY_MODE=full_scope to accept docs/08 Option B's obligations"
+    )
+
+
 @app.command()
 def doctor() -> None:
     """Preflight for activation: one line per check, non-zero exit on any failure.
@@ -1879,12 +1942,45 @@ def doctor() -> None:
         if d.status == detect_mod.FOUND:
             typer.echo(f"[ -- ] {d.source} detected but not configured — `backglass setup`")
 
+    # Informational: connectors that exist in code and are configured to run but have
+    # never authed. Distinct from the detection lines above — those are stores this Mac
+    # *has*, these are sources the owner has *asked for* and never finished connecting,
+    # which is otherwise invisible: a source that never authed has no credential row, so
+    # neither the health loop nor the Sources panel says anything about it at all.
+    for label, needs in _unauthed_remote_sources(settings, {str(r["source"]) for r in rows}):
+        typer.echo(f"[ -- ] {label} configured but never authed — {needs}")
+
+    # ── data boundary (docs/08, CLAUDE.md rule 6 — legal weight) ──────────
+    verdict = _boundary_verdict(
+        settings, [(str(r["source"]), bool(r["enabled"])) for r in rows]
+    )
+    if verdict is not None:
+        check("data boundary decided", *verdict)
+
     # ── scheduling ────────────────────────────────────────────────────────
     done = subprocess.run(["launchctl", "list"], capture_output=True, text=True)
     missing = missing_launchd_jobs(done.stdout)
     check("launchd jobs loaded", not missing,
           f"missing {', '.join(missing)} — run `backglass schedule install`; "
           "without them nothing runs at 05:45/06:00")
+
+    # ── the scheduler is loaded; is it actually running? (heartbeat) ──────
+    # A loaded job that throws on every fire looks identical to a healthy one in
+    # `launchctl list`. The run table is the only witness. Stale only fails when the
+    # sync job is loaded — otherwise the missing-job check above is already the red,
+    # and two reds for one cause teach skimming.
+    from backglass import heartbeat as heartbeat_mod
+
+    beat = heartbeat_mod.read(conn, settings, _today(settings))
+    if beat.never_ran:
+        typer.echo("[note] sync has never run — `backglass sync` once to prove the pipeline")
+    elif "com.backglass.sync" not in missing:
+        check(
+            "sync is running on schedule",
+            not beat.stale,
+            f"last run {beat.age_phrase} (threshold {settings.sync_stale_after_hours}h) — "
+            "the job is loaded but not producing runs; check data/sync.err",
+        )
 
     # ── backups (audit #23) ───────────────────────────────────────────────
     from backglass import backup as backup_mod
