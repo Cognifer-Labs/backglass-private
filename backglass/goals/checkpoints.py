@@ -23,6 +23,12 @@ from backglass.ledger import USER_ID
 
 SOURCES = ("block", "commitment", "manual", "extraction")
 
+#: The largest magnitude a single checkpoint may carry. Far above any real entry — more
+#: than a year of continuous hours — so it can only ever catch a mistake, and small
+#: enough that no plausible number of rows can sum past 2**63-1. Symmetric because an
+#: unlog writes a negative delta. See `record` for why it is enforced here and nowhere else.
+MAX_DELTA = 10_000
+
 
 class CheckpointError(ValueError):
     pass
@@ -55,6 +61,20 @@ def record(
     if source not in SOURCES:
         raise CheckpointError(
             f"unknown checkpoint source {source!r}; expected one of {SOURCES}"
+        )
+    if not -MAX_DELTA <= delta <= MAX_DELTA:
+        # This bound lives here, at the funnel, and not at any call site. It was first
+        # written into the CLI's own validation, which left the dashboard's log form
+        # (web/routes/roadmaps.py, checking only `amount <= 0`) wide open to the same
+        # thing — and every column that sums these is unbounded. Any int up to 2**63-1
+        # is a legal SQLite INTEGER, so an absurd delta commits, and from then on every
+        # `SUM(delta)` raises "integer overflow": the roadmap page, the goals page, the
+        # dashboard index, `backglass log` and `amcas-export` all die at once. The one
+        # route that could delete the row is a button on a page that no longer renders.
+        # A guard that only covers one of two write paths is not a guard.
+        raise CheckpointError(
+            f"delta {delta} is out of range (limit ±{MAX_DELTA:,}); "
+            "record the sessions separately"
         )
     if source == "extraction" and source_item_id is None:
         raise CheckpointError("an extraction checkpoint must carry its source_item_id")

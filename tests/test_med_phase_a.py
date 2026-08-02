@@ -893,11 +893,21 @@ class TestLogSafety:
     def test_a_value_too_large_for_sqlite_is_refused_without_a_traceback(
         self, cli_env
     ) -> None:
+        """A value past SQLite's INTEGER range must be a refusal, not an OverflowError.
+
+        The first version of this test asserted `"Traceback" not in result.output` and
+        was vacuous: CliRunner puts the exception on `result.exception`, never in
+        `.output`, so it passed against the unguarded code that printed a full traceback
+        in a real terminal. The assertion has to name the exception itself.
+        """
         cli, settings = cli_env
         self._run(cli, "Chen Lab", "1", "--new", "research")
+
         result = self._run(cli, "Chen Lab", "99999999999999999999")
-        assert result.exit_code != 0
-        assert "Traceback" not in result.output
+
+        assert result.exit_code == 1
+        assert isinstance(result.exception, SystemExit), result.exception
+        assert "not plausible" in result.output
         assert self._hours(settings) == [("Chen Lab", 1)]
 
     def test_new_creates_nothing_when_the_category_has_no_target(self, cli_env) -> None:
@@ -944,6 +954,21 @@ class TestLogSafety:
         assert result.exit_code == 1
         assert "future" in result.output
         assert self._hours(settings) == [("Chen Lab", 1)]
+
+    def test_a_bad_on_date_creates_no_activity(self, cli_env) -> None:
+        """`--new` plus a rejected `--on` used to leave an orphan.
+
+        `add` ran before `--on` was validated, and the connection is autocommit, so the
+        activity was durable before the refusal. There is no rename or delete for an
+        activity anywhere, so the orphan is permanent and consumes one of the fifteen
+        AMCAS slots. Every refusal now resolves before the first write.
+        """
+        cli, settings = cli_env
+        for bad in ("9999-12-31", "not-a-date", "0001-01-01"):
+            result = self._run(cli, "Chen Lab", "4", "--new", "research", "--on", bad)
+            assert result.exit_code == 1, bad
+            assert "new activity" not in result.output, bad
+            assert self._hours(settings) == [], bad
 
     def test_an_implausibly_old_date_is_refused(self, cli_env) -> None:
         # Pre-2000 dates land in local mean time (-07:28:18), an offset nothing else in
@@ -1009,3 +1034,82 @@ class TestCategoryResolutionCannotMisfile:
         conn.commit()
         for category, target_id in ids.items():
             assert activities.total_target_for(conn, category)["id"] == target_id, category
+
+
+class TestGuardsLiveAtTheFunnel:
+    """Third-round findings. Each first-round fix was written at the CLI call site, so
+    the dashboard's own write path — the one the docs point owners at — bypassed it.
+    These assert the guard where BOTH doors go through."""
+
+    def test_the_dashboard_cannot_log_an_overflowing_amount(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Reproduced end-to-end by the verifier: POST amount=2**63-1 returned 200, and
+        # from then on every page that SUMs deltas — roadmap, goals, dashboard index —
+        # raised "integer overflow", including the page whose button is the only way to
+        # delete the row.
+        goal_id, _ = _seed_goal_with_target(conn)
+        total_id = instantiate.add_total(conn, goal_id, "Research hours", 200)
+        with pytest.raises(checkpoints.CheckpointError, match="out of range"):
+            checkpoints.record(conn, total_id, source="manual", delta=2**63 - 1)
+        assert conn.execute("SELECT COUNT(*) AS n FROM checkpoint").fetchone()["n"] == 0
+
+    def test_an_unlog_may_still_be_negative_but_not_unbounded(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # The bound is symmetric because removing a logged entry writes a negative delta.
+        goal_id, _ = _seed_goal_with_target(conn)
+        total_id = instantiate.add_total(conn, goal_id, "Research hours", 200)
+        checkpoints.record(conn, total_id, source="manual", delta=-4)
+        with pytest.raises(checkpoints.CheckpointError, match="out of range"):
+            checkpoints.record(conn, total_id, source="manual", delta=-(2**63 - 1))
+
+    def test_a_plausible_amount_still_records(self, conn: sqlite3.Connection) -> None:
+        # The mirror direction: the bound must not start refusing real entries.
+        goal_id, _ = _seed_goal_with_target(conn)
+        total_id = instantiate.add_total(conn, goal_id, "Research hours", 200)
+        checkpoints.record(conn, total_id, source="manual", delta=checkpoints.MAX_DELTA)
+        assert conn.execute("SELECT SUM(delta) AS n FROM checkpoint").fetchone()["n"] == (
+            checkpoints.MAX_DELTA
+        )
+
+    def test_add_refuses_a_duplicate_title_whatever_the_caller(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # The dashboard's activity_add calls straight through activities.add with no
+        # check of its own, so three POSTs made three "Chen Lab" rows and the name became
+        # permanently unloggable — `log` can only report the ambiguity, and no rename or
+        # delete exists.
+        activities.add(conn, title="Chen Lab", category="research")
+        with pytest.raises(activities.ActivityError, match="already exists"):
+            activities.add(conn, title="Chen Lab", category="research")
+        with pytest.raises(activities.ActivityError, match="already exists"):
+            activities.add(conn, title="  chen lab  ", category="clinical")
+        assert len(activities.list_with_hours(conn)) == 1
+
+    def test_a_distinct_title_that_merely_overlaps_is_allowed(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # The guard is an exact title match, not find_by_name's substring-and-org search
+        # — that version refused "Chen" because "Chen Lab Neuroscience" existed, and said
+        # an activity named "Chen" already existed when none did.
+        activities.add(conn, title="Chen Lab Neuroscience", org="Banner Health",
+                       category="research")
+        activities.add(conn, title="Chen", category="research")
+        activities.add(conn, title="Banner", category="clinical")
+        assert len(activities.list_with_hours(conn)) == 3
+
+    def test_non_clinical_is_stripped_however_it_is_punctuated(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Target titles are editable from the dashboard, so the separator is whatever the
+        # owner typed. An en dash or a double space used to defeat the phrase-strip and
+        # turn a volunteering total into a refusal.
+        goal_id, _ = _seed_goal_with_target(conn)
+        for title in ("Non-clinical volunteering hours", "Non  clinical volunteering",
+                      "Non–clinical volunteering", "non_clinical volunteering"):
+            conn.execute("DELETE FROM target WHERE kind = 'total'")
+            target_id = instantiate.add_total(conn, goal_id, title, 500)
+            conn.commit()
+            found = activities.total_target_for(conn, "volunteering")
+            assert found is not None and found["id"] == target_id, title

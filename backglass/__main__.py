@@ -942,18 +942,11 @@ def log(
             raise typer.Exit(code=1)
         # Every reason to refuse has to be found *before* the activity row is written.
         # The connection is autocommit (db/__init__.py), so `add` is durable the moment
-        # it runs and the commit below is a formality — a failure after it left an
-        # activity with no hours, and the natural retry (`--new` again) made a second
-        # one, then a third, until the plain name was permanently ambiguous and one
-        # activity's hours were split across duplicate AMCAS rows. That is exactly the
-        # unrecoverable mis-filing this command exists to prevent.
-        if activities_mod.find_by_name(conn, activity):
-            typer.echo(
-                f"an activity named {activity!r} already exists — log against it "
-                "without --new, or pick a distinct title",
-                err=True,
-            )
-            raise typer.Exit(code=1)
+        # it runs — a failure after it leaves an activity with no hours, and there is no
+        # rename or delete for one anywhere, so the orphan is permanent and consumes an
+        # AMCAS slot. The first attempt at this ordered the checks by how obvious they
+        # were and left `--on` validation after the write; the resolution below happens
+        # in full, for both branches, before anything is created.
         if activities_mod.total_target_for(conn, new) is None:
             typer.echo(
                 f"category {new!r} has no lifetime hour target on any active goal, so "
@@ -961,11 +954,43 @@ def log(
                 err=True,
             )
             raise typer.Exit(code=1)
+
+    # Resolve the instant first. `local_now_iso` takes a day only to pick the zone — it
+    # always stamps now — so a backdated entry needs `local_noon_iso` on the day named.
+    # The owner's "today" is the day in whichever zone they are actually in; `_today`
+    # reads `default_tz` only, which refuses a genuine Kolkata today for 12.5 hours of
+    # every day while they are there.
+    today = timezones.local_date_of(
+        timezones.local_now_iso(settings, _today(settings)),
+        timezones.active_tz(settings, _today(settings)),
+    )
+    if on:
         try:
-            activities_mod.check_hours(hours)
-        except activities_mod.ActivityError as exc:
-            typer.echo(str(exc), err=True)
-            raise typer.Exit(code=1) from exc
+            day = _date.fromisoformat(on)
+        except ValueError:
+            typer.echo(f"--on {on!r} is not a date; use YYYY-MM-DD", err=True)
+            raise typer.Exit(code=1) from None
+        if day > today:
+            # A future entry counts toward the total immediately — the accumulator has no
+            # date filter — so it would inflate every progress bar until the day arrived.
+            typer.echo(f"--on {on} is in the future; log hours after you do them", err=True)
+            raise typer.Exit(code=1)
+        if day.year < 2000:
+            # Pre-2000 dates fall outside any plausible record and land in local mean
+            # time, producing offsets like -07:28:18 that nothing else in the ledger uses.
+            typer.echo(f"--on {on} is implausibly old", err=True)
+            raise typer.Exit(code=1)
+        occurred_at = timezones.local_noon_iso(settings, day)
+    else:
+        occurred_at = timezones.local_now_iso(settings, today)
+
+    try:
+        activities_mod.check_hours(hours)
+    except activities_mod.ActivityError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    if new is not None:
         try:
             activity_id = activities_mod.add(conn, title=activity, category=new)
         except activities_mod.ActivityError as exc:
@@ -989,30 +1014,6 @@ def log(
                 typer.echo(f"  {match['title']} ({match['category']})", err=True)
             raise typer.Exit(code=1)
         activity_id = int(matches[0]["id"])
-
-    # A backdated entry is stamped local noon on the day named; a same-day entry keeps
-    # the actual moment. local_now_iso takes a day only to pick the zone — it always
-    # stamps now — so using it for --on would file September's hours under today.
-    today = _today(settings)
-    if on:
-        try:
-            day = _date.fromisoformat(on)
-        except ValueError:
-            typer.echo(f"--on {on!r} is not a date; use YYYY-MM-DD", err=True)
-            raise typer.Exit(code=1) from None
-        if day > today:
-            # A future entry counts toward the total immediately — the accumulator has no
-            # date filter — so it would inflate every progress bar until the day arrived.
-            typer.echo(f"--on {on} is in the future; log hours after you do them", err=True)
-            raise typer.Exit(code=1)
-        if day.year < 2000:
-            # Pre-2000 dates fall outside any plausible record and land in local mean
-            # time, producing offsets like -07:28:18 that nothing else in the ledger uses.
-            typer.echo(f"--on {on} is implausibly old", err=True)
-            raise typer.Exit(code=1)
-        occurred_at = timezones.local_noon_iso(settings, day)
-    else:
-        occurred_at = timezones.local_now_iso(settings, today)
     try:
         logged = activities_mod.log_hours(
             conn,

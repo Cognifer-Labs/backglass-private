@@ -52,14 +52,8 @@ AMCAS_MEANINGFUL_CHARS = 1325
 #: `target`, backfilled by these same hints, would make the link explicit and survive a
 #: retitle. Left as follow-up rather than done inline because it needs a migration.
 #:
-#: Each entry is (must contain any of, must contain none of). The exclusions are not
-#: hypothetical: the shipped preset titles are "Clinical experience hours (paid or
-#: volunteer)" and "Non-clinical service hours", so a naive substring match files
-#: volunteering hours under clinical (the parenthetical says "volunteer") and clinical
-#: hours under volunteering (the other title contains "clinical"). Parentheticals are
-#: stripped before matching for the same reason — a qualifier in brackets describes the
-#: target, it does not name the category.
-#: Matching runs against a normalized title: parenthetical qualifiers removed, and the
+#: Each entry is (must contain any of, must contain none of), matched against a
+#: normalized title: parenthetical qualifiers removed, and the
 #: phrase "non-clinical" removed as a unit. That second step is what lets `clinical` and
 #: `volunteering` be told apart by plain words. The two real titles collide in both
 #: directions — "Clinical experience hours (paid or volunteer)" and "Non-clinical service
@@ -76,7 +70,7 @@ CATEGORY_TITLE_HINTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
 }
 
 #: Removed before matching, as a phrase. See CATEGORY_TITLE_HINTS.
-_NON_CLINICAL = re.compile(r"non[-\s]?clinical")
+_NON_CLINICAL = re.compile(r"non[\s_\-\u2010-\u2015]*clinical")
 
 
 class ActivityError(ValueError):
@@ -122,6 +116,14 @@ def add(
         raise ActivityError(
             f"unknown category {category!r}; expected one of {CATEGORIES}"
         )
+    # Refused here rather than at a caller, because `title` is what every later lookup
+    # resolves by and there is no rename or delete for an activity anywhere. A second
+    # row with the same name makes that name permanently unloggable — `log` can only
+    # report the ambiguity — and splits one activity's hours across two AMCAS entries.
+    # The CLI learned this first; the dashboard's add form calls straight through here,
+    # so the check has to live at the funnel or it covers one door out of two.
+    if _titled(conn, title) is not None:
+        raise ActivityError(f"an activity titled {title!r} already exists")
     conn.execute(
         "INSERT INTO activity (user_id, title, org, role, category, contact_entity_id, "
         " started_on, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -152,6 +154,21 @@ def end(conn: sqlite3.Connection, activity_id: int, ended_on: str) -> None:
         "UPDATE activity SET ended_on = ?, is_ongoing = 0 WHERE id = ?",
         (ended_on, activity_id),
     )
+
+
+def _titled(conn: sqlite3.Connection, title: str) -> sqlite3.Row | None:
+    """An active activity with exactly this title, case-insensitively, or None.
+
+    Exact — not `find_by_name`'s substring search, which also matches orgs. Using that
+    here refused "Chen" because "Chen Lab Neuroscience" existed, and said "an activity
+    named 'Chen' already exists" when none did. A duplicate guard has to answer "is this
+    the same activity", and only an exact title does.
+    """
+    return conn.execute(  # type: ignore[no-any-return]
+        "SELECT * FROM activity WHERE user_id = ? AND active = 1 "
+        "AND LOWER(title) = LOWER(?)",
+        (USER_ID, title.strip()),
+    ).fetchone()
 
 
 def _get(conn: sqlite3.Connection, activity_id: int) -> sqlite3.Row:
