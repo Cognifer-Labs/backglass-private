@@ -107,6 +107,49 @@ user-level.
 Rationale: per-user OAuth is the entire difference between a script and a product, and
 the table shape is identical either way. Doing it now costs one migration file.
 
+## Setting up Gmail/Calendar/Drive OAuth
+
+Gmail, Calendar, and Drive all authenticate through one Google Cloud OAuth client — you
+need exactly one, shared across all three, not one per connector.
+
+1. **Create a Google Cloud project.** [console.cloud.google.com](https://console.cloud.google.com/)
+   → project picker → New Project. Any name; it's just a container for the API access
+   below and is never seen by anyone but you.
+2. **Enable the APIs you plan to use.** In the project, go to APIs & Services →
+   Library, and enable each of: **Gmail API**, **Google Calendar API**,
+   **Google Drive API**. Skip whichever you don't need — `backglass auth <label> --source
+   <gmail|calendar|drive>` only needs the matching API enabled.
+3. **Create an OAuth client.** APIs & Services → Credentials → Create Credentials →
+   OAuth client ID. If prompted, configure the OAuth consent screen first: **External**
+   user type is fine for personal use (you'll see an "unverified app" warning during
+   consent — that's expected and safe to click through, since it's your own app talking
+   to your own account), and you don't need to submit it for Google's review since only
+   you (as a test user) will ever authorize it. For the client itself, choose **Desktop
+   app** as the application type — this matches how `backglass auth` runs the consent
+   flow (`InstalledAppFlow.run_local_server`, a short-lived local redirect, not a web
+   callback URL).
+4. **Copy the client ID and secret into `.env`:**
+   ```
+   GOOGLE_CLIENT_ID=...
+   GOOGLE_CLIENT_SECRET=...
+   ```
+5. **Add an account label per mailbox/calendar/drive you want to read** — e.g.
+   `GMAIL_ACCOUNTS=personal`, `CALENDAR_ACCOUNTS=personal`, `DRIVE_ACCOUNTS=personal`.
+   Labels are yours to choose; `credential.source` becomes `gmail:personal` etc., which
+   is why two Gmail accounts need two different labels, comma-separated.
+6. **Run the consent flow once per label:**
+   ```bash
+   uv run backglass auth personal --source gmail
+   uv run backglass auth personal --source calendar
+   uv run backglass auth personal --source drive
+   ```
+   Each opens a browser for Google's consent screen and stores the resulting tokens in
+   the `credential` table — read-only scopes only (`gmail.readonly` etc.), since this
+   system never sends or writes anywhere.
+7. **Verify:** `uv run backglass doctor` reports "google oauth client configured" and one
+   line per authorized account; `uv run backglass sync` should then pull real items on
+   the next run.
+
 ## Health and failure
 
 Every connector reports health on each run. `status` transitions to `failed` on auth

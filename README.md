@@ -3,7 +3,10 @@
 A personal commitment ledger that reads your email, documents, notes, and calendar, and
 gives you back a morning brief and a dashboard.
 
-Single user. Not a SaaS, not yet.
+Single user, runs entirely on your machine. MIT-licensed. Bring your own Anthropic or
+DeepInfra API key (or run it free against your existing Claude subscription via the
+Claude Code CLI) — there is no hosted service, no account, and nothing leaves your
+computer except a delivered brief email.
 
 > **back·glass** *(n.)* — the illuminated art panel standing at the rear of a pinball
 > machine, carrying the score reels. The one surface that tells you, at a glance and
@@ -31,27 +34,25 @@ No automatic calendar writes. It proposes; you accept.
 
 ## Getting started
 
-```bash
-cp .env.example .env      # fill in credentials
-python -m backglass.db init
-python -m backglass.sync --dry-run
-```
-
-`--dry-run` prints the diff it would apply and writes nothing. Use it until the output
-looks right.
+See [`GETTING_STARTED.md`](GETTING_STARTED.md) for the full sequence — clone, install,
+configure a model backend, authorize your own sources, and run it.
 
 ## Layout
 
 ```
 CLAUDE.md      read this first if you are an agent working on this repo
-PROMPT.md      copy-paste kickoff prompts for Claude Code, one per phase
 docs/          product and architecture decisions, numbered in reading order
 design/        design system, tokens, and a rendered preview
-specs/         schema DDL, extraction prompts, API contracts
-scripts/       utilities, including the palette validator
+specs/         schema DDL, extraction prompts, API contracts, roadmap presets
+scripts/       utilities, including the release manifest and palette validator
 ```
 
 ## Status
 
-Pre-phase-0. Nothing is built. `docs/09-build-plan.md` has the sequence, and phase 0
-involves no code at all — read it before writing any.
+The core pipeline (ledger, extraction, morning brief, dashboard, schedule/goal engine)
+is built and covered by its own test suite. `docs/09-build-plan.md` has the original
+build sequence if you want the reasoning behind the order.
+
+## License
+
+MIT — see [`LICENSE`](LICENSE).
