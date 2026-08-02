@@ -151,7 +151,7 @@ class TestHappyPath:
 
         item = conn.execute("SELECT * FROM source_item WHERE id = ?", (sid,)).fetchone()
         assert item["source"] == "roadmap-interview"
-        assert item["extraction_version"] == "roadmap-interview-adjust@1"
+        assert item["extraction_version"] == "roadmap-interview-adjust@2"
         assert "MCAT" in item["body_text"]
         head = conn.execute("SELECT * FROM roadmap WHERE id = ?", (rid,)).fetchone()
         assert head["interview_source_item_id"] == sid

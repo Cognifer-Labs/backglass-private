@@ -98,6 +98,11 @@ Reason: the whole thing should be readable in an afternoon by one person a year 
 ## Testing expectations
 
 - Every extraction prompt has a fixture set of real-shaped inputs with expected output.
+- A test that carves a fragment out of rendered HTML uses `tests/conftest.py::panel_slice`
+  (bounded by stable `id="panel-…"` markers) — never `.split()` on a closing tag or
+  element order. Closing tags lie once elements nest, and N inline splits means N breaks
+  on the next markup change. Before restructuring shared markup, grep tests for
+  structural couplings and fix them in the same change.
 - Idempotency test: run the sync twice against a frozen fixture, assert zero writes on
   the second pass.
 - Date-resolution tests specifically for relative dates across timezone changes, because

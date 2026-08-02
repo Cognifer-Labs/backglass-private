@@ -21,6 +21,7 @@ from backglass.db import now_iso
 from backglass.ledger import USER_ID, Ledger
 from backglass.web import actions, panels
 from backglass.web.app import create_app
+from tests.conftest import panel_slice
 
 TODAY = date.today()
 
@@ -28,7 +29,7 @@ TODAY = date.today()
 @pytest.fixture
 def client(conn, settings: Settings):  # type: ignore[no-untyped-def]
     """The app opens its own connections against the same file the fixture migrated."""
-    return TestClient(create_app(settings))
+    return TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
 
 
 def commitment(conn, settings: Settings, **kwargs) -> int:  # type: ignore[no-untyped-def]
@@ -108,8 +109,8 @@ def test_low_confidence_is_in_the_review_queue_and_not_on_the_board(
     """CLAUDE.md rule 2. A guess next to a fact is the confusion the queue exists to stop."""
     commitment(conn, settings, n=1, what="a guess", confidence=0.3)
     body = client.get("/").text
-    review = body.split('id="panel-review"')[1]
-    board = body.split('id="panel-board"')[1].split("</section>")[0]
+    review = panel_slice(body, "panel-review")
+    board = panel_slice(body, "panel-board")
     assert "a guess" in review
     assert "a guess" not in board
 
@@ -442,7 +443,7 @@ def test_accept_and_reject_are_equal_weight(
     turns it into a rubber stamp."."""
     commitment(conn, settings, n=1, confidence=0.4)
     body = client.get("/").text
-    review = body.split('id="panel-review"')[1].split("</section>")[0]
+    review = panel_slice(body, "panel-review")
 
     accept = [f for f in review.split("<button")[1:] if ">Accept<" in f][0]
     reject = [f for f in review.split("<button")[1:] if ">Reject<" in f][0]

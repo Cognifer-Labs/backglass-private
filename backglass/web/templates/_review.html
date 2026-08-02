@@ -1,6 +1,6 @@
 {% import "_macros.html" as m %}
-<section class="panel" id="panel-review">
-  {{ m.banner(d.review.title, d.review.rows|length ~ ' waiting') }}
+<details class="panel" id="panel-review" open>
+  {{ m.foldbanner(d.review.title, d.review.rows|length ~ ' waiting') }}
   <div class="inner">
     {% if d.review.empty %}
       <p class="empty">Nothing to review.</p>
@@ -38,4 +38,4 @@
       {% endfor %}
     {% endif %}
   </div>
-</section>
+</details>

@@ -1,6 +1,6 @@
 {% import "_macros.html" as m %}
-<section class="panel" id="panel-today">
-  {{ m.banner(d.today_panel.title, d.today|string) }}
+<details class="panel" id="panel-today" open>
+  {{ m.foldbanner(d.today_panel.title, d.today|string) }}
   <div class="inner">
     {% if d.today_panel.empty %}
       <p class="empty">No plan for today. The day planner runs at 05:45.</p>
@@ -48,4 +48,4 @@
       {% endfor %}
     {% endif %}
   </div>
-</section>
+</details>

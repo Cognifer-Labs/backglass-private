@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,24 @@ from backglass.db import connect, migrate
 from backglass.extract.client import ModelResult
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def panel_slice(body: str, panel_id: str) -> str:
+    """The rendered markup of one dashboard panel, bounded by panel ids.
+
+    The ONLY sanctioned way for a test to carve a panel out of a rendered page.
+    Never slice on closing tags: the panels are <details> that legally nest
+    further <details> (the board's Quick-add fold), so a `</details>`—or the
+    pre-2026-08 `</section>`—boundary silently truncates at the first inner
+    fold and the assertion tests a fragment of the wrong shape. Panel ids are
+    the stable contract; this helper finds the next `id="panel-…"` whatever
+    the panels' order or count, so re-composing the page never breaks a slice.
+    """
+    marker = f'id="{panel_id}"'
+    start = body.index(marker) + len(marker)
+    rest = body[start:]
+    nxt = re.search(r'id="panel-[a-z]+"', rest)
+    return rest[: nxt.start()] if nxt else rest
 
 
 # ────────────────────────────────────────────────────────── message fixtures

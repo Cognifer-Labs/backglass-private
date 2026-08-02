@@ -2,8 +2,8 @@
 {# docs/06: "Looks like ops chrome, is actually the most important panel."
    docs/02: "When the brief goes quiet because Gmail auth expired three days ago, it is
    the only place that would tell you." #}
-<section class="panel" id="panel-sources">
-  {{ m.banner(d.sources.title, ('%.0f%% killed'|format(d.sources.meta.kill_rate * 100)) if d.sources.meta.triaged else '') }}
+<details class="panel span2" id="panel-sources" open>
+  {{ m.foldbanner(d.sources.title, ('%.0f%% killed'|format(d.sources.meta.kill_rate * 100)) if d.sources.meta.triaged else '') }}
   <div class="inner">
     {% if d.sources.empty %}
       <p class="empty">No sources configured. Run <span class="kbd">backglass setup</span>.</p>
@@ -68,4 +68,4 @@
         {{ r['items_excluded'] }} excluded by the data boundary{% endif %}.</p>
     {% endif %}
   </div>
-</section>
+</details>

@@ -16,23 +16,20 @@
   {# The source-failure banner moved to the sidebar alerts block (_sidebar.html), which
      is present on every page — a failure is now louder, not quieter: it follows the
      owner to Schedule, People and Roadmaps instead of living only here. #}
-  {# Two INDEPENDENT column stacks, not one grid: grid rows stretch both cells to
-     the taller panel, so any height mismatch frames a void in cream and rules.
-     Independent columns pack their own panels — a void is structurally impossible,
-     whatever the data does to panel heights. Morning priority: plan and debts left,
-     inbox-shaped work right. #}
-  <div class="cols">
-    <div class="col">
-      {% include "_today.html" %}
-      {% include "_awaiting.html" %}
-      {% include "_goals.html" %}
-    </div>
-    <div class="col">
-      {% include "_board.html" %}
-      {% include "_review.html" %}
-      {% include "_checklist.html" %}
-      {% include "_sources.html" %}
-    </div>
+  {# Row-locked grid (owner ruling 2026-08-01): panels pair off into shared rows so
+     every seam lines up across the page — the ledger look. The height-mismatch void
+     that killed the grid in July is defused by the panels themselves now being
+     <details>: a panel that runs long can be folded to its banner. Placement is
+     row-major, so includes interleave — morning plan beside the board, debts beside
+     the review queue, goals beside the checklist; sources runs full-width below. #}
+  <div class="grid">
+    {% include "_today.html" %}
+    {% include "_board.html" %}
+    {% include "_awaiting.html" %}
+    {% include "_review.html" %}
+    {% include "_goals.html" %}
+    {% include "_checklist.html" %}
+    {% include "_sources.html" %}
   </div>
 
   <p class="note" style="padding:var(--sp-4) var(--sp-5)">
@@ -77,12 +74,43 @@
       case 'x': act('button.btn:not(.danger)'); break;
       case 'd': act('button.btn.danger'); break;
       case 's': act('button.btn:nth-of-type(2)'); break;
-      case 'r': document.getElementById('panel-review')
-                  .scrollIntoView({ behavior: 'smooth', block: 'start' }); break;
+      case 'r': {
+        const review = document.getElementById('panel-review');
+        review.open = true;
+        review.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        break;
+      }
       default: return;
     }
     event.preventDefault();
   });
+})();
+
+/* Panel folds persist. Server-rendered fragments always arrive open (the template
+   hardcodes `open` so an HTMX swap cannot silently hide fresh data behind a stale
+   attribute) — this re-applies the owner's saved fold state after load and after
+   every swap. localStorage, not the ledger: which panels are folded is device
+   posture, not owner state. */
+(function () {
+  const KEY = 'bg-folds';
+  const load = () => {
+    try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; }
+  };
+  function apply(root) {
+    const closed = load();
+    (root || document).querySelectorAll('details.panel[id]').forEach((p) => {
+      p.open = !closed[p.id];
+    });
+  }
+  document.addEventListener('toggle', (event) => {
+    const p = event.target;
+    if (!p.matches || !p.matches('details.panel[id]')) return;
+    const closed = load();
+    if (p.open) delete closed[p.id]; else closed[p.id] = 1;
+    localStorage.setItem(KEY, JSON.stringify(closed));
+  }, true);
+  document.body.addEventListener('htmx:afterSwap', () => apply());
+  apply();
 })();
 </script>
 {% endblock %}

@@ -1,6 +1,6 @@
 {% import "_macros.html" as m %}
-<section class="panel" id="panel-goals">
-  {{ m.banner(d.goals.title) }}
+<details class="panel" id="panel-goals" open>
+  {{ m.foldbanner(d.goals.title) }}
   <div class="inner">
     {% if not d.goals.meta.summary %}
       {# docs/06 §Empty states, verbatim. #}
@@ -41,4 +41,4 @@
         <a href="/goals">all goals →</a></p>
     {% endif %}
   </div>
-</section>
+</details>

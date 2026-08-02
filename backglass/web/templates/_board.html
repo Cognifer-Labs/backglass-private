@@ -1,6 +1,6 @@
 {% import "_macros.html" as m %}
-<section class="panel" id="panel-board">
-  {{ m.banner(d.board.title, d.board.rows|length ~ ' open') }}
+<details class="panel" id="panel-board" open>
+  {{ m.foldbanner(d.board.title, d.board.rows|length ~ ' open') }}
   <div class="inner">
     {# Phase 6: the one way a commitment enters by hand. Provenance is a manual
        source_item — see actions.quick_add. #}
@@ -21,37 +21,50 @@
       {# docs/06 §Empty states: declarative, never cheerful. #}
       <p class="empty">Nothing open.</p>
     {% else %}
-      {% for counterparty, cards in d.lanes.items() %}
-        <p class="lane">{{ counterparty }}</p>
-        {% for c in cards %}
-          {# docs/06: "Every commitment card is a click target in full, not just its title." #}
-          <div class="row card" tabindex="0" data-commitment="{{ c['id'] }}"
-               data-state="{{ c['state'] }}">
-            <div class="grow">
-              <p class="b1 hang">{{ m.chip(c['state']) }}<span>{{ c['what'] }}</span></p>
-              <p class="b2">
-                {{ m.due_text(c, d.today) }}
-                {%- if c['estimated_minutes'] %} · {{ c['estimated_minutes'] }}m{% endif %}
-                {%- if c['goal_title'] %} · {{ c['goal_title'] }}{% endif %}
-                · {{ m.source_link(c) }}
-              </p>
-              <div class="acts">
-                {# docs/11 §3: no confirmation on resolve. The action is reversible and the
-                   dialog costs more over a year than the occasional misclick. #}
-                <button class="btn ok" hx-post="/commitments/{{ c['id'] }}/resolve"
-                        hx-target="#panel-board" hx-swap="outerHTML">Resolve</button>
-                <button class="btn defer" hx-post="/commitments/{{ c['id'] }}/snooze/1"
-                        hx-target="#panel-board" hx-swap="outerHTML">Snooze</button>
-                {# docs/06: "No confirmation dialogs except for drop, which is destructive
-                   and rare." This is the only hx-confirm in the application. #}
-                <button class="btn danger" hx-post="/commitments/{{ c['id'] }}/drop"
-                        hx-target="#panel-board" hx-swap="outerHTML"
-                        hx-confirm="Drop “{{ c['what'] }}”? This tombstones it.">Drop</button>
-              </div>
-            </div>
+      {# Register form (owner ruling 2026-08-01): the counterparty-lane card stack
+         outgrew the panel — a lane heading per person plus a three-button row per card
+         made nine commitments taller than the rest of the page. One ledger line per
+         commitment now: counterparty inline (the Awaiting panel's grammar), two
+         direction groups instead of N lanes, and the action row surfaces only on the
+         row under the cursor or keyboard selection. The SQL sort (direction, then
+         counterparty) is unchanged, so rows keep the stable order muscle memory needs. #}
+      {% for c in d.board.rows %}
+        {% if loop.changed(c['direction']) %}
+          <p class="lane">{{ 'I owe' if c['direction'] == 'i_owe' else 'Owed to me' }}</p>
+        {% endif %}
+        {# docs/06: "Every commitment card is a click target in full, not just its title." #}
+        <div class="row card" tabindex="0" data-commitment="{{ c['id'] }}"
+             data-state="{{ c['state'] }}">
+          <p class="b1 hang">{{ m.chip(c['state']) }}<span>
+            {%- if c['counterparty'] %}<strong>{{ c['counterparty'] }}:</strong> {% endif -%}
+            {{ c['what'] }}</span></p>
+          <p class="b2">
+            {{ m.due_text(c, d.today) }}
+            {%- if c['estimated_minutes'] %} · {{ c['estimated_minutes'] }}m{% endif %}
+            {%- if c['goal_title'] %} · {{ c['goal_title'] }}{% endif %}
+            · {{ m.source_link(c) }}
+          </p>
+          <div class="acts">
+            {# docs/11 §3: no confirmation on resolve. The action is reversible and the
+               dialog costs more over a year than the occasional misclick. #}
+            <button class="btn ok" hx-post="/commitments/{{ c['id'] }}/resolve"
+                    hx-target="#panel-board" hx-swap="outerHTML">Resolve</button>
+            <button class="btn defer" hx-post="/commitments/{{ c['id'] }}/snooze/1"
+                    hx-target="#panel-board" hx-swap="outerHTML">Snooze</button>
+            {# docs/06: "No confirmation dialogs except for drop, which is destructive
+               and rare." This is the only hx-confirm in the application. #}
+            <button class="btn danger" hx-post="/commitments/{{ c['id'] }}/drop"
+                    hx-target="#panel-board" hx-swap="outerHTML"
+                    hx-confirm="Drop “{{ c['what'] }}”? This tombstones it.">Drop</button>
           </div>
-        {% endfor %}
+        </div>
       {% endfor %}
     {% endif %}
   </div>
-</section>
+</details>
+{% if awaiting_oob|default(false) %}
+  {# Out-of-band companion: a board write can also empty an Awaiting row (the
+     "Received" button lives there and posts to /resolve). HTMX applies this to
+     #panel-awaiting wherever it is on the page, so the row leaves both lists. #}
+  {% include "_awaiting.html" %}
+{% endif %}

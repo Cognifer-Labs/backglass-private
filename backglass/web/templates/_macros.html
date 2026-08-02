@@ -55,6 +55,13 @@
   <div class="banner"><span class="cond bt">{{ title }}</span>{% if right %}<span class="cond bc">{{ right }}</span>{% endif %}</div>
 {%- endmacro %}
 
+{% macro foldbanner(title, right='') -%}
+  {#- The banner as a <summary>: same black bar, plus the fold's +/− marker (CSS).
+      The count stays visible when collapsed, so a closed panel still states its
+      contents — the same rule the goals-page week fold follows. -#}
+  <summary class="banner"><span class="cond bt">{{ title }}</span>{% if right %}<span class="cond bc">{{ right }}</span>{% endif %}</summary>
+{%- endmacro %}
+
 {% macro stale_chip(level, text) -%}
   {#- G12: a day count, never a bare colour — and §8 rule 3: a colored fill carries a
       glyph as well as its label. The plain (fresh) chip has no fill, so no glyph. -#}

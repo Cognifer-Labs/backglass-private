@@ -1,6 +1,9 @@
 {% import "_macros.html" as m %}
-<section class="panel" id="panel-awaiting">
-  {{ m.banner(d.awaiting.title, d.awaiting.rows|length ~ ' open') }}
+{# Rendered out-of-band alongside the board fragment when a write could have changed
+   this panel too — an awaiting item marked Received leaves the board AND this list. #}
+<details class="panel" id="panel-awaiting" open
+         {%- if awaiting_oob|default(false) %} hx-swap-oob="outerHTML"{% endif %}>
+  {{ m.foldbanner(d.awaiting.title, d.awaiting.rows|length ~ ' open') }}
   <div class="inner">
     {% if d.awaiting.empty %}
       <p class="empty">Nothing outstanding.</p>
@@ -19,13 +22,17 @@
               {% if a['due_at'] %}{{ a['due_at']|due(d.today) }} · {% endif %}{{ m.source_link(a) }}
             </p>
             <div class="acts">
+              {# The response is the board fragment plus this panel out-of-band, so the
+                 row the owner just cleared actually leaves the list. It used to fire a
+                 'bg:refresh' event that nothing listened for, which left a dead row
+                 with a live button: the second click 422s and HTMX, having no error
+                 handler, swaps nothing — a click that silently does nothing at all. #}
               <button class="btn ok" hx-post="/commitments/{{ a['id'] }}/resolve"
-                      hx-target="#panel-board" hx-swap="outerHTML"
-                      hx-on::after-request="htmx.trigger('body','bg:refresh')">Received</button>
+                      hx-target="#panel-board" hx-swap="outerHTML">Received</button>
             </div>
           </div>
         </div>
       {% endfor %}
     {% endif %}
   </div>
-</section>
+</details>

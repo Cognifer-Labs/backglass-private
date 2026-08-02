@@ -26,7 +26,7 @@ TODAY = date(2026, 7, 30)
 @pytest.fixture
 def client(conn: sqlite3.Connection, settings: Settings) -> TestClient:
     del conn
-    return TestClient(create_app(settings))
+    return TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
 
 
 def _goal(conn: sqlite3.Connection, *, target_date: str | None = "2027-06-01") -> int:
@@ -141,9 +141,9 @@ class TestEngine:
 
 
 class TestMedicalPreset:
-    def test_v2_carries_the_amcas_totals(self) -> None:
+    def test_v3_carries_the_amcas_totals(self) -> None:
         preset = presets.load("medical")
-        assert preset.version == "2"
+        assert preset.version == "3"
         assert [t.key for t in preset.totals] == [
             "shadowing", "clinical", "volunteering", "research", "leadership",
         ]
@@ -163,12 +163,12 @@ class TestMedicalPreset:
             )
         ]
         assert kinds.count("total") == 5
-        assert kinds.count("cadence") == 2
+        assert kinds.count("cadence") == 3
         assert kinds.count("milestone") == 8
         stamp = conn.execute(
             "SELECT path_version FROM roadmap WHERE id = ?", (rid,)
         ).fetchone()["path_version"]
-        assert stamp == "2"
+        assert stamp == "3"
 
 
 class TestRoadmapPage:
@@ -194,7 +194,7 @@ class TestRoadmapPage:
         assert "nextstep" in page
         assert '<span class="nextlbl">Next</span>' in page
         assert "Shadowing hours" in page
-        assert "0/60 · 0%" in page
+        assert "0/75 · 0%" in page
 
     def test_log_writes_a_checkpoint_with_delta_and_note(
         self, client: TestClient, conn: sqlite3.Connection
@@ -205,7 +205,7 @@ class TestRoadmapPage:
             data={"amount": "3", "note": "Banner ER · Dr. Rao"},
         )
         assert response.status_code == 200
-        assert "3/60" in response.text
+        assert "3/75" in response.text
         assert "Banner ER · Dr. Rao" in response.text
         cp = conn.execute("SELECT * FROM checkpoint WHERE target_id = ?", (tid,)).fetchone()
         assert cp["delta"] == 3
@@ -250,7 +250,7 @@ class TestRoadmapPage:
         rid, tid = self._start_medical(client, conn)
         client.post(f"/roadmaps/{rid}/totals/{tid}/log", data={"amount": "3", "note": ""})
         page = client.get("/goals").text
-        assert "3/60 logged" in page
+        assert "3/75 logged" in page
 
 
 class TestGoalsPageLogging:
@@ -357,7 +357,7 @@ class TestRoadmapEditsAndUnlog:
         cid = conn.execute("SELECT id FROM checkpoint").fetchone()["id"]
         fragment = client.post(f"/roadmaps/{rid}/totals/{tid}/unlog/{cid}").text
         assert conn.execute("SELECT COUNT(*) AS n FROM checkpoint").fetchone()["n"] == 0
-        assert "0/60 · 0%" in fragment
+        assert "0/75 · 0%" in fragment
 
     def test_unlog_refuses_a_checkpoint_of_another_target(
         self, client: TestClient, conn: sqlite3.Connection

@@ -1,6 +1,6 @@
 {% import "_macros.html" as m %}
-<section class="panel" id="panel-checklist">
-  {{ m.banner(d.checklist.title, d.checklist.meta.done ~ '/' ~ d.checklist.meta.total) }}
+<details class="panel" id="panel-checklist" open>
+  {{ m.foldbanner(d.checklist.title, d.checklist.meta.done ~ '/' ~ d.checklist.meta.total) }}
   <div class="inner">
     {% if d.checklist.empty %}
       <p class="empty">No checklist items for today.</p>
@@ -20,4 +20,4 @@
       {% endfor %}
     {% endif %}
   </div>
-</section>
+</details>

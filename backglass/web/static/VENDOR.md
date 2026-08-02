@@ -12,3 +12,16 @@ third party in the request path for a page rendering the owner's commitments. do
 "no build step" that also survives the CDN going away.
 
 To upgrade: fetch the new file, record its hash here, and re-run the dashboard tests.
+
+`fonts/Mortend-Bold.woff2` — Mortend Bold display face, converted 2026-08-01 from the
+owner's `MortendBold-2Odle.ttf` (fontTools woff2 compress). Source:
+`https://www.fontspace.com/mortend-font-f61373`.
+
+    sha256  42b544d2d548fe377828c3fcd12e5dfc8812b4084e99d5877112ec6592df454f
+    bytes   10992
+    license Freeware, Non-Commercial — fine for this single-owner personal tool;
+            replace before any commercial distribution.
+
+One weight only (Bold), declared `font-weight:700` in `dashboard.css` so it slots into
+the existing display rules. It is the first entry in `--font-cond` (design/tokens.css);
+the condensed Helvetica stack remains the fallback.

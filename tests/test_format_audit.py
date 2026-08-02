@@ -18,12 +18,13 @@ from fastapi.testclient import TestClient
 
 from backglass.config import Settings
 from backglass.web.app import create_app
+from tests.conftest import panel_slice
 
 
 @pytest.fixture
 def client(conn: sqlite3.Connection, settings: Settings) -> TestClient:
     del conn  # migrated db on disk; the app opens its own connections
-    return TestClient(create_app(settings))
+    return TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
 
 
 def _seed_goal(conn: sqlite3.Connection, title: str, target_kind: str = "cadence") -> int:
@@ -136,7 +137,7 @@ class TestDashboardGoalsSummary:
         _seed_goal(conn, "Ship the fundraise")
         conn.commit()
         body = client.get("/").text
-        panel = body.split('id="panel-goals"', 1)[1].split("</section>", 1)[0]
+        panel = panel_slice(body, "panel-goals")
         assert "0/3 this week" in panel
         # No cadence pickers, no logging on the glance surface.
         assert "/wk" not in panel
@@ -218,6 +219,30 @@ class TestPeopleGrouping:
         # The owner's tag beats the heuristic in both directions.
         assert org_like({"canonical_name": "Sallie Mae", "tags": ["org"]})
         assert not org_like({"canonical_name": "ASU Housing", "tags": ["person"]})
+        # Persisted kind beats everything — a flipped row is decided.
+        assert org_like({"canonical_name": "Sallie Mae", "kind": "org", "tags": []})
+
+    def test_an_org_tag_writes_through_to_entity_kind(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """The tag is the owner's classification, not just a display hint: tagging
+        `org` flips entity.kind (the resolver matches both kinds, so nothing
+        fragments), and tagging `person` flips it back."""
+        from backglass.web import actions
+
+        conn.execute(
+            "INSERT INTO entity (user_id, kind, canonical_name)"
+            " VALUES (1, 'person', 'Sallie Mae')"
+        )
+        eid = int(conn.execute("SELECT last_insert_rowid() AS i").fetchone()["i"])
+
+        actions.person_update(conn, eid, tags="org, lender")
+        kind = conn.execute("SELECT kind FROM entity WHERE id = ?", (eid,)).fetchone()
+        assert kind["kind"] == "org"
+
+        actions.person_update(conn, eid, tags="person")
+        kind = conn.execute("SELECT kind FROM entity WHERE id = ?", (eid,)).fetchone()
+        assert kind["kind"] == "person"
 
 
 class TestMilestoneList:

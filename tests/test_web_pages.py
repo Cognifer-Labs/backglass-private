@@ -15,7 +15,7 @@ from backglass.web.app import create_app
 @pytest.fixture
 def client(conn: sqlite3.Connection, settings: Settings) -> TestClient:
     del conn  # migrated db on disk; the app opens its own connections
-    return TestClient(create_app(settings))
+    return TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
 
 
 class TestShell:
@@ -357,7 +357,7 @@ class TestRoadmapReplan:
         assert "Next: " + self._steps(conn, rid)[0]["title"] in page
         assert "0/8 steps" in page
         assert "Shadowing hours" in page
-        assert "4/60" in page
+        assert "4/75" in page
 
     def test_closed_roadmaps_sink_to_their_own_group(
         self, client: TestClient, conn: sqlite3.Connection
@@ -995,16 +995,21 @@ class TestConsistencyHeatmap:
         chk.tick(conn, weekdays_only, saturday)
 
         retired = chk.add(conn, "Old habit")
-        yesterday = today - timedelta(days=1)
-        chk.tick(conn, retired, yesterday)
+        # A day distinct from `saturday` above — plain `today - 1 day` collides
+        # with it whenever the suite runs on a Sunday (yesterday *is* the most
+        # recent Saturday then), which would assert two different labels for
+        # the same heatmap cell. The day before `saturday` is always distinct
+        # and always inside the heatmap's multi-week window.
+        other_day = saturday - timedelta(days=1)
+        chk.tick(conn, retired, other_day)
         conn.execute("UPDATE checklist_item SET active = 0 WHERE id = ?", (retired,))
         conn.commit()
 
         page = client.get("/goals").text
         # Saturday: 0 scheduled, 1 ticked → 1/1, never 1/0.
         assert f'aria-label="1/1 · {saturday.strftime("%d %b")}"' in page
-        # Yesterday: the retired item's tick is gone from the numerator.
-        assert f'aria-label="0/1 · {yesterday.strftime("%d %b")}"' in page
+        # other_day: the retired item's tick is gone from the numerator.
+        assert f'aria-label="0/1 · {other_day.strftime("%d %b")}"' in page
 
     def test_future_days_carry_no_claim(
         self, client: TestClient, conn: sqlite3.Connection

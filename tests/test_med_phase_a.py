@@ -486,7 +486,7 @@ class TestDownstream:
     def test_log_with_activity_round_trips_on_the_roadmap_page(
         self, conn: sqlite3.Connection, settings: Settings
     ) -> None:
-        client = TestClient(create_app(settings))
+        client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
         client.post("/roadmaps/start/medical", follow_redirects=True)
         rid = int(conn.execute("SELECT id FROM roadmap").fetchone()["id"])
         tid = int(
@@ -517,7 +517,7 @@ class TestDownstream:
     def test_meaningful_toggle_and_slot_count_render(
         self, conn: sqlite3.Connection, settings: Settings
     ) -> None:
-        client = TestClient(create_app(settings))
+        client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
         client.post("/roadmaps/start/medical", follow_redirects=True)
         rid = int(conn.execute("SELECT id FROM roadmap").fetchone()["id"])
         client.post(
