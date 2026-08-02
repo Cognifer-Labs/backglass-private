@@ -22,7 +22,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from backglass.config import Settings
-from backglass.connectors import credentials
+from backglass.connectors import base, credentials
 from backglass.connectors.base import Connector
 from backglass.db import now_iso, query
 from backglass.extract import commitments as tier2
@@ -179,7 +179,11 @@ def _ingest(
             if not dry_run and new_cursor:
                 credentials.save_cursor(conn, connector.name, str(new_cursor))
         except Exception as exc:  # noqa: BLE001 - rule 5: degrade, never block
-            detail = f"{type(exc).__name__}: {exc}"[:300]
+            # Redacted before it is persisted. This detail lands in credential.last_error
+            # AND in run.errors_json — a table outside `credential`, which docs/08 says
+            # tokens must never reach. Every connector had a redactor for its health()
+            # path and none of them were wired to the path that actually writes.
+            detail = base.safe_error(exc)
             report.failed_sources.append(connector.name)
             report.errors.append(f"{connector.name}: {detail}")
             if not dry_run:
@@ -409,14 +413,28 @@ def _extract_pass(
             continue
         extraction, cost = outcome
         cap.charge(float(cost))
-        applied = tier2.apply(
-            extraction,
-            source_item_id=item_id,
-            occurred_at=str(item["occurred_at"]),
-            ledger=ledger,
-            settings=settings,
-        )
-        ledger.record_extraction_version(item_id, prompt.stamp)
+        # One transaction per item, for the same reason people/merge.py takes one: the
+        # connection is autocommit, so apply()'s commitment inserts land immediately
+        # while the extraction_version stamp that marks the item done lands after. A
+        # crash in that gap (laptop sleep, OOM, a launchd restart mid-run) leaves the
+        # rows written and the item still pending, so the next sync re-extracts it —
+        # and the 0.85 dedup only catches a re-extraction the model phrases the same
+        # way. Half-applied is worse than not applied: the owner gets a duplicate
+        # commitment with no way to tell which one is real.
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            applied = tier2.apply(
+                extraction,
+                source_item_id=item_id,
+                occurred_at=str(item["occurred_at"]),
+                ledger=ledger,
+                settings=settings,
+            )
+            ledger.record_extraction_version(item_id, prompt.stamp)
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        conn.execute("COMMIT")
         report.extracted += 1
         report.review_queue += applied.review_queue
         report.date_notes.extend(applied.date_notes)
@@ -447,15 +465,29 @@ def _in_parallel[T, R](
 
     Results are yielded to the caller, which writes them on the main thread — sqlite3
     connections are not shared across threads here.
+
+    The cap check has to interleave with the *results*, not sit in the submission loop.
+    This is a generator: everything before the first `yield` runs on the caller's first
+    `next()`, so a submission-loop check would evaluate `cap.reached` against spend from
+    before this call and never against spend accrued inside it. The whole batch was
+    submitted before the caller charged a cent — a 400-item backfill could run to twice
+    the cap and only then report itself degraded, which is exactly the silent overspend
+    docs/02 §Cost control and CLAUDE.md rule 7 exist to prevent.
+
+    So work is submitted in waves of `max_workers`: each wave's results are yielded (and
+    therefore charged) before the next wave is submitted. The cost of the fix is at most
+    one wave of overshoot, which is the smallest overshoot possible without giving up
+    concurrency altogether.
     """
-    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as pool:
-        futures = []
-        for item in items:
+    width = max(1, max_workers)
+    remaining = list(items)
+    with ThreadPoolExecutor(max_workers=width) as pool:
+        while remaining:
             if stop_on_cap and cap.reached:
-                break
-            futures.append(pool.submit(work, item))
-        for future in futures:
-            yield future.result()
+                return
+            wave, remaining = remaining[:width], remaining[width:]
+            for future in [pool.submit(work, item) for item in wave]:
+                yield future.result()
 
 
 def _headers_of(item: dict[str, Any]) -> dict[str, str]:

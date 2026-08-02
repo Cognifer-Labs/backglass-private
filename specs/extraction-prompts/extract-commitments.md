@@ -1,6 +1,6 @@
 ---
 id: extract-commitments
-version: 2
+version: 3
 model: careful
 output: strict JSON, schema-validated, one retry on malformed
 ---
@@ -10,6 +10,13 @@ output: strict JSON, schema-validated, one retry on malformed
      rule and won. Resolutions now come first, with an explicit carve-out in the
      do-not-extract list. Eval finding #1 (the model dedupes thread restatements itself)
      is welcome; the code-level dedup in post-processing stays as the backstop. -->
+
+<!-- v3 (2026-08-01): the prompt's date rule stated the principle (resolve against the
+     message date) but not the conventions, so the model and extract/dates.py could
+     disagree on "Friday", "end of week", and "next week". The resolver's conventions
+     are now spelled out in the prompt — one source of truth, stated twice, identical.
+     Also: counterparty direction made explicit; the eval showed occasional swaps on
+     owed_to_me. -->
 
 # Tier 2 commitment extraction
 
@@ -29,7 +36,8 @@ The user is {{owner_name}} <{{owner_email}}>.
 
 For each commitment, return:
   direction          i_owe | owed_to_me
-  counterparty       the other party's name or email as written
+  counterparty       the other party's name or email as written — for i_owe,
+                     who the user owes; for owed_to_me, who owes the user
   what               the artifact or action, in under 12 words, concrete
   due_at             ISO 8601 date or datetime, or null if none stated
   due_is_explicit    true if a date was stated, false if you inferred it
@@ -42,6 +50,15 @@ Resolve all relative dates against the message date {{occurred_at}}, never
 against today. "By Friday" in a message sent 2026-07-10 means 2026-07-17,
 even if today is 2026-08-30. Getting this wrong produces confidently wrong
 briefs, which is the worst outcome this system has.
+
+Conventions (these match the ledger's own resolver — do not improvise):
+  - A bare weekday ("Friday", "this Friday") is the first such day strictly
+    after the message date, never the message's own day.
+  - "Next <weekday>" skips a week only when the nearer one is under a week out.
+  - "End of week" is that week's Friday; "next week" adds seven days;
+    "end of month" is the last day of the message's month.
+  - Return a date alone unless the message states a clock time. Never invent
+    times and never convert timezones — keep what was written.
 
 CONFIDENCE
   0.9+   explicit commitment, explicit date, unambiguous owner

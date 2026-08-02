@@ -15,7 +15,7 @@ from backglass.web.app import create_app
 @pytest.fixture
 def client(conn: sqlite3.Connection, settings: Settings) -> TestClient:
     del conn
-    return TestClient(create_app(settings))
+    return TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
 
 
 class TestEngine:

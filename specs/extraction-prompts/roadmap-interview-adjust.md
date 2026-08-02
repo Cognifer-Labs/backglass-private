@@ -1,9 +1,15 @@
 ---
 id: roadmap-interview-adjust
-version: 1
+version: 2
 model: careful
 output: strict JSON
 ---
+
+<!-- v2 (2026-08-01): added the Output schema section this file never had — the shape
+     lived only in roadmap/schemas.py, so a prompt edit could silently drift from what
+     validation enforces. Every field including the per-edit reason is now visible
+     where the prompt is edited. -->
+
 
 # Roadmap interview — adjustment set
 
@@ -43,3 +49,32 @@ Rules:
 - An answer you cannot map to a concrete edit produces no edit — put the reason
   in `reason`, never guess a date.
 ```
+
+## Output schema
+
+Enforced by `roadmap/schemas.py::RoadmapAdjustments`. Every edit carries a `reason` —
+it is what the confirmation screen shows the owner before anything is applied.
+
+```json
+{
+  "step_adjustments": [
+    {"step_key": "prereqs", "action": "skip", "planned_date": null,
+     "reason": "already completed the coursework"},
+    {"step_key": "mcat", "action": "redate", "planned_date": "2026-11-15",
+     "reason": "sitting already booked for November"}
+  ],
+  "added_steps": [
+    {"key": "casper", "title": "Sit Casper", "planned_date": "2027-05-20",
+     "after_step_key": "mcat", "reason": "owner named it with a date"}
+  ],
+  "cadence_adjustments": [
+    {"cadence_key": "practice_sections", "weekly_count": 5,
+     "reason": "full-time prep block"}
+  ],
+  "summary": "Skipped prerequisites, moved the MCAT to November, added Casper."
+}
+```
+
+`weekly_count` is capped at 21 by validation; `planned_date` is required whenever
+`action` is `redate`, and `added_steps` tops out at 5 — the same limits the prompt
+states, enforced rather than trusted.

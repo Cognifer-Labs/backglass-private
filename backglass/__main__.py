@@ -7,6 +7,7 @@ nothing, and it is what makes every phase after this one debuggable.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import sqlite3
 import sys
@@ -247,17 +248,58 @@ def purge_boundary(
         typer.echo(f"  {rule}: {count}")
 
 
+def _is_loopback(host: str) -> bool:
+    """Whether binding `host` keeps the dashboard on this machine.
+
+    `localhost` is accepted by name because it is what the docs and the launchd plists
+    say; everything else has to be an address that answers `is_loopback`, which covers
+    the whole of 127.0.0.0/8 and ::1 without hard-coding them. An unparseable host is
+    not loopback: a hostname that resolves off-machine is exactly the case being caught.
+    """
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 @app.command()
 def dashboard(
     host: Annotated[str, typer.Option("--host")] = "127.0.0.1",
     port: Annotated[int, typer.Option("--port")] = 8765,
+    expose_unauthenticated: Annotated[
+        bool,
+        typer.Option(
+            "--expose-unauthenticated",
+            help="Bind a non-loopback --host anyway. There is no login: anyone who can "
+            "reach this port reads and edits the ledger.",
+        ),
+    ] = False,
 ) -> None:
     """Serve the dashboard. docs/06.
 
     Binds to loopback by default. docs/08: no telemetry leaves the machine, and a page
     rendering the owner's commitments has no business being reachable from the network.
+
+    The dashboard writes as well as reads (docs/06: "if the dashboard is read-only it
+    becomes a thing you look at") and has no authentication of any kind, so `--host
+    0.0.0.0` hands the whole ledger to the coffee-shop wifi. That is a one-character
+    mistake away from the default, so it takes a second flag that says what it costs —
+    a guard against the accident, not a substitute for the auth this does not have.
     """
     from backglass.web.app import serve
+
+    if not _is_loopback(host) and not expose_unauthenticated:
+        typer.echo(
+            f"refusing to bind {host}: the dashboard has no login, so this would publish "
+            f"the ledger to everyone on the network. docs/08. Loopback (127.0.0.1) is the "
+            f"default; pass --expose-unauthenticated if you meant it.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    if not _is_loopback(host):
+        typer.echo(f"serving unauthenticated on {host} — reachable from the network", err=True)
 
     settings = get_settings()
     typer.echo(f"http://{host}:{port}  (db: {settings.db_path})")
@@ -1571,7 +1613,14 @@ def setup(
         template = env_path.with_name(".env.example")
         if not template.exists():
             template = Path(__file__).resolve().parent.parent / ".env.example"
-        changed = envfile.set_keys(env_path, updates, template=template)
+        try:
+            changed = envfile.set_keys(env_path, updates, template=template)
+        except envfile.EnvValueError as exc:
+            # Detection found a path the .env cannot represent on one line. Stop with the
+            # offending value shown rather than write a file whose extra assignment would
+            # silently override a real setting on the next load.
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
         for key in changed:
             typer.echo(f"wrote {key} to {env_path}")
         if changed:

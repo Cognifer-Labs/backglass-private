@@ -7,6 +7,7 @@ of them know about commitments, goals, or plans."
 from __future__ import annotations
 
 import hashlib
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
@@ -87,3 +88,24 @@ def content_hash(
         occurred_at.strip(),
     ]
     return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
+
+
+def safe_error(exc: Exception, *, limit: int = 300) -> str:
+    """An exception rendered for storage and display, with credentials stripped.
+
+    docs/08 §General handling: "Tokens never appear in logs, in the SQLite file outside
+    the `credential` table, or in brief output." Google's client raises exceptions whose
+    `str()` can carry the request URL, and on some transports that URL carries the access
+    token as a query parameter — so the raw text of a failure is not safe to persist.
+
+    Several connectors already had a private version of this for their `health()` path.
+    It lives here now because the path that actually persists an error is the ingest
+    loop in sync.py, which is shared: a per-connector redactor cannot protect a
+    connector that never wrote one, and a new connector should not have to remember.
+    """
+    text = f"{type(exc).__name__}: {exc}"
+    text = re.sub(r"(?i)(access_token|refresh_token|client_secret|api[_-]?key|key|token)"
+                  r"\s*[=:]\s*[^&\s,)\"']+", r"\1=[redacted]", text)
+    # Bearer headers and bare JWT-ish blobs, which carry no key= to match on.
+    text = re.sub(r"(?i)\bBearer\s+[\w\-.~+/]+=*", "Bearer [redacted]", text)
+    return text[:limit]

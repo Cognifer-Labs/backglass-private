@@ -1,9 +1,14 @@
 ---
 id: triage-batch
-version: 1
+version: 2
 model: small/fast
 output: strict JSON
 ---
+
+<!-- v2 (2026-08-01): mirrors triage.md v2 — keep-tests-outrank-drop-list precedence
+     and the confirmation-reply rule. The two prompts ask the same question and must
+     change together. -->
+
 
 # Tier 1 triage, batched
 
@@ -27,6 +32,11 @@ For each message, return keep=true only if it plausibly contains at least one of
 Return keep=false for: newsletters, marketing, receipts, shipping notices,
 automated alerts, social notifications, mailing list chatter, and pleasantries
 with no substance.
+
+The keep tests outrank the drop list: a receipt or automated alert that states
+a deadline the user must act on (payment due, document expiring, submission
+window closing) is a keep. A short reply that accepts or confirms something
+("yes, Friday works") is a decision reached — keep it.
 
 Each excerpt is truncated to 500 characters. If an excerpt is not enough to be
 confident the message contains none of the above, set uncertain=true — it will be

@@ -1,9 +1,17 @@
 ---
 id: triage
-version: 1
+version: 2
 model: small/fast
 output: strict JSON
 ---
+
+<!-- v2 (2026-08-01): two failure modes closed. (1) The keep tests and the drop list
+     could conflict — a receipt carrying a payment deadline matched both, and the model
+     picked either. Precedence is now explicit: keep tests outrank the drop list.
+     (2) Short confirmation replies ("yes, Friday works") read as pleasantries and were
+     dropped, losing the decision they carry. Any change here must be mirrored in
+     triage-batch.md — the two prompts ask the same question. -->
+
 
 # Tier 1 triage
 
@@ -28,6 +36,14 @@ Return keep=true only if the message plausibly contains at least one of:
 Return keep=false for: newsletters, marketing, receipts, shipping notices,
 automated alerts, social notifications, mailing list chatter, and pleasantries
 with no substance.
+
+The keep tests outrank the drop list: a receipt or automated alert that states
+a deadline the user must act on (payment due, document expiring, submission
+window closing) is a keep.
+
+A short reply that accepts or confirms something ("yes, Friday works",
+"approved, go ahead") is a decision reached — keep it even though it looks
+like a pleasantry.
 
 When genuinely uncertain, return keep=true. A false positive costs one extraction
 call. A false negative loses a commitment permanently, and the user will never

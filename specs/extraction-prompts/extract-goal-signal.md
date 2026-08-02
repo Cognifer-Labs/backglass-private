@@ -1,9 +1,16 @@
 ---
 id: extract-goal-signal
-version: 1
+version: 2
 model: careful
 output: strict JSON
 ---
+
+<!-- v2 (2026-08-01): delta was documented as "usually 1", which was written before
+     hour-denominated totals existed (Phase 10 medical preset: shadowing/clinical/
+     research hours). A message evidencing "four hours in the ER" must move an hour
+     target by 4, not 1 — and a stated amount is the only acceptable source for a
+     delta above 1. Units rule added. -->
+
 
 # Goal signal extraction
 
@@ -36,7 +43,11 @@ That is the common case and the correct answer most of the time.
 
 For each signal:
   target_id    which target advanced
-  delta        how many units (usually 1)
+  delta        units moved, in the target's own unit — hours for hour targets,
+               a count (usually 1) otherwise. Use only amounts the message
+               states; if work clearly happened but no amount is stated,
+               return delta 1 with confidence at or below 0.4 so it routes
+               to review instead of the ledger
   confidence   0.0 to 1.0
   evidence     the exact sentence, verbatim
 

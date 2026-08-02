@@ -23,7 +23,7 @@ TODAY = date(2026, 7, 30)
 @pytest.fixture
 def client(conn: sqlite3.Connection, settings: Settings) -> TestClient:
     del conn
-    return TestClient(create_app(settings))
+    return TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
 
 
 def test_set_enabled_upserts_and_reads_back(conn: sqlite3.Connection) -> None:

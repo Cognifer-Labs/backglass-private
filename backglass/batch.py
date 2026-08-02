@@ -259,10 +259,16 @@ def collect(
                 )
 
         def _occurred(entry: tuple[str, int, Any]) -> str:
+            # datetime() normalizes to UTC before we sort. The raw column keeps each
+            # source's own offset, so sorting it as text puts a 23:50 Phoenix message
+            # (06:50Z next day) *before* a 00:10 Kolkata one (18:40Z the day before) —
+            # and supersession depends on applying oldest-first, so the inversion
+            # leaves a resolved commitment open.
             found = conn.execute(
-                "SELECT occurred_at FROM source_item WHERE id = ?", (entry[1],)
+                "SELECT datetime(occurred_at) AS at FROM source_item WHERE id = ?",
+                (entry[1],),
             ).fetchone()
-            return str(found["occurred_at"]) if found else ""
+            return str(found["at"]) if found and found["at"] else ""
 
         for custom_id, item_id, message in sorted(succeeded, key=_occurred):
             batch_usd += pricing.cost_usd(str(row["model"]), message.usage) * DISCOUNT
@@ -298,21 +304,32 @@ def collect(
                     (batch_id, custom_id),
                 )
                 continue
-            applied = tier2.apply(
-                extraction,
-                source_item_id=item_id,
-                occurred_at=str(current["occurred_at"]),
-                ledger=ledger,
-                settings=settings,
-            )
-            ledger.record_extraction_version(item_id, str(row["prompt_stamp"]))
+            # One transaction per item, matching sync.py's extract pass: the commitment
+            # rows, the extraction stamp and the item's 'succeeded' mark are one fact.
+            # Autocommit would let a crash between them leave rows written against an
+            # item still marked in-flight, and the next collect would apply the same
+            # result a second time.
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                applied = tier2.apply(
+                    extraction,
+                    source_item_id=item_id,
+                    occurred_at=str(current["occurred_at"]),
+                    ledger=ledger,
+                    settings=settings,
+                )
+                ledger.record_extraction_version(item_id, str(row["prompt_stamp"]))
+                conn.execute(
+                    "UPDATE model_batch_item SET status = 'succeeded'"
+                    " WHERE batch_id = ? AND custom_id = ?",
+                    (batch_id, custom_id),
+                )
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+            conn.execute("COMMIT")
             extracted += 1
             report.review_queue += applied.review_queue
-            conn.execute(
-                "UPDATE model_batch_item SET status = 'succeeded'"
-                " WHERE batch_id = ? AND custom_id = ?",
-                (batch_id, custom_id),
-            )
 
         cap.charge(batch_usd)
         spend_usd += batch_usd

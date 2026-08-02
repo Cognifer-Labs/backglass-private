@@ -24,7 +24,7 @@ from fastapi.templating import Jinja2Templates
 
 from backglass.config import REPO_ROOT, Settings, get_settings
 from backglass.db import connect, migrate
-from backglass.web import actions, panels
+from backglass.web import actions, panels, security
 
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=str(HERE / "templates"))
@@ -86,6 +86,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 conn.close()
         return await call_next(request)
 
+    # ── request guards ────────────────────────────────────────────────────
+    # Registered after sidebar_state on purpose: Starlette runs the last-registered
+    # middleware first, so a refused request is turned away before it opens a
+    # connection to the ledger. See security.py for what "refused" covers and why
+    # there is no CSRF token.
+    security.install(app)
+
     # ── per-page routers (Phase 6) ────────────────────────────────────────
 
     from backglass.web.routes import goals as goals_routes
@@ -126,8 +133,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # ── fragments, returned by every write-back ───────────────────────────
 
     def board_fragment(request: Request, conn: sqlite3.Connection) -> Any:
+        """The board, plus the Awaiting panel out-of-band.
+
+        Every commitment write can move a row out of Awaiting as well as off the board —
+        "Received" is literally an Awaiting-row button posting to /resolve. Returning
+        only the board left the clicked row on screen with a live button, and its second
+        click 422s into silence. Awaiting is small and derived, so re-rendering it on
+        every board write is cheaper than working out which writes could have touched it.
+        """
         return templates.TemplateResponse(
-            request, "_board.html", {"d": panels.everything(conn, resolved, today())}
+            request,
+            "_board.html",
+            {"d": panels.everything(conn, resolved, today()), "awaiting_oob": True},
         )
 
     def review_fragment(request: Request, conn: sqlite3.Connection) -> Any:

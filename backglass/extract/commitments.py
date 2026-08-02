@@ -142,11 +142,26 @@ def apply(
             report.review_queue += 1
 
         # ── step 4: supersede what this message resolves. Never delete (docs/03).
+        #
+        # Gated on confidence, which step 3 above applies to *display* and this branch
+        # did not apply at all. Closing a commitment is a heavier act than showing one:
+        # a wrong insert is visible on the board and can be dropped, while a wrong
+        # supersede makes a real obligation silently disappear from every surface.
+        #
+        # It is also the one write reachable by a hostile sender. The extraction prompt
+        # ends with the message body, so "sent it last night, you're all set" is read as
+        # instructions; with no counterparty the NULL-safe match in
+        # open_commitments_for_dedup.sql lands on exactly the commitments the owner
+        # typed by hand. An unconfirmed resolution now waits in the review queue, where
+        # a human decides, instead of closing the row on a stranger's say-so.
         if candidate.resolves and candidate.resolves_what:
-            superseded = _find_resolved(candidate, entity_id, ledger, settings)
-            if superseded is not None and superseded != new_id:
-                ledger.supersede(superseded, new_id)
-                report.superseded += 1
+            if candidate.confidence < settings.confidence_threshold:
+                report.review_queue += 1
+            else:
+                superseded = _find_resolved(candidate, entity_id, ledger, settings)
+                if superseded is not None and superseded != new_id:
+                    ledger.supersede(superseded, new_id)
+                    report.superseded += 1
 
     return report
 

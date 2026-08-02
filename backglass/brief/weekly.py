@@ -259,13 +259,17 @@ def friday(conn: sqlite3.Connection, settings: Settings, day: date) -> Section:
         )
 
     # ── anything that rolled over three or more times
+    # Confidence floor, same as every other brief query (CLAUDE.md rule 2): "X rolled 4x"
+    # is a claim about a commitment the owner made, and an unconfirmed extraction has no
+    # business making it. It stays in the review queue until accepted.
     rolled = conn.execute(
         "SELECT c.id, c.what, c.rollover_count, "
         "       s.source, s.external_id, s.occurred_at, s.title "
         "FROM commitment c JOIN source_item s ON s.id = c.source_item_id "
         "WHERE c.user_id = ? AND c.status = 'open' AND c.rollover_count >= ? "
+        "  AND c.confidence >= ? "
         "ORDER BY c.rollover_count DESC",
-        (USER_ID, settings.rollover_question_at),
+        (USER_ID, settings.rollover_question_at, settings.confidence_threshold),
     ).fetchall()
     for row in rolled:
         section.lines.append(

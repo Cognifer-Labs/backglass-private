@@ -119,13 +119,19 @@ def flagged_for_question(conn: sqlite3.Connection, settings: Settings) -> list[d
     the only free column on `commitment`, and adding a column for a boolean the brief
     reads once a quarter would be the wrong trade.
     """
+    # The confidence floor is CLAUDE.md rule 2 and it applies here too: this row is
+    # rendered into the brief as a commitment the owner is asked to drop or do. A guess
+    # that rolled over three times is still a guess, and asking about it states it as
+    # fact — the review queue is where an unconfirmed extraction belongs until the owner
+    # accepts it. Every other brief query carries this predicate; this one did not.
     return conn.execute(
         "SELECT c.id, c.what, c.rollover_count, c.due_at, "
         "       s.source, s.external_id, s.occurred_at, s.title "
         "FROM commitment c JOIN source_item s ON s.id = c.source_item_id "
         "WHERE c.user_id = ? AND c.status = 'open' AND c.rollover_count >= ? "
+        "  AND c.confidence >= ? "
         "  AND (c.resolution_note IS NULL OR c.resolution_note NOT LIKE 'asked:rollover%')",
-        (USER_ID, settings.rollover_question_at),
+        (USER_ID, settings.rollover_question_at, settings.confidence_threshold),
     ).fetchall()
 
 
