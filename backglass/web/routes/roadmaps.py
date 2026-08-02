@@ -18,7 +18,7 @@ from fastapi.templating import Jinja2Templates
 
 from backglass.config import Settings
 from backglass.goals import activities, checkpoints, health
-from backglass.goals.targets import week_start_of
+from backglass.goals.targets import count_between, week_start_of
 from backglass.ledger import USER_ID
 from backglass.plan import timezones
 from backglass.roadmap import adjust, instantiate, presets
@@ -156,20 +156,17 @@ def progress_context(
     # Cadences render read-only here with a live count: the one place to tick a
     # weekly cadence is /goals, so every countable keeps a single write surface.
     start = week_start_of(day, settings.week_start)
+    tz = timezones.active_tz(settings, day)
     detail["cadences"] = [
-        {**dict(c), "done_this_week": _done_between(conn, int(c["target_id"]), start)}
+        {
+            **dict(c),
+            "done_this_week": count_between(
+                conn, int(c["target_id"]), start, start + timedelta(days=7), tz
+            ),
+        }
         for c in detail["cadences"]
     ]
     return detail
-
-
-def _done_between(conn: sqlite3.Connection, target_id: int, start: date) -> int:
-    row = conn.execute(
-        "SELECT COALESCE(SUM(delta), 0) AS n FROM checkpoint WHERE target_id = ? "
-        "AND date(occurred_at) >= date(?) AND date(occurred_at) < date(?)",
-        (target_id, start.isoformat(), (start + timedelta(days=7)).isoformat()),
-    ).fetchone()
-    return int(row["n"] or 0)
 
 
 def build_router(

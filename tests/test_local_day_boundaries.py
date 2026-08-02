@@ -200,3 +200,75 @@ def test_a_dst_day_is_still_one_local_day() -> None:
 def test_local_date_of_reads_an_instant_back_into_the_owners_day() -> None:
     assert timezones.local_date_of("2026-08-02 04:00:00", "America/Phoenix") == date(2026, 8, 1)
     assert timezones.local_date_of("2026-07-31T20:00:00", "Asia/Kolkata") == date(2026, 8, 1)
+
+
+def test_the_roadmap_page_counts_the_same_week_the_goals_page_does(
+    conn: sqlite3.Connection, settings: Settings
+) -> None:
+    """The last surviving `date(occurred_at)` bucket, found re-auditing after the fix.
+
+    `targets.count_between` was corrected for the goals page, but the roadmap page kept
+    a private copy of the same query that still compared rendered dates — so a 22:00
+    Phoenix session showed 1/2 on /goals and 0/2 on the roadmap for the same week. Two
+    surfaces disagreeing about the same number is worse than both being wrong: it is the
+    thing that makes an owner stop believing either. There is now one implementation.
+    """
+    from backglass.web.routes.roadmaps import progress_context
+
+    target_id = _goal_with_cadence(conn, weekly=2)
+    # Sunday 22:00 Phoenix is Monday 05:00 UTC — the last hours of the local week,
+    # rendered by date() as the first day of the next one. Times inside the broken
+    # window, not merely near it: this test fails against the old private copy.
+    checkpoints.record(
+        conn, target_id, source="manual", occurred_at="2026-08-02T22:00:00-07:00"
+    )
+    conn.commit()
+    goal_id = int(
+        conn.execute("SELECT goal_id AS id FROM target WHERE id = ?", (target_id,))
+        .fetchone()["id"]
+    )
+    cadences = conn.execute(
+        "SELECT id AS target_id, title, weekly_count FROM target WHERE id = ?",
+        (target_id,),
+    ).fetchall()
+    detail = progress_context(
+        conn,
+        settings,
+        PHOENIX_DAY,
+        {"r": {"goal_id": goal_id}, "steps": [], "cadences": cadences},
+    )
+
+    on_goals_page = {t.target_id: t for t in targets.progress(conn, settings, PHOENIX_DAY)}
+    assert detail["cadences"][0]["done_this_week"] == 1
+    assert detail["cadences"][0]["done_this_week"] == on_goals_page[target_id].done_this_week
+
+
+def test_the_roadmap_cadence_count_follows_the_owner_to_kolkata(
+    conn: sqlite3.Connection, kolkata: Settings
+) -> None:
+    """+05:30's failure is the mirror image: 04:00 local is the *previous* UTC day."""
+    from backglass.web.routes.roadmaps import progress_context
+
+    target_id = _goal_with_cadence(conn, weekly=2)
+    # Monday 04:00 Kolkata is Sunday 22:30 UTC — the first hours of the local week,
+    # rendered by date() as the last day of the week before, so the old copy scored it
+    # zero on the very morning the work was done.
+    checkpoints.record(
+        conn, target_id, source="manual", occurred_at="2026-07-27T04:00:00+05:30"
+    )
+    conn.commit()
+    goal_id = int(
+        conn.execute("SELECT goal_id AS id FROM target WHERE id = ?", (target_id,))
+        .fetchone()["id"]
+    )
+    cadences = conn.execute(
+        "SELECT id AS target_id, title, weekly_count FROM target WHERE id = ?",
+        (target_id,),
+    ).fetchall()
+    detail = progress_context(
+        conn,
+        kolkata,
+        date(2026, 7, 27),
+        {"r": {"goal_id": goal_id}, "steps": [], "cadences": cadences},
+    )
+    assert detail["cadences"][0]["done_this_week"] == 1

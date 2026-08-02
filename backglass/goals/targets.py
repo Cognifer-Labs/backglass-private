@@ -86,7 +86,7 @@ def progress(conn: sqlite3.Connection, settings: Settings, day: date) -> list[Ta
 
     out: list[TargetProgress] = []
     for row in rows:
-        done = _count_between(conn, int(row["id"]), start, start + timedelta(days=7), tz)
+        done = count_between(conn, int(row["id"]), start, start + timedelta(days=7), tz)
         out.append(
             TargetProgress(
                 target_id=int(row["id"]),
@@ -115,7 +115,7 @@ def _lifetime_done(conn: sqlite3.Connection, target_id: int) -> int:
     return int(row["n"] or 0)
 
 
-def _count_between(
+def count_between(
     conn: sqlite3.Connection, target_id: int, start: date, end: date, tz: str
 ) -> int:
     """Checkpoints inside a local week, counted by instant.
@@ -150,7 +150,7 @@ def _consecutive_misses(
     tz = timezones.active_tz(settings, this_week)
     for back in range(1, settings.unrealistic_after_weeks + 1):
         start = this_week - timedelta(days=7 * back)
-        if _count_between(conn, int(row["id"]), start, start + timedelta(days=7), tz) >= weekly:
+        if count_between(conn, int(row["id"]), start, start + timedelta(days=7), tz) >= weekly:
             break
         misses += 1
     return misses

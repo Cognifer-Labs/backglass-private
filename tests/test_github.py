@@ -303,7 +303,8 @@ def test_the_same_issue_in_both_feeds_yields_once_and_keeps_the_search_version(
 
     assert len(items) == 1
     assert items[0].external_id == "alexrivera/backglass#41"
-    assert "Assigned to: alexrivera" in str(items[0].body_text), "the richer search row survived"
+    body = str(items[0].body_text)
+    assert "Assigned to: alexrivera" in body, "the richer search row survived"
     assert "Reason:" not in str(items[0].body_text)
 
 
