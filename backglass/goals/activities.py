@@ -156,6 +156,21 @@ def end(conn: sqlite3.Connection, activity_id: int, ended_on: str) -> None:
     )
 
 
+def _norm(title: str) -> str:
+    """The one way this module decides two titles are the same name.
+
+    `casefold`, not `lower`, and in Python rather than SQL. SQLite's built-in `LOWER()`
+    folds ASCII only, so `LOWER('CAFÉ LATINO') != LOWER('Café Latino')` — while
+    `find_by_name`, which later has to answer *which* activity a name means, compares
+    with Python's full-Unicode fold and calls them identical. The guard and the resolver
+    disagreeing is worse than either rule alone: "Café Latino" and "CAFÉ LATINO" both got
+    created, and from then on the name matched two rows, so it could never be logged
+    against and its hours split across two AMCAS entries. Accented characters are
+    ordinary in real activity names, so this was a live path, not a curiosity.
+    """
+    return title.strip().casefold()
+
+
 def _titled(conn: sqlite3.Connection, title: str) -> sqlite3.Row | None:
     """An active activity with exactly this title, case-insensitively, or None.
 
@@ -164,11 +179,13 @@ def _titled(conn: sqlite3.Connection, title: str) -> sqlite3.Row | None:
     named 'Chen' already exists" when none did. A duplicate guard has to answer "is this
     the same activity", and only an exact title does.
     """
-    return conn.execute(  # type: ignore[no-any-return]
-        "SELECT * FROM activity WHERE user_id = ? AND active = 1 "
-        "AND LOWER(title) = LOWER(?)",
-        (USER_ID, title.strip()),
-    ).fetchone()
+    wanted = _norm(title)
+    for row in conn.execute(
+        "SELECT * FROM activity WHERE user_id = ? AND active = 1", (USER_ID,)
+    ):
+        if _norm(str(row["title"])) == wanted:
+            return row  # type: ignore[no-any-return]
+    return None
 
 
 def _get(conn: sqlite3.Connection, activity_id: int) -> sqlite3.Row:
@@ -213,17 +230,17 @@ def find_by_name(conn: sqlite3.Connection, name: str) -> list[dict[str, Any]]:
     returned so the caller can ask which one instead of guessing — filing four years of
     research hours under the wrong activity is not a recoverable mistake.
     """
-    needle = name.strip().lower()
+    needle = _norm(name)
     if not needle:
         return []
-    rows = [a for a in list_with_hours(conn)]
-    exact = [a for a in rows if str(a["title"]).lower() == needle]
+    rows = list_with_hours(conn)
+    exact = [a for a in rows if _norm(str(a["title"])) == needle]
     if exact:
         return exact
     return [
         a
         for a in rows
-        if needle in str(a["title"]).lower() or needle in str(a["org"] or "").lower()
+        if needle in _norm(str(a["title"])) or needle in _norm(str(a["org"] or ""))
     ]
 
 

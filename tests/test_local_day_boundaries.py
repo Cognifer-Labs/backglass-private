@@ -290,3 +290,39 @@ def test_a_backdated_stamp_lands_on_the_day_it_names_in_both_zones(
     # The point of noon: converted to UTC, both are still the 14th.
     for stamp in (phoenix, india):
         assert timezones.local_date_of(stamp, "UTC") == day
+
+
+def test_today_is_the_date_in_the_zone_the_owner_is_actually_in() -> None:
+    """`active_tz` needs a date to pick the zone and the date depends on the zone.
+
+    Resolving that circularity by starting from `default_tz` gets the *arrival* day of a
+    stay wrong: the Phoenix-derived date still falls before the range begins, so the
+    range does not apply, and for the 12.5 hours between Kolkata midnight and 12:30 the
+    owner's genuine today reads as tomorrow. `today_for` iterates to a fixed point.
+
+    Settings is built rather than `model_copy`-ed because `tz_ranges` is normalized by a
+    field validator that model_copy skips — the 2026-07-30 lesson, one layer down.
+    """
+    from datetime import UTC as _utc
+    from datetime import datetime as _dt
+
+    def _with(ranges: list[str]) -> Settings:
+        return Settings(
+            _env_file=None,  # type: ignore[call-arg]
+            default_tz="America/Phoenix",
+            alt_tz="Asia/Kolkata",
+            tz_ranges=ranges,
+        )
+
+    # 23:30 UTC on Aug 2 = 16:30 Phoenix (still the 2nd) = 05:00 Kolkata on the 3rd.
+    moment = _dt(2026, 8, 2, 23, 30, tzinfo=_utc)
+
+    assert timezones.today_for(_with([]), moment) == date(2026, 8, 2)
+    # Mid-stay: the naive derivation already handled this one.
+    assert timezones.today_for(
+        _with(["2026-07-01..2026-08-20:Asia/Kolkata"]), moment
+    ) == date(2026, 8, 3)
+    # The arrival day itself — the case that was wrong.
+    assert timezones.today_for(
+        _with(["2026-08-03..2026-08-20:Asia/Kolkata"]), moment
+    ) == date(2026, 8, 3)

@@ -515,11 +515,19 @@ def build_router(
         ).fetchone()
         if row is None:
             raise HTTPException(status_code=404)
-        checkpoints.record(
-            conn, target_id, source="manual",
-            occurred_at=timezones.local_now_iso(settings, today()),
-            note=note.strip() or None, delta=amount,
-        )
+        # The funnel's own refusals are owner-readable ("record the sessions
+        # separately"); without this they surfaced as a bare 500 and the generic strip
+        # in base.html said only "The server refused that". The roadmap page's sibling
+        # endpoint has always caught this — the two log forms should not disagree about
+        # what a rejected amount looks like.
+        try:
+            checkpoints.record(
+                conn, target_id, source="manual",
+                occurred_at=timezones.local_now_iso(settings, today()),
+                note=note.strip() or None, delta=amount,
+            )
+        except checkpoints.CheckpointError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
         return cards_fragment(request, conn)
 
     @router.post("/goals/targets/{target_id}/tick", response_class=HTMLResponse)

@@ -960,10 +960,7 @@ def log(
     # The owner's "today" is the day in whichever zone they are actually in; `_today`
     # reads `default_tz` only, which refuses a genuine Kolkata today for 12.5 hours of
     # every day while they are there.
-    today = timezones.local_date_of(
-        timezones.local_now_iso(settings, _today(settings)),
-        timezones.active_tz(settings, _today(settings)),
-    )
+    today = timezones.today_for(settings)
     if on:
         try:
             day = _date.fromisoformat(on)

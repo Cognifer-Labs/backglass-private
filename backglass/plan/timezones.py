@@ -73,6 +73,32 @@ def local_now_iso(settings: Settings, day: date | None = None) -> str:
     return datetime.now(ZoneInfo(zone)).replace(microsecond=0).isoformat()
 
 
+def today_for(settings: Settings, now: datetime | None = None) -> date:
+    """The owner's local date, in the zone they are actually in.
+
+    `active_tz` needs a date to pick the zone, and the date depends on the zone — so the
+    obvious `active_tz(settings, today_in(default_tz))` is circular and gets the arrival
+    day of a stay wrong: the `default_tz` date still falls before the range starts, so
+    the range does not apply, and for the 12.5 hours between Kolkata midnight and 12:30
+    the owner's genuine today reads as tomorrow.
+
+    Iterating from the `default_tz` answer does not escape it — on the arrival day the
+    Phoenix date says the range has not started, which keeps the zone Phoenix, which
+    keeps the date. So instead every zone the owner could be in is tried, and the answer
+    is the one that agrees with itself: the date it produces must be a date on which
+    `active_tz` picks that same zone. A stay's own zone wins over the default, which is
+    what makes the arrival day come out right.
+    """
+    moment = now or datetime.now(UTC)
+    candidates = [stay.zone for stay in parse_ranges(settings.tz_ranges)]
+    candidates.append(settings.default_tz)
+    for zone in candidates:
+        day = moment.astimezone(ZoneInfo(zone)).date()
+        if active_tz(settings, day).lower() == zone.lower():
+            return day
+    return moment.astimezone(ZoneInfo(settings.default_tz)).date()
+
+
 def local_noon_iso(settings: Settings, day: date) -> str:
     """Local noon on `day`, with that day's active offset.
 

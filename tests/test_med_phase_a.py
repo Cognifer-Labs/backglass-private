@@ -1113,3 +1113,107 @@ class TestGuardsLiveAtTheFunnel:
             conn.commit()
             found = activities.total_target_for(conn, "volunteering")
             assert found is not None and found["id"] == target_id, title
+
+
+class TestTheDashboardDoorIsGuarded:
+    """The routes, not the functions. The claim that both doors are covered rested on a
+    grep for INSERT sites; these exercise the doors themselves."""
+
+    @pytest.fixture
+    def web(self, tmp_path):
+        from fastapi.testclient import TestClient
+
+        from backglass.config import Settings
+        from backglass.db import connect, migrate
+        from backglass.web.app import create_app
+
+        db = tmp_path / "b.db"
+        conn = connect(db)
+        migrate(conn)
+        goal_id, _ = _seed_goal_with_target(conn)
+        target_id = instantiate.add_total(conn, goal_id, "Research hours", 200)
+        conn.execute(
+            "INSERT INTO roadmap (user_id, path_id, path_version, title, goal_id, status,"
+            " created_at) VALUES (1, 'medical', '2', 'R', ?, 'active',"
+            " '2026-07-01T00:00:00Z')",
+            (goal_id,),
+        )
+        roadmap_id = int(conn.execute("SELECT last_insert_rowid() AS i").fetchone()["i"])
+        conn.commit()
+        conn.close()
+        client = TestClient(
+            create_app(Settings(db_path=db)),
+            base_url="http://127.0.0.1:8765",
+            raise_server_exceptions=False,
+        )
+        return client, roadmap_id, target_id, db
+
+    def _activities(self, db):
+        from backglass.db import connect
+
+        conn = connect(db)
+        rows = [str(r["title"]) for r in activities.list_with_hours(conn)]
+        conn.close()
+        return rows
+
+    def test_the_roadmap_log_form_cannot_overflow_the_totals(self, web) -> None:
+        client, roadmap_id, target_id, db = web
+        response = client.post(
+            f"/roadmaps/{roadmap_id}/totals/{target_id}/log",
+            data={"amount": str(2**63 - 1), "note": "", "activity_id": "0"},
+        )
+        assert response.status_code == 422
+        assert client.get(f"/roadmaps/{roadmap_id}").status_code == 200
+        assert client.get("/").status_code == 200
+
+    def test_the_goals_log_form_refuses_readably_rather_than_500ing(self, web) -> None:
+        # Its sibling on the roadmap page always caught CheckpointError; this one did
+        # not, so the owner saw "The server refused that (500)" instead of the reason.
+        client, _roadmap_id, target_id, _db = web
+        response = client.post(
+            f"/goals/targets/{target_id}/log", data={"amount": "50000", "note": ""}
+        )
+        assert response.status_code == 422
+        assert "separately" in response.text
+
+    def test_the_dashboard_add_form_refuses_a_duplicate_activity(self, web) -> None:
+        client, roadmap_id, _target_id, db = web
+        form = {"title": "Chen Lab", "org": "", "role": "", "category": "research"}
+        assert client.post(f"/roadmaps/{roadmap_id}/activities", data=form).status_code == 200
+        assert client.post(f"/roadmaps/{roadmap_id}/activities", data=form).status_code == 422
+        assert self._activities(db) == ["Chen Lab"]
+
+    def test_an_accented_title_cannot_be_duplicated_by_changing_its_case(
+        self, web
+    ) -> None:
+        """SQLite's LOWER() folds ASCII only, so the guard called these distinct while
+        find_by_name — which decides *which* activity a name means — called them the
+        same. Both rows got created, the name then matched two of them, and it could
+        never be logged against again."""
+        client, roadmap_id, _target_id, db = web
+        base = {"org": "", "role": "", "category": "volunteering"}
+        first = client.post(
+            f"/roadmaps/{roadmap_id}/activities", data={**base, "title": "Café Latino"}
+        )
+        second = client.post(
+            f"/roadmaps/{roadmap_id}/activities", data={**base, "title": "CAFÉ LATINO"}
+        )
+
+        assert first.status_code == 200
+        assert second.status_code == 422
+        assert self._activities(db) == ["Café Latino"]
+
+    def test_the_name_stays_loggable_afterwards(self, web) -> None:
+        # The harm was never the extra row itself — it was that the name became
+        # ambiguous and therefore permanently unloggable, with no rename or delete.
+        from backglass.db import connect
+
+        client, roadmap_id, _target_id, db = web
+        base = {"org": "", "role": "", "category": "volunteering"}
+        client.post(f"/roadmaps/{roadmap_id}/activities", data={**base, "title": "Café Latino"})
+        client.post(f"/roadmaps/{roadmap_id}/activities", data={**base, "title": "CAFÉ LATINO"})
+
+        conn = connect(db)
+        assert len(activities.find_by_name(conn, "Café Latino")) == 1
+        assert len(activities.find_by_name(conn, "CAFÉ LATINO")) == 1
+        conn.close()
