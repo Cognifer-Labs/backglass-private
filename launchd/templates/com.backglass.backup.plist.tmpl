@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.backglass.backup</string>
+
+  <!-- Absolute paths: launchd has no shell and no useful PATH. -->
+  <key>WorkingDirectory</key><string>{{REPO_DIR}}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{UV_BIN}}</string>
+    <string>run</string>
+    <string>backglass</string>
+    <string>backup</string>
+  </array>
+
+  <!-- 02:00 local: after the day's writes, before the 05:30/05:45/06:00 morning run,
+       so the snapshot the owner wakes up to is of a settled database. -->
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>0</integer></dict>
+
+  <!-- docs/02 §Failure policy: the process exits non-zero at the end so a scheduled run
+       reports failure. These logs are where that lands. -->
+  <key>StandardOutPath</key><string>{{REPO_DIR}}/data/backup.log</string>
+  <key>StandardErrorPath</key><string>{{REPO_DIR}}/data/backup.err</string>
+  <key>RunAtLoad</key><false/>
+</dict>
+</plist>
