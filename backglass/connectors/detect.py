@@ -236,8 +236,9 @@ def _credentialed(settings: Settings, authed: set[str]) -> list[Detection]:
                 "google",
                 NEEDS_SETUP,
                 hint=(
-                    "set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (docs/13 step 3), "
-                    "then `backglass auth <label>` per account"
+                    "set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET (docs/07 "
+                    "§Setting up Gmail/Calendar/Drive OAuth), then "
+                    "`backglass auth <label>` per account"
                 ),
             )
         )
