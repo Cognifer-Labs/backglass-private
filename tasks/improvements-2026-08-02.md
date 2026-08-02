@@ -126,6 +126,14 @@ anything else touches `__main__.py`/`planner.py`.
 
 ## Status — end of the 2026-08-02 session
 
+**Verification took four rounds.** Each fresh-context pass refuted the previous claim
+and found real defects (7, 8, 7, then the fourth). Two were live on the machine; three
+were vacuous tests that passed against the bug they named; and three HIGHs shared one
+root cause — a guard written at the CLI call site while the dashboard's own write path
+walked past it. All are recorded in `tasks/lessons.md`. The lesson worth carrying: on
+this codebase, "tests pass" was wrong four times in a row, and only adversarial
+re-verification caught it.
+
 **Done and verified (Tier 1/2, plus a Tier 3 head start).** All eight launchd jobs are
 installed and loaded, including a new daily `com.backglass.backup`. `backglass backup`
 / `restore` exist with rotation, integrity and ledger-shape checks. `backglass/heartbeat.py`
