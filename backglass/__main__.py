@@ -1763,11 +1763,49 @@ def doctor() -> None:
     done = subprocess.run(["launchctl", "list"], capture_output=True, text=True)
     missing = missing_launchd_jobs(done.stdout)
     check("launchd jobs loaded", not missing,
-          f"missing {', '.join(missing)} — install per launchd/README.md; "
+          f"missing {', '.join(missing)} — run `backglass schedule install`; "
           "without them nothing runs at 05:45/06:00")
 
     typer.echo("all clear" if not failures else f"{failures} check(s) failing")
     raise typer.Exit(code=1 if failures else 0)
+
+
+schedule_app = typer.Typer(
+    help="Render and install the launchd jobs. docs/10 §Scheduling."
+)
+app.add_typer(schedule_app, name="schedule")
+
+
+@schedule_app.command("install")
+def schedule_install(
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Render the plists and print them; write nothing."),
+    ] = False,
+) -> None:
+    """Render launchd/templates/*.plist.tmpl for this machine and load them.
+
+    Writes to ~/Library/LaunchAgents and runs `launchctl load` on each. Safe to run
+    again after moving the repo or reinstalling uv — it just re-renders and reloads.
+    """
+    from backglass import schedule as schedule_mod
+
+    try:
+        rendered = schedule_mod.install(dry_run=dry_run)
+    except schedule_mod.ScheduleError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    if dry_run:
+        for filename, text in rendered.items():
+            typer.echo(f"── {filename} " + "─" * max(0, 60 - len(filename)))
+            typer.echo(text)
+        return
+
+    for filename in rendered:
+        typer.echo(f"installed {filename}")
+    typer.echo(f"wrote {len(rendered)} job(s) to {schedule_mod.LAUNCH_AGENTS_DIR}")
+    typer.echo("verify with `backglass doctor` or `launchctl list | grep backglass`")
 
 
 memory_app = typer.Typer(

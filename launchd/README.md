@@ -14,7 +14,18 @@ rather than code.
 
 The plists live as templates under `launchd/templates/*.plist.tmpl` — they are not
 directly installable files, because the absolute repo path and `uv` binary path are
-different on every machine. Render and install them manually:
+different on every machine.
+
+    backglass schedule install
+
+Renders every template for this machine (repo path via the same resolution
+`backglass/config.py` uses, `uv` via `shutil.which`), writes the result to
+`~/Library/LaunchAgents/`, and runs `launchctl load` on each. Use
+`backglass schedule install --dry-run` to see the rendered plists without writing or
+loading anything — useful after moving the repo or reinstalling `uv`, before trusting
+the real run.
+
+**Manual fallback**, if you'd rather not use the CLI or need to tweak a job by hand:
 
     cp launchd/templates/*.plist.tmpl ~/Library/LaunchAgents/
     # then replace {{REPO_DIR}}, {{UV_BIN}}, {{HOME}} in each with real absolute paths,
