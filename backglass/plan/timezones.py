@@ -259,6 +259,20 @@ def active_tz(settings: Settings, day: date) -> str:
     for stay in stays_of(settings):
         if stay.covers(day):
             zone = stay.zone
+    # Never hand back a name that cannot be turned into a zone. Everything downstream —
+    # utc_bounds, day_bounds, local_now_iso, the working window — calls ZoneInfo on this
+    # string, so a typo in the stay that is currently in effect otherwise raises from
+    # whichever of them the caller happened to reach: the dashboard sidebar died in
+    # health.risk -> day_bounds. Degrading here keeps a bad TZ_RANGES line costing the
+    # *ranges* rather than the application, and `zone_problems` is what names it.
+    try:
+        _zone(zone)
+    except (ZoneInfoNotFoundError, ValueError):
+        try:
+            _zone(settings.default_tz)
+        except (ZoneInfoNotFoundError, ValueError):
+            return "UTC"
+        return settings.default_tz
     return zone
 
 

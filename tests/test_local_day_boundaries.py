@@ -467,3 +467,57 @@ def test_a_stale_timezone_typo_cannot_break_logging(settings: Settings) -> None:
         tz_ranges=["2026-01-01..2026-01-10:Asia/Kolkatta"],
     )
     assert timezones.today_for(typo, _dt(2026, 8, 4, 19, 0, tzinfo=_utc)) == date(2026, 8, 4)
+
+
+#: Zone names that reach ZoneInfo but cannot become one. `Asia/` raises ValueError,
+#: the others ZoneInfoNotFoundError — both must degrade the same way.
+BAD_ZONES = ["Asia/Kolkatta", "Asia/", "Nowhere/Atall"]
+
+
+@pytest.mark.parametrize("bad", BAD_ZONES)
+def test_active_tz_never_returns_a_name_that_is_not_a_zone(bad: str) -> None:
+    """Everything downstream calls ZoneInfo on whatever this returns.
+
+    Skipping bad zones inside `today_for` only protected `today_for`: `active_tz` still
+    handed the broken name to `utc_bounds`, `day_bounds`, `local_now_iso` and the
+    working window, so a typo in the stay currently in effect raised from whichever of
+    them the caller reached first — the dashboard sidebar died in health.risk.
+    """
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        default_tz="America/Phoenix",
+        tz_ranges=[f"2026-08-01..2026-08-31:{bad}"],
+    )
+    day = date(2026, 8, 15)  # inside the stay
+
+    zone = timezones.active_tz(settings, day)
+
+    assert zone == "America/Phoenix"
+    ZoneInfo(zone)  # constructible, which is the whole contract
+    # And every reader that builds on it survives.
+    timezones.day_bounds(day, zone)
+    timezones.utc_bounds(day, date(2026, 8, 16), zone)
+    assert timezones.local_now_iso(settings, day)
+    assert timezones.local_noon_iso(settings, day).startswith("2026-08-15T12:00:00")
+
+
+def test_a_broken_default_zone_falls_back_to_utc_rather_than_raising() -> None:
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        default_tz="Nowhere/Atall",
+        tz_ranges=[],
+    )
+    zone = timezones.active_tz(settings, date(2026, 8, 15))
+    assert zone == "UTC"
+    ZoneInfo(zone)
+
+
+def test_a_good_zone_is_returned_unchanged() -> None:
+    # The mirror direction: the guard must not start rewriting valid config.
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        default_tz="America/Phoenix",
+        tz_ranges=["2026-08-01..2026-08-31:Asia/Kolkata"],
+    )
+    assert timezones.active_tz(settings, date(2026, 8, 15)) == "asia/kolkata"
+    assert timezones.active_tz(settings, date(2026, 9, 15)) == "America/Phoenix"
