@@ -1429,6 +1429,115 @@ def costs_senders(
         )
 
 
+# ── audit: reading the owner's own corrections back ──────────────────────
+
+# Its own family rather than a `noise` subcommand, because the two look at different
+# tiers and would answer different questions under one name: `noise` mines tier-0/1
+# triage to stop paying for mail, while this reads tier-2 extraction quality out of the
+# owner's review-queue verdicts. Filing "why are the extractions wrong" under "which
+# senders are junk" would bury it. `audit` is left deliberately open for the other
+# read-back surfaces that belong beside it.
+audit_app = typer.Typer(help="Read the owner's own corrections back into the build loop.")
+app.add_typer(audit_app, name="audit")
+
+
+@audit_app.command("corrections")
+def audit_corrections(
+    days: Annotated[int, typer.Option("--days", help="Trailing window")] = 30,
+) -> None:
+    """What the review queue has been teaching, and which file to go and edit.
+
+    Every accept and reject on the dashboard is labelled training signal; this is the
+    only thing that reads it. Below ~50 corrections it says so instead of drawing a
+    distribution over noise.
+    """
+    from backglass import corrections as corrections_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    rep = corrections_mod.report(conn, days=days)
+
+    if not rep.total:
+        typer.echo(
+            f"no owner corrections in the last {days} days. Accept/reject in the"
+            " dashboard's review queue is what fills this — nothing else writes it."
+        )
+        raise typer.Exit()
+
+    typer.echo(
+        f"{rep.total} corrections in {days}d  ·  {rep.accepts} accepted,"
+        f" {rep.rejects} rejected"
+    )
+    if not rep.meaningful:
+        # The whole reason this command exists is to be acted on, so a sample that
+        # cannot support an action prints its size and stops. Everything below here
+        # would be a shape read out of fewer rows than it has categories.
+        typer.echo(
+            f"{rep.total} corrections so far; the distribution is not meaningful below"
+            f" ~{corrections_mod.MEANINGFUL_MINIMUM}. Come back with more."
+        )
+        raise typer.Exit()
+
+    typer.echo("\nwhy the owner rejected:")
+    for reason, n in sorted(rep.reasons.items(), key=lambda kv: (-kv[1], kv[0])):
+        share = round(100 * n / rep.rejects) if rep.rejects else 0
+        typer.echo(f"  {corrections_mod.reason_label(reason):<18} {n:>4}  {share:>3}%")
+
+    by_source = rep.reasons_by_source
+    if len(by_source) > 1:
+        typer.echo("\n  by source:")
+        for source, reasons in sorted(by_source.items()):
+            mix = ", ".join(
+                f"{corrections_mod.reason_label(r)} {n}"
+                for r, n in sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))
+            )
+            typer.echo(f"    {source:<12} {mix}")
+
+    by_version = rep.reasons_by_version
+    if len(by_version) > 1:
+        # One version in the window means no prompt changed in it, and a single-row
+        # "split" implies a comparison that was never made.
+        typer.echo("\n  by extraction prompt version:")
+        for version, reasons in sorted(by_version.items()):
+            mix = ", ".join(
+                f"{corrections_mod.reason_label(r)} {n}"
+                for r, n in sorted(reasons.items(), key=lambda kv: (-kv[1], kv[0]))
+            )
+            typer.echo(f"    {version:<12} {mix}")
+
+    typer.echo(
+        f"\nconfidence calibration (the model's own score vs the owner's verdict;"
+        f"\nthreshold is {settings.confidence_threshold:.2f} — a band well below its"
+        " accept rate is a threshold set too high):"
+    )
+    for b in rep.buckets:
+        typer.echo(
+            f"  {b.low:.1f}–{b.low + 0.1:.1f}  {b.total:>4} judged"
+            f"  {round(100 * b.accept_rate):>3}% accepted"
+        )
+
+    typer.echo("\nrejection rate by source, then by sender (of what reached the queue):")
+    for s in rep.worst_sources:
+        typer.echo(
+            f"  {s.key:<32} {s.rejected:>3}/{s.total:<3} {round(100 * s.reject_rate):>3}%"
+        )
+    for s in rep.worst_senders[:5]:
+        typer.echo(
+            f"    {s.key[:40]:<40} {s.rejected:>3}/{s.total:<3}"
+            f" {round(100 * s.reject_rate):>3}%"
+        )
+
+    remedy = rep.remedy
+    if remedy is None:
+        typer.echo("\nno single dominant reject reason — no one file to point at yet.")
+    else:
+        typer.echo(
+            f"\n→ {corrections_mod.reason_label(rep.dominant_reason or '')} dominates"
+            f" ({rep.reasons[rep.dominant_reason or '']} of {rep.rejects}): edit {remedy}"
+        )
+
+
 # ── batch mode ───────────────────────────────────────────────────────────
 
 batch_app = typer.Typer(
