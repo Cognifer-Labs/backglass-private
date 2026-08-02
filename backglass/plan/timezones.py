@@ -53,13 +53,18 @@ def parse_ranges(entries: list[str]) -> list[Stay]:
                 f"bad TZ_RANGES entry {raw!r}; expected YYYY-MM-DD[..YYYY-MM-DD]:Area/Zone"
             )
         end = match.group("end")
-        stays.append(
-            Stay(
-                start=date.fromisoformat(match.group("start")),
-                end=date.fromisoformat(end) if end else None,
-                zone=match.group("zone"),
-            )
-        )
+        # The regex checks the *shape*; `fromisoformat` checks the *value*, and it
+        # raises a plain ValueError. Two kinds of validation raising two kinds of
+        # exception is how `2026-02-30` — a transposed leap day, a swapped month and
+        # day — walked past every `except TimezoneError` in this module and tracebacked
+        # out of `backglass log`, `plan`, `doctor` and three dashboard pages. Everything
+        # this function rejects now leaves by the same door.
+        try:
+            start_on = date.fromisoformat(match.group("start"))
+            end_on = date.fromisoformat(end) if end else None
+        except ValueError as exc:
+            raise TimezoneError(f"bad date in TZ_RANGES entry {raw!r}: {exc}") from exc
+        stays.append(Stay(start=start_on, end=end_on, zone=match.group("zone")))
     return stays
 
 

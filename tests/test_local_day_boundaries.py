@@ -389,18 +389,44 @@ def test_an_unusable_zone_name_is_skipped_however_it_is_malformed() -> None:
         assert timezones.today_for(settings, moment) == date(2026, 8, 4), bad
 
 
-def test_a_malformed_range_line_does_not_raise_from_today_for() -> None:
-    settings = Settings(
-        _env_file=None,  # type: ignore[call-arg]
-        default_tz="America/Phoenix",
-        tz_ranges=["not-a-range"],
-    )
+#: Every way a TZ_RANGES line can be unusable. The second group is the one that matters:
+#: those match the grammar and fail only when the date is *evaluated*, so they used to
+#: raise a plain ValueError past every `except TimezoneError` in the module.
+BAD_RANGES = [
+    "not-a-range",                          # rejected by the regex
+    "2026-08-01:",                          # no zone
+    "2026-02-30..2026-08-30:Asia/Kolkata",  # February has no 30th
+    "2027-02-29..2027-03-01:Asia/Kolkata",  # 2027 is not a leap year
+    "2026-13-01..2026-13-05:Asia/Kolkata",  # no thirteenth month
+    "2026-08-00..2026-08-05:Asia/Kolkata",  # no zeroth day
+    "2026-08-01..2026-08-32:Asia/Kolkata",  # no thirty-second day
+]
+
+
+@pytest.mark.parametrize("bad", BAD_RANGES)
+def test_a_malformed_range_line_does_not_raise_from_today_for(bad: str) -> None:
+    """A shape-valid date that does not exist — a transposed leap day, a swapped month
+    and day — is the typo this degradation was written for, and it was the one case the
+    first version missed: the regex accepts it and `fromisoformat` rejects it with a
+    plain ValueError, which walked past every `except TimezoneError`."""
     from datetime import UTC as _utc
     from datetime import datetime as _dt
 
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        default_tz="America/Phoenix",
+        tz_ranges=[bad],
+    )
     assert timezones.today_for(
         settings, _dt(2026, 8, 4, 19, 0, tzinfo=_utc)
     ) == date(2026, 8, 4)
+
+
+@pytest.mark.parametrize("bad", BAD_RANGES)
+def test_every_bad_range_leaves_parse_ranges_by_the_same_door(bad: str) -> None:
+    # The invariant that makes one `except TimezoneError` sufficient everywhere.
+    with pytest.raises(timezones.TimezoneError):
+        timezones.parse_ranges([bad])
 
 
 def test_doctor_is_where_a_bad_timezone_config_gets_reported() -> None:
@@ -416,6 +442,8 @@ def test_doctor_is_where_a_bad_timezone_config_gets_reported() -> None:
         (["2026-01-01..2026-01-10:Asia/Kolkatta"], "not a timezone"),
         (["2026-01-01..2026-01-10:Asia/"], "not a timezone"),
         (["not-a-range"], "bad TZ_RANGES entry"),
+        (["2026-02-30..2026-08-30:Asia/Kolkata"], "bad date in TZ_RANGES"),
+        (["2027-02-29..2027-03-01:Asia/Kolkata"], "bad date in TZ_RANGES"),
     ):
         broken = Settings(
             _env_file=None,  # type: ignore[call-arg]
