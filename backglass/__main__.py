@@ -39,6 +39,16 @@ def _open(settings: Settings) -> sqlite3.Connection:
     return connect(settings.db_path)
 
 
+def _build_model_client(settings: Settings) -> Any:
+    """`model_client.build()`, but a missing key/CLI degrades (Rule 5) instead of an
+    uncaught `ModelError` producing a full stack trace for a fresh, unconfigured clone."""
+    try:
+        return model_client.build(settings)
+    except model_client.ModelError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+
 @app.command()
 def init() -> None:
     """Create the database and run migrations. Safe to run repeatedly."""
@@ -116,7 +126,7 @@ def sync_command(
         typer.echo("no sources configured; run `backglass auth <label>` first", err=True)
         raise typer.Exit(2)
 
-    report = sync(conn, settings, connectors, model_client.build(settings), dry_run=dry_run)
+    report = sync(conn, settings, connectors, _build_model_client(settings), dry_run=dry_run)
     _print_report(report, dry_run=dry_run)
     raise typer.Exit(report.exit_code)
 
@@ -962,7 +972,7 @@ def roadmap_start(
     result = None
     adjustments = None
     if not no_interview:
-        client = model_client.build(settings)
+        client = _build_model_client(settings)
         result = interview.run_interview(
             conn, settings, client, preset, start_date,
             ask=lambda q: typer.prompt(q, default="", show_default=False),
