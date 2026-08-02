@@ -69,3 +69,23 @@ deterministic given the id.
   collect) | when a loop both accumulates a total and writes per-group rows, keep two
   variables — `group_x` reset inside the loop, `total_x` summed from it — and always
   test the N>1-groups case, not just N=1.
+
+- 2026-08-01 | panel markup change (section → details) broke 3 tests that carved panels
+  out of rendered HTML with `.split("</section>")` — and the mechanical fix
+  (`</details>`) would have passed while silently truncating at the board's nested
+  Quick-add fold, testing a fragment of the wrong shape | two rules: (1) before changing
+  shared markup structure, grep tests for structural couplings first —
+  `grep -rn '</section>\|</details>\|class="panel"' tests/` — and fix the couplings in
+  the same change, not after the red run; (2) tests slice fragments on stable ids via
+  one shared helper (`tests/conftest.panel_slice`), never on closing tags or element
+  order — a re-composition then breaks zero slices or one helper, never N call sites.
+
+- 2026-08-01 | Visual QA of the dashboard was run against the REAL owner db
+  (data/backglass.db) with a live Safari tab; during keyboard-shortcut testing a
+  stray `x`/click resolved commitment 21 ("Withdraw from or confirm BioBridge") —
+  write-back is real, so a browser test IS a db write risk. Caught in the access
+  log (`POST /commitments/21/resolve`) and reverted by exact-match UPDATE.
+  Rule: never point a live-browser session at data/backglass.db for testing —
+  launch the app against a copy (or backglass-demo.db) via BACKGLASS_DB/temp
+  copy first; treat every dashboard surface as mutating; diff open-commitment
+  counts before/after any browser QA session.
