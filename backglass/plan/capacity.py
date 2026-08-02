@@ -106,10 +106,16 @@ def fixed_events(conn: sqlite3.Connection, day: date, tz: str) -> list[FixedEven
     source, it belongs in raw_json, not in a column." So the capacity model needs no new
     table and no schema change when the connector lands in Phase 5.
     """
+    # Instant comparison, not date(): the connector stores each event's own offset, and
+    # SQLite's date() normalizes to UTC first — which silently dropped every Phoenix
+    # event after ~17:00 from its own day, so the planner scheduled work across it.
+    # timezones.utc_bounds carries the full reasoning.
+    starts_at, ends_before = timezones.day_bounds(day, tz)
     rows = conn.execute(
         "SELECT raw_json, title FROM source_item "
-        "WHERE user_id = ? AND source LIKE 'calendar%' AND date(occurred_at) = date(?)",
-        (USER_ID, day.isoformat()),
+        "WHERE user_id = ? AND source LIKE 'calendar%' "
+        "  AND datetime(occurred_at) >= datetime(?) AND datetime(occurred_at) < datetime(?)",
+        (USER_ID, starts_at, ends_before),
     ).fetchall()
 
     events: list[FixedEvent] = []

@@ -133,6 +133,23 @@ def test_the_same_person_under_two_display_names_is_one_entity(
     assert conn.execute("SELECT COUNT(*) AS n FROM entity").fetchone()["n"] == 1
 
 
+def test_a_counterparty_reclassified_as_an_org_still_resolves(
+    conn, settings: Settings
+) -> None:  # type: ignore[no-untyped-def]
+    """Flipping entity.kind to 'org' (Sallie Mae, a housing portal) must not
+    fragment resolution: the next extraction from the same address has to land on
+    the flipped row, not create a duplicate 'person'."""
+    ledger = Ledger(conn, settings)
+    first = ledger.resolve_entity("Sallie Mae <no-reply@salliemae.com>")
+    conn.execute("UPDATE entity SET kind = 'org' WHERE id = ?", (first,))
+
+    by_email = ledger.resolve_entity("Sallie Mae <no-reply@salliemae.com>")
+    by_name = ledger.resolve_entity("Sallie Mae")
+
+    assert first == by_email == by_name
+    assert conn.execute("SELECT COUNT(*) AS n FROM entity").fetchone()["n"] == 1
+
+
 def test_resolving_the_same_entity_twice_is_not_a_write(conn, settings: Settings) -> None:  # type: ignore[no-untyped-def]
     ledger = Ledger(conn, settings)
     ledger.resolve_entity("Dana <dwhitfield@example.gov>")

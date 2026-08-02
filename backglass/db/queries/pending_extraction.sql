@@ -15,4 +15,4 @@ WHERE user_id = :user_id
 -- plan I promised" before the promise itself, so supersession never fires, and the
 -- original promise is then silently deduped away against the resolution. The ledger has
 -- to be built in the order the events actually happened.
-ORDER BY occurred_at ASC;
+ORDER BY datetime(occurred_at) ASC;

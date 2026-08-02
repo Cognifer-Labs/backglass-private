@@ -128,6 +128,10 @@ class GmailConnector:
     cursor: Cursor = None
     excluded: int = 0
     excluded_by_rule: dict[str, int] = field(default_factory=dict)
+    #: Messages that were listed but could not be fetched — see `fetch`. Counted rather
+    #: than dropped in silence, the same shape as github's `rate_limited`: connector-local
+    #: state a caller can read, not a health failure.
+    skipped: int = 0
     _error: str | None = None
 
     @property
@@ -154,9 +158,19 @@ class GmailConnector:
         """
         self.excluded = 0
         self.excluded_by_rule = {}
+        self.skipped = 0
         message_ids, new_cursor = self._message_ids(since)
         for message_id in message_ids:
-            item = self._fetch_one(message_id)
+            try:
+                item = self._fetch_one(message_id)
+            except Exception:  # noqa: BLE001 - one unfetchable message is not a source failure
+                # A message deleted on the phone between the list call and the get call
+                # is routine, not an error, and letting it out of the generator costs far
+                # more than the message: rule 5 fails the whole source, the assignment
+                # below never runs, and the historyId cursor is starved — so every later
+                # run re-lists from a cursor that no longer advances.
+                self.skipped += 1
+                continue
             if item is not None:
                 yield item
         self.cursor = new_cursor or since

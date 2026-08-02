@@ -74,6 +74,7 @@ class TargetProgress:
 def progress(conn: sqlite3.Connection, settings: Settings, day: date) -> list[TargetProgress]:
     """G3. Every count here comes from checkpoints; nothing is entered directly."""
     start = week_start_of(day, settings.week_start)
+    tz = timezones.active_tz(settings, day)
     rows = conn.execute(
         "SELECT t.id, t.goal_id, t.kind, t.title, t.weekly_count, t.estimated_minutes_each, "
         "       t.total_count, g.title AS goal_title "
@@ -85,7 +86,7 @@ def progress(conn: sqlite3.Connection, settings: Settings, day: date) -> list[Ta
 
     out: list[TargetProgress] = []
     for row in rows:
-        done = _count_between(conn, int(row["id"]), start, start + timedelta(days=7))
+        done = _count_between(conn, int(row["id"]), start, start + timedelta(days=7), tz)
         out.append(
             TargetProgress(
                 target_id=int(row["id"]),
@@ -114,11 +115,22 @@ def _lifetime_done(conn: sqlite3.Connection, target_id: int) -> int:
     return int(row["n"] or 0)
 
 
-def _count_between(conn: sqlite3.Connection, target_id: int, start: date, end: date) -> int:
+def _count_between(
+    conn: sqlite3.Connection, target_id: int, start: date, end: date, tz: str
+) -> int:
+    """Checkpoints inside a local week, counted by instant.
+
+    `date(occurred_at)` normalized each row to UTC before comparing, so a checkpoint
+    logged after ~17:00 in Phoenix counted toward next week and one before ~05:30 in
+    Kolkata toward last week — a weekly cadence target was scored against the wrong
+    week for ordinary evening work. timezones.utc_bounds explains the mechanism.
+    """
+    from_utc, to_utc = timezones.utc_bounds(start, end, tz)
     row = conn.execute(
         "SELECT COALESCE(SUM(delta), 0) AS n FROM checkpoint "
-        "WHERE target_id = ? AND date(occurred_at) >= date(?) AND date(occurred_at) < date(?)",
-        (target_id, start.isoformat(), end.isoformat()),
+        "WHERE target_id = ? AND datetime(occurred_at) >= datetime(?) "
+        "  AND datetime(occurred_at) < datetime(?)",
+        (target_id, from_utc, to_utc),
     ).fetchone()
     return int(row["n"] or 0)
 
@@ -135,9 +147,10 @@ def _consecutive_misses(
     if not weekly or row["kind"] == "milestone":
         return 0
     misses = 0
+    tz = timezones.active_tz(settings, this_week)
     for back in range(1, settings.unrealistic_after_weeks + 1):
         start = this_week - timedelta(days=7 * back)
-        if _count_between(conn, int(row["id"]), start, start + timedelta(days=7)) >= weekly:
+        if _count_between(conn, int(row["id"]), start, start + timedelta(days=7), tz) >= weekly:
             break
         misses += 1
     return misses

@@ -32,6 +32,7 @@ from datetime import date, timedelta
 from backglass.config import Settings
 from backglass.goals import targets as targets_mod
 from backglass.ledger import USER_ID
+from backglass.plan import timezones
 
 
 def _word_date(day: date, *, with_year: bool = False) -> str:
@@ -64,9 +65,14 @@ class Staleness:
 
 
 def staleness(conn: sqlite3.Connection, settings: Settings, day: date) -> list[Staleness]:
+    # MAX over the instant, then converted to the owner's local date in Python.
+    # MAX(date(...)) was wrong twice over: date() normalizes each row to UTC first, so
+    # an evening Phoenix checkpoint reported tomorrow, and the max of rendered dates is
+    # not the latest instant when the rows carry different offsets.
+    tz = timezones.active_tz(settings, day)
     rows = conn.execute(
         "SELECT g.id, g.title, "
-        "  (SELECT MAX(date(cp.occurred_at)) FROM checkpoint cp "
+        "  (SELECT MAX(datetime(cp.occurred_at)) FROM checkpoint cp "
         "   JOIN target t ON t.id = cp.target_id WHERE t.goal_id = g.id) AS last_at "
         "FROM goal g WHERE g.user_id = ? AND g.status = 'active' ORDER BY g.id",
         (USER_ID,),
@@ -75,11 +81,11 @@ def staleness(conn: sqlite3.Connection, settings: Settings, day: date) -> list[S
     out: list[Staleness] = []
     for row in rows:
         if row["last_at"]:
-            # Clamped at zero: occurred_at is stored UTC, so a checkpoint logged
-            # tonight can carry tomorrow's date in a western timezone — and
+            # Still clamped at zero, for a different reason than before: the timezone
+            # skew is fixed, but a manual checkpoint can be dated ahead, and
             # "-1 days quiet" is an impossible claim on a provenance surface.
             days: int | None = max(
-                0, (day - date.fromisoformat(str(row["last_at"]))).days
+                0, (day - timezones.local_date_of(str(row["last_at"]), tz)).days
             )
         else:
             days = None
@@ -146,12 +152,15 @@ def risk(conn: sqlite3.Connection, settings: Settings, day: date) -> list[Risk]:
     """
     window_days = settings.risk_window_weeks * 7
     since = day - timedelta(days=window_days)
+    # The trailing window as instants: a checkpoint's membership in it is a question
+    # about when it happened, not about how its timestamp renders in UTC.
+    since_utc, _ = timezones.day_bounds(since, timezones.active_tz(settings, day))
 
     rows = conn.execute(
         "SELECT g.id, g.title, g.target_date, "
         "  (SELECT COALESCE(SUM(cp.delta), 0) FROM checkpoint cp "
         "   JOIN target t ON t.id = cp.target_id "
-        "   WHERE t.goal_id = g.id AND date(cp.occurred_at) >= date(?)) AS recent, "
+        "   WHERE t.goal_id = g.id AND datetime(cp.occurred_at) >= datetime(?)) AS recent, "
         "  (SELECT COALESCE(SUM(cp.delta), 0) FROM checkpoint cp "
         "   JOIN target t ON t.id = cp.target_id WHERE t.goal_id = g.id) AS total, "
         "  (SELECT COALESCE(SUM(t.weekly_count), 0) FROM target t "
@@ -161,7 +170,7 @@ def risk(conn: sqlite3.Connection, settings: Settings, day: date) -> list[Risk]:
         "   FROM target t WHERE t.goal_id = g.id AND t.active = 1 "
         "   AND t.kind = 'total' AND t.total_count IS NOT NULL) AS totals_remaining "
         "FROM goal g WHERE g.user_id = ? AND g.status = 'active' ORDER BY g.id",
-        (since.isoformat(), USER_ID),
+        (since_utc, USER_ID),
     ).fetchall()
 
     out: list[Risk] = []

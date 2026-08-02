@@ -20,4 +20,6 @@ WHERE si.user_id = :user_id
       AND mb.status = 'submitted'
       AND mb.created_at >= :cutoff
   )
-ORDER BY si.occurred_at ASC;
+-- datetime(), not the bare column: occurred_at keeps each source's own UTC offset, so
+-- text order inverts across the owner's two zones. Supersession applies oldest-first.
+ORDER BY datetime(si.occurred_at) ASC;

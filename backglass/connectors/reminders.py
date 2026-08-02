@@ -23,7 +23,6 @@ from dataclasses import dataclass, field
 from backglass.connectors.apple_notes import run_osascript
 from backglass.connectors.base import Cursor, Health, SourceItem, content_hash
 from backglass.connectors.boundary import Boundary
-from backglass.db import now_iso
 
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
@@ -93,7 +92,19 @@ class RemindersConnector:
     def fetch(self, since: Cursor) -> Iterator[SourceItem]:
         script = _SCRIPT_TEMPLATE.format(since_js=json.dumps(since or ""))
         reminders = json.loads(self.runner(script) or "[]")
+        watermark = str(since or "")
+        newest = watermark
         for r in reminders:
+            # The watermark is an upstream timestamp, never the wall clock. A clock
+            # reading taken after the snapshot covers a window this run never saw, and
+            # the JXA filter above then skips anything completed inside it — forever,
+            # because a completion has one timestamp and no second chance. Same rule as
+            # apple_notes/files/notes: advance only past what was actually observed,
+            # including boundary-excluded rows, which were seen even though they are
+            # not stored.
+            observed = str(r.get("completionDate") or r.get("creationDate") or "")
+            newest = max(newest, observed)
+
             text_parts = [str(r.get("name") or "")]
             if r.get("body"):
                 text_parts.append(str(r["body"]))
@@ -112,10 +123,17 @@ class RemindersConnector:
 
             # source_item is immutable (0002), so a completion cannot rewrite the
             # original row — it becomes its own item with a derived external_id, an
-            # event the extractor can supersede the open commitment against.
+            # event the extractor can supersede the open commitment against. The
+            # completion timestamp is part of that id because a reminder can be
+            # completed, un-completed and completed again: without it both completions
+            # claim one external_id with different content, which upsert_source_item
+            # reads as an immutability conflict and resolves by keeping the first —
+            # the second completion is dropped and nothing anywhere says so.
             occurred = str(r.get("completionDate") or r.get("creationDate"))
             title = str(r.get("name") or "untitled")
-            external_id = str(r["id"]) + (":completed" if r.get("completed") else "")
+            external_id = str(r["id"])
+            if r.get("completed"):
+                external_id = f"{external_id}:completed:{r.get('completionDate')}"
             yield SourceItem(
                 source=self.name,
                 external_id=external_id,
@@ -134,5 +152,6 @@ class RemindersConnector:
                     author="me", title=title, body_text=body[:20000], occurred_at=occurred
                 ),
             )
-        # Window watermark, not a change cursor — see module docstring.
-        self.cursor = now_iso()
+        # Window watermark, not a change cursor — see module docstring. Held rather
+        # than reset when a run observes nothing.
+        self.cursor = newest or since

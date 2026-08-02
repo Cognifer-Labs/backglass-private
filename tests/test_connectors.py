@@ -515,6 +515,42 @@ def test_canvas_follows_rfc5988_link_pagination_to_completion(enforcing: Boundar
     assert any("/courses/12/assignments" in url for url in connector.requested)
 
 
+def test_canvas_does_not_skip_an_assignment_stamped_on_the_watermark_second(
+    enforcing: Boundary,
+) -> None:
+    """Canvas's `updated_at` is mutable and second-precision.
+
+    A bulk administrative edit stamps many assignments with one identical second, and
+    only some of them are read before the cursor is stored. On the next run the rest sit
+    exactly on the watermark: skipping them means the assignment is never fetched at all
+    and its due date never reaches the ledger. Re-reading costs nothing — the content
+    hash short-circuits an unchanged row.
+    """
+    due = (datetime.now(UTC) + timedelta(days=3)).isoformat()
+    watermark = "2026-07-20T09:00:00+00:00"
+    connector = FakeCanvas(
+        {
+            "/api/v1/courses?": ([{"id": 11, "name": "PUBHLTH 501"}], {}),
+            "/courses/11/assignments": (
+                [
+                    {
+                        "id": 23,
+                        "name": "Reflection two",
+                        "due_at": due,
+                        "updated_at": "2026-07-20T09:00:00Z",
+                        "submission": {"workflow_state": "unsubmitted"},
+                    }
+                ],
+                {},
+            ),
+        },
+        boundary=enforcing,
+    )
+    items = list(connector.fetch(watermark))
+    assert [item.external_id for item in items] == ["11:23"]
+    assert connector.cursor == watermark
+
+
 def test_canvas_reports_a_rejected_token_as_the_documented_failure(enforcing: Boundary) -> None:
     """docs/07: "Some institutions disable student-generated tokens ... the fallback is
     the ICS feed, which loses submission state."."""

@@ -7,4 +7,4 @@ SELECT id, source, external_id, occurred_at, author, title, body_text, raw_json,
 FROM source_item
 WHERE user_id = :user_id
   AND (triage_verdict IS NULL OR triage_verdict = 'unclassified')
-ORDER BY occurred_at DESC;
+ORDER BY datetime(occurred_at) DESC;

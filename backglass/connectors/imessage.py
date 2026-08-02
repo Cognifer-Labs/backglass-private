@@ -33,9 +33,11 @@ point at a copied or archived store.
     conflict — which is the right outcome, because what the owner was told at the time is
     the evidence, and the edit is a later event rather than a correction of the record.
 
-The connection is opened `mode=ro&immutable=1`. Read-only is the obvious half; immutable
-is the load-bearing half, because it stops SQLite taking any lock at all on a database
-Messages.app has open and is actively writing to.
+The connection is opened plain ``mode=ro`` with a short busy timeout — deliberately
+*not* ``immutable=1``, because chat.db is in WAL mode and immutable makes SQLite skip
+the ``-wal`` file entirely: against a database Messages.app has open, reads are either
+silently stale or fail with "no such table". Same failure mode the Anki and Avorio
+connectors hit; see anki.py's docstring.
 """
 
 from __future__ import annotations
@@ -155,11 +157,12 @@ class IMessageConnector:
         self.cursor = str(highest)
 
     def _connect(self) -> sqlite3.Connection:
-        # immutable=1 promises SQLite the file will not change under it, which is what
-        # buys a lock-free read of a database Messages.app has open. It is a promise about
-        # *our* behaviour, not the store's: we never write, so we never break it.
-        conn = sqlite3.connect(f"file:{self.db_path}?mode=ro&immutable=1", uri=True)
+        # mode=ro, NOT immutable=1 — chat.db is WAL and immutable skips the -wal
+        # file, making reads silently stale (or "no such table") while Messages.app
+        # is open. The busy timeout rides out its checkpoint writes instead.
+        conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout = 2000")
         return conn
 
     def _to_item(self, row: sqlite3.Row) -> SourceItem | None:

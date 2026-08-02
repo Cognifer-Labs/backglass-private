@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import UTC, date, datetime, time
 from zoneinfo import ZoneInfo
 
 from backglass.config import Settings
@@ -71,6 +71,59 @@ def local_now_iso(settings: Settings, day: date | None = None) -> str:
     read as tomorrow, and P13's "stored UTC" is satisfied by the explicit offset."""
     zone = active_tz(settings, day or datetime.now().date())
     return datetime.now(ZoneInfo(zone)).replace(microsecond=0).isoformat()
+
+
+def utc_bounds(first: date, last_exclusive: date, tz: str) -> tuple[str, str]:
+    """The UTC instants bracketing a span of *local* calendar days.
+
+    This exists because of a trap that is invisible at the call site. Timestamps in
+    this ledger deliberately keep their source's own offset (rule 4: "by Friday" in a
+    Phoenix email is a Phoenix Friday), so the column holds a mix of `-07:00`,
+    `+05:30` and `Z` strings. SQLite's `date()` and `datetime()` silently convert any
+    of those to UTC before comparing — so `date(occurred_at) = date('2026-08-01')`
+    does NOT mean "on the owner's August 1st". A 17:15 Phoenix event is 00:15 UTC on
+    the 2nd and vanishes from the 1st entirely; an 04:00 Kolkata checkpoint lands on
+    the previous day. Both are ordinary times of day, not edge cases.
+
+    The fix is to compare *instants*, never rendered dates: convert the local day
+    window to UTC here, and in SQL write
+
+        WHERE datetime(occurred_at) >= datetime(:from)
+          AND datetime(occurred_at) <  datetime(:to)
+
+    which normalizes both sides to UTC and is therefore correct whatever offset the
+    row carries. `last_exclusive` is a local midnight rather than `first + 24h`, so a
+    DST transition inside the span cannot shorten or stretch it.
+    """
+    zone = ZoneInfo(tz)
+    start = datetime.combine(first, time.min, tzinfo=zone)
+    end = datetime.combine(last_exclusive, time.min, tzinfo=zone)
+    return (_as_utc(start), _as_utc(end))
+
+
+def day_bounds(day: date, tz: str) -> tuple[str, str]:
+    """`utc_bounds` for one local day."""
+    from datetime import timedelta
+
+    return utc_bounds(day, day + timedelta(days=1), tz)
+
+
+def local_date_of(utc_value: str, tz: str) -> date:
+    """The owner-local calendar date of a UTC instant SQLite handed back.
+
+    The counterpart to `utc_bounds` for aggregates: `MAX(datetime(occurred_at))`
+    returns a UTC instant, and the day the owner would call it is a zone conversion,
+    not a string slice.
+    """
+    moment = datetime.fromisoformat(utc_value.replace(" ", "T"))
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=UTC)
+    return moment.astimezone(ZoneInfo(tz)).date()
+
+
+def _as_utc(moment: datetime) -> str:
+    """UTC, second precision, no offset suffix — what `datetime()` compares against."""
+    return moment.astimezone(UTC).replace(tzinfo=None, microsecond=0).isoformat()
 
 
 def active_tz(settings: Settings, day: date) -> str:

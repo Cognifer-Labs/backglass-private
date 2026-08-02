@@ -21,9 +21,9 @@ def _like(term: str | None) -> str | None:
 
 
 #: Name tokens that mark a service desk, portal, or institution rather than a
-#: human. Display heuristic only — extraction writes kind='person' for every
-#: counterparty (the resolver looks up kind='person', so reclassifying rows would
-#: fragment resolution; recorded in tasks/todo.md format-audit phase).
+#: human. Extraction still writes kind='person' for every counterparty (it cannot
+#: know better); an owner `org` tag now writes through to entity.kind, and the
+#: resolver matches both kinds, so a flipped row keeps resolving.
 _ORG_TOKENS = frozenset(
     {"portal", "housing", "transportation", "office", "services", "admissions",
      "registrar", "financial", "aid", "loan", "loans", "bank", "university",
@@ -40,11 +40,14 @@ _ROLE_TOKENS = frozenset(
 def org_like(record: dict[str, Any]) -> bool:
     """Does this profile read as an org/service rather than a person?
 
-    Owner override first: a literal `org` tag decides. Then: a curated role/org
-    means a person; a role word in the name means an unnamed person; an org token
-    or an all-caps acronym (ASU, MLSBE) means a service. Misfiles are harmless —
-    the row renders identically, only the display group moves — and taggable.
+    Persisted kind first: a row flipped to kind='org' is decided. Then the owner
+    tag override, then: a curated role/org means a person; a role word in the name
+    means an unnamed person; an org token or an all-caps acronym (ASU, MLSBE)
+    means a service. Misfiles are harmless — the row renders identically, only the
+    display group moves — and taggable.
     """
+    if record.get("kind") == "org":
+        return True
     tags = {str(t).lower() for t in record.get("tags") or []}
     if "org" in tags:
         return True

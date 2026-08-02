@@ -279,13 +279,24 @@ def person_create(
     try:
         cur = conn.execute(
             "INSERT INTO entity (user_id, kind, canonical_name, role, org, tags_json,"
-            " notes, updated_at) VALUES (?, 'person', ?, ?, ?, ?, ?, ?)",
-            (USER_ID, name, role or None, org or None, json.dumps(tag_list),
-             notes or None, now_iso()),
+            " notes, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (USER_ID, _kind_from_tags(tag_list) or "person", name, role or None,
+             org or None, json.dumps(tag_list), notes or None, now_iso()),
         )
     except sqlite3.IntegrityError as exc:
         raise ActionError(f"'{name}' already exists") from exc
     return int(cur.lastrowid or 0)
+
+
+def _kind_from_tags(tag_list: list[str]) -> str | None:
+    """An `org`/`person` tag is the owner's classification, so it writes through to
+    `entity.kind` rather than living only in the display heuristic. Safe since the
+    resolver matches both kinds; `org` wins a tie the same way org_like reads it."""
+    if "org" in tag_list:
+        return "org"
+    if "person" in tag_list:
+        return "person"
+    return None
 
 
 def person_update(
@@ -298,12 +309,18 @@ def person_update(
     notes: str | None = None,
 ) -> Result:
     tag_list = sorted({t.strip().lower() for t in tags.split(",") if t.strip()})
-    updated = conn.execute(
-        "UPDATE entity SET role = ?, org = ?, tags_json = ?, notes = ?, updated_at = ? "
-        "WHERE id = ? AND user_id = ?",
-        (role or None, org or None, json.dumps(tag_list), notes or None,
-         now_iso(), entity_id, USER_ID),
-    )
+    kind = _kind_from_tags(tag_list)
+    try:
+        updated = conn.execute(
+            "UPDATE entity SET role = ?, org = ?, tags_json = ?, notes = ?,"
+            " kind = COALESCE(?, kind), updated_at = ? "
+            "WHERE id = ? AND user_id = ?",
+            (role or None, org or None, json.dumps(tag_list), notes or None,
+             kind, now_iso(), entity_id, USER_ID),
+        )
+    except sqlite3.IntegrityError as exc:
+        # UNIQUE(user_id, kind, canonical_name): the other kind already has this name.
+        raise ActionError("another profile with this name already has that kind") from exc
     if not updated.rowcount:
         raise ActionError(f"no entity {entity_id}")
     return Result(ok=True, detail="updated")

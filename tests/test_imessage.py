@@ -344,3 +344,24 @@ def test_health_names_full_disk_access_when_the_store_is_missing(
 
 def test_health_is_ok_on_a_readable_store(store: Path, enforcing: Boundary) -> None:
     assert IMessageConnector(db_path=store, boundary=enforcing).health().ok is True
+
+
+def test_wal_only_rows_are_visible(store: Path, enforcing: Boundary) -> None:
+    """The verifier's refutation of immutable=1, ported from anki/avorio: the real
+    chat.db is WAL, and an immutable open misses rows living only in the -wal file.
+    mode=ro must see them while Messages.app still holds the database open."""
+    writer = sqlite3.connect(store)
+    writer.execute("PRAGMA journal_mode=WAL")
+    writer.execute(
+        "INSERT INTO message (ROWID, date, text, is_from_me, handle_id)"
+        " VALUES (3, ?, 'Sent the deck', 0, 1)",
+        (NANOSECONDS_2026_07_10,),
+    )
+    writer.commit()  # committed, but sitting in the -wal, not the main file
+    try:
+        connector = IMessageConnector(db_path=store, boundary=enforcing)
+        items = list(connector.fetch(None))
+        assert [item.external_id for item in items] == ["1", "2", "3"]
+        assert connector.cursor == "3"
+    finally:
+        writer.close()

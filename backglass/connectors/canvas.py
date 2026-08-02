@@ -110,7 +110,14 @@ class CanvasConnector:
                 item = self._to_item(course, assignment)
                 if item is None:
                     continue
-                if since and item.occurred_at <= str(since):
+                # Boundary-equal items are re-read, not skipped. Unlike github, which
+                # filters server-side with `updated:>` at full precision, this watermark
+                # is Canvas's own mutable `updated_at` at whole-second resolution, so a
+                # bulk administrative edit can stamp a dozen assignments with the exact
+                # second already stored. Dropping those loses them permanently; re-reading
+                # them costs zero writes, because content_hash short-circuits an unchanged
+                # row (tasks/lessons.md 2026-07-30 makes the same trade for Obsidian).
+                if since and item.occurred_at < str(since):
                     continue
                 latest = max(latest, item.occurred_at)
                 yield item

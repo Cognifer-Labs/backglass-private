@@ -78,14 +78,53 @@ class TestReminders:
     def test_open_and_completed_map_to_distinct_items(self, boundary: Boundary) -> None:
         connector = RemindersConnector(boundary=boundary, runner=fake_runner(REMINDERS))
         items = {i.external_id: i for i in connector.fetch(None)}
-        assert set(items) == {"r-1", "r-2:completed"}
+        assert set(items) == {"r-1", "r-2:completed:2026-07-29T15:00:00.000Z"}
         open_item = items["r-1"]
         # Relative dates resolve against the reminder's own creation time.
         assert open_item.occurred_at == "2026-07-28T09:00:00.000Z"
         assert "due 2026-08-04" in (open_item.body_text or "")
-        done_item = items["r-2:completed"]
+        done_item = items["r-2:completed:2026-07-29T15:00:00.000Z"]
         assert done_item.occurred_at == "2026-07-29T15:00:00.000Z"
         assert "completed" in (done_item.body_text or "")
+
+    def test_watermark_is_the_newest_timestamp_seen_not_the_wall_clock(
+        self, boundary: Boundary
+    ) -> None:
+        """A completion landing between the snapshot and the cursor write is lost forever.
+
+        The JXA filter drops anything completed at or before the stored cursor, so a
+        cursor taken from the wall clock covers a window this run never read: the
+        completion is absent from the snapshot and skipped by every run after it, and
+        nothing anywhere reports the commitment as resolved.
+        """
+        connector = RemindersConnector(boundary=boundary, runner=fake_runner(REMINDERS))
+        list(connector.fetch(None))
+        assert connector.cursor == "2026-07-29T15:00:00.000Z"
+
+    def test_a_run_that_sees_nothing_holds_the_watermark(self, boundary: Boundary) -> None:
+        connector = RemindersConnector(boundary=boundary, runner=fake_runner([]))
+        assert list(connector.fetch("2026-07-29T15:00:00.000Z")) == []
+        assert connector.cursor == "2026-07-29T15:00:00.000Z"
+
+    def test_recompletion_is_its_own_event_not_an_immutability_conflict(
+        self, boundary: Boundary
+    ) -> None:
+        """Complete → un-complete → re-complete. Two completions, two ids.
+
+        Sharing one external_id makes the second completion a differing content_hash for
+        a stored row, which upsert_source_item records as a conflict and drops.
+        """
+        first = RemindersConnector(boundary=boundary, runner=fake_runner(REMINDERS))
+        again = [
+            dict(REMINDERS[1], completionDate="2026-07-31T11:00:00.000Z"),
+        ]
+        second = RemindersConnector(boundary=boundary, runner=fake_runner(again))
+
+        ids = {i.external_id for i in first.fetch(None)} | {
+            i.external_id for i in second.fetch(first.cursor)
+        }
+        assert "r-2:completed:2026-07-29T15:00:00.000Z" in ids
+        assert "r-2:completed:2026-07-31T11:00:00.000Z" in ids
 
     def test_rereading_unchanged_reminders_is_write_free_by_hash(
         self, boundary: Boundary

@@ -168,9 +168,12 @@ class Ledger:
         if self.settings.owns(email or raw):
             return None
 
+        # Both kinds: a counterparty reclassified to 'org' (Sallie Mae, a housing
+        # portal) must keep resolving to its row, or every later extraction creates
+        # a duplicate 'person' and the awaiting view fragments.
         if email:
             hit = self.conn.execute(
-                "SELECT id FROM entity WHERE user_id = ? AND kind = 'person' "
+                "SELECT id FROM entity WHERE user_id = ? AND kind IN ('person', 'org') "
                 "AND EXISTS (SELECT 1 FROM json_each(entity.aliases_json) "
                 "            WHERE lower(json_each.value) = ?)",
                 (USER_ID, email),
@@ -178,7 +181,7 @@ class Ledger:
             if hit:
                 return int(hit["id"])
         hit = self.conn.execute(
-            "SELECT id FROM entity WHERE user_id = ? AND kind = 'person' "
+            "SELECT id FROM entity WHERE user_id = ? AND kind IN ('person', 'org') "
             "AND lower(canonical_name) = ?",
             (USER_ID, name.lower()),
         ).fetchone()

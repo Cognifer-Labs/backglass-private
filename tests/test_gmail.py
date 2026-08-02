@@ -6,9 +6,42 @@ network.
 
 from __future__ import annotations
 
+from typing import Any
+
 from backglass.connectors.base import content_hash
 from backglass.connectors.gmail import occurred_at_of, strip_quoted
-from tests.conftest import FakeGmailService, gmail_message, make_connector
+from tests.conftest import (
+    FakeGmailService,
+    _Messages,
+    _Users,
+    gmail_message,
+    make_connector,
+)
+
+
+class _VanishingMessages(_Messages):
+    def get(self, *, userId: str, id: str, format: str) -> Any:  # noqa: N803, A002
+        if id == self._service.vanished_id:
+            # Stands in for googleapiclient's HttpError 404: the message was deleted on
+            # another device between the list call and this one.
+            raise RuntimeError("HttpError 404: Requested entity was not found.")
+        return super().get(userId=userId, id=id, format=format)
+
+
+class _VanishingUsers(_Users):
+    def messages(self) -> _VanishingMessages:
+        return _VanishingMessages(self._service)
+
+
+class VanishingGmailService(FakeGmailService):
+    """One listed message that can no longer be fetched."""
+
+    def __init__(self, messages: list[dict[str, Any]], *, vanished_id: str):
+        super().__init__([*messages, {"id": vanished_id}])
+        self.vanished_id = vanished_id
+
+    def users(self) -> _VanishingUsers:
+        return _VanishingUsers(self)
 
 THREAD_REPLY = """Sounds good, I'll send the scope Monday.
 
@@ -127,6 +160,32 @@ def test_an_expired_history_id_falls_back_to_a_full_scan(boundary) -> None:  # t
     connector = GmailConnector(label="personal", service=service, boundary=boundary)
     items = list(connector.fetch("stale-cursor"))
     assert len(items) == 1
+    assert connector.cursor == "99001"
+
+
+def test_a_message_deleted_mid_batch_is_skipped_and_the_cursor_still_advances(boundary) -> None:  # type: ignore[no-untyped-def]
+    """A multi-device delete between the list call and the get call is routine.
+
+    Letting it escape the generator fails the whole source under rule 5, which means the
+    historyId is never stored — so every later run re-lists from the same stale cursor and
+    the mailbox stops advancing. One message is skipped and counted instead.
+    """
+    spec = {
+        "id": "m1",
+        "from": "a@example.com",
+        "to": "b@example.com",
+        "subject": "s",
+        "date": "Fri, 10 Jul 2026 09:15:00 -0700",
+        "body": "b",
+    }
+    service = VanishingGmailService([gmail_message(spec)], vanished_id="m2")
+
+    from backglass.connectors.gmail import GmailConnector
+
+    connector = GmailConnector(label="personal", service=service, boundary=boundary)
+    items = list(connector.fetch("88000"))
+    assert [item.external_id for item in items] == ["m1"]
+    assert connector.skipped == 1
     assert connector.cursor == "99001"
 
 

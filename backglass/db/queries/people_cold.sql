@@ -16,7 +16,7 @@ LEFT JOIN source_item s ON s.id = (
   SELECT c.source_item_id FROM commitment c
   JOIN source_item si ON si.id = c.source_item_id
   WHERE c.counterparty_entity_id = e.id
-  ORDER BY si.occurred_at DESC LIMIT 1
+  ORDER BY datetime(si.occurred_at) DESC LIMIT 1
 )
 WHERE e.user_id = :user_id
   AND e.kind = 'person'
