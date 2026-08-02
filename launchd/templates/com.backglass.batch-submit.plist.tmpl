@@ -3,15 +3,15 @@
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.cognifer.backglass.batch-submit</string>
+  <key>Label</key><string>com.backglass.batch-submit</string>
 
   <!-- Optional — batch mode only (needs an Anthropic API key). Submits the day's
        pending extraction to the Message Batches API at 22:00; the collect job picks
        the results up at 05:30, before plan (05:45) and brief (06:00). -->
-  <key>WorkingDirectory</key><string>/Users/Dharsan/Downloads/backglass</string>
+  <key>WorkingDirectory</key><string>{{REPO_DIR}}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/Dharsan/.local/bin/uv</string>
+    <string>{{UV_BIN}}</string>
     <string>run</string>
     <string>backglass</string>
     <string>batch</string>
@@ -24,8 +24,8 @@
     <key>Minute</key><integer>0</integer>
   </dict>
 
-  <key>StandardOutPath</key><string>/Users/Dharsan/Downloads/backglass/data/batch-submit.log</string>
-  <key>StandardErrorPath</key><string>/Users/Dharsan/Downloads/backglass/data/batch-submit.err</string>
+  <key>StandardOutPath</key><string>{{REPO_DIR}}/data/batch-submit.log</string>
+  <key>StandardErrorPath</key><string>{{REPO_DIR}}/data/batch-submit.err</string>
   <key>RunAtLoad</key><false/>
 </dict>
 </plist>

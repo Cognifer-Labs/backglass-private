@@ -3,15 +3,15 @@
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.cognifer.backglass.batch-collect</string>
+  <key>Label</key><string>com.backglass.batch-collect</string>
 
   <!-- Optional — batch mode only. Collects overnight batch results at 05:30 so the
        morning brief (06:00) reports on batch-extracted commitments. A batch that is
        not finished yet is simply left for the next collect; the brief never waits. -->
-  <key>WorkingDirectory</key><string>/Users/Dharsan/Downloads/backglass</string>
+  <key>WorkingDirectory</key><string>{{REPO_DIR}}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/Dharsan/.local/bin/uv</string>
+    <string>{{UV_BIN}}</string>
     <string>run</string>
     <string>backglass</string>
     <string>batch</string>
@@ -24,8 +24,8 @@
     <key>Minute</key><integer>30</integer>
   </dict>
 
-  <key>StandardOutPath</key><string>/Users/Dharsan/Downloads/backglass/data/batch-collect.log</string>
-  <key>StandardErrorPath</key><string>/Users/Dharsan/Downloads/backglass/data/batch-collect.err</string>
+  <key>StandardOutPath</key><string>{{REPO_DIR}}/data/batch-collect.log</string>
+  <key>StandardErrorPath</key><string>{{REPO_DIR}}/data/batch-collect.err</string>
   <key>RunAtLoad</key><false/>
 </dict>
 </plist>

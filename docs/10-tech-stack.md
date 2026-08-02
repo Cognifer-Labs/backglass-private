@@ -173,9 +173,9 @@ small extra weight).
 **launchd on macOS**, one plist per job, each invoking the CLI.
 
 ```
-com.cognifer.backglass.sync.plist     every 30 min
-com.cognifer.backglass.plan.plist     05:45 local
-com.cognifer.backglass.brief.plist    06:00 local
+com.backglass.sync.plist     every 30 min
+com.backglass.plan.plist     05:45 local
+com.backglass.brief.plist    06:00 local
 ```
 
 **Do not use an in-process scheduler** (APScheduler, `schedule`, a `while True` loop). It

@@ -12,11 +12,14 @@ rather than code.
 
 ## Install
 
-Edit the paths in each plist (they need absolute paths — launchd has no shell and no
-`PATH` worth relying on), then:
+The plists live as templates under `launchd/templates/*.plist.tmpl` — they are not
+directly installable files, because the absolute repo path and `uv` binary path are
+different on every machine. Render and install them manually:
 
-    cp launchd/*.plist ~/Library/LaunchAgents/
-    launchctl load ~/Library/LaunchAgents/com.cognifer.backglass.*.plist
+    cp launchd/templates/*.plist.tmpl ~/Library/LaunchAgents/
+    # then replace {{REPO_DIR}}, {{UV_BIN}}, {{HOME}} in each with real absolute paths,
+    # rename to strip the .tmpl suffix, and:
+    launchctl load ~/Library/LaunchAgents/com.backglass.*.plist
 
 Check they are registered:
 
@@ -24,14 +27,14 @@ Check they are registered:
 
 ## Jobs
 
-| plist | cadence | command |
+| template | cadence | command |
 |---|---|---|
-| `com.cognifer.backglass.sync.plist` | every 30 min | `backglass sync` |
-| `com.cognifer.backglass.plan.plist` | 05:45 local | `backglass plan` |
-| `com.cognifer.backglass.brief.plist` | 06:00 local | `backglass brief --send` |
-| `com.cognifer.backglass.shutdown.plist` | 18:00 local | `backglass shutdown` |
-| `com.cognifer.backglass.batch-submit.plist` | 22:00 local — **optional, batch mode only** | `backglass batch submit` |
-| `com.cognifer.backglass.batch-collect.plist` | 05:30 local — **optional, batch mode only** | `backglass batch collect` |
+| `com.backglass.sync.plist.tmpl` | every 30 min | `backglass sync` |
+| `com.backglass.plan.plist.tmpl` | 05:45 local | `backglass plan` |
+| `com.backglass.brief.plist.tmpl` | 06:00 local | `backglass brief --send` |
+| `com.backglass.shutdown.plist.tmpl` | 18:00 local | `backglass shutdown` |
+| `com.backglass.batch-submit.plist.tmpl` | 22:00 local — **optional, batch mode only** | `backglass batch submit` |
+| `com.backglass.batch-collect.plist.tmpl` | 05:30 local — **optional, batch mode only** | `backglass batch collect` |
 
 The cadences come from docs/02 §Scheduling. `plan` runs fifteen minutes before `brief` so
 the brief has a plan to report.

@@ -122,8 +122,8 @@ Once the soak is stable and an Anthropic API key exists (`MODEL_BACKEND=anthropi
 key in `MODEL_API_KEY` or `ANTHROPIC_API_KEY`), extraction can move to the Message
 Batches API at half price:
 
-1. `cp launchd/com.cognifer.backglass.batch-*.plist ~/Library/LaunchAgents/` and load
-   them (submit 22:00, collect 05:30 — before plan and brief).
+1. `backglass schedule install` renders and loads the batch-submit/batch-collect
+   templates along with the rest (submit 22:00, collect 05:30 — before plan and brief).
 2. Verify once by hand: `backglass batch submit`, then `backglass batch collect` the
    next morning; `backglass batch status` shows the ledger.
 3. Failure policy is automatic: an expired or errored batch leaves its items pending

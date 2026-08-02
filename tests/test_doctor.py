@@ -20,7 +20,7 @@ ALL_INSTALLED = APP_ONLY + "".join(
     f"-\t0\t{label}\n" for label in LAUNCHD_LABELS
 )
 
-PARTIAL = APP_ONLY + "-\t0\tcom.cognifer.backglass.sync\n"
+PARTIAL = APP_ONLY + "-\t0\tcom.backglass.sync\n"
 
 
 def test_the_running_app_is_not_a_scheduled_job() -> None:
@@ -30,24 +30,24 @@ def test_the_running_app_is_not_a_scheduled_job() -> None:
 
 
 def test_correctly_installed_jobs_pass() -> None:
-    # The false fail: the real labels are com.cognifer.backglass.*.
+    # The false fail: the desktop app's own transient label must not satisfy this.
     assert missing_launchd_jobs(ALL_INSTALLED) == []
 
 
 def test_partial_install_names_what_is_missing() -> None:
     missing = missing_launchd_jobs(PARTIAL)
-    assert "com.cognifer.backglass.sync" not in missing
-    assert "com.cognifer.backglass.brief" in missing
+    assert "com.backglass.sync" not in missing
+    assert "com.backglass.brief" in missing
 
 
-def test_labels_match_the_shipped_plists() -> None:
-    # The constant and launchd/*.plist must never drift apart.
+def test_labels_match_the_shipped_plist_templates() -> None:
+    # The constant and launchd/templates/*.plist.tmpl must never drift apart.
     from pathlib import Path
 
     from backglass.config import REPO_ROOT
 
     plist_labels = set()
-    for plist in Path(REPO_ROOT, "launchd").glob("*.plist"):
+    for plist in Path(REPO_ROOT, "launchd", "templates").glob("*.plist.tmpl"):
         text = plist.read_text()
         for label in LAUNCHD_LABELS:
             if f"<string>{label}</string>" in text:

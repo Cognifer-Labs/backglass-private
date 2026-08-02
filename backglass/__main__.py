@@ -1639,15 +1639,15 @@ def setup(
 # ── Phase 8: doctor ───────────────────────────────────────────────────────
 
 
-#: The exact labels launchd/*.plist declare. Checked as whole labels, not a
-#: substring: the Phase 8 verifier caught the substring version passing on the
+#: The exact labels launchd/templates/*.plist.tmpl declare. Checked as whole labels,
+#: not a substring: the Phase 8 verifier caught the substring version passing on the
 #: desktop app's transient GUI registration (application.com.backglass.desktop…)
-#: while failing on the real com.cognifer.backglass.* jobs — wrong both ways.
+#: while failing on the real com.backglass.* jobs — wrong both ways.
 LAUNCHD_LABELS = (
-    "com.cognifer.backglass.sync",
-    "com.cognifer.backglass.brief",
-    "com.cognifer.backglass.plan",
-    "com.cognifer.backglass.shutdown",
+    "com.backglass.sync",
+    "com.backglass.brief",
+    "com.backglass.plan",
+    "com.backglass.shutdown",
 )
 
 

@@ -3,13 +3,13 @@
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.cognifer.backglass.sync</string>
+  <key>Label</key><string>com.backglass.sync</string>
 
   <!-- Absolute paths: launchd has no shell and no useful PATH. -->
-  <key>WorkingDirectory</key><string>/Users/Dharsan/Downloads/backglass</string>
+  <key>WorkingDirectory</key><string>{{REPO_DIR}}</string>
   <key>ProgramArguments</key>
   <array>
-    <string>/Users/Dharsan/.local/bin/uv</string>
+    <string>{{UV_BIN}}</string>
     <string>run</string>
     <string>backglass</string>
     <string>sync</string>
@@ -19,8 +19,8 @@
 
   <!-- docs/02 §Failure policy: the process exits non-zero at the end so a scheduled run
        reports failure. These logs are where that lands. -->
-  <key>StandardOutPath</key><string>/Users/Dharsan/Downloads/backglass/data/sync.log</string>
-  <key>StandardErrorPath</key><string>/Users/Dharsan/Downloads/backglass/data/sync.err</string>
+  <key>StandardOutPath</key><string>{{REPO_DIR}}/data/sync.log</string>
+  <key>StandardErrorPath</key><string>{{REPO_DIR}}/data/sync.err</string>
   <key>RunAtLoad</key><false/>
 </dict>
 </plist>
