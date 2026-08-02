@@ -18,7 +18,9 @@ push the overflow back into a spreadsheet.
 
 from __future__ import annotations
 
+import re
 import sqlite3
+from dataclasses import dataclass
 from typing import Any
 
 from backglass.db import now_iso
@@ -30,6 +32,35 @@ AMCAS_SLOTS = 15
 AMCAS_MOST_MEANINGFUL = 3
 AMCAS_DESCRIPTION_CHARS = 700
 AMCAS_MEANINGFUL_CHARS = 1325
+
+
+#: Which total-target a category's hours belong to, matched against the target title.
+#:
+#: The preset carries an explicit key per total (`"key": "shadowing"`), but
+#: `roadmap/instantiate.add_total` writes only the title — the key is dropped, and
+#: `target` has no column for it. So the link from an AMCAS category to the accumulator
+#: it feeds has to be rebuilt on read, and this table is that rebuild. It is keyword
+#: based rather than exact because the titles are prose the owner may edit ("Shadowing
+#: hours (3+ specialties, ≥1 primary care)").
+#:
+#: This is a workaround for a schema gap, not the end state — a `preset_key` column on
+#: `target`, backfilled by these same hints, would make the link explicit and survive a
+#: retitle. Left as follow-up rather than done inline because it needs a migration.
+#:
+#: Each entry is (must contain any of, must contain none of). The exclusions are not
+#: hypothetical: the shipped preset titles are "Clinical experience hours (paid or
+#: volunteer)" and "Non-clinical service hours", so a naive substring match files
+#: volunteering hours under clinical (the parenthetical says "volunteer") and clinical
+#: hours under volunteering (the other title contains "clinical"). Parentheticals are
+#: stripped before matching for the same reason — a qualifier in brackets describes the
+#: target, it does not name the category.
+CATEGORY_TITLE_HINTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    "shadowing": (("shadow",), ()),
+    "clinical": (("clinical",), ("non-clinical", "nonclinical")),
+    "volunteering": (("volunteer", "service"), ()),
+    "research": (("research",), ()),
+    "leadership": (("leadership", "teaching"), ()),
+}
 
 
 class ActivityError(ValueError):
@@ -116,6 +147,130 @@ def list_with_hours(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         (USER_ID,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def find_by_name(conn: sqlite3.Connection, name: str) -> list[dict[str, Any]]:
+    """Activities whose title or org matches `name`, best match first.
+
+    Logging an hour should cost one line, and one line means naming the activity the
+    way the owner thinks of it ("lab", "Dr. Chen") rather than by id. An exact
+    case-insensitive title match wins outright; otherwise every substring hit is
+    returned so the caller can ask which one instead of guessing — filing four years of
+    research hours under the wrong activity is not a recoverable mistake.
+    """
+    needle = name.strip().lower()
+    if not needle:
+        return []
+    rows = [a for a in list_with_hours(conn)]
+    exact = [a for a in rows if str(a["title"]).lower() == needle]
+    if exact:
+        return exact
+    return [
+        a
+        for a in rows
+        if needle in str(a["title"]).lower() or needle in str(a["org"] or "").lower()
+    ]
+
+
+def total_target_for(
+    conn: sqlite3.Connection, category: str, goal_id: int | None = None
+) -> dict[str, Any] | None:
+    """The lifetime accumulator a category's hours feed, or None if there isn't one.
+
+    See CATEGORY_TITLE_HINTS for why this is a title match rather than a join. `other`
+    has no accumulator by design — it is the escape hatch for an activity that belongs
+    in the AMCAS list but under no hour category, and inventing a target for it would
+    put a number on the roadmap page that means nothing.
+    """
+    hint = CATEGORY_TITLE_HINTS.get(category)
+    if hint is None:
+        return None
+    wanted, excluded = hint
+    sql = (
+        "SELECT t.id, t.title, t.total_count, t.goal_id, "
+        "  COALESCE((SELECT SUM(c.delta) FROM checkpoint c WHERE c.target_id = t.id), 0)"
+        "  AS done "
+        "FROM target t WHERE t.kind = 'total' AND t.active = 1"
+    )
+    params: list[Any] = []
+    if goal_id is not None:
+        sql += " AND t.goal_id = ?"
+        params.append(goal_id)
+    sql += " ORDER BY t.id"
+    for row in conn.execute(sql, params).fetchall():
+        # Parentheticals are qualifiers, not category names: "(paid or volunteer)" on
+        # the clinical total would otherwise claim every volunteering hour.
+        title = re.sub(r"\([^)]*\)", " ", str(row["title"])).lower()
+        if any(bad in title for bad in excluded):
+            continue
+        if any(want in title for want in wanted):
+            return dict(row)
+    return None
+
+
+@dataclass(frozen=True)
+class LoggedHours:
+    """What one log entry did, so the caller can say it back without re-querying."""
+
+    activity_id: int
+    activity_title: str
+    target_id: int
+    target_title: str
+    hours: int
+    target_done: int
+    target_total: int
+
+
+def log_hours(
+    conn: sqlite3.Connection,
+    *,
+    activity_id: int,
+    hours: int,
+    occurred_at: str,
+    note: str | None = None,
+) -> LoggedHours:
+    """File `hours` against an activity and the accumulator its category feeds.
+
+    The whole point is that this costs one line. The activity ledger is the part of a
+    pre-med record that cannot be reconstructed later — four years of hours are not
+    recoverable from memory or from mail — and it stays empty exactly as long as
+    logging means opening a browser, finding the roadmap page and filling a form.
+
+    One log entry is still one checkpoint, written the same way the roadmap route
+    writes it (G9: every checkpoint says what produced it), so nothing here is a second
+    source of truth. `occurred_at` is passed in rather than read from the clock because
+    dates.py's rule holds everywhere: the caller knows which local day this belongs to.
+    """
+    if hours <= 0:
+        raise ActivityError("hours must be positive")
+    activity = _get(conn, activity_id)
+    target = total_target_for(conn, str(activity["category"]))
+    if target is None:
+        raise ActivityError(
+            f"{activity['title']!r} is category {activity['category']!r}, which has no "
+            "lifetime hour target on any active goal — log it on the roadmap page "
+            "against a specific total, or recategorize the activity"
+        )
+    from backglass.goals import checkpoints
+
+    checkpoints.record(
+        conn,
+        int(target["id"]),
+        source="manual",
+        occurred_at=occurred_at,
+        note=note,
+        delta=hours,
+        activity_id=activity_id,
+    )
+    return LoggedHours(
+        activity_id=activity_id,
+        activity_title=str(activity["title"]),
+        target_id=int(target["id"]),
+        target_title=str(target["title"]),
+        hours=hours,
+        target_done=int(target["done"]) + hours,
+        target_total=int(target["total_count"] or 0),
+    )
 
 
 def entries_for(conn: sqlite3.Connection, activity_id: int) -> list[dict[str, Any]]:

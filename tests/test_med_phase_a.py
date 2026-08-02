@@ -165,6 +165,137 @@ class TestActivities:
         assert entries[0]["note"] == "Dr. R · ICU"
 
 
+class TestLogHours:
+    """One-line hour logging. The activity ledger is the part of a pre-med record that
+    cannot be reconstructed later, and it stays empty as long as logging means opening
+    a browser and filling a form."""
+
+    def test_hours_land_on_the_accumulator_the_category_feeds(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        goal_id, _ = _seed_goal_with_target(conn)
+        total_id = instantiate.add_total(
+            conn, goal_id, "Shadowing hours (3+ specialties)", 60
+        )
+        aid = activities.add(conn, title="Cardiology", category="shadowing")
+
+        logged = activities.log_hours(
+            conn, activity_id=aid, hours=4, occurred_at="2026-08-02T18:00:00-07:00"
+        )
+
+        assert logged.target_id == total_id
+        assert logged.hours == 4
+        assert logged.target_done == 4
+        assert logged.target_total == 60
+        assert activities.list_with_hours(conn)[0]["hours"] == 4
+
+    def test_the_title_is_prose_and_the_match_survives_it(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # The real preset ships "Non-clinical service hours" for `volunteering` — a
+        # title with neither the category word nor an obvious stem. If this breaks, the
+        # hint table is wrong, not the caller.
+        goal_id, _ = _seed_goal_with_target(conn)
+        instantiate.add_total(conn, goal_id, "Non-clinical service hours", 500)
+        aid = activities.add(conn, title="Food bank", category="volunteering")
+        assert activities.log_hours(
+            conn, activity_id=aid, hours=3, occurred_at="2026-08-02T12:00:00-07:00"
+        ).hours == 3
+
+    def test_clinical_does_not_steal_the_non_clinical_total(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # "Non-clinical service hours" contains "clinical". Ordering by target id means
+        # whichever was instantiated first wins a naive substring match, so the real
+        # preset's order is reproduced here: clinical is added first and must still be
+        # the one clinical hours land on, and volunteering must not land there.
+        goal_id, _ = _seed_goal_with_target(conn)
+        clinical_id = instantiate.add_total(
+            conn, goal_id, "Clinical experience hours (paid or volunteer)", 500
+        )
+        service_id = instantiate.add_total(conn, goal_id, "Non-clinical service hours", 500)
+
+        clinical = activities.add(conn, title="ED scribe", category="clinical")
+        service = activities.add(conn, title="Food bank", category="volunteering")
+
+        assert activities.log_hours(
+            conn, activity_id=clinical, hours=2, occurred_at="2026-08-02T09:00:00-07:00"
+        ).target_id == clinical_id
+        assert activities.log_hours(
+            conn, activity_id=service, hours=2, occurred_at="2026-08-02T09:00:00-07:00"
+        ).target_id == service_id
+
+    def test_a_category_with_no_accumulator_says_so_instead_of_guessing(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # `other` exists for activities that belong in the AMCAS list under no hour
+        # category. Inventing a target would put a meaningless number on the roadmap.
+        _seed_goal_with_target(conn)
+        aid = activities.add(conn, title="Marching band", category="other")
+        with pytest.raises(activities.ActivityError, match="no lifetime hour target"):
+            activities.log_hours(
+                conn, activity_id=aid, hours=2, occurred_at="2026-08-02T09:00:00-07:00"
+            )
+
+    def test_a_category_whose_total_was_never_instantiated_is_refused(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        goal_id, _ = _seed_goal_with_target(conn)
+        instantiate.add_total(conn, goal_id, "Shadowing hours", 60)
+        aid = activities.add(conn, title="Ochem TA", category="leadership")
+        with pytest.raises(activities.ActivityError, match="no lifetime hour target"):
+            activities.log_hours(
+                conn, activity_id=aid, hours=1, occurred_at="2026-08-02T09:00:00-07:00"
+            )
+
+    def test_zero_and_negative_hours_are_refused(self, conn: sqlite3.Connection) -> None:
+        goal_id, _ = _seed_goal_with_target(conn)
+        instantiate.add_total(conn, goal_id, "Research hours", 200)
+        aid = activities.add(conn, title="Lab", category="research")
+        for bad in (0, -3):
+            with pytest.raises(activities.ActivityError, match="positive"):
+                activities.log_hours(
+                    conn, activity_id=aid, hours=bad,
+                    occurred_at="2026-08-02T09:00:00-07:00",
+                )
+
+    def test_the_logged_instant_is_the_callers_not_the_clocks(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # CLAUDE.md rule 4 one layer down: the caller knows which local day this belongs
+        # to. A 22:00 Phoenix session must keep its own offset, not be restamped.
+        goal_id, _ = _seed_goal_with_target(conn)
+        instantiate.add_total(conn, goal_id, "Research hours", 200)
+        aid = activities.add(conn, title="Lab", category="research")
+        activities.log_hours(
+            conn, activity_id=aid, hours=2, occurred_at="2026-08-01T22:00:00-07:00"
+        )
+        assert activities.entries_for(conn, aid)[0]["occurred_at"] == (
+            "2026-08-01T22:00:00-07:00"
+        )
+
+    def test_find_by_name_prefers_an_exact_title_over_a_substring(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        activities.add(conn, title="Lab", org="Chen Lab", category="research")
+        activities.add(conn, title="Lab assistant training", category="research")
+        assert [a["title"] for a in activities.find_by_name(conn, "lab")] == ["Lab"]
+
+    def test_find_by_name_returns_every_candidate_when_ambiguous(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # Filing four years of hours under the wrong activity is not recoverable, so an
+        # ambiguous name returns all of them for the caller to disambiguate.
+        activities.add(conn, title="Chen Lab", category="research")
+        activities.add(conn, title="Rivera Lab", category="research")
+        assert len(activities.find_by_name(conn, "lab")) == 2
+        assert activities.find_by_name(conn, "nothing here") == []
+
+    def test_find_by_name_matches_the_org_too(self, conn: sqlite3.Connection) -> None:
+        activities.add(conn, title="ED scribe", org="Banner Health", category="clinical")
+        assert [a["title"] for a in activities.find_by_name(conn, "banner")] == ["ED scribe"]
+
+
 # ──────────────────────────────────────────────────────────── anki connector
 
 
