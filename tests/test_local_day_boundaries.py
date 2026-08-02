@@ -272,3 +272,21 @@ def test_the_roadmap_cadence_count_follows_the_owner_to_kolkata(
         {"r": {"goal_id": goal_id}, "steps": [], "cadences": cadences},
     )
     assert detail["cadences"][0]["done_this_week"] == 1
+
+
+def test_a_backdated_stamp_lands_on_the_day_it_names_in_both_zones(
+    settings: Settings, kolkata: Settings
+) -> None:
+    """`local_now_iso` takes a day only to pick the zone — it always stamps *now*, so
+    a backdated write (`backglass log --on`) needed its own helper. Noon is chosen so
+    no later reader in either zone can round the entry onto a neighbouring day."""
+    day = date(2026, 9, 14)
+
+    phoenix = timezones.local_noon_iso(settings, day)
+    india = timezones.local_noon_iso(kolkata, day)
+
+    assert phoenix == "2026-09-14T12:00:00-07:00"
+    assert india == "2026-09-14T12:00:00+05:30"
+    # The point of noon: converted to UTC, both are still the 14th.
+    for stamp in (phoenix, india):
+        assert timezones.local_date_of(stamp, "UTC") == day

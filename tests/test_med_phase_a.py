@@ -731,3 +731,109 @@ class TestStructuredSourceBypass:
         second = sync(conn, bound, [_TallyConnector()], model)
         assert second.writes == 0
         assert model.calls == []
+
+
+class TestLogCommand:
+    """`backglass log` — the fast path. Every test drives the real CLI against a tmp
+    database; none can reach the owner's ledger."""
+
+    @pytest.fixture
+    def cli_env(self, tmp_path, monkeypatch):
+        from backglass import __main__ as cli
+        from backglass.config import Settings
+        from backglass.db import connect, migrate
+
+        db = tmp_path / "backglass.db"
+        conn = connect(db)
+        migrate(conn)
+        goal_id, _ = _seed_goal_with_target(conn)
+        instantiate.add_total(conn, goal_id, "Research hours", 200)
+        instantiate.add_total(conn, goal_id, "Shadowing hours", 60)
+        conn.commit()
+        conn.close()
+        made = Settings(db_path=db, default_tz="America/Phoenix", tz_ranges=[])
+        monkeypatch.setattr(cli, "get_settings", lambda: made)
+        return cli, made
+
+    def _run(self, cli, *args):
+        from typer.testing import CliRunner
+
+        return CliRunner().invoke(cli.app, ["log", *args])
+
+    def test_new_creates_the_activity_and_logs_in_one_line(self, cli_env) -> None:
+        cli, settings = cli_env
+        result = self._run(cli, "Chen Lab", "3", "--new", "research", "--note", "blot")
+        assert result.exit_code == 0, result.output
+        assert "+3h Chen Lab" in result.output
+        assert "Research hours 3/200" in result.output
+
+        from backglass.db import connect
+
+        conn = connect(settings.db_path)
+        rows = activities.list_with_hours(conn)
+        assert [(r["title"], r["hours"]) for r in rows] == [("Chen Lab", 3)]
+        assert activities.entries_for(conn, int(rows[0]["id"]))[0]["note"] == "blot"
+        conn.close()
+
+    def test_a_second_log_accumulates_on_the_same_target(self, cli_env) -> None:
+        cli, _ = cli_env
+        self._run(cli, "Chen Lab", "3", "--new", "research")
+        result = self._run(cli, "chen", "2")
+        assert result.exit_code == 0, result.output
+        assert "Research hours 5/200" in result.output
+
+    def test_an_unknown_name_says_how_to_create_it(self, cli_env) -> None:
+        cli, _ = cli_env
+        result = self._run(cli, "Nowhere", "2")
+        assert result.exit_code == 1
+        assert "--new" in result.output
+
+    def test_an_ambiguous_name_lists_the_candidates_and_writes_nothing(
+        self, cli_env
+    ) -> None:
+        cli, settings = cli_env
+        self._run(cli, "Chen Lab", "1", "--new", "research")
+        self._run(cli, "Rivera Lab", "1", "--new", "research")
+
+        result = self._run(cli, "lab", "5")
+
+        assert result.exit_code == 1
+        assert "matches 2 activities" in result.output
+        from backglass.db import connect
+
+        conn = connect(settings.db_path)
+        assert [r["hours"] for r in activities.list_with_hours(conn)] == [1, 1]
+        conn.close()
+
+    def test_an_unknown_category_is_refused_before_anything_is_created(
+        self, cli_env
+    ) -> None:
+        cli, settings = cli_env
+        result = self._run(cli, "Marching band", "2", "--new", "hobbies")
+        assert result.exit_code == 1
+        assert "unknown category" in result.output
+        from backglass.db import connect
+
+        conn = connect(settings.db_path)
+        assert activities.list_with_hours(conn) == []
+        conn.close()
+
+    def test_on_logs_against_the_named_day_not_today(self, cli_env) -> None:
+        cli, settings = cli_env
+        result = self._run(cli, "Chen Lab", "4", "--new", "research", "--on", "2026-09-14")
+        assert result.exit_code == 0, result.output
+
+        from backglass.db import connect
+
+        conn = connect(settings.db_path)
+        entry = activities.entries_for(conn, 1)[0]
+        conn.close()
+        # The owner's own offset, on the day they said — not the clock's, not UTC.
+        assert str(entry["occurred_at"]).startswith("2026-09-14T")
+        assert str(entry["occurred_at"]).endswith("-07:00")
+
+    def test_a_category_with_no_accumulator_explains_itself(self, cli_env) -> None:
+        cli, _ = cli_env
+        result = self._run(cli, "Marching band", "2", "--new", "other")
+        assert result.exit_code == 1
+        assert "no lifetime hour target" in result.output

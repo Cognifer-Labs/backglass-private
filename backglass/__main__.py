@@ -26,6 +26,7 @@ from backglass.connectors.gmail import SCOPES, GmailConnector
 from backglass.db import connect, migrate, now_iso, query
 from backglass.extract import client as model_client
 from backglass.extract import prompts
+from backglass.goals import activities as activities_mod
 from backglass.ledger import USER_ID
 from backglass.sync import EXTRACT_PROMPT, sync
 
@@ -885,6 +886,107 @@ def goals_add_total(
         raise typer.Exit(code=1) from exc
     conn.commit()
     typer.echo(f"target {target_id}: {title} — 0/{total}")
+
+
+@app.command()
+def log(
+    activity: Annotated[
+        str, typer.Argument(help="Activity title or org — a substring is fine")
+    ],
+    hours: Annotated[int, typer.Argument(help="Hours to add")],
+    note: Annotated[
+        str | None, typer.Option("--note", help="What you did — raw material for AMCAS")
+    ] = None,
+    on: Annotated[
+        str | None, typer.Option("--on", help="YYYY-MM-DD; defaults to today")
+    ] = None,
+    new: Annotated[
+        str | None,
+        typer.Option(
+            "--new",
+            help="Create the activity first, in this category: "
+            + "/".join(activities_mod.CATEGORIES),
+        ),
+    ] = None,
+) -> None:
+    """Log hours against an activity. The fast path for the record that matters most.
+
+    The Work & Activities list is the part of a four-year record that cannot be
+    rebuilt afterwards — hours are not recoverable from mail, and no one remembers
+    them — so the cost of logging is the thing that decides whether the ledger has
+    any. One line, from anywhere:
+
+        backglass log "Chen Lab" 3 --note "ran the Western blot"
+        backglass log shadowing 4 --on 2026-09-14
+        backglass log "Food bank" 2 --new volunteering
+
+    Hours land on the lifetime accumulator the activity's category feeds, as one
+    checkpoint — the same write the roadmap page makes, so there is no second source
+    of truth and `amcas-export` sees this immediately.
+    """
+    from datetime import date as _date
+
+    from backglass.plan import timezones
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+
+    if new is not None:
+        if new not in activities_mod.CATEGORIES:
+            typer.echo(
+                f"unknown category {new!r}; expected one of "
+                f"{', '.join(activities_mod.CATEGORIES)}",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        try:
+            activity_id = activities_mod.add(conn, title=activity, category=new)
+        except activities_mod.ActivityError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
+        typer.echo(f"new activity: {activity} ({new})")
+    else:
+        matches = activities_mod.find_by_name(conn, activity)
+        if not matches:
+            typer.echo(
+                f"no activity matching {activity!r} — add it with "
+                f"`backglass log {activity!r} {hours} --new <category>`",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        if len(matches) > 1:
+            # Filing four years of hours under the wrong activity is not recoverable,
+            # so an ambiguous name asks rather than picking the first row.
+            typer.echo(f"{activity!r} matches {len(matches)} activities:", err=True)
+            for match in matches:
+                typer.echo(f"  {match['title']} ({match['category']})", err=True)
+            raise typer.Exit(code=1)
+        activity_id = int(matches[0]["id"])
+
+    # A backdated entry is stamped local noon on the day named; a same-day entry keeps
+    # the actual moment. local_now_iso takes a day only to pick the zone — it always
+    # stamps now — so using it for --on would file September's hours under today.
+    if on:
+        occurred_at = timezones.local_noon_iso(settings, _date.fromisoformat(on))
+    else:
+        occurred_at = timezones.local_now_iso(settings, _today(settings))
+    try:
+        logged = activities_mod.log_hours(
+            conn,
+            activity_id=activity_id,
+            hours=hours,
+            occurred_at=occurred_at,
+            note=note,
+        )
+    except activities_mod.ActivityError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    conn.commit()
+    typer.echo(
+        f"+{logged.hours}h {logged.activity_title} → {logged.target_title} "
+        f"{logged.target_done}/{logged.target_total}"
+    )
 
 
 @app.command("amcas-export")

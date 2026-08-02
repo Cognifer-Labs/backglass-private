@@ -73,6 +73,20 @@ def local_now_iso(settings: Settings, day: date | None = None) -> str:
     return datetime.now(ZoneInfo(zone)).replace(microsecond=0).isoformat()
 
 
+def local_noon_iso(settings: Settings, day: date) -> str:
+    """Local noon on `day`, with that day's active offset.
+
+    The stamp for a write the owner is backdating ("I did four hours on the 14th").
+    `local_now_iso` takes a `day` too, but only to choose the zone — it still stamps
+    *now*, so passing a past date there silently files the entry under today. Noon is
+    the same convention `goals/reviews.py` uses for a day-scoped checkpoint: far enough
+    from either boundary that no later reader, in any zone, can round it onto the
+    neighbouring day.
+    """
+    zone = active_tz(settings, day)
+    return datetime.combine(day, time(12, 0), ZoneInfo(zone)).isoformat()
+
+
 def utc_bounds(first: date, last_exclusive: date, tz: str) -> tuple[str, str]:
     """The UTC instants bracketing a span of *local* calendar days.
 
