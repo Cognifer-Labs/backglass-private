@@ -231,3 +231,14 @@ deterministic given the id.
   Commit messages containing backticks, `$`, or `!` go through a heredoc to a file and
   `git commit -F`, never `-m` with double quotes. Check `git log -1 --format=%B` after
   writing a long message — a swallowed word is invisible until someone reads the history.
+
+- 2026-08-02 | Guarded a config parser with `except TimezoneError` in two places, and a
+  shape-valid-but-nonexistent date (`2026-02-30`) sailed past both: the regex validated
+  the shape and `date.fromisoformat` validated the value, raising a plain ValueError the
+  guards never named. It tracebacked out of three CLI commands and three dashboard pages.
+  | A function that validates in two stages must raise ONE exception type, or every
+  caller has to know both — and callers only ever learn the one they were bitten by.
+  When writing `except SomeError` around a parser, read the parser and list every way it
+  can fail; if the list has more than one type, narrow it at the source instead of
+  widening the catch. A parametrized test over every malformed input, asserting they all
+  leave by the same door, is what keeps it true.
