@@ -204,8 +204,8 @@ def test_the_owner_is_never_their_own_counterparty(conn, settings: Settings) -> 
     Both of the owner's addresses count.
     """
     ledger = Ledger(conn, settings)
-    assert ledger.resolve_entity("contactdharsan@gmail.com") is None
-    assert ledger.resolve_entity("K <DKesava2@ASU.EDU>") is None
+    assert ledger.resolve_entity("alex.rivera@example.com") is None
+    assert ledger.resolve_entity("K <arivera@example.edu>") is None
     assert ledger.resolve_entity("Dana <dwhitfield@example.gov>") is not None
     assert conn.execute("SELECT COUNT(*) AS n FROM entity").fetchone()["n"] == 1
 

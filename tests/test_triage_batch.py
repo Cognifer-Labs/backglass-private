@@ -36,7 +36,7 @@ def _messages(n: int) -> list[dict[str, Any]]:
             {
                 "id": f"b{i}",
                 "from": f"sender{i}@corp{i}.example",
-                "to": "contactdharsan@gmail.com",
+                "to": "alex.rivera@example.com",
                 "subject": f"Update {chr(65 + i)}",
                 "date": f"Fri, {10 + i:02d} Jul 2026 09:00:00 -0700",
                 "body": PROSE[i % len(PROSE)],

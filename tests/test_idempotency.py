@@ -25,7 +25,7 @@ SPECS: list[dict[str, Any]] = [
     {
         "id": "m1",
         "from": "Dana Whitfield <dwhitfield@example.gov>",
-        "to": "contactdharsan@gmail.com",
+        "to": "alex.rivera@example.com",
         "subject": "Migration plan",
         "date": "Fri, 10 Jul 2026 09:15:00 -0700",
         "body": "I'll have the revised migration plan over to you by Friday.",
@@ -33,7 +33,7 @@ SPECS: list[dict[str, Any]] = [
     {
         "id": "m2",
         "from": "news@marketing.example.com",
-        "to": "contactdharsan@gmail.com",
+        "to": "alex.rivera@example.com",
         "subject": "Weekly digest",
         "date": "Fri, 10 Jul 2026 06:00:00 -0700",
         "body": "Top stories this week.",
@@ -42,7 +42,7 @@ SPECS: list[dict[str, Any]] = [
     {
         "id": "m3",
         "from": "no-reply@notifications.example.com",
-        "to": "contactdharsan@gmail.com",
+        "to": "alex.rivera@example.com",
         "subject": "Your receipt",
         "date": "Fri, 10 Jul 2026 07:30:00 -0700",
         "body": "Thanks for your order.",
@@ -224,7 +224,7 @@ def test_oversized_body_is_parked_not_extracted(
     huge = {
         "id": "huge",
         "from": "Dana <dwhitfield@example.gov>",
-        "to": "contactdharsan@gmail.com",
+        "to": "alex.rivera@example.com",
         "subject": "Migration plan",
         "date": "Fri, 10 Jul 2026 09:15:00 -0700",
         "body": "I'll send the plan by Friday. " + ("x" * 70_000),

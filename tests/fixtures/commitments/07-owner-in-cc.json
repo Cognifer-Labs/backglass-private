@@ -3,9 +3,9 @@
   "why": "Direction must still resolve correctly when the owner is not the primary recipient, and it must resolve against BOTH of the owner's addresses - here the ASU one, in Cc.",
   "message": {
     "id": "c07",
-    "from": "contactdharsan@gmail.com",
+    "from": "alex.rivera@example.com",
     "to": "Marcus Reed <mreed@example.com>",
-    "cc": "dkesava2@asu.edu",
+    "cc": "arivera@example.edu",
     "subject": "Vendor comparison",
     "date": "Fri, 10 Jul 2026 13:00:00 -0700",
     "body": "Marcus, I'll put together the vendor comparison and send it Monday."

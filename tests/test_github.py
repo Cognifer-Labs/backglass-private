@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import email.message
 import json
+import re
 import urllib.error
 from typing import Any
 
@@ -59,9 +60,9 @@ def an_issue(**kwargs: Any) -> dict[str, Any]:
         "body": kwargs.pop("body", "Fix before the Friday cut."),
         "updated_at": kwargs.pop("updated_at", "2026-07-28T09:15:32Z"),
         "user": {"login": kwargs.pop("author", "dana")},
-        "repository_url": "https://api.github.com/repos/kesavan/backglass",
+        "repository_url": "https://api.github.com/repos/alexrivera/backglass",
         "labels": kwargs.pop("labels", [{"name": "bug"}]),
-        "assignees": kwargs.pop("assignees", [{"login": "kesavan"}]),
+        "assignees": kwargs.pop("assignees", [{"login": "alexrivera"}]),
     }
     base.update(kwargs)
     return base
@@ -72,7 +73,7 @@ def one_page(issues: list[dict[str, Any]], **headers: str) -> dict[str, Any]:
 
 
 def a_notification(**kwargs: Any) -> dict[str, Any]:
-    repo = kwargs.pop("repo", "kesavan/backglass")
+    repo = kwargs.pop("repo", "alexrivera/backglass")
     number = kwargs.pop("number", 41)
     kind = kwargs.pop("subject_type", "PullRequest")
     path = "issues" if kind == "Issue" else "pulls"
@@ -117,11 +118,11 @@ def test_an_assigned_issue_becomes_a_source_item(enforcing: Boundary) -> None:
     assert len(items) == 1
     item = items[0]
     assert item.source == "github:personal"
-    assert item.external_id == "kesavan/backglass#41"
-    assert item.title == "[kesavan/backglass] Ledger dedupe drops supersedes"
+    assert item.external_id == "alexrivera/backglass#41"
+    assert item.title == "[alexrivera/backglass] Ledger dedupe drops supersedes"
     assert item.author == "dana"
     assert "issue, open" in str(item.body_text)
-    assert "Assigned to: kesavan" in str(item.body_text)
+    assert "Assigned to: alexrivera" in str(item.body_text)
     assert "bug" in str(item.body_text)
     assert "Friday cut" in str(item.body_text)
     assert json.loads(item.raw_json)["number"] == 41
@@ -144,7 +145,7 @@ def test_a_pull_request_is_labelled_as_one(enforcing: Boundary) -> None:
     )
     item = next(iter(connector.fetch(None)))
     assert "pull request" in str(item.body_text)
-    assert item.external_id == "kesavan/backglass#7"
+    assert item.external_id == "alexrivera/backglass#7"
 
 
 def test_a_long_body_is_truncated(enforcing: Boundary) -> None:
@@ -152,7 +153,11 @@ def test_a_long_body_is_truncated(enforcing: Boundary) -> None:
     thread the extractor should not be charged for."""
     connector = FakeGithub(one_page([an_issue(body="x" * 9000)]), boundary=enforcing)
     item = next(iter(connector.fetch(None)))
-    assert str(item.body_text).count("x") == 4000
+    # Count only the trailing run of "x" (the body), not the whole body_text — the
+    # header line's login can itself contain the letter "x" (e.g. "alexrivera"),
+    # which would inflate a plain substring count unrelated to truncation.
+    trailing_run = re.search(r"x+$", str(item.body_text))
+    assert trailing_run is not None and len(trailing_run.group()) == 4000
 
 
 # ── pagination ────────────────────────────────────────────────────────────
@@ -168,7 +173,7 @@ def test_pagination_follows_link_to_completion(enforcing: Boundary) -> None:
         boundary=enforcing,
     )
     numbers = [item.external_id for item in connector.fetch(None)]
-    assert numbers == ["kesavan/backglass#1", "kesavan/backglass#2"]
+    assert numbers == ["alexrivera/backglass#1", "alexrivera/backglass#2"]
     assert any("page=2" in url for url in connector.requested)
 
 
@@ -252,12 +257,12 @@ def test_a_notification_carries_its_reason_into_the_body(enforcing: Boundary) ->
 
     assert len(items) == 1
     item = items[0]
-    assert item.external_id == "kesavan/backglass#88"
-    assert item.title == "[kesavan/backglass] Cap the extractor spend per run"
+    assert item.external_id == "alexrivera/backglass#88"
+    assert item.title == "[alexrivera/backglass] Cap the extractor spend per run"
     assert item.occurred_at == "2026-07-29T18:40:00+00:00"
-    assert item.author == "kesavan"
+    assert item.author == "alexrivera"
     assert "Reason: review_requested" in str(item.body_text)
-    assert "Repository: kesavan/backglass" in str(item.body_text)
+    assert "Repository: alexrivera/backglass" in str(item.body_text)
     assert "Subject type: PullRequest" in str(item.body_text)
 
 
@@ -279,7 +284,7 @@ def test_notifications_that_are_not_issues_or_pull_requests_are_skipped(
         boundary=enforcing,
     )
     items = list(connector.fetch(None))
-    assert [item.external_id for item in items] == ["kesavan/backglass#12"]
+    assert [item.external_id for item in items] == ["alexrivera/backglass#12"]
 
 
 def test_the_same_issue_in_both_feeds_yields_once_and_keeps_the_search_version(
@@ -297,8 +302,8 @@ def test_the_same_issue_in_both_feeds_yields_once_and_keeps_the_search_version(
     items = list(connector.fetch(None))
 
     assert len(items) == 1
-    assert items[0].external_id == "kesavan/backglass#41"
-    assert "Assigned to: kesavan" in str(items[0].body_text), "the richer search row survived"
+    assert items[0].external_id == "alexrivera/backglass#41"
+    assert "Assigned to: alexrivera" in str(items[0].body_text), "the richer search row survived"
     assert "Reason:" not in str(items[0].body_text)
 
 
@@ -374,7 +379,7 @@ def test_a_spent_quota_skips_the_notification_leg(enforcing: Boundary) -> None:
         boundary=enforcing,
     )
     items = list(connector.fetch(None))
-    assert [item.external_id for item in items] == ["kesavan/backglass#1"]
+    assert [item.external_id for item in items] == ["alexrivera/backglass#1"]
     assert connector.rate_limited is True
     assert not any("/notifications" in url for url in connector.requested)
 
@@ -429,7 +434,7 @@ def test_a_missing_token_is_a_health_state(enforcing: Boundary) -> None:
 
 
 def test_a_healthy_token_reports_ok(enforcing: Boundary) -> None:
-    connector = FakeGithub({"/user": ({"login": "kesavan"}, {})}, boundary=enforcing)
+    connector = FakeGithub({"/user": ({"login": "alexrivera"}, {})}, boundary=enforcing)
     assert connector.health().ok is True
 
 

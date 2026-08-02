@@ -110,7 +110,7 @@ class TestPromotionAndConsumption:
             {
                 "id": "n1",
                 "from": "spam@x.com",
-                "to": "contactdharsan@gmail.com",
+                "to": "alex.rivera@example.com",
                 "subject": "one more offer",
                 "date": "Fri, 31 Jul 2026 09:00:00 -0700",
                 "body": "Buy now.",

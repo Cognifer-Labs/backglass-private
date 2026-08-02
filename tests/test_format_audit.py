@@ -167,7 +167,7 @@ class TestPeopleGrouping:
     ) -> None:
         conn.execute(
             "INSERT INTO entity (user_id, kind, canonical_name, role) VALUES"
-            " (1, 'person', 'Shawn Gathas', 'Guidance Coordinator')"
+            " (1, 'person', 'Jordan Blake', 'Guidance Coordinator')"
         )
         conn.execute(
             "INSERT INTO entity (user_id, kind, canonical_name) VALUES"
@@ -177,7 +177,7 @@ class TestPeopleGrouping:
         body = client.get("/people").text
         assert "Orgs &amp; services" in body
         # The org lands after the group header; the human before it.
-        human_pos = body.index("Shawn Gathas")
+        human_pos = body.index("Jordan Blake")
         header_pos = body.index("Orgs &amp; services")
         org_pos = body.index("ASU Transportation Portal")
         assert human_pos < header_pos < org_pos
@@ -214,7 +214,7 @@ class TestPeopleGrouping:
         assert org_like({"canonical_name": "Financial Aid Office", "tags": []})
         assert not org_like({"canonical_name": "college counselor", "tags": []})
         assert not org_like(
-            {"canonical_name": "Shawn Gathas", "role": "Coordinator", "tags": []}
+            {"canonical_name": "Jordan Blake", "role": "Coordinator", "tags": []}
         )
         # The owner's tag beats the heuristic in both directions.
         assert org_like({"canonical_name": "Sallie Mae", "tags": ["org"]})

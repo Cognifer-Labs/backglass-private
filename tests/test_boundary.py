@@ -42,7 +42,7 @@ def test_d7_denylisted_address_in_any_recipient_field_produces_zero_rows(
     spec = {
         "id": f"msg-{field}",
         "from": "colleague@example.com",
-        "to": "contactdharsan@gmail.com",
+        "to": "alex.rivera@example.com",
         "subject": "Scope for the WIC rollout",
         "date": "Fri, 10 Jul 2026 09:15:00 -0700",
         "body": "I'll send the revised scope by Thursday.",
@@ -95,7 +95,7 @@ def test_allowed_message_passes_through(enforcing: Boundary) -> None:
     spec = {
         "id": "clean",
         "from": "colleague@example.com",
-        "to": "contactdharsan@gmail.com",
+        "to": "alex.rivera@example.com",
         "subject": "Scope",
         "date": "Fri, 10 Jul 2026 09:15:00 -0700",
         "body": "I'll send the revised scope by Thursday.",
@@ -131,7 +131,7 @@ def test_purge_removes_previously_stored_items_and_their_commitments(
     spec = {
         "id": "later-denied",
         "from": "Dana <dwhitfield@clientexample.gov>",
-        "to": "contactdharsan@gmail.com",
+        "to": "alex.rivera@example.com",
         "subject": "Scope",
         "date": "Fri, 10 Jul 2026 09:15:00 -0700",
         "body": "I'll send the revised scope by Thursday.",

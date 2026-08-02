@@ -53,7 +53,7 @@ def _statement_message(i: int, body: str) -> dict[str, object]:
     return {
         "id": f"stmt{i}",
         "from": "alerts@bank.example",
-        "to": "contactdharsan@gmail.com",
+        "to": "alex.rivera@example.com",
         "subject": f"Statement #{i}",
         "date": f"Fri, {10 + i:02d} Jul 2026 09:00:00 -0700",
         "body": body,

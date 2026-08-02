@@ -108,7 +108,7 @@ def test_the_connector_produces_one_item_per_message(boundary) -> None:  # type:
     spec = {
         "id": "m1",
         "from": "Marcus Reed <mreed@example.com>",
-        "to": "contactdharsan@gmail.com",
+        "to": "alex.rivera@example.com",
         "subject": "Re: Scope",
         "date": "Fri, 10 Jul 2026 09:15:00 -0700",
         "body": THREAD_REPLY,

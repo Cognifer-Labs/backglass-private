@@ -31,11 +31,11 @@ def env_settings(**values: str) -> Settings:
 
 def test_comma_separated_lists_parse_from_the_environment() -> None:
     settings = env_settings(
-        OWNER_EMAILS="contactdharsan@gmail.com, dkesava2@asu.edu",
+        OWNER_EMAILS="alex.rivera@example.com, arivera@example.edu",
         GMAIL_ACCOUNTS="personal,asu",
         BOUNDARY_DENY_DOMAINS="clientexample.gov, wic-partner.org",
     )
-    assert settings.owner_emails == ["contactdharsan@gmail.com", "dkesava2@asu.edu"]
+    assert settings.owner_emails == ["alex.rivera@example.com", "arivera@example.edu"]
     assert settings.gmail_accounts == ["personal", "asu"]
     assert settings.boundary_deny_domains == ["clientexample.gov", "wic-partner.org"]
 
@@ -52,9 +52,9 @@ def test_both_owner_addresses_count_as_the_owner() -> None:
     The Cc fixture in tests/fixtures/commitments/07 is the case this exists for: the
     owner is reachable at the ASU address and must not be read as a third party.
     """
-    settings = env_settings(OWNER_EMAILS="contactdharsan@gmail.com,dkesava2@asu.edu")
-    assert settings.owns("contactdharsan@gmail.com")
-    assert settings.owns("Dharsan <DKesava2@ASU.EDU>")
+    settings = env_settings(OWNER_EMAILS="alex.rivera@example.com,arivera@example.edu")
+    assert settings.owns("alex.rivera@example.com")
+    assert settings.owns("Alex <arivera@example.edu>")
     assert not settings.owns("dwhitfield@example.gov")
     assert not settings.owns(None)
 

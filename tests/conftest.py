@@ -247,7 +247,7 @@ def settings(tmp_path: Path) -> Settings:
     # reads the environment on purpose (the 2026-07-30 lesson).
     return Settings(
         owner_name="K",
-        owner_emails=["contactdharsan@gmail.com", "dkesava2@asu.edu"],
+        owner_emails=["alex.rivera@example.com", "arivera@example.edu"],
         boundary_mode="full_scope",
         db_path=tmp_path / "backglass.db",
         model_backend="claude_cli",

@@ -56,13 +56,13 @@ class TestEngine:
     def test_export_carries_only_active_with_provenance(
         self, conn: sqlite3.Connection, settings: Settings
     ) -> None:
-        facts.remember(conn, settings, "identity", "name", "Dharsan Kesavan")
+        facts.remember(conn, settings, "identity", "name", "Alex Rivera")
         gone = facts.remember(conn, settings, "identity", "old", "stale claim")
         facts.forget(conn, gone)
         conn.commit()
         doc = facts.export_markdown(conn)
         assert "## identity" in doc
-        assert "**name**: Dharsan Kesavan" in doc
+        assert "**name**: Alex Rivera" in doc
         assert "stale claim" not in doc
         assert "(manual ·" in doc  # every line says where it came from
 

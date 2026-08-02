@@ -85,7 +85,7 @@ def _mail(i: int, body: str, sender: str = "dwhitfield@example.gov") -> dict[str
     return {
         "id": f"bm{i}",
         "from": f"Dana Whitfield <{sender}>",
-        "to": "contactdharsan@gmail.com",
+        "to": "alex.rivera@example.com",
         "subject": f"Plan {i}",
         "date": f"Fri, {10 + i:02d} Jul 2026 09:15:00 -0700",
         "body": body,

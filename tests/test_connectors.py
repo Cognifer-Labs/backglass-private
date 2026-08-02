@@ -254,7 +254,7 @@ def a_file(**kwargs: Any) -> dict[str, Any]:
         "mimeType": kwargs.pop("mimeType", "application/vnd.google-apps.document"),
         "size": kwargs.pop("size", "1200"),
         "modifiedTime": kwargs.pop("modifiedTime", "2026-07-28T10:00:00Z"),
-        "owners": kwargs.pop("owners", [{"emailAddress": "contactdharsan@gmail.com"}]),
+        "owners": kwargs.pop("owners", [{"emailAddress": "alex.rivera@example.com"}]),
         "permissions": kwargs.pop("permissions", []),
         "trashed": False,
     }
@@ -268,7 +268,7 @@ def test_drive_extracts_text_from_a_doc(enforcing: Boundary) -> None:
         label="personal",
         service=service,
         boundary=enforcing,
-        owner_emails=("contactdharsan@gmail.com",),
+        owner_emails=("alex.rivera@example.com",),
     )
     items = list(connector.fetch(None))
     assert len(items) == 1
@@ -284,7 +284,7 @@ def test_drive_never_crawls_shared_drives(enforcing: Boundary) -> None:
         label="personal",
         service=service,
         boundary=enforcing,
-        owner_emails=("contactdharsan@gmail.com",),
+        owner_emails=("alex.rivera@example.com",),
     )
     list(connector.fetch(None))
     kwargs = service.last_list_kwargs  # type: ignore[attr-defined]
@@ -301,7 +301,7 @@ def test_a_file_the_owner_cannot_reach_is_skipped(enforcing: Boundary) -> None:
         label="personal",
         service=service,
         boundary=enforcing,
-        owner_emails=("contactdharsan@gmail.com",),
+        owner_emails=("alex.rivera@example.com",),
     )
     assert list(connector.fetch(None)) == []
 
@@ -316,7 +316,7 @@ def test_binary_and_media_are_skipped(enforcing: Boundary) -> None:
         label="personal",
         service=service,
         boundary=enforcing,
-        owner_emails=("contactdharsan@gmail.com",),
+        owner_emails=("alex.rivera@example.com",),
     )
     assert list(connector.fetch(None)) == []
     assert service.export_calls == [], "an image is never even fetched"
@@ -332,7 +332,7 @@ def test_a_drive_file_shared_with_a_denylisted_domain_is_excluded(enforcing: Bou
         label="personal",
         service=service,
         boundary=enforcing,
-        owner_emails=("contactdharsan@gmail.com",),
+        owner_emails=("alex.rivera@example.com",),
     )
     assert list(connector.fetch(None)) == []
     assert connector.excluded == 1
@@ -628,7 +628,7 @@ def test_drive_extracts_pdf_text_instead_of_decoding_the_bytes(enforcing: Bounda
         label="personal",
         service=service,
         boundary=enforcing,
-        owner_emails=("contactdharsan@gmail.com",),
+        owner_emails=("alex.rivera@example.com",),
     )
     items = list(connector.fetch(None))
 
@@ -651,7 +651,7 @@ def test_a_drive_pdf_with_no_extractable_text_is_skipped(enforcing: Boundary) ->
         label="personal",
         service=service,
         boundary=enforcing,
-        owner_emails=("contactdharsan@gmail.com",),
+        owner_emails=("alex.rivera@example.com",),
     )
     assert list(connector.fetch(None)) == []
 
@@ -669,7 +669,7 @@ def test_an_unreadable_drive_pdf_does_not_break_the_run(enforcing: Boundary) -> 
         label="personal",
         service=service,
         boundary=enforcing,
-        owner_emails=("contactdharsan@gmail.com",),
+        owner_emails=("alex.rivera@example.com",),
     )
     items = list(connector.fetch(None))
 
