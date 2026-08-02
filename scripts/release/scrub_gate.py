@@ -31,6 +31,17 @@ WORD_BOUNDED_TERMS = [
     "Gathas",
     "Nyasha",
     "Sheppard",
+    "orgtruth",
+    "cogwait",
+]
+# Bare docs/13 and docs/14 citations — dangling pointers into the private-only
+# activation runbook and med-student PRD from otherwise-shipped surfaces.
+# Matched with a trailing word boundary (not a plain substring) so this can't
+# false-positive on some other, longer "docs/1..." path sharing the prefix
+# (e.g. a hypothetical "docs/130-foo.md" would not trip on "docs/13").
+WORD_BOUNDED_TERMS += [
+    "docs/13",
+    "docs/14",
 ]
 SUBSTRING_TERMS = [
     "Dharsan",
@@ -38,6 +49,19 @@ SUBSTRING_TERMS = [
     "dkesava2",
     "kesavand",
     "/Users/Dharsan",
+    "docs/13-activation-runbook.md",
+    "docs/14-med",
+    # Canaries for the "this is the owner's own personal project" ownership-
+    # context leak class (see Avorio's connector docstring, which used to open
+    # "the owner's own flashcard app"). Deliberately the exact leaked phrase,
+    # not the bare "owner's own" — that fragment is ordinary product language
+    # used throughout the codebase for the *app user's* own data/words/pace
+    # (config.py, actions.py, reviews.py, capacity.py, drive.py, tech-stack.md
+    # all ship it legitimately) and banning it bare would fail this gate
+    # against the current, already-clean tree. This narrower phrase still
+    # catches a regression of the actual leak without that collision.
+    "owner's own flashcard app",
+    "Avorio launch",
 ]
 LITERAL_CASE_SENSITIVE_TERMS = [
     "Arizona State",
@@ -61,6 +85,21 @@ LICENSE_EXEMPT_LINE_RE = re.compile(r"^Copyright \(c\) \d{4} Dharsan Kesavan$")
 # itself — every other shipped file, including every other file under
 # scripts/release/, is scanned normally.
 SELF_EXEMPT_RELPATH = "scripts/release/scrub_gate.py"
+
+# The third, term-scoped exemption: `manifest.py` legitimately must spell out
+# the exact denied doc paths as `DENY_PATHS` configuration data — the same
+# self-referential situation as this file's own SELF_EXEMPT_RELPATH above, but
+# narrower: manifest.py is exempted only from the specific docs/13 / docs/14
+# citation terms it's required to contain as data, not from the full banned
+# list (it still gets scanned normally for every other term).
+PATH_CITATION_FILE_EXEMPTIONS: dict[str, set[str]] = {
+    "scripts/release/manifest.py": {
+        "docs/13",
+        "docs/14",
+        "docs/13-activation-runbook.md",
+        "docs/14-med",
+    },
+}
 
 # Extensions unlikely to be meaningfully text-scannable (fonts, binary blobs).
 # Everything else is attempted as UTF-8 text; a decode failure is treated as
@@ -101,13 +140,18 @@ def scan(root: Path) -> list[tuple[str, int, str]]:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError):
             continue
+        file_term_exemptions = PATH_CITATION_FILE_EXEMPTIONS.get(rel, set())
         for line_no, line in enumerate(text.splitlines(), start=1):
             if rel == LICENSE_EXEMPT_FILENAME and LICENSE_EXEMPT_LINE_RE.match(line):
                 continue
             for term, pattern in _WORD_BOUNDED_RE:
+                if term in file_term_exemptions:
+                    continue
                 if pattern.search(line):
                     hits.append((rel, line_no, term))
             for term, pattern in _SUBSTRING_RE:
+                if term in file_term_exemptions:
+                    continue
                 if pattern.search(line):
                     hits.append((rel, line_no, term))
             for term, pattern in _LITERAL_RE:

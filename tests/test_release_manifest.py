@@ -36,11 +36,12 @@ def _reachable_under_allow(path: str) -> bool:
 def test_deny_paths_not_reachable_under_allow_prefixes():
     """A DENY_PATHS entry must not be silently un-denied by a broad ALLOW prefix.
 
-    Concretely: docs/13 and docs/14 are denied *because* the docs/ allowlist is
-    individual files, not a directory prefix. If a future edit collapses those
-    individual `docs/0X-*.md` entries into a broad `"docs/"` prefix (as `specs/
-    roadmaps/` already is), this test fails immediately — it does not wait for
-    someone to notice the leak in a built export tree.
+    Concretely: the activation-runbook and med-student-prd docs are denied
+    *because* the docs/ allowlist is individual files, not a directory prefix.
+    If a future edit collapses those individual `docs/0X-*.md` entries into a
+    broad `"docs/"` prefix (as `specs/roadmaps/` already is), this test fails
+    immediately — it does not wait for someone to notice the leak in a built
+    export tree.
 
     Paths that participate in SUBSTITUTIONS (either side) are the one
     deliberate exception: `specs/roadmaps/medical.md` (a SUBSTITUTIONS key) is
