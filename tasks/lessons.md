@@ -242,3 +242,14 @@ deterministic given the id.
   can fail; if the list has more than one type, narrow it at the source instead of
   widening the catch. A parametrized test over every malformed input, asserting they all
   leave by the same door, is what keeps it true.
+
+- 2026-08-02 | Wrote `test_a_stale_timezone_typo_cannot_break_logging` with the typo in a
+  stay that was NOT in effect, and called only the one function I had just fixed. It
+  passed for three rounds while the same typo in a stay that WAS in effect 500'd every
+  dashboard page and tracebacked `log` and `plan` — because `active_tz` handed the bad
+  name to six other readers. | Test the config in the state where it actually bites. An
+  inert value exercises the skip path; a live value exercises everything downstream, and
+  those are different tests. Two habits fall out: when a fix concerns configuration,
+  write the case where the config is IN EFFECT, and drive at least one real door (CLI
+  command, HTTP route) rather than only the function under repair — the door is what
+  reaches the callers you did not think of.
