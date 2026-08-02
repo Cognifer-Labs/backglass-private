@@ -2,6 +2,7 @@
 name = "backglass"
 version = "0.1.0"
 description = "A commitment ledger with documents as evidence."
+license = "MIT"
 requires-python = ">=3.12"
 dependencies = [
     "typer>=0.12",
