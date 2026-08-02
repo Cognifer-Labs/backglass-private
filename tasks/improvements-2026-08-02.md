@@ -1,5 +1,12 @@
 # Backglass improvement plan — 2026-08-02
 
+> **North star set by the owner on 2026-08-02: Backglass is the main way they compile
+> their college journey.** That re-ranks everything below. The ledger is the
+> longitudinal record of a degree, so data loss and silent staleness are the worst
+> failures (Tier 1/2, now done), and the surfaces that accumulate the record —
+> activities, hours, deadlines, roadmap — outrank OSS polish. See the college-journey
+> section at the end for what the real ledger says today.
+
 Synthesized from a 4-scout state map + 4-lens idea panel (daily-value, extraction,
 reliability, surface-growth), cross-checked against tasks/audit-2026-08-01.md and the
 current code. Ideas from the panel that turned out already fixed were dropped after
@@ -114,3 +121,44 @@ background loop; Tiers 4-5 batched opportunistically.
 
 **Also pending:** uncommitted plan-catchup work in the tree (8 files) — commit before
 anything else touches `__main__.py`/`planner.py`.
+
+---
+
+## The college journey: what the real ledger says (read-only survey, 2026-08-02)
+
+Facts, not plans — each verified against `data/backglass.db` read-only.
+
+**Already there, and better than expected.** The fall semester is in the ledger:
+200 `calendar:asu` items spanning 2026-08-20 → 2026-12-04 — HON 171, PSY 101, CHM 113
++ lab, CIS 236, BIO 181, LSB 191. The medical roadmap is instantiated with the full
+AMCAS target set (60 shadowing / 150 clinical / 100 volunteering / 200 research / 50
+leadership hours, plus MCAT and application milestones), and six scholarship deadlines
+are live milestones (2026-09-01 through 2026-12-31).
+
+**The gap that matters most: the activity ledger is empty.** `activity` has zero rows
+and `checkpoint` has two. The AMCAS engine is fully built — `goals/activities.py` has
+add/hours/most-meaningful, the 15-slot and description-character limits, and a UI on
+the roadmap page — but nothing has been logged into it. For a pre-med, the compiled
+activity list with hours and dates *is* the college record; four years of it cannot be
+reconstructed later from memory. **Highest-value next work is making logging an hour
+take seconds** (a `backglass log <activity> <hours>` CLI, a brief line that asks, or
+proposing activities from evidence already ingested) — not more machinery.
+
+**Calendar is an unmanaged source.** Those 200 semester events have no `credential`
+row, so no sync will ever refresh them: a dropped class or a room change never
+reaches the ledger. This is exactly the class the new unmanaged-source line surfaces.
+Fixing it needs Google OAuth (owner step).
+
+**Extraction quality is visibly imperfect on real rows.** Open commitments include a
+near-duplicate pair ("Purchase 2026-27 resident hall parking permit" at 0.9 and the
+same thing + "online" at 0.7 — the dedup threshold missed it) and several with due
+dates months in the past. This is the concrete case for the correction-feedback loop
+(Tier 3 #7) rather than a hypothetical one.
+
+**Owner-blocked steps, in priority order for this use case:**
+1. Google OAuth client → `backglass auth gmail:*` / `calendar:*` — school mail and a
+   refreshing class schedule. Biggest single unlock.
+2. Canvas token + base URL → assignments and due dates, "the original request that
+   seeded this project."
+3. Full Disk Access for the terminal → fixes the failed iMessage connector.
+4. `BRIEF_TO` + `RESEND_API_KEY` → the 06:00 brief actually arrives.
