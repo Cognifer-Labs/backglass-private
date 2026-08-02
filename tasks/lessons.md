@@ -89,3 +89,5 @@ deterministic given the id.
   launch the app against a copy (or backglass-demo.db) via BACKGLASS_DB/temp
   copy first; treat every dashboard surface as mutating; diff open-commitment
   counts before/after any browser QA session.
+
+2026-08-02 | Scout claimed git history was PII-clean; direct re-grep of all revisions found 376 file-hits of the owner's email — and later, a fresh-context verifier caught two leak classes (owner's project names in goal contexts, dangling private-doc citations in shipped --help/comments) that both the scrub gate's banned list and the manual grep missed | Scrub lists are provisional by nature: verify scouted claims that decisions hinge on yourself, and always run an independent adversarial sweep with freshly-derived terms (project names, doc-reference patterns, username-shaped fixtures) before anything ships publicly.
