@@ -12,6 +12,17 @@ timestamp as a required argument.
 The prompt asks the model to resolve dates itself and return ISO 8601. This module is
 the check on that, plus the fallback for when it returns a bare weekday anyway.
 
+Academic sources drift furthest from the prompt: syllabi say "assignments due March 3",
+Canvas assignment text says "Jan 5th", professors write "submit by 5pm Friday". Those
+shapes are parsed here — month names in both orders, with or without an ordinal suffix
+or a year, and an optional clock time lifted out of the phrase. Numeric slash dates
+(03/04/2027) are deliberately NOT parsed: the owner reads both US and Indian
+conventions, so that string has two readings and this module never picks one.
+
+Nothing here guesses. Every shape it cannot pin down exactly falls through to the same
+drop-with-note path a commitment with no date takes. A wrong due date puts a fake
+deadline in the day plan, which is strictly worse than no deadline at all.
+
 Timezone handling: `occurred_at` carries the sender's UTC offset, preserved from the
 `Date` header by connectors/gmail.py. The local date is read in that offset, so a message
 sent at 19:00 in Phoenix (UTC-7) and one sent at 07:00 the next morning in Coimbatore
@@ -45,9 +56,73 @@ WEEKDAYS = {
     "sun": 6,
 }
 
-_LEADING = re.compile(r"^(?:by|on|before|due|due\s+by|this|coming|end\s+of)\s+", re.IGNORECASE)
-_IN_N = re.compile(r"^in\s+(\d+)\s+(day|days|week|weeks|month|months)$", re.IGNORECASE)
-_N_FROM = re.compile(r"^(\d+)\s+(day|days|week|weeks)\s+from\s+now$", re.IGNORECASE)
+MONTHS = {
+    "january": 1,
+    "jan": 1,
+    "february": 2,
+    "feb": 2,
+    "march": 3,
+    "mar": 3,
+    "april": 4,
+    "apr": 4,
+    "may": 5,
+    "june": 6,
+    "jun": 6,
+    "july": 7,
+    "jul": 7,
+    "august": 8,
+    "aug": 8,
+    "september": 9,
+    "sept": 9,
+    "sep": 9,
+    "october": 10,
+    "oct": 10,
+    "november": 11,
+    "nov": 11,
+    "december": 12,
+    "dec": 12,
+}
+
+# Lead-ins that carry no date information. Stripped repeatedly, because syllabus and
+# professor prose stacks them: "due by Friday", "submitted by 5pm on March 3".
+_PREFIX = re.compile(
+    r"^(?:by|on|before|due(?:\s+by)?|no\s+later\s+than|nlt|this|coming|the"
+    r"|submit(?:ted)?\s+by|turn\s+in\s+by)\s+"
+)
+# "end of the week", "end of this week" and "end of week" are one phrase, not three.
+_END_OF = re.compile(r"^end\s+of\s+(?:the\s+|this\s+)?")
+_IN_N = re.compile(r"^in\s+(\d+)\s+(day|days|week|weeks|month|months)$")
+_N_FROM = re.compile(r"^(\d+)\s+(day|days|week|weeks)\s+from\s+now$")
+
+# Longest first, so "sept" wins over "sep" and "march" over "mar".
+_MONTH_ALT = "|".join(sorted(MONTHS, key=len, reverse=True))
+_ORDINAL = r"(?:st|nd|rd|th)?"
+# "March 3", "Jan 5th", "Mar 3, 2027". Anchored: a month name buried in a sentence is
+# not a date this module will guess at.
+_MONTH_DAY = re.compile(
+    rf"^(?P<month>{_MONTH_ALT})\.?\s+(?P<day>\d{{1,2}}){_ORDINAL}(?:,?\s+(?P<year>\d{{4}}))?$"
+)
+# "3 March", "3rd of March 2027".
+_DAY_MONTH = re.compile(
+    rf"^(?P<day>\d{{1,2}}){_ORDINAL}\s+(?:of\s+)?(?P<month>{_MONTH_ALT})\.?"
+    rf"(?:,?\s+(?P<year>\d{{4}}))?$"
+)
+
+# A clock time anywhere in the phrase: "by 5pm Friday", "Friday at 5", "17:00 Friday",
+# "March 3 at 11:59pm". The bare-integer case is only a time when "at"/"@" introduces it
+# or a ":" or meridiem confirms it — otherwise the "3" in "March 3" would be read as
+# three o'clock. That check is in _split_time, not the pattern.
+_TIME = re.compile(
+    r"""(?:^|\s)
+        (?:(?P<at>at|@)\s*)?
+        (?P<hour>\d{1,2})
+        (?::(?P<minute>\d{2}))?
+        \s*
+        (?P<meridiem>a\.?m\.?|p\.?m\.?)?
+        (?=$|\s|[,;.])
+    """,
+    re.VERBOSE,
+)
 
 
 @dataclass(frozen=True)
@@ -87,9 +162,27 @@ def resolve_due(raw: str | None, *, occurred_at: str) -> Resolution:
     if absolute is not None:
         return _guard(absolute, base, text, was_relative=False)
 
-    relative = _try_relative(text, base)
+    # Everything below works on one lowercased, lead-in-stripped form of the phrase.
+    phrase = _normalize(text)
+
+    # A clock time is lifted out before the date is read, so "by 5pm Friday" and "Friday"
+    # take the same weekday path. `time_note` is set when a time was stated but could not
+    # be pinned down — the date still resolves, the time degrades to a note.
+    remainder, clock, time_note = _split_time(phrase)
+
+    named = _try_month_name(remainder, base)
+    if named is not None:
+        return _guard(_with_time(named, clock), base, text, was_relative=False, note=time_note)
+
+    relative = _try_relative(remainder, base)
     if relative is not None:
-        return _guard(relative.isoformat(), base, text, was_relative=True)
+        return _guard(
+            _with_time(relative.isoformat(), clock),
+            base,
+            text,
+            was_relative=True,
+            note=time_note,
+        )
 
     return Resolution(value=None, note=f"could not resolve {text!r} against {base.isoformat()}")
 
@@ -109,9 +202,111 @@ def _try_absolute(text: str) -> str | None:
     return parsed.date().isoformat()
 
 
-def _try_relative(text: str, base: date) -> date | None:
-    lowered = _LEADING.sub("", text.strip().lower()).strip().rstrip(".")
-    lowered = re.sub(r"^next\s+", "next ", lowered)
+def _normalize(text: str) -> str:
+    """Lowercase, collapse whitespace, strip stacked lead-ins, canonicalise "end of X".
+
+    Stripping is a loop rather than one pass because the lead-ins compose: "due by on
+    March 3" is real prose from a syllabus. "end of the week" is rewritten to "end of
+    week" here so that the phrase table below holds one entry per meaning.
+    """
+    lowered = " ".join(text.lower().split()).strip(" .,;")
+    while True:
+        stripped = _PREFIX.sub("", lowered).strip()
+        if stripped == lowered:
+            break
+        lowered = stripped
+    return _END_OF.sub("end of ", lowered)
+
+
+def _split_time(phrase: str) -> tuple[str, tuple[int, int] | None, str | None]:
+    """Lift a clock time out of a normalised phrase.
+
+    Returns the phrase with the time removed, the (hour, minute) if one was stated
+    unambiguously, and a note when a time was stated but could not be read as one hour.
+
+    "Friday at 5" is the ambiguous case: 5am and 5pm are both ordinary readings and this
+    module does not get to pick. The date still resolves — dropping the whole due date
+    over an ambiguous hour would be worse — but the time is discarded and said so.
+    """
+    for match in _TIME.finditer(phrase):
+        meridiem = match.group("meridiem")
+        minute_text = match.group("minute")
+        introduced = match.group("at") is not None
+        if meridiem is None and minute_text is None and not introduced:
+            # A bare integer with nothing marking it as a time — the "3" in "March 3".
+            continue
+
+        hour = int(match.group("hour"))
+        minute = int(minute_text) if minute_text is not None else 0
+        remainder = f"{phrase[: match.start()]} {phrase[match.end() :]}"
+        remainder = _normalize(remainder)
+
+        if meridiem is not None:
+            if not 1 <= hour <= 12 or minute > 59:
+                return remainder, None, f"unreadable clock time in {phrase!r}; time dropped"
+            hour = hour % 12 + (12 if meridiem.startswith("p") else 0)
+            return remainder, (hour, minute), None
+        if hour > 23 or minute > 59:
+            return remainder, None, f"unreadable clock time in {phrase!r}; time dropped"
+        if minute_text is None and hour < 13:
+            # "at 5" — am or pm, and guessing puts a fake deadline in the day plan.
+            ambiguous = f"ambiguous clock time in {phrase!r}; date kept, time dropped"
+            return remainder, None, ambiguous
+        return remainder, (hour, minute), None
+    return phrase, None, None
+
+
+def _with_time(iso_date: str, clock: tuple[int, int] | None) -> str:
+    """Attach a stated clock time to a resolved date.
+
+    `commitment.due_at` is TEXT and already stores datetimes when the model returns one,
+    and every reader truncates with `[:10]` before comparing days, so carrying the time
+    costs nothing and no schema changes. No offset is attached: the prompt tells the model
+    to keep what was written and never convert timezones, and a naive local time is what
+    "5pm" means to the person who wrote it.
+    """
+    if clock is None:
+        return iso_date
+    return f"{iso_date}T{clock[0]:02d}:{clock[1]:02d}:00"
+
+
+def _try_month_name(phrase: str, base: date) -> str | None:
+    """"March 3", "3 March", "Jan 5th", "Mar 3, 2027" — the syllabus shapes.
+
+    When no year is written, the answer is the first occurrence on or after the message
+    date. A December email saying "January 5" means the January that is three weeks away,
+    not the one ten months gone.
+    """
+    match = _MONTH_DAY.match(phrase) or _DAY_MONTH.match(phrase)
+    if match is None:
+        return None
+
+    month = MONTHS[match.group("month")]
+    day = int(match.group("day"))
+    written_year = match.group("year")
+
+    if written_year is not None:
+        stated = _make_date(int(written_year), month, day)
+        return stated.isoformat() if stated is not None else None
+
+    # Five candidate years covers "February 29" from any starting year.
+    for year in range(base.year, base.year + 5):
+        candidate = _make_date(year, month, day)
+        if candidate is not None and candidate >= base:
+            return candidate.isoformat()
+    return None
+
+
+def _make_date(year: int, month: int, day: int) -> date | None:
+    """A calendar date, or None when that day does not exist in that month."""
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _try_relative(phrase: str, base: date) -> date | None:
+    lowered = phrase
 
     if lowered in {"today", "eod", "end of day", "cob", "close of business"}:
         return base
@@ -119,13 +314,14 @@ def _try_relative(text: str, base: date) -> date | None:
         return base + timedelta(days=1)
     if lowered == "yesterday":
         return base - timedelta(days=1)
-    if lowered in {"week", "this week", "eow"}:
-        # "end of week" — the Friday of the message's own week, or the coming Friday if
-        # the message was sent at the weekend.
+    # "this week" arrives here as "week": _normalize strips the lead-in.
+    if lowered in {"week", "eow", "end of week"}:
+        # The Friday of the message's own week, or the coming Friday if the message was
+        # sent at the weekend.
         return _next_weekday(base, 4, inclusive=True)
-    if lowered in {"next week", "the week"}:
+    if lowered == "next week":
         return base + timedelta(days=7)
-    if lowered in {"month", "next month", "end of month"}:
+    if lowered in {"month", "next month", "end of month", "eom"}:
         return _end_of_month(base)
 
     match = _IN_N.match(lowered) or _N_FROM.match(lowered)
@@ -172,21 +368,55 @@ def _leap(year: int) -> bool:
     return year % 4 == 0 and (year % 100 != 0 or year % 400 == 0)
 
 
-def _guard(value: str, base: date, original: str, *, was_relative: bool) -> Resolution:
+def _guard(
+    value: str, base: date, original: str, *, was_relative: bool, note: str | None = None
+) -> Resolution:
     """Reject a due date that falls before the message that created it.
 
     A commitment cannot be due before it was made. When this fires, the usual cause is a
     date resolved against the wrong year, and a null due date that shows up in the review
     queue is a far better outcome than a confidently wrong one in the brief.
+
+    An overdue commitment is one due before *today*, which this function never sees and
+    must never touch. It only sees dates due before the message that created them, and
+    those are already being dropped outright — so trying a year correction first cannot
+    turn a legitimately overdue commitment into a future one. It can only turn a dropped
+    date into a kept one.
+
+    The correction is +1 year, taken only when it lands on or after the message date.
+    That arithmetic bounds itself: a date before `base` that is still before `base` after
+    a year has been added is not a rollover slip, and it falls through to the drop. No
+    separate "within 11 months" window is needed, and imposing one would break the exact
+    case this exists for — a January message citing "2026-01-08" when it meant 2027.
+
+    Relative phrases are never corrected. "Yesterday" resolves to the past because it
+    means the past, and adding a year to it would invent a deadline nobody wrote.
     """
     resolved = date.fromisoformat(value[:10])
     if resolved < base:
+        corrected = _make_date(resolved.year + 1, resolved.month, resolved.day)
+        if not was_relative and corrected is not None and corrected >= base:
+            return Resolution(
+                value=corrected.isoformat() + value[10:],
+                note=_join_notes(
+                    note,
+                    f"{original!r} resolved to {resolved.isoformat()}, before the message date "
+                    f"{base.isoformat()}; read as {corrected.isoformat()}",
+                ),
+                was_relative=was_relative,
+            )
         return Resolution(
             value=None,
-            note=(
+            note=_join_notes(
+                note,
                 f"{original!r} resolved to {resolved.isoformat()}, before the message date "
-                f"{base.isoformat()}; dropped"
+                f"{base.isoformat()}; dropped",
             ),
             was_relative=was_relative,
         )
-    return Resolution(value=value, was_relative=was_relative)
+    return Resolution(value=value, note=note, was_relative=was_relative)
+
+
+def _join_notes(*notes: str | None) -> str | None:
+    stated = [note for note in notes if note]
+    return "; ".join(stated) if stated else None
