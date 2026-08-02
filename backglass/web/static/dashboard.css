@@ -20,9 +20,9 @@
  * figures everywhere.
  */
 
-/* Mortend Bold — vendored display face (see static/VENDOR.md). One weight; declared
+/* Oswald Bold — vendored display face (see static/VENDOR.md). One weight; declared
  * 700 so the existing bold display rules pick it up without edits. */
-@font-face{font-family:"Mortend";src:url("/static/fonts/Mortend-Bold.woff2") format("woff2");
+@font-face{font-family:"Oswald";src:url("/static/fonts/Oswald-Bold.woff2") format("woff2");
   font-weight:700;font-style:normal;font-display:swap}
 *{box-sizing:border-box}
 body{margin:0;background:var(--paper);color:var(--ink);

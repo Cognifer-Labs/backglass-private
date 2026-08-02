@@ -13,14 +13,14 @@ third party in the request path for a page rendering the owner's commitments. do
 
 To upgrade: fetch the new file, record its hash here, and re-run the dashboard tests.
 
-`fonts/Mortend-Bold.woff2` — Mortend Bold display face, converted 2026-08-01 from the
-owner's `MortendBold-2Odle.ttf` (fontTools woff2 compress). Source:
-`https://www.fontspace.com/mortend-font-f61373`.
+`fonts/Oswald-Bold.woff2` — Oswald Bold display face, converted 2026-08-02 from the
+Google Fonts variable source `ofl/oswald/Oswald[wght].ttf` (fontTools
+`varLib.instancer` pinned to `wght=700`, then `ttLib.woff2 compress`). Source:
+`https://github.com/google/fonts/raw/main/ofl/oswald/Oswald%5Bwght%5D.ttf`.
 
-    sha256  42b544d2d548fe377828c3fcd12e5dfc8812b4084e99d5877112ec6592df454f
-    bytes   10992
-    license Freeware, Non-Commercial — fine for this single-owner personal tool;
-            replace before any commercial distribution.
+    sha256  23b071107844095a858ca18c9ebfa917bf899d111d07522103308e3de5851c9d
+    bytes   33908
+    license OFL 1.1 — permissive, ships freely.
 
 One weight only (Bold), declared `font-weight:700` in `dashboard.css` so it slots into
 the existing display rules. It is the first entry in `--font-cond` (design/tokens.css);

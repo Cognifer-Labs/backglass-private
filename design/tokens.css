@@ -85,7 +85,7 @@
 
   /* type */
   --font-body: system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-cond: "Mortend", "Helvetica Neue Condensed", "HelveticaNeue-CondensedBold",
+  --font-cond: "Oswald", "Helvetica Neue Condensed", "HelveticaNeue-CondensedBold",
                "Arial Narrow", system-ui, sans-serif;
   --font-reel: ui-monospace, "SF Mono", Menlo, monospace;
 }
