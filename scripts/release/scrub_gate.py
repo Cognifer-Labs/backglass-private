@@ -104,7 +104,10 @@ PATH_CITATION_FILE_EXEMPTIONS: dict[str, set[str]] = {
 # Extensions unlikely to be meaningfully text-scannable (fonts, binary blobs).
 # Everything else is attempted as UTF-8 text; a decode failure is treated as
 # binary and skipped rather than crashing the gate.
-SKIP_EXTENSIONS = {".woff2", ".woff", ".ttf", ".otf", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".db"}
+SKIP_EXTENSIONS = {
+    ".woff2", ".woff", ".ttf", ".otf",
+    ".png", ".jpg", ".jpeg", ".gif", ".ico", ".db",
+}
 
 _WORD_BOUNDED_RE = [
     (term, re.compile(r"\b" + re.escape(term) + r"\b", re.IGNORECASE))

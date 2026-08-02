@@ -7,7 +7,8 @@ constraint on this file, not a preference (see the plan's Risks section).
 
 Usage:
     uv run python scripts/release/build_public_repo.py --dry-run
-    uv run python scripts/release/build_public_repo.py --out /private/tmp/backglass-release/2026-08-02
+    uv run python scripts/release/build_public_repo.py \
+        --out /private/tmp/backglass-release/2026-08-02
 """
 
 from __future__ import annotations
