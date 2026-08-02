@@ -11,7 +11,7 @@ calendar, and produces two surfaces:
 1. **A morning brief**, pushed at 06:00 local, read in under two minutes.
 2. **A dashboard**, opened during the day, showing schedule, commitments, and goals.
 
-Single user. Owner is K, a founder who works across Arizona and India.
+Single user. Runs entirely locally, for one owner who splits time across two timezones.
 
 ## The one idea that shapes everything
 

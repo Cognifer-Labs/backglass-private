@@ -29,9 +29,9 @@ happens once at ingest and the read path is plain SQL over a small table.
 
 ## Who it is for
 
-One person. K, a founder splitting time between Arizona and India, working across several
-client engagements and a couple of products. High email volume, high commitment density,
-frequent timezone changes.
+One person. Someone splitting time across two timezones, working across several
+engagements at once. High email volume, high commitment density, frequent timezone
+changes.
 
 Designing for one known user is a feature. It permits decisions a multi-tenant product
 could not make: SQLite, no auth, no onboarding, a hardcoded working window that can be

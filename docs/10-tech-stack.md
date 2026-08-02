@@ -85,12 +85,12 @@ selected by `MODEL_BACKEND`, behind the one-method `ModelClient` protocol in
 
 | backend | when | marginal cost |
 |---|---|---|
-| `claude_cli` | now, personal use | none — runs on the owner's Claude subscription |
-| `deepinfra` | when this becomes a product | per token, open-source models |
+| `claude_cli` | personal use | none — runs on your existing Claude subscription |
+| `deepinfra` | at scale, or without a Claude subscription | per token, open-source models |
 
 **`claude_cli` shells out to the Claude Code CLI.** The reason is billing, not
-engineering: the owner has a subscription and no API key, and a personal tool that costs
-nothing per run is a tool that survives the month its enthusiasm wears off.
+engineering: if you already have a Claude subscription and no API key, a personal tool
+that costs nothing per run is a tool that survives the month its enthusiasm wears off.
 
 The structured-output requirement above survives the substitution intact. `--json-schema`
 is implemented as a forced tool call, and the CLI returns the validated object in a

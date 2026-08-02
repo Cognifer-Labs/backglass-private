@@ -98,14 +98,17 @@ At the end of the working window, anything proposed but not marked done becomes
 
 ### 1.7 Timezone and travel
 
-The owner moves between America/Phoenix (UTC-7, no DST) and Asia/Kolkata (UTC+5:30).
+Written for a user who splits time between two zones — worked example below uses
+America/Phoenix (UTC-7, no DST) and Asia/Kolkata (UTC+5:30), a real pair chosen because
+it has no DST on either side to complicate the math, but the mechanics apply to any
+two-zone split.
 
 | ID | Requirement |
 |----|-------------|
 | P13 | All timestamps stored UTC. The working window, brief delivery, and day boundaries follow the **active timezone**, not a fixed offset. |
 | P14 | Active timezone comes from an explicit setting with an optional date range, not from IP geolocation, which is wrong exactly when travelling. |
 | P15 | On a day where the active timezone changes, the brief leads with the change and shows the working window in both zones. |
-| P16 | Meetings scheduled in the other zone display both local and counterpart time. A 09:00 Phoenix call is 21:30 in Coimbatore, and getting this wrong once costs a meeting. |
+| P16 | Meetings scheduled in the other zone display both local and counterpart time. A 09:00 Phoenix call is 21:30 in Kolkata, and getting this wrong once costs a meeting. |
 
 ### 1.8 Evening shutdown
 

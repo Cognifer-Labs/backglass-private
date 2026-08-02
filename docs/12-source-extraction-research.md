@@ -74,8 +74,9 @@ both permit this). Skip talon's HTML and ML paths entirely — extract `text/pla
 and strip there. Rationale: both projects are abandonware, so a dep buys ongoing risk and
 zero maintenance; the regexes themselves are stable artifacts. Stripping is a token-cost
 and dedup win (thread hashing, per `docs/07-connectors.md`), and the extractor model
-tolerates any residue. Build the fixture set from K's real thread shapes (Gmail, Outlook,
-Apple Mail reply styles). **Effort: M** (the fixtures are the work, not the regexes).
+tolerates any residue. Build the fixture set from your own real thread shapes (Gmail,
+Outlook, Apple Mail reply styles). **Effort: M** (the fixtures are the work, not the
+regexes).
 
 ## 4. Slack — threads, cursors, rate limits
 
@@ -131,7 +132,7 @@ to close resolved items. No dep; `gh api` in dev, stdlib HTTP in the connector.
   [extract-text sample](https://developers.google.com/workspace/docs/api/samples/extract-text)).
   Drive `files.export?mimeType=text/plain` is the simpler path but its multi-tab behavior
   is not documented — test on a tabbed doc; if it exports only tab one, switch to the
-  Docs API walk. Assume multi-tab docs exist in K's Drive.
+  Docs API walk. Assume multi-tab docs exist in your Drive.
 - **Recurring events: never expand RRULEs yourself.** Pass `singleEvents=true` with a
   bounded `timeMin`/`timeMax` ([guide](https://developers.google.com/workspace/calendar/api/guides/recurringevents)).
   Pitfalls the API handles that hand-rolling gets wrong: deleted occurrences arrive as
@@ -195,8 +196,9 @@ escalate to pyobjc-EventKit only if runtime hurts. **Effort: S, M for EventKit.*
 4. **pypdf for the drop folder + Drive PDFs** — single BSD pure-Python dep, `needs_ocr`
    threshold flag instead of an OCR stack. (S)
 5. **Vendored quote-strip regex module** — talon + email-reply-parser plain-text patterns,
-   vendored with attribution, fixture-tested on K's real reply styles. Both upstreams are
-   dead; the regexes aren't. Feeds thread dedup and cuts extraction tokens. (M)
+   vendored with attribution, fixture-tested on your own real reply styles. Both
+   upstreams are dead; the regexes aren't. Feeds thread dedup and cuts extraction
+   tokens. (M)
 
 Deliberately not doing: PyMuPDF (AGPL), any talon/email-reply-parser dependency
 (abandoned), WhatsApp (ToS + fragility), OCR (premature), Docs-tab support beyond the
