@@ -120,10 +120,17 @@ def read(
         moment = moment.replace(tzinfo=UTC)
     tz = timezones.active_tz(settings, today)
 
+    # Only sync runs. `run` records every job kind — roadmap/interview.py writes
+    # kind='interview' — and counting all of them meant one roadmap interview reset the
+    # clock on all three surfaces, so a sync that had been dead five hours read green on
+    # the dashboard, in the brief, and in doctor. The surfaces say "last sync ran", so
+    # the query has to mean it.
+    #
     # Ordered by the instant, not the string: run rows are written UTC by db.now_iso,
     # but datetime() normalizes whatever offset a future writer hands it.
     run = conn.execute(
         "SELECT id, finished_at FROM run WHERE user_id = ? AND finished_at IS NOT NULL "
+        "AND kind = 'sync' "
         "ORDER BY datetime(finished_at) DESC, id DESC LIMIT 1",
         (USER_ID,),
     ).fetchone()

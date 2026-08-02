@@ -1838,6 +1838,13 @@ def restore(
             err=True,
         )
         raise typer.Exit(code=1)
+    if not backup_mod.is_ledger(snapshot):
+        typer.echo(
+            f"refusing to restore: {snapshot} is a valid SQLite database but not a "
+            "Backglass ledger (no schema_version/source_item/commitment tables)",
+            err=True,
+        )
+        raise typer.Exit(code=1)
 
     if not yes:
         typer.echo(f"would restore {snapshot}")
@@ -1923,7 +1930,9 @@ BOUNDARY_SCOPED = ("gmail", "drive", "slack", "github", "calendar")
 
 
 def _boundary_verdict(
-    settings: Settings, credentials: Sequence[tuple[str, bool]]
+    settings: Settings,
+    credentials: Sequence[tuple[str, bool]],
+    ingested: Sequence[str] = (),
 ) -> tuple[bool, str] | None:
     """`(ok, detail)` for the boundary check, or None when it does not apply yet.
 
@@ -1933,12 +1942,27 @@ def _boundary_verdict(
     `full_scope` with the obligations that carries — and "never decided" is neither.
     So this stays silent until a source that can actually carry client data is live,
     and then it fails until the owner has chosen. Rule 6 is the one with legal weight.
+
+    `ingested` is the set of sources that have rows in the ledger, and it is not
+    redundant with `credentials`. The first version of this check derived "live" from
+    credential rows alone and was therefore silent on a ledger already holding 200
+    `calendar:*` items imported without one — boundary-scoped third-party data, present,
+    unexamined, and reported as nothing to decide. Data that is already in the ledger is
+    the strongest possible reason to have decided, so it counts even when no connector
+    claims it.
     """
-    scoped = sorted({
-        source.split(":")[0]
-        for source, enabled in credentials
-        if enabled and source.split(":")[0] in BOUNDARY_SCOPED
-    })
+    scoped = sorted(
+        {
+            source.split(":")[0]
+            for source, enabled in credentials
+            if enabled and source.split(":")[0] in BOUNDARY_SCOPED
+        }
+        | {
+            source.split(":")[0]
+            for source in ingested
+            if source.split(":")[0] in BOUNDARY_SCOPED
+        }
+    )
     if not scoped:
         return None
     decided = (
@@ -2061,7 +2085,14 @@ def doctor() -> None:
 
     # ── data boundary (docs/08, CLAUDE.md rule 6 — legal weight) ──────────
     verdict = _boundary_verdict(
-        settings, [(str(r["source"]), bool(r["enabled"])) for r in rows]
+        settings,
+        [(str(r["source"]), bool(r["enabled"])) for r in rows],
+        ingested=[
+            str(r["source"])
+            for r in conn.execute(
+                "SELECT DISTINCT source FROM source_item WHERE user_id = ?", (USER_ID,)
+            )
+        ],
     )
     if verdict is not None:
         check("data boundary decided", *verdict)

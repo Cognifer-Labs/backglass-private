@@ -335,3 +335,54 @@ class TestBriefLines:
         a_plan(conn)
         texts = [line.text for line in daily.failure_section(conn, TODAY, settings, NOW).lines]
         assert not any("No plan" in text for text in texts)
+
+
+class TestOnlySyncRunsCount:
+    """The verifier's D3: `run` records every job kind, and counting all of them let one
+    roadmap interview reset the staleness clock on all three surfaces at once."""
+
+    def _interview(self, conn: sqlite3.Connection, ago: timedelta) -> None:
+        conn.execute(
+            "INSERT INTO run (user_id, kind, started_at, finished_at) "
+            "VALUES (1, 'interview', ?, ?)",
+            ((NOW - ago).isoformat(), (NOW - ago).isoformat()),
+        )
+
+    def test_an_interview_run_does_not_hide_a_dead_sync(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        a_run(conn, timedelta(hours=5))
+        self._interview(conn, timedelta(minutes=5))
+
+        beat = heartbeat.read(conn, settings, TODAY, NOW)
+
+        assert beat.stale
+        assert beat.age_hours is not None and round(beat.age_hours) == 5
+
+    def test_an_interview_run_alone_still_reads_as_never_synced(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        self._interview(conn, timedelta(minutes=5))
+        assert heartbeat.read(conn, settings, TODAY, NOW).never_ran
+
+    def test_a_recent_sync_is_still_fresh_alongside_an_interview(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        # The mirror direction: filtering must not make a healthy sync look dead.
+        a_run(conn, timedelta(minutes=10))
+        self._interview(conn, timedelta(hours=9))
+        beat = heartbeat.read(conn, settings, TODAY, NOW)
+        assert not beat.stale
+        assert not beat.never_ran
+
+    def test_the_schema_guarantees_a_kind_so_the_filter_cannot_drop_rows(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # `kind = 'sync'` is only safe as an equality because the column cannot be NULL.
+        # If that ever loosens, every pre-existing row silently stops counting and a
+        # long-running install reads as never-synced — so pin the constraint here.
+        column = next(
+            r for r in conn.execute("PRAGMA table_info(run)") if r["name"] == "kind"
+        )
+        assert column["notnull"] == 1
+        assert "sync" in str(column["dflt_value"])

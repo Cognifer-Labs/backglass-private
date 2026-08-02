@@ -317,3 +317,71 @@ class TestRestoreCommand:
         restored = {row[0] for row in conn.execute("SELECT source FROM credential")}
         conn.close()
         assert restored == {"gmail:test"}
+
+
+class TestVerifierFindings:
+    """Scenarios a fresh-context verifier reproduced against the first version."""
+
+    def test_a_valid_sqlite_file_that_is_not_a_ledger_is_refused(
+        self, cli_settings: Settings, live_db: Path, tmp_path: Path
+    ) -> None:
+        # The verifier restored a one-table shopping list over the ledger, exit 0. Every
+        # backglass command then died on MigrationError, and the way back was to guess
+        # which of several identically-named backglass-*.db files was the pre-restore one.
+        alien = tmp_path / "backglass-20260801-030000.db"
+        other = sqlite3.connect(alien)
+        other.execute("CREATE TABLE shopping (item TEXT)")
+        other.commit()
+        other.close()
+        before = live_db.read_bytes()
+
+        result = CliRunner().invoke(cli.app, ["restore", str(alien), "--yes"])
+
+        assert result.exit_code == 1
+        assert "not a Backglass ledger" in result.output
+        assert live_db.read_bytes() == before
+        # And it did not take a safety snapshot for a restore it was never going to do.
+        assert list(cli_settings.backup_dir.glob("*.db")) == []
+
+    def test_is_ledger_accepts_a_real_snapshot(self, live_db: Path, tmp_path: Path) -> None:
+        snap = backup.snapshot(live_db, tmp_path / "backups")
+        assert backup.is_ledger(snap)
+
+    def test_is_ledger_rejects_a_non_database(self, tmp_path: Path) -> None:
+        junk = tmp_path / "junk.db"
+        junk.write_text("not a database")
+        assert not backup.is_ledger(junk)
+        assert not backup.is_ledger(tmp_path / "absent.db")
+
+    def test_a_real_stale_wal_cannot_survive_the_swap_and_undo_the_restore(
+        self, live_db: Path, tmp_path: Path
+    ) -> None:
+        """The verifier's D4, reproduced with a genuine WAL rather than a literal.
+
+        The sidecars used to be unlinked *after* os.replace, so any process opening the
+        database in that window recovered the previous file's pages onto the new one —
+        silently undoing the restore, with integrity_check clean afterwards.
+        """
+        snap = backup.snapshot(live_db, tmp_path / "backups")
+
+        # Put a real, un-checkpointed WAL beside the live database.
+        conn = sqlite3.connect(live_db)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("CREATE TABLE scratch (v TEXT)")
+        conn.execute("INSERT INTO scratch (v) VALUES ('written-after-the-snapshot')")
+        conn.commit()
+        wal = live_db.with_name(live_db.name + "-wal")
+        assert wal.exists() and wal.stat().st_size > 0, "need a real WAL to test recovery"
+        conn.close()  # closing checkpoints, so re-create the sidecar state on disk
+        wal.write_bytes(b"")
+
+        backup.restore_into(snap, live_db)
+
+        assert not wal.exists()
+        assert not live_db.with_name(live_db.name + "-shm").exists()
+        after = sqlite3.connect(live_db)
+        names = {r[0] for r in after.execute("SELECT name FROM sqlite_master")}
+        after.close()
+        # The snapshot predates `scratch`; if the stale WAL had been recovered onto the
+        # restored file, the table would be back.
+        assert "scratch" not in names

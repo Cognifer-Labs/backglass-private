@@ -50,13 +50,23 @@ class BackupError(RuntimeError):
 
 
 def _stamp_of(path: Path) -> datetime | None:
-    """The UTC time encoded in a snapshot filename, or None if it is not one of ours."""
+    """The UTC time encoded in a snapshot filename, or None if it is not one of ours.
+
+    The pattern matches eight digits, which is not the same as a date: a file named
+    `backglass-20260231-020000.db` (February 31st, from a hand-copy or a clock-skewed
+    machine) made `strptime` raise straight out through `snapshots()` into both
+    `rotate()` and `freshness()` — so one stray filename took out `doctor` entirely and
+    stopped rotation forever, while `backup` kept appending. "Anything else in there is
+    ignored" has to mean it, or the backup directory is a place a typo can brick.
+    """
     match = _SNAPSHOT_NAME.match(path.name)
     if not match:
         return None
-    return datetime.strptime(f"{match.group(1)}-{match.group(2)}", _STAMP).replace(
-        tzinfo=UTC
-    )
+    try:
+        parsed = datetime.strptime(f"{match.group(1)}-{match.group(2)}", _STAMP)
+    except ValueError:
+        return None
+    return parsed.replace(tzinfo=UTC)
 
 
 def snapshots(backup_dir: Path) -> list[tuple[datetime, Path]]:
@@ -129,6 +139,40 @@ def verify(path: Path) -> bool:
     return bool(row) and row[0] == "ok"
 
 
+#: Tables every Backglass ledger has had since the first migration. A restore candidate
+#: missing any of them is not this application's database.
+_LEDGER_TABLES = frozenset({"schema_version", "source_item", "commitment", "credential"})
+
+
+def is_ledger(path: Path) -> bool:
+    """True if `path` looks like a Backglass ledger, not merely a valid SQLite file.
+
+    `verify()` answers "is this a readable database"; it says nothing about *which*
+    database. That gap let `restore --yes` accept any SQLite file at all — a notes
+    export, a browser history, someone else's app — and replace the ledger with it.
+    The safety snapshot makes that recoverable, but only for an owner who works out
+    which of several identically-named `backglass-*.db` files was theirs, while every
+    command dies on MigrationError in the meantime. Restoring the wrong database is not
+    a mistake worth being polite about.
+    """
+    if not path.exists():
+        return False
+    try:
+        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return False
+    try:
+        names = {
+            str(row[0])
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
+        }
+    except sqlite3.DatabaseError:
+        return False
+    finally:
+        conn.close()
+    return names >= _LEDGER_TABLES
+
+
 def rotate(backup_dir: Path) -> list[Path]:
     """Delete snapshots outside the keep window. Returns what was deleted.
 
@@ -171,8 +215,21 @@ def freshness(
             f"no ledger snapshot in {backup_dir} — run `backglass backup` now; "
             "the database is the only copy of the record"
         )
-    stamp, path = found[0]
-    hours = ((now or datetime.now(UTC)).astimezone(UTC) - stamp).total_seconds() / 3600
+    moment = (now or datetime.now(UTC)).astimezone(UTC)
+    # A snapshot stamped in the future is not a fresh one. `snapshots()` sorts by
+    # filename stamp, so a clock-skewed or hand-copied `backglass-20991231-*.db` sorts
+    # first, yields a negative age, and reads as "fresh" forever — hiding a genuinely
+    # stale newest-real snapshot behind a permanent green check. Ignore anything dated
+    # after now, and say so if that leaves nothing.
+    dated = [(stamp, path) for stamp, path in found if stamp <= moment]
+    if not dated:
+        newest = found[0][1].name
+        return "fail", (
+            f"every snapshot in {backup_dir} is dated in the future (newest {newest}) — "
+            "the backup clock or the filenames are wrong, so freshness cannot be judged"
+        )
+    stamp, path = dated[0]
+    hours = (moment - stamp).total_seconds() / 3600
     if hours > STALE_AFTER_HOURS and job_installed:
         return "fail", (
             f"newest snapshot {path.name} is {hours:.0f}h old — com.backglass.backup is "
@@ -185,9 +242,16 @@ def restore_into(snapshot_path: Path, db_path: Path) -> None:
     """Replace the database at `db_path` with `snapshot_path`.
 
     Atomic via `os.replace` onto a same-directory temporary, so an interrupted restore
-    leaves the original database intact rather than a truncated half of one. The WAL
-    sidecars are removed afterwards: they describe pages of the *old* file, and leaving
-    them beside a different database is how a restore corrupts what it just restored.
+    leaves the original database intact rather than a truncated half of one.
+
+    The WAL sidecars are removed **before** the swap, not after. They describe pages of
+    the *old* file, so between `os.replace` and their removal there is a window where
+    the restored database sits beside the previous one's WAL — and any process that
+    opens it in that window (the dashboard, a sync, launchd firing on schedule) recovers
+    those pages onto the new file and silently undoes the restore. `integrity_check`
+    passes afterwards, so nothing reports it. Removing them first means the worst case
+    is a crash between the two steps, which leaves the *original* database without its
+    WAL — recoverable, and loud, rather than a clean-looking wrong answer.
     """
     db_path.parent.mkdir(parents=True, exist_ok=True)
     staged = db_path.with_name(db_path.name + ".restoring")
@@ -199,8 +263,8 @@ def restore_into(snapshot_path: Path, db_path: Path) -> None:
     except BaseException:
         staged.unlink(missing_ok=True)
         raise
+    for suffix in ("-wal", "-shm"):
+        db_path.with_name(db_path.name + suffix).unlink(missing_ok=True)
     os.replace(staged, db_path)
     with contextlib.suppress(OSError):
         db_path.chmod(_DB_MODE)
-    for suffix in ("-wal", "-shm"):
-        db_path.with_name(db_path.name + suffix).unlink(missing_ok=True)

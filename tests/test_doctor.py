@@ -13,6 +13,10 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
+import pytest
+from typer.testing import CliRunner
+
+from backglass import __main__ as cli
 from backglass import backup
 from backglass.__main__ import (
     LAUNCHD_LABELS,
@@ -215,3 +219,183 @@ def test_the_detail_names_every_live_scoped_source_once() -> None:
     ok, detail = _boundary_verdict(settings, creds)  # type: ignore[misc]
     assert not ok
     assert detail.split(" enabled")[0] == "gmail, slack"
+
+
+# ── defects the fresh-context verifier found in the first version ────────
+#
+# Each of these reproduces a scenario that was live on the owner's machine or one
+# command away from it. They are written as the verifier posed them.
+
+
+def test_ingested_data_with_no_credential_still_demands_a_boundary_decision() -> None:
+    """The one that was live: 200 calendar:asu items, no credential row, check silent.
+
+    Deriving "is a scoped source live" from the credential table alone missed an entire
+    class — data imported or left behind by a removed connector — which is exactly the
+    class the unmanaged-sources line was added to surface in the same commit range.
+    Data already in the ledger is the strongest reason to have decided, not a weaker one.
+    """
+    settings = _cfg(boundary_mode="exclude")
+    creds = [("apple-notes", True), ("reminders", True)]
+    verdict = _boundary_verdict(settings, creds, ingested=["calendar:asu", "apple-notes"])
+    assert verdict is not None
+    ok, detail = verdict
+    assert not ok
+    assert "calendar" in detail
+
+
+def test_an_ingested_source_is_not_double_counted_with_its_credential() -> None:
+    settings = _cfg(boundary_mode="exclude")
+    ok, detail = _boundary_verdict(  # type: ignore[misc]
+        settings, [("gmail:personal", True)], ingested=["gmail:personal", "gmail:school"]
+    )
+    assert not ok
+    assert detail.split(" enabled")[0] == "gmail"
+
+
+def test_ingested_local_sources_still_mean_no_verdict() -> None:
+    settings = _cfg(boundary_mode="exclude")
+    assert (
+        _boundary_verdict(settings, [], ingested=["apple-notes", "anki", "manual"])
+        is None
+    )
+
+
+def test_a_malformed_snapshot_filename_does_not_take_doctor_down(tmp_path) -> None:
+    """February 31st, from a hand-copy or a skewed clock, used to raise ValueError out
+    of snapshots() into both rotate() and freshness() — bricking doctor and stopping
+    rotation forever while backup kept appending."""
+    _snapshot_named(tmp_path, "20260231-020000")  # no such date
+    _snapshot_named(tmp_path, "20260802-020000")
+    now = datetime(2026, 8, 2, 9, 0, tzinfo=UTC)
+
+    level, detail = backup.freshness(tmp_path, job_installed=True, now=now)
+
+    assert level == "ok"
+    assert "20260802" in detail
+    assert backup.rotate(tmp_path) == []  # and rotation still runs
+
+
+def test_a_future_dated_snapshot_cannot_mask_a_stale_one(tmp_path) -> None:
+    """A clock-skewed snapshot sorts first, yields a negative age, and reads as fresh
+    forever — a permanent green check over a genuinely stale backup."""
+    _snapshot_named(tmp_path, "20991231-235959")
+    _snapshot_named(tmp_path, "20260101-000000")  # 7 months old
+    now = datetime(2026, 8, 2, 9, 0, tzinfo=UTC)
+
+    level, detail = backup.freshness(tmp_path, job_installed=True, now=now)
+
+    assert level == "fail"
+    assert "20260101" in detail
+
+
+def test_only_future_dated_snapshots_fail_loudly(tmp_path) -> None:
+    _snapshot_named(tmp_path, "20991231-235959")
+    now = datetime(2026, 8, 2, 9, 0, tzinfo=UTC)
+    level, detail = backup.freshness(tmp_path, job_installed=True, now=now)
+    assert level == "fail"
+    assert "future" in detail
+
+
+# ── the command itself, not only its helpers ─────────────────────────────
+#
+# Every check above is a pure function, which is why they are testable — but the wiring
+# that decides *which* branch runs had no test at all, and "a check nobody has seen fail
+# is a check nobody has seen work" applies to the wiring too.
+
+
+@pytest.fixture
+def doctor_env(tmp_path, monkeypatch):
+    """`backglass doctor` against a tmp database and tmp backup dir, with launchctl and
+    the connector probes stubbed — never the owner's real ledger or real launchd."""
+    from backglass.db import connect, migrate
+
+    db = tmp_path / "backglass.db"
+    conn = connect(db)
+    migrate(conn)
+    conn.close()
+    made = Settings(
+        db_path=db,
+        backup_dir=tmp_path / "backups",
+        owner_emails=["a@example.com"],
+        model_backend="anthropic",
+        model_api_key="k",
+    )
+    monkeypatch.setattr(cli, "get_settings", lambda: made)
+    monkeypatch.setattr(cli, "_all_connectors", lambda conn, settings: [])
+    monkeypatch.setattr(
+        "backglass.connectors.detect.detect_all", lambda settings, authed=(): []
+    )
+
+    loaded: list[str] = []
+
+    class _Done:
+        returncode = 0
+        stdout = ""
+
+    def fake_run(cmd, **kw):
+        done = _Done()
+        if cmd[:2] == ["launchctl", "list"]:
+            done.stdout = "".join(f"-\t0\t{label}\n" for label in loaded)
+        return done
+
+    monkeypatch.setattr("subprocess.run", fake_run)
+    return made, loaded
+
+
+def _doctor(monkeypatch) -> str:
+    return CliRunner().invoke(cli.app, ["doctor"]).output
+
+
+def test_doctor_notes_a_never_run_sync_rather_than_failing_it(doctor_env, monkeypatch) -> None:
+    # A fresh install has never synced; that is a note, not a red — there is nothing
+    # broken yet, and a red on first run teaches the owner to ignore reds.
+    out = _doctor(monkeypatch)
+    assert "sync has never run" in out
+    assert "sync is running on schedule" not in out
+
+
+def test_doctor_stays_quiet_about_staleness_when_the_sync_job_is_not_loaded(
+    doctor_env, monkeypatch
+) -> None:
+    # The missing-job check is already the red. Two reds for one cause trains skimming.
+    settings, _loaded = doctor_env
+    conn = cli._open(settings)
+    conn.execute(
+        "INSERT INTO run (user_id, kind, started_at, finished_at) "
+        "VALUES (1, 'sync', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    out = _doctor(monkeypatch)
+
+    assert "launchd jobs loaded" in out
+    assert "sync is running on schedule" not in out
+
+
+def test_doctor_fails_a_stale_sync_once_the_job_is_loaded(doctor_env, monkeypatch) -> None:
+    settings, loaded = doctor_env
+    loaded.extend(LAUNCHD_LABELS)
+    conn = cli._open(settings)
+    conn.execute(
+        "INSERT INTO run (user_id, kind, started_at, finished_at) "
+        "VALUES (1, 'sync', '2026-01-01T00:00:00+00:00', '2026-01-01T00:00:00+00:00')"
+    )
+    conn.commit()
+    conn.close()
+
+    out = _doctor(monkeypatch)
+
+    assert "[FAIL] sync is running on schedule" in out
+
+
+def test_doctor_notes_a_missing_backup_and_fails_a_stale_one(doctor_env, monkeypatch) -> None:
+    settings, loaded = doctor_env
+    loaded.extend(LAUNCHD_LABELS)
+
+    assert "no ledger snapshot" in _doctor(monkeypatch)
+
+    settings.backup_dir.mkdir(parents=True, exist_ok=True)
+    _snapshot_named(settings.backup_dir, "20200101-020000")
+    assert "[FAIL] ledger backup is fresh" in _doctor(monkeypatch)
