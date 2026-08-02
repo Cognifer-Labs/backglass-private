@@ -13,6 +13,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts" / "release"))
 
 from manifest import ALLOW_PATHS, DENY_PATHS, SUBSTITUTIONS  # noqa: E402
@@ -80,7 +82,18 @@ def test_substitution_keys_are_denied():
 def test_substitution_sources_exist_on_disk():
     """Catches `medical.public.md` (or any future substitution source) going
     stale, renamed, or deleted silently — a build run would otherwise fail
-    late, inside the scrub/test pipeline, instead of at this cheap check."""
+    late, inside the scrub/test pipeline, instead of at this cheap check.
+
+    Private-tree-only check: `tests/` ships wholesale (this file included), so
+    this same assertion also runs *inside* an already-assembled export tree —
+    where every SUBSTITUTIONS source is, by design, denylisted and therefore
+    correctly absent (the substitution has already been applied; the staging
+    file was never meant to ship standalone). `tasks/` is DENY_PATHS-only and
+    never ships either, so its presence is a reliable signal that REPO_ROOT is
+    the private tree and this check should actually run.
+    """
+    if not (REPO_ROOT / "tasks").is_dir():
+        pytest.skip("running inside an assembled export tree, not the private tree")
     for dest_path, src_path in SUBSTITUTIONS.items():
         full_path = REPO_ROOT / src_path
         assert full_path.is_file(), (
