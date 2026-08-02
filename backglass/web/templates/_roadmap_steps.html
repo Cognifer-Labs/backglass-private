@@ -51,10 +51,15 @@
               <button class="lnk" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/skip"
                       hx-target="#roadmap-steps" hx-swap="outerHTML">Skip</button>
             {% endif %}
+            {# The chosen date is appended to the path by the listener in roadmap.html.
+               It used to ride in an hx-on:: attribute, which HTMX evaluates through the
+               Function constructor — the dashboard's Content-Security-Policy withholds
+               'unsafe-eval', so that attribute would have failed silently and re-dating
+               a step would have posted to a pathless URL. #}
             <input type="date" value="{{ (s['planned_date'] or '')[:10] }}" aria-label="Re-date"
+                   class="redate"
                    hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/date/"
                    hx-trigger="change"
-                   hx-on::config-request="event.detail.path += this.value"
                    hx-target="#roadmap-steps" hx-swap="outerHTML">
             <button class="lnk" hx-post="/roadmaps/{{ r['id'] }}/steps/{{ s['id'] }}/move/up"
                     hx-target="#roadmap-steps" hx-swap="outerHTML" title="Move earlier">↑ earlier</button>

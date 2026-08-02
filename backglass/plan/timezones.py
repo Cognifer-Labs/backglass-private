@@ -78,10 +78,16 @@ def local_noon_iso(settings: Settings, day: date) -> str:
 
     The stamp for a write the owner is backdating ("I did four hours on the 14th").
     `local_now_iso` takes a `day` too, but only to choose the zone — it still stamps
-    *now*, so passing a past date there silently files the entry under today. Noon is
-    the same convention `goals/reviews.py` uses for a day-scoped checkpoint: far enough
-    from either boundary that no later reader, in any zone, can round it onto the
-    neighbouring day.
+    *now*, so passing a past date there silently files the entry under today.
+
+    Noon is the same convention `goals/reviews.py` uses for a day-scoped checkpoint. It
+    buys the widest margin available — twelve hours either side of the local midnight,
+    so the entry survives being read in UTC — but it is not magic: the owner's two zones
+    are 12.5 hours apart, so Kolkata noon rendered in Phoenix is the previous evening
+    and Phoenix noon rendered in Kolkata is the following small hours. Readers that care
+    about which local day a row belongs to must convert through the zone that was active
+    when it was written, exactly as `utc_bounds` does; noon only guarantees that no
+    *single-hour* rounding moves it.
     """
     zone = active_tz(settings, day)
     return datetime.combine(day, time(12, 0), ZoneInfo(zone)).isoformat()

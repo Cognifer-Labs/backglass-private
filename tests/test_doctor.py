@@ -399,3 +399,31 @@ def test_doctor_notes_a_missing_backup_and_fails_a_stale_one(doctor_env, monkeyp
     settings.backup_dir.mkdir(parents=True, exist_ok=True)
     _snapshot_named(settings.backup_dir, "20200101-020000")
     assert "[FAIL] ledger backup is fresh" in _doctor(monkeypatch)
+
+
+def test_a_hand_imports_own_spelling_still_demands_a_boundary_decision() -> None:
+    """The next gap in D1's class, found by re-verification.
+
+    The rows that made D1 real exist *because of a hand import*, and a hand import picks
+    its own spelling. An unnormalized `source.split(":")[0] in BOUNDARY_SCOPED` was
+    silent on every one of these — the same blind spot in a new coat.
+    """
+    settings = _cfg(boundary_mode="exclude")
+    for spelling in (
+        "Calendar:ASU",
+        "CALENDAR:asu",
+        "  calendar:asu ",
+        "gcal:asu",
+        "google-calendar",
+    ):
+        verdict = _boundary_verdict(settings, [], ingested=[spelling])
+        assert verdict is not None, spelling
+        assert not verdict[0], spelling
+        assert "calendar" in verdict[1], spelling
+
+
+def test_an_unrelated_source_is_still_not_scoped() -> None:
+    # The mirror direction: normalization must not start matching things it shouldn't.
+    settings = _cfg(boundary_mode="exclude")
+    for spelling in ("apple-notes", "anki", "calendarific", "manual"):
+        assert _boundary_verdict(settings, [], ingested=[spelling]) is None, spelling

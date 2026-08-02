@@ -56,3 +56,19 @@
   </div>
 </section>
 {% endblock %}
+
+{% block scripts %}
+<script>
+/* The re-date control's path suffix. HTMX's own hx-on:: attributes go through the
+   Function constructor, which the page's CSP does not allow ('unsafe-eval' is
+   withheld deliberately) — so the one place that needed it does it here instead,
+   where an ordinary inline listener is enough. Delegated on document because the
+   steps list is replaced wholesale by every swap. */
+document.addEventListener('htmx:configRequest', function (event) {
+  var el = event.detail.elt;
+  if (el && el.matches && el.matches('input.redate')) {
+    event.detail.path += el.value;
+  }
+});
+</script>
+{% endblock %}

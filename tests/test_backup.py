@@ -7,6 +7,7 @@ shaped file (13 tables, WAL sidecars and all) rather than an empty one.
 
 from __future__ import annotations
 
+import os
 import sqlite3
 import stat
 from datetime import UTC, datetime, timedelta
@@ -353,35 +354,75 @@ class TestVerifierFindings:
         assert not backup.is_ledger(junk)
         assert not backup.is_ledger(tmp_path / "absent.db")
 
-    def test_a_real_stale_wal_cannot_survive_the_swap_and_undo_the_restore(
-        self, live_db: Path, tmp_path: Path
+    def test_the_sidecars_are_gone_before_the_swap_not_after(
+        self, live_db: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """The verifier's D4, reproduced with a genuine WAL rather than a literal.
+        """The verifier's D4. The defect is an *ordering*, so the test observes ordering.
 
-        The sidecars used to be unlinked *after* os.replace, so any process opening the
-        database in that window recovered the previous file's pages onto the new one —
-        silently undoing the restore, with integrity_check clean afterwards.
+        Unlinking the sidecars after os.replace leaves a window where the restored file
+        sits beside the previous database's WAL; a process opening it there recovers
+        those pages onto the new file and silently undoes the restore, integrity_check
+        clean afterwards. Both orderings leave the same end state once the function
+        returns, so no after-the-fact assertion can tell them apart — the only honest
+        check is what is true at the instant of the swap.
+
+        The first version of this test tried to prove it with a real WAL and passed
+        against the bug: a closed connection has already checkpointed, so the file it
+        wrote was empty. Recorded in tasks/lessons.md; this one was confirmed red
+        against the reverted ordering before being kept.
         """
         snap = backup.snapshot(live_db, tmp_path / "backups")
-
-        # Put a real, un-checkpointed WAL beside the live database.
-        conn = sqlite3.connect(live_db)
-        conn.execute("PRAGMA journal_mode=WAL")
-        conn.execute("CREATE TABLE scratch (v TEXT)")
-        conn.execute("INSERT INTO scratch (v) VALUES ('written-after-the-snapshot')")
-        conn.commit()
         wal = live_db.with_name(live_db.name + "-wal")
-        assert wal.exists() and wal.stat().st_size > 0, "need a real WAL to test recovery"
-        conn.close()  # closing checkpoints, so re-create the sidecar state on disk
-        wal.write_bytes(b"")
+        shm = live_db.with_name(live_db.name + "-shm")
+        wal.write_bytes(b"stale-wal-pages")
+        shm.write_bytes(b"stale-shm")
+
+        seen: dict[str, bool] = {}
+        real_replace = os.replace
+
+        def watching_replace(src, dst, *a, **kw):
+            seen["wal_present_at_swap"] = wal.exists()
+            seen["shm_present_at_swap"] = shm.exists()
+            return real_replace(src, dst, *a, **kw)
+
+        monkeypatch.setattr(backup.os, "replace", watching_replace)
 
         backup.restore_into(snap, live_db)
 
+        assert seen == {"wal_present_at_swap": False, "shm_present_at_swap": False}
         assert not wal.exists()
-        assert not live_db.with_name(live_db.name + "-shm").exists()
-        after = sqlite3.connect(live_db)
-        names = {r[0] for r in after.execute("SELECT name FROM sqlite_master")}
-        after.close()
-        # The snapshot predates `scratch`; if the stale WAL had been recovered onto the
-        # restored file, the table would be back.
-        assert "scratch" not in names
+        assert not shm.exists()
+
+
+class TestIsLedgerChecksSchemaNotNames:
+    """Re-verification found `is_ledger` was a table-name check: four empty tables with
+    the right names restored cleanly, and `doctor` then died on "no such column:
+    version" — the exact post-restore brick the gate exists to prevent."""
+
+    def _decoy(self, path: Path) -> Path:
+        conn = sqlite3.connect(path)
+        for table in ("schema_version", "source_item", "commitment", "credential"):
+            conn.execute(f"CREATE TABLE {table} (x)")
+        conn.commit()
+        conn.close()
+        return path
+
+    def test_right_table_names_wrong_columns_is_not_a_ledger(self, tmp_path: Path) -> None:
+        decoy = self._decoy(tmp_path / "backglass-20260801-040000.db")
+        assert backup.verify(decoy), "the decoy is a valid SQLite file — that is the point"
+        assert not backup.is_ledger(decoy)
+
+    def test_the_cli_refuses_the_decoy(
+        self, cli_settings: Settings, live_db: Path, tmp_path: Path
+    ) -> None:
+        decoy = self._decoy(tmp_path / "backglass-20260801-050000.db")
+        before = live_db.read_bytes()
+        result = CliRunner().invoke(cli.app, ["restore", str(decoy), "--yes"])
+        assert result.exit_code == 1
+        assert live_db.read_bytes() == before
+
+    def test_a_real_snapshot_of_the_real_schema_still_passes(
+        self, live_db: Path, tmp_path: Path
+    ) -> None:
+        # The mirror direction: a stricter gate must not start refusing real snapshots.
+        assert backup.is_ledger(backup.snapshot(live_db, tmp_path / "backups"))

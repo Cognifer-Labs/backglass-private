@@ -28,6 +28,11 @@ from backglass.ledger import USER_ID
 
 CATEGORIES = ("shadowing", "clinical", "volunteering", "research", "leadership", "other")
 
+#: The largest number of hours one entry may carry. More than a year of continuous
+#: hours, so it never rejects a real backfill — it exists only to keep an unbounded
+#: integer out of a column that is later summed. See log_hours.
+MAX_HOURS_PER_ENTRY = 10_000
+
 AMCAS_SLOTS = 15
 AMCAS_MOST_MEANINGFUL = 3
 AMCAS_DESCRIPTION_CHARS = 700
@@ -54,17 +59,50 @@ AMCAS_MEANINGFUL_CHARS = 1325
 #: hours under volunteering (the other title contains "clinical"). Parentheticals are
 #: stripped before matching for the same reason — a qualifier in brackets describes the
 #: target, it does not name the category.
+#: Matching runs against a normalized title: parenthetical qualifiers removed, and the
+#: phrase "non-clinical" removed as a unit. That second step is what lets `clinical` and
+#: `volunteering` be told apart by plain words. The two real titles collide in both
+#: directions — "Clinical experience hours (paid or volunteer)" and "Non-clinical service
+#: hours" — and so do the retitles an owner might reasonably write ("Clinical hours, paid
+#: or volunteer" has no parentheses to strip). Once "non-clinical" is gone, a residual
+#: "clinical" means the clinical total and nothing else, so `volunteering` can exclude it
+#: without excluding itself.
 CATEGORY_TITLE_HINTS: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
     "shadowing": (("shadow",), ()),
-    "clinical": (("clinical",), ("non-clinical", "nonclinical")),
-    "volunteering": (("volunteer", "service"), ()),
+    "clinical": (("clinical",), ()),
+    "volunteering": (("volunteer", "service"), ("clinical",)),
     "research": (("research",), ()),
     "leadership": (("leadership", "teaching"), ()),
 }
 
+#: Removed before matching, as a phrase. See CATEGORY_TITLE_HINTS.
+_NON_CLINICAL = re.compile(r"non[-\s]?clinical")
+
 
 class ActivityError(ValueError):
     pass
+
+
+def check_hours(hours: int) -> None:
+    """Raise unless `hours` is a plausible amount for one entry.
+
+    Separate from `log_hours` so a caller can refuse *before* it creates anything —
+    every reason to reject has to be reachable before the first durable write.
+
+    The upper bound is not typo paranoia: any integer up to 2**63-1 is a legal SQLite
+    INTEGER, so an absurd value commits happily and then every later `SUM(delta)` raises
+    "integer overflow". That takes out `log`, `amcas-export` and both dashboard pages at
+    once, and no CLI path can delete a checkpoint to undo it — recovery means raw SQL.
+    The limit sits far above any real entry (more than a year of continuous hours), so
+    it can only ever catch a mistake.
+    """
+    if hours <= 0:
+        raise ActivityError("hours must be positive")
+    if hours > MAX_HOURS_PER_ENTRY:
+        raise ActivityError(
+            f"{hours} hours in one entry is not plausible (limit "
+            f"{MAX_HOURS_PER_ENTRY}); log the sessions separately"
+        )
 
 
 def add(
@@ -186,11 +224,15 @@ def total_target_for(
     if hint is None:
         return None
     wanted, excluded = hint
+    # Only targets on a live goal. An archived goal keeps its target rows, and without
+    # this an abandoned path's "Research hours" could outrank the active one purely by
+    # having a lower id.
     sql = (
         "SELECT t.id, t.title, t.total_count, t.goal_id, "
         "  COALESCE((SELECT SUM(c.delta) FROM checkpoint c WHERE c.target_id = t.id), 0)"
         "  AS done "
-        "FROM target t WHERE t.kind = 'total' AND t.active = 1"
+        "FROM target t JOIN goal g ON g.id = t.goal_id "
+        "WHERE t.kind = 'total' AND t.active = 1 AND g.status = 'active'"
     )
     params: list[Any] = []
     if goal_id is not None:
@@ -199,8 +241,10 @@ def total_target_for(
     sql += " ORDER BY t.id"
     for row in conn.execute(sql, params).fetchall():
         # Parentheticals are qualifiers, not category names: "(paid or volunteer)" on
-        # the clinical total would otherwise claim every volunteering hour.
+        # the clinical total would otherwise claim every volunteering hour. "non-clinical"
+        # goes as a phrase so a residual "clinical" unambiguously means the clinical total.
         title = re.sub(r"\([^)]*\)", " ", str(row["title"])).lower()
+        title = _NON_CLINICAL.sub(" ", title)
         if any(bad in title for bad in excluded):
             continue
         if any(want in title for want in wanted):
@@ -241,8 +285,7 @@ def log_hours(
     source of truth. `occurred_at` is passed in rather than read from the clock because
     dates.py's rule holds everywhere: the caller knows which local day this belongs to.
     """
-    if hours <= 0:
-        raise ActivityError("hours must be positive")
+    check_hours(hours)
     activity = _get(conn, activity_id)
     target = total_target_for(conn, str(activity["category"]))
     if target is None:

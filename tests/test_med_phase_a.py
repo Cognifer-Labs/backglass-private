@@ -820,7 +820,7 @@ class TestLogCommand:
 
     def test_on_logs_against_the_named_day_not_today(self, cli_env) -> None:
         cli, settings = cli_env
-        result = self._run(cli, "Chen Lab", "4", "--new", "research", "--on", "2026-09-14")
+        result = self._run(cli, "Chen Lab", "4", "--new", "research", "--on", "2026-07-14")
         assert result.exit_code == 0, result.output
 
         from backglass.db import connect
@@ -829,7 +829,7 @@ class TestLogCommand:
         entry = activities.entries_for(conn, 1)[0]
         conn.close()
         # The owner's own offset, on the day they said — not the clock's, not UTC.
-        assert str(entry["occurred_at"]).startswith("2026-09-14T")
+        assert str(entry["occurred_at"]).startswith("2026-07-14T")
         assert str(entry["occurred_at"]).endswith("-07:00")
 
     def test_a_category_with_no_accumulator_explains_itself(self, cli_env) -> None:
@@ -837,3 +837,175 @@ class TestLogCommand:
         result = self._run(cli, "Marching band", "2", "--new", "other")
         assert result.exit_code == 1
         assert "no lifetime hour target" in result.output
+
+
+class TestLogSafety:
+    """Second-round verifier findings. Each reproduces a scenario that reached the
+    ledger, or would have."""
+
+    @pytest.fixture
+    def cli_env(self, tmp_path, monkeypatch):
+        from backglass import __main__ as cli
+        from backglass.config import Settings
+        from backglass.db import connect, migrate
+
+        db = tmp_path / "backglass.db"
+        conn = connect(db)
+        migrate(conn)
+        goal_id, _ = _seed_goal_with_target(conn)
+        instantiate.add_total(conn, goal_id, "Research hours", 200)
+        conn.commit()
+        conn.close()
+        made = Settings(db_path=db, default_tz="America/Phoenix", tz_ranges=[])
+        monkeypatch.setattr(cli, "get_settings", lambda: made)
+        return cli, made
+
+    def _run(self, cli, *args):
+        from typer.testing import CliRunner
+
+        return CliRunner().invoke(cli.app, ["log", *args])
+
+    def _hours(self, settings):
+        from backglass.db import connect
+
+        conn = connect(settings.db_path)
+        rows = activities.list_with_hours(conn)
+        conn.close()
+        return [(r["title"], r["hours"]) for r in rows]
+
+    def test_an_absurd_hour_count_is_refused_before_it_can_overflow_the_ledger(
+        self, cli_env
+    ) -> None:
+        # 2**63-1 is a legal SQLite INTEGER, so it committed — and every later
+        # SUM(delta) then raised "integer overflow", taking out log, amcas-export and
+        # both dashboard pages permanently, with no CLI path able to delete the row.
+        cli, settings = cli_env
+        self._run(cli, "Chen Lab", "1", "--new", "research")
+
+        result = self._run(cli, "Chen Lab", str(2**63 - 1))
+
+        assert result.exit_code == 1
+        assert "not plausible" in result.output
+        assert self._hours(settings) == [("Chen Lab", 1)]
+        # And the ledger still reads afterwards, which is the whole point.
+        assert self._run(cli, "Chen Lab", "2").exit_code == 0
+
+    def test_a_value_too_large_for_sqlite_is_refused_without_a_traceback(
+        self, cli_env
+    ) -> None:
+        cli, settings = cli_env
+        self._run(cli, "Chen Lab", "1", "--new", "research")
+        result = self._run(cli, "Chen Lab", "99999999999999999999")
+        assert result.exit_code != 0
+        assert "Traceback" not in result.output
+        assert self._hours(settings) == [("Chen Lab", 1)]
+
+    def test_new_creates_nothing_when_the_category_has_no_target(self, cli_env) -> None:
+        # The connection is autocommit, so `add` was durable before log_hours could
+        # fail; the natural retry then made a second activity, and a third, until the
+        # plain name was permanently ambiguous and the hours split across duplicates.
+        cli, settings = cli_env
+        result = self._run(cli, "Food bank", "2", "--new", "other")
+        assert result.exit_code == 1
+        assert "nothing was created" in result.output
+        assert self._hours(settings) == []
+
+    def test_new_refuses_to_duplicate_an_existing_activity(self, cli_env) -> None:
+        cli, settings = cli_env
+        self._run(cli, "Chen Lab", "1", "--new", "research")
+        result = self._run(cli, "Chen Lab", "2", "--new", "research")
+        assert result.exit_code == 1
+        assert "already exists" in result.output
+        assert self._hours(settings) == [("Chen Lab", 1)]
+
+    def test_new_refuses_an_absurd_amount_before_creating_the_activity(
+        self, cli_env
+    ) -> None:
+        cli, settings = cli_env
+        result = self._run(cli, "Chen Lab", str(2**63 - 1), "--new", "research")
+        assert result.exit_code == 1
+        assert self._hours(settings) == []
+
+    def test_a_malformed_on_date_is_refused_without_a_traceback(self, cli_env) -> None:
+        cli, settings = cli_env
+        self._run(cli, "Chen Lab", "1", "--new", "research")
+        result = self._run(cli, "Chen Lab", "2", "--on", "not-a-date")
+        assert result.exit_code == 1
+        assert "not a date" in result.output
+        assert "Traceback" not in result.output
+        assert self._hours(settings) == [("Chen Lab", 1)]
+
+    def test_a_future_date_is_refused(self, cli_env) -> None:
+        # The accumulator has no date filter, so a future entry inflates every progress
+        # bar immediately and stays wrong until the day arrives.
+        cli, settings = cli_env
+        self._run(cli, "Chen Lab", "1", "--new", "research")
+        result = self._run(cli, "Chen Lab", "2", "--on", "9999-12-31")
+        assert result.exit_code == 1
+        assert "future" in result.output
+        assert self._hours(settings) == [("Chen Lab", 1)]
+
+    def test_an_implausibly_old_date_is_refused(self, cli_env) -> None:
+        # Pre-2000 dates land in local mean time (-07:28:18), an offset nothing else in
+        # the ledger uses.
+        cli, settings = cli_env
+        self._run(cli, "Chen Lab", "1", "--new", "research")
+        result = self._run(cli, "Chen Lab", "2", "--on", "0001-01-01")
+        assert result.exit_code == 1
+        assert self._hours(settings) == [("Chen Lab", 1)]
+
+
+class TestCategoryResolutionCannotMisfile:
+    """`total_target_for` matches title keywords, so the ways it can be wrong are the
+    ways an owner might retitle a target or start a second goal."""
+
+    def test_a_retitled_clinical_total_does_not_capture_volunteering(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # "Clinical hours, paid or volunteer" has no parentheses to strip, so the
+        # exclusion has to do the work.
+        goal_id, _ = _seed_goal_with_target(conn)
+        clinical = instantiate.add_total(
+            conn, goal_id, "Clinical hours, paid or volunteer", 500
+        )
+        service = instantiate.add_total(conn, goal_id, "Non-clinical service hours", 500)
+        assert activities.total_target_for(conn, "clinical")["id"] == clinical
+        assert activities.total_target_for(conn, "volunteering")["id"] == service
+
+    def test_a_target_on_an_archived_goal_is_not_eligible(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # An abandoned path keeps its target rows, and a lower id would otherwise let it
+        # outrank the live goal's accumulator purely by age.
+        old_goal, _ = _seed_goal_with_target(conn)
+        instantiate.add_total(conn, old_goal, "Research hours", 100)
+        conn.execute("UPDATE goal SET status = 'archived' WHERE id = ?", (old_goal,))
+        live_goal, _ = _seed_goal_with_target(conn)
+        live = instantiate.add_total(conn, live_goal, "Research hours", 200)
+        conn.commit()
+
+        assert activities.total_target_for(conn, "research")["id"] == live
+
+    def test_the_owners_real_preset_titles_all_resolve_to_the_right_total(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        # The exact titles specs/roadmaps/medical.md instantiates, in its own order.
+        goal_id, _ = _seed_goal_with_target(conn)
+        ids = {
+            "shadowing": instantiate.add_total(
+                conn, goal_id, "Shadowing hours (3+ specialties, >=1 primary care)", 75
+            ),
+            "clinical": instantiate.add_total(
+                conn, goal_id, "Clinical experience hours (paid or volunteer)", 500
+            ),
+            "volunteering": instantiate.add_total(
+                conn, goal_id, "Non-clinical service hours", 500
+            ),
+            "research": instantiate.add_total(conn, goal_id, "Research hours", 1000),
+            "leadership": instantiate.add_total(
+                conn, goal_id, "Leadership and teaching hours", 150
+            ),
+        }
+        conn.commit()
+        for category, target_id in ids.items():
+            assert activities.total_target_for(conn, category)["id"] == target_id, category

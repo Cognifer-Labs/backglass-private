@@ -147,3 +147,39 @@ deterministic given the id.
   the next caller. Added `local_noon_iso` for the backdating case and a test asserting
   the stamp lands on the named day in both of the owner's zones. When a helper takes a
   date and returns a timestamp, test that the timestamp is *on* that date before using it.
+
+- 2026-08-01 | Audit found SQLite's `date()`/`datetime()` silently normalize offset-bearing
+  timestamps to UTC before comparing, so `date(occurred_at) = date(:day)` dropped every
+  Phoenix calendar event after ~17:00 from its own day and bucketed evening checkpoints
+  into the wrong week. Three more sites had the same shape (ORDER BY on the raw column
+  inverts across -07:00/+05:30). | When a column deliberately stores mixed offsets, NEVER
+  compare or sort it as a date/string. Convert the local day to UTC instants in Python
+  (`timezones.utc_bounds`) and compare `datetime(col) >= datetime(:from)`. Test with times
+  inside the broken window (evening/early morning), not near it — a midday fixture passes
+  against both the broken and the fixed query and proves nothing.
+
+- 2026-08-01 | The spend-cap "stop" lived in a generator's submission loop, so it ran
+  before the caller charged anything and never fired; both existing cap tests set the cap
+  to 0 and only exercised the early-return guard. | A check inside a generator runs at
+  first `next()`, not when it reads. When a limit must interact with results, interleave
+  submission with consumption (waves) and write the test at a cap the run reaches
+  mid-batch — a zero-limit test only proves the entry guard.
+
+- 2026-08-02 | Reverted a fix to prove a test went red, restored the file, and the test
+  kept failing — for several minutes I chased a bug in correct code. `__pycache__` was
+  still serving the reverted bytecode; `inspect.getsource` showed the right source while
+  the interpreter ran the wrong bytes. | The revert-to-prove-red loop needs a cache purge
+  on BOTH edges: `find . -name __pycache__ -prune -exec rm -rf {} +` after the revert and
+  again after the restore. Source and behaviour disagreeing is the signature — when a
+  file's text says one thing and its behaviour says another, suspect stale bytecode
+  before suspecting the logic.
+
+- 2026-08-02 | Wrote a regression test for the WAL-unlink ordering that passed against
+  the buggy ordering — the "genuine WAL" it built was empty, because closing a SQLite
+  connection checkpoints and deletes it. That is the *second* vacuous test this session,
+  in the commit that cites the verifier who found the first one. | When the defect is an
+  ORDERING, no end-state assertion can catch it: both orderings leave the same files on
+  disk once the function returns. Observe the order directly — patch the later operation
+  and assert what is true at that instant. And a fixture that "sets up the broken
+  precondition" must be proven to have set it up: assert the precondition is real before
+  exercising the code, or the test is testing nothing.

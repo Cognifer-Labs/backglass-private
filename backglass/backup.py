@@ -166,11 +166,21 @@ def is_ledger(path: Path) -> bool:
             str(row[0])
             for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")
         }
+        if not names >= _LEDGER_TABLES:
+            return False
+        # Names alone are not the schema. Four empty tables with the right names passed
+        # the first version of this check and restored cleanly, after which `doctor` died
+        # on "no such column: version" — the same post-restore brick the check exists to
+        # prevent. Reading the migration row is the cheapest thing that actually proves
+        # this file was built by this application's migrations.
+        conn.execute("SELECT version FROM schema_version LIMIT 1").fetchone()
+        conn.execute("SELECT id, source, external_id FROM source_item LIMIT 1").fetchone()
+        conn.execute("SELECT id, status, confidence FROM commitment LIMIT 1").fetchone()
     except sqlite3.DatabaseError:
         return False
     finally:
         conn.close()
-    return names >= _LEDGER_TABLES
+    return True
 
 
 def rotate(backup_dir: Path) -> list[Path]:

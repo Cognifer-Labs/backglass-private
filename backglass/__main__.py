@@ -940,6 +940,32 @@ def log(
                 err=True,
             )
             raise typer.Exit(code=1)
+        # Every reason to refuse has to be found *before* the activity row is written.
+        # The connection is autocommit (db/__init__.py), so `add` is durable the moment
+        # it runs and the commit below is a formality — a failure after it left an
+        # activity with no hours, and the natural retry (`--new` again) made a second
+        # one, then a third, until the plain name was permanently ambiguous and one
+        # activity's hours were split across duplicate AMCAS rows. That is exactly the
+        # unrecoverable mis-filing this command exists to prevent.
+        if activities_mod.find_by_name(conn, activity):
+            typer.echo(
+                f"an activity named {activity!r} already exists — log against it "
+                "without --new, or pick a distinct title",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        if activities_mod.total_target_for(conn, new) is None:
+            typer.echo(
+                f"category {new!r} has no lifetime hour target on any active goal, so "
+                f"there is nowhere to log {hours}h — nothing was created",
+                err=True,
+            )
+            raise typer.Exit(code=1)
+        try:
+            activities_mod.check_hours(hours)
+        except activities_mod.ActivityError as exc:
+            typer.echo(str(exc), err=True)
+            raise typer.Exit(code=1) from exc
         try:
             activity_id = activities_mod.add(conn, title=activity, category=new)
         except activities_mod.ActivityError as exc:
@@ -967,10 +993,26 @@ def log(
     # A backdated entry is stamped local noon on the day named; a same-day entry keeps
     # the actual moment. local_now_iso takes a day only to pick the zone — it always
     # stamps now — so using it for --on would file September's hours under today.
+    today = _today(settings)
     if on:
-        occurred_at = timezones.local_noon_iso(settings, _date.fromisoformat(on))
+        try:
+            day = _date.fromisoformat(on)
+        except ValueError:
+            typer.echo(f"--on {on!r} is not a date; use YYYY-MM-DD", err=True)
+            raise typer.Exit(code=1) from None
+        if day > today:
+            # A future entry counts toward the total immediately — the accumulator has no
+            # date filter — so it would inflate every progress bar until the day arrived.
+            typer.echo(f"--on {on} is in the future; log hours after you do them", err=True)
+            raise typer.Exit(code=1)
+        if day.year < 2000:
+            # Pre-2000 dates fall outside any plausible record and land in local mean
+            # time, producing offsets like -07:28:18 that nothing else in the ledger uses.
+            typer.echo(f"--on {on} is implausibly old", err=True)
+            raise typer.Exit(code=1)
+        occurred_at = timezones.local_noon_iso(settings, day)
     else:
-        occurred_at = timezones.local_now_iso(settings, _today(settings))
+        occurred_at = timezones.local_now_iso(settings, today)
     try:
         logged = activities_mod.log_hours(
             conn,
@@ -2030,6 +2072,19 @@ def _unauthed_remote_sources(
 #: a shared inbox is not.
 BOUNDARY_SCOPED = ("gmail", "drive", "slack", "github", "calendar")
 
+#: Spellings a hand import might use for a scoped source. Not exhaustive and cannot be —
+#: which is the argument for the allowlist being the boundary and this being a second
+#: net, not the first one.
+_SOURCE_ALIASES = {
+    "gcal": "calendar",
+    "google-calendar": "calendar",
+    "googlecalendar": "calendar",
+    "google-drive": "drive",
+    "gdrive": "drive",
+    "mail": "gmail",
+    "google-mail": "gmail",
+}
+
 
 def _boundary_verdict(
     settings: Settings,
@@ -2053,17 +2108,21 @@ def _boundary_verdict(
     the strongest possible reason to have decided, so it counts even when no connector
     claims it.
     """
+    def _family(source: str) -> str:
+        # Normalized, because the rows this has to catch are hand imports and a hand
+        # import picks its own spelling: `Calendar:ASU`, `  calendar:asu`, `GCAL:asu`.
+        # An unnormalized comparison silently passed every one of those — the same
+        # blind spot in a new coat.
+        head = source.strip().lower().split(":")[0].strip()
+        return _SOURCE_ALIASES.get(head, head)
+
     scoped = sorted(
         {
-            source.split(":")[0]
+            _family(source)
             for source, enabled in credentials
-            if enabled and source.split(":")[0] in BOUNDARY_SCOPED
+            if enabled and _family(source) in BOUNDARY_SCOPED
         }
-        | {
-            source.split(":")[0]
-            for source in ingested
-            if source.split(":")[0] in BOUNDARY_SCOPED
-        }
+        | {source for src in ingested if (source := _family(src)) in BOUNDARY_SCOPED}
     )
     if not scoped:
         return None
