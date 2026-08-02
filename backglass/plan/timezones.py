@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from backglass.config import Settings
 
@@ -76,27 +76,41 @@ def local_now_iso(settings: Settings, day: date | None = None) -> str:
 def today_for(settings: Settings, now: datetime | None = None) -> date:
     """The owner's local date, in the zone they are actually in.
 
-    `active_tz` needs a date to pick the zone, and the date depends on the zone — so the
-    obvious `active_tz(settings, today_in(default_tz))` is circular and gets the arrival
-    day of a stay wrong: the `default_tz` date still falls before the range starts, so
-    the range does not apply, and for the 12.5 hours between Kolkata midnight and 12:30
-    the owner's genuine today reads as tomorrow.
+    `active_tz` needs a date to pick the zone, and the date depends on the zone, so the
+    obvious `active_tz(settings, today_in(default_tz))` is circular: it can only ever
+    return the default zone's answer, whatever the ranges say.
 
-    Iterating from the `default_tz` answer does not escape it — on the arrival day the
-    Phoenix date says the range has not started, which keeps the zone Phoenix, which
-    keeps the date. So instead every zone the owner could be in is tried, and the answer
-    is the one that agrees with itself: the date it produces must be a date on which
-    `active_tz` picks that same zone. A stay's own zone wins over the default, which is
-    what makes the arrival day come out right.
+    Every zone the owner could be in is tried, and a candidate counts only if it agrees
+    with itself: the date it produces must be a date on which `active_tz` picks that same
+    zone. Around a stay boundary two candidates can both agree, because `tz_ranges` is
+    date-granular and cannot say that a flight lands at 05:00 — at 23:30 UTC the day
+    before an eastward stay begins, "Phoenix, the 4th" and "Kolkata, the 5th" are equally
+    consistent with the config, and nothing in the data distinguishes "already there"
+    from "leaving tomorrow".
+
+    **The tie goes to the earliest date, deliberately.** This function's main caller is
+    the future-date guard on `backglass log`, and the two errors are not symmetric: too
+    early means a refusal the owner clears by waiting a few hours, while too late lets a
+    genuinely future-dated checkpoint through — and the accumulator has no date filter,
+    so that inflates every progress bar until the day arrives, with no CLI path to delete
+    the row. Preferring the later date was tried and had exactly that effect. A guard
+    that is occasionally too strict is a guard; one that is occasionally too loose is not.
     """
     moment = now or datetime.now(UTC)
-    candidates = [stay.zone for stay in parse_ranges(settings.tz_ranges)]
-    candidates.append(settings.default_tz)
-    for zone in candidates:
-        day = moment.astimezone(ZoneInfo(zone)).date()
+    fallback = moment.astimezone(ZoneInfo(settings.default_tz)).date()
+    days = []
+    for zone in [*(stay.zone for stay in parse_ranges(settings.tz_ranges)),
+                 settings.default_tz]:
+        try:
+            day = moment.astimezone(ZoneInfo(zone)).date()
+        except ZoneInfoNotFoundError:
+            # A typo in a stay that is not even in effect must not take down the ledger's
+            # primary write path. `Settings` does not validate zone names, and a stale
+            # `TZ_RANGES` line outlives the trip it described.
+            continue
         if active_tz(settings, day).lower() == zone.lower():
-            return day
-    return moment.astimezone(ZoneInfo(settings.default_tz)).date()
+            days.append(day)
+    return min(days) if days else fallback
 
 
 def local_noon_iso(settings: Settings, day: date) -> str:

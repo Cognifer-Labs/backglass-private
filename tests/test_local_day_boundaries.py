@@ -318,11 +318,39 @@ def test_today_is_the_date_in_the_zone_the_owner_is_actually_in() -> None:
     moment = _dt(2026, 8, 2, 23, 30, tzinfo=_utc)
 
     assert timezones.today_for(_with([]), moment) == date(2026, 8, 2)
-    # Mid-stay: the naive derivation already handled this one.
+    # Mid-stay, unambiguous: only Kolkata agrees with itself.
     assert timezones.today_for(
         _with(["2026-07-01..2026-08-20:Asia/Kolkata"]), moment
     ) == date(2026, 8, 3)
-    # The arrival day itself — the case that was wrong.
-    assert timezones.today_for(
-        _with(["2026-08-03..2026-08-20:Asia/Kolkata"]), moment
-    ) == date(2026, 8, 3)
+
+    # ── the boundary, where two answers are equally consistent ──────────────
+    #
+    # `tz_ranges` is date-granular; it cannot say a flight lands at 05:00. At this
+    # instant "Phoenix, the 2nd" and "Kolkata, the 3rd" both satisfy the
+    # self-consistency test, and the config genuinely does not distinguish "already
+    # arrived" from "leaving tomorrow". The tie goes to the earlier date because the
+    # caller is a future-date guard: too early costs the owner a wait, too late lets a
+    # future-dated checkpoint into an accumulator that has no date filter and no delete.
+    arriving = _with(["2026-08-03..2026-08-20:Asia/Kolkata"])
+    assert timezones.today_for(arriving, moment) == date(2026, 8, 2)
+
+    # The same shape one day out from a later stay — the case that regressed when the
+    # tie went the other way, letting `--on 2026-08-05` through as "not future".
+    departing = _with(["2026-08-05..2026-08-20:Asia/Kolkata"])
+    pre_departure = _dt(2026, 8, 4, 19, 0, tzinfo=_utc)  # Phoenix noon on the 4th
+    assert timezones.today_for(departing, pre_departure) == date(2026, 8, 4)
+
+
+def test_a_stale_timezone_typo_cannot_break_logging(settings: Settings) -> None:
+    """`Settings` does not validate zone names, and a `TZ_RANGES` line outlives the trip
+    it described. A typo in a stay that is not even in effect must not raise out of
+    `backglass log` — the ledger's primary write path."""
+    from datetime import UTC as _utc
+    from datetime import datetime as _dt
+
+    typo = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        default_tz="America/Phoenix",
+        tz_ranges=["2026-01-01..2026-01-10:Asia/Kolkatta"],
+    )
+    assert timezones.today_for(typo, _dt(2026, 8, 4, 19, 0, tzinfo=_utc)) == date(2026, 8, 4)
