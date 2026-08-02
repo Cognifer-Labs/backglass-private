@@ -315,7 +315,7 @@ def goal_section(conn: sqlite3.Connection, today: date, settings: Settings) -> S
 
     section = Section(priority=6, title="Goals")
 
-    # docs/14 F2: today's spaced-repetition load, one line, only when a due
+    # Today's spaced-repetition load, one line, only when a due
     # snapshot exists and carries work (B3 — a quiet day says nothing). Provenance
     # is the snapshot item itself: the claim "140 due" is checkable against it.
     snapshot = reviews_mod.due_snapshot(conn, today)

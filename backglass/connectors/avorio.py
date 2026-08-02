@@ -1,4 +1,4 @@
-"""Avorio. Phase A, docs/14 F2 — the owner's own flashcard app, read like Anki.
+"""Avorio — a flashcard app with a local SQLite store, read the same way as Anki.
 
 The store is `~/Library/Application Support/Avorio/avorio.db` (path injected, per the
 house rule), a Rust-core SQLite schema. Same contract as `anki.py`: opened plain
@@ -25,8 +25,8 @@ Schema facts this connector depends on (Avorio migrations V1–V21):
 Avorio's schema is still moving (the Android port is in flight), so `health()` is a
 schema guard, not just a file check: every required table and column is verified at
 open, and a mismatch degrades the source with a detail naming exactly what moved
-(rule 5) instead of crashing the sync. The stable fix, recorded in docs/14 §7, is a
-versioned export view inside Avorio; until then this guard is the tripwire.
+(rule 5) instead of crashing the sync. The stable fix is a versioned export view
+inside Avorio; until then this guard is the tripwire.
 """
 
 from __future__ import annotations
@@ -106,7 +106,7 @@ class AvorioConnector:
                 detail=(
                     "Avorio schema moved under the connector: missing "
                     + ", ".join(missing)
-                    + " — see docs/14 §7 (versioned export view is the stable fix)"
+                    + " — the stable fix is a versioned export view inside Avorio"
                 ),
             )
         return Health(name=self.name, ok=True)

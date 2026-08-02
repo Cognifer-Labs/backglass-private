@@ -1,4 +1,4 @@
-"""Phase A (docs/14 F1+F2): the activity registry and the spaced-repetition sources.
+"""The activity registry and the spaced-repetition sources.
 
 The connector tests build real SQLite fixture files in the shapes Anki and Avorio
 actually write — no live store is ever opened (docs/10 §Testing). Where a connector

@@ -10,7 +10,7 @@
     commute/travel   = any calendar event tagged travel, plus its buffer
     capacity_minutes = working_window − fixed − buffer − travel − reserve − reviews
     reserve          = configured slack, default 45 min/day, never zero
-    reviews          = today's spaced-repetition load (docs/14 F2), when a due
+    reviews          = today's spaced-repetition load, when a due
                        snapshot exists; zero otherwise
 
 The reserve is the requirement most likely to be "optimised" away by someone trying to fit
@@ -39,7 +39,7 @@ from backglass.plan import timezones
 #: capacity costs one unscheduled hour, over-promising costs a missed commitment.
 BUSY_STATUSES = {"confirmed", "tentative", "busy"}
 
-#: Ceiling on the capacity reserved for spaced-repetition reviews (docs/14 F2). Two
+#: Ceiling on the capacity reserved for spaced-repetition reviews. Two
 #: hours a day is a heavy but real review load; anything above it means a backlog
 #: the owner should triage deliberately rather than have the planner silently
 #: surrender the day to.
@@ -80,7 +80,7 @@ class Capacity:
     travel_minutes: int
     reserve_minutes: int
     capacity_minutes: int
-    #: Today's spaced-repetition load (docs/14 F2): due cards × the owner's own
+    #: Today's spaced-repetition load: due cards × the owner's own
     #: trailing pace. Subtracted like the reserve — reviews happen whether or not
     #: they are scheduled, so a plan that ignores them over-promises the day.
     review_minutes: int = 0

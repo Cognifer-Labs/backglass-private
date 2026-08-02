@@ -617,7 +617,7 @@ def _all_connectors(conn: sqlite3.Connection, settings: Settings) -> list[Connec
 
         built.append(RemindersConnector(boundary=boundary))
 
-    # ── Phase A sources — spaced repetition (docs/14 F2). No boundary: review
+    # ── Spaced-repetition sources. No boundary: review
     # tallies carry no addresses and no card content is ingested. ──
     if settings.anki_db_path or settings.avorio_db_path:
         from datetime import date as _date
@@ -867,7 +867,7 @@ def amcas_export(
         Path | None, typer.Option("--out", help="Write markdown here instead of stdout")
     ] = None,
 ) -> None:
-    """Assemble the Work & Activities raw material (docs/14 F1).
+    """Assemble the Work & Activities raw material.
 
     Evidence assembly, never authorship: every hour figure is a sum over named
     checkpoints, the note stream is the owner's own words, and the 700/1325
@@ -1582,7 +1582,7 @@ def setup(
         if yes or typer.confirm(f"enable {d.source}?", default=True):
             updates[d.env_key] = d.env_value
 
-    # ── bind the reviews target while we are here (docs/14 F2) ────────────
+    # ── bind the reviews target while we are here ──────────────────────────
     wants_reviews = (
         settings.reviews_target_id is None
         and ("ANKI_DB_PATH" in updates or "AVORIO_DB_PATH" in updates
@@ -1674,8 +1674,8 @@ def missing_launchd_jobs(launchctl_list_output: str) -> list[str]:
 def doctor() -> None:
     """Preflight for activation: one line per check, non-zero exit on any failure.
 
-    The runbook (docs/13) says run this after every setup step; a clean doctor is
-    the automation half of "activated" — the product half is the seven-day soak.
+    Run this after every setup step; a clean doctor is the automation half of
+    "activated" — the product half is the seven-day soak.
     """
     import shutil
     import subprocess

@@ -1,4 +1,4 @@
-"""Spaced-repetition wiring. Phase A, docs/14 F2.
+"""Spaced-repetition wiring.
 
 The anki/avorio connectors write two source_item shapes — per-day review tallies
 (``reviews:<date>:...``) and a once-a-day due snapshot (``due:<date>``). This module

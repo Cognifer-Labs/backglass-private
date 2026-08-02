@@ -258,8 +258,8 @@ def build_router(
     ) -> Any:
         """One log entry = one checkpoint: delta carries the amount, the note carries
         the org/supervisor detail AMCAS will ask for later (G9). Naming an activity
-        (docs/14 F1) files the same hours under the discrete extracurricular the
-        Work & Activities export will assemble from."""
+        files the same hours under the discrete extracurricular the Work & Activities
+        export will assemble from."""
         if amount <= 0:
             raise HTTPException(status_code=422, detail="amount must be positive")
         _total_target(conn, roadmap_id, target_id)

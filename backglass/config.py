@@ -249,7 +249,7 @@ class Settings(BaseSettings):
     apple_notes: bool = False
     apple_reminders: bool = False
 
-    # ── Phase A sources — spaced repetition (docs/14 F2) ─────────────────
+    # ── Spaced-repetition sources ─────────────────────────────────────────
     #: Paths to the review apps' own local SQLite stores; empty disables. Opened
     #: read-only+immutable like the Messages store. Only review counts and due
     #: loads are ingested, never card content, so the docs/08 boundary has no

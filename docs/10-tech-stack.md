@@ -278,7 +278,7 @@ rejected is recorded so the argument does not have to be re-had.
 | google-api-python-client + google-auth-oauthlib | Gmail/Calendar/Drive auth + discovery; OAuth token refresh is dangerous to hand-write | re-implementing OAuth refresh, the classic security foot-gun |
 | pypdf | drop-folder + Drive PDF text (docs/12 ruling: BSD-3, pure Python; PyMuPDF rejected on AGPL + 50 MB, pdfplumber as overkill) | "PDF support" that UTF-8-decodes binary noise |
 
-Dev-only: pytest, ruff, mypy, vcrpy (cassettes recorded at activation, docs/13).
+Dev-only: pytest, ruff, mypy, vcrpy (cassettes recorded once and replayed in tests).
 
 Deliberately vendored rather than depended on: quote/signature stripping regexes
 (talon, email-reply-parser — both unmaintained since ≤2022, Apache-2.0/MIT permit

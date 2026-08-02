@@ -1,4 +1,4 @@
-"""The activity registry. Phase A, docs/14 F1.
+"""The activity registry.
 
 A discrete extracurricular — organization, role, supervisor, date range — that hour
 checkpoints attach to, so the AMCAS Work & Activities section can later be assembled

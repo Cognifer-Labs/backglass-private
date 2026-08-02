@@ -1,4 +1,4 @@
-"""Anki. Phase A, docs/14 F2 — a local source in the shape of §Notes/iMessage.
+"""Anki — a local source in the shape of §Notes/iMessage.
 
 The store is Anki's own `collection.anki2` (SQLite), opened plain ``mode=ro`` with a
 short busy timeout — deliberately *not* ``immutable=1``, because the store is in WAL

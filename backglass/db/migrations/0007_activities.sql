@@ -1,4 +1,4 @@
--- Activity registry (Phase A, docs/14 F1). A discrete extracurricular activity —
+-- Activity registry. A discrete extracurricular activity —
 -- organization, role, supervisor, date range — that hour checkpoints can attach to,
 -- so the AMCAS Work & Activities section can later be assembled from evidence.
 -- category maps to the medical preset's total keys (shadowing/clinical/volunteering/

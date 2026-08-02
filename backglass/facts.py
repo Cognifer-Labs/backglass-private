@@ -8,7 +8,7 @@ mail. Three rules, all inherited from the ledger:
 - Memory changes by supersession, never by UPDATE — history survives its corrections.
 - Retraction is a status, not a DELETE.
 
-Subjects are freeform kebab lanes (identity, housing, premed, orgtruth, ...). The
+Subjects are freeform kebab lanes (identity, housing, premed, side-project, ...). The
 (subject, key) pair is the identity a new value supersedes; the Memory page groups by
 subject so near-duplicate keys stay visible rather than silently forking.
 """
