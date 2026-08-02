@@ -93,9 +93,13 @@ class TestTriageRouter:
         assert primary.calls == ["keep"]
 
     def test_build_wraps_only_when_enabled(self) -> None:
-        base = Settings(owner_emails=["x@y.z"])
-        wrapped = Settings(owner_emails=["x@y.z"], apple_triage=True,
-                           apple_triage_shortcut="My Screen")
+        # Pinned explicitly, matching tests/conftest.py's `settings` fixture: this is
+        # about apple_triage wrapping, not backend selection, so it must not inherit
+        # whatever MODEL_BACKEND a real .env (or its absence) happens to leave in
+        # effect — `Settings` reads .env even when constructed with explicit kwargs.
+        base = Settings(owner_emails=["x@y.z"], model_backend="claude_cli")
+        wrapped = Settings(owner_emails=["x@y.z"], model_backend="claude_cli",
+                           apple_triage=True, apple_triage_shortcut="My Screen")
         assert not isinstance(client_mod.build(base), TriageRouter)
         router = client_mod.build(wrapped)
         assert isinstance(router, TriageRouter)
