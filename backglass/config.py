@@ -291,6 +291,24 @@ class Settings(BaseSettings):
             return _csv(value)
         raise TypeError(f"expected a comma-separated string or list, got {type(value)}")
 
+    # .env.example ships these four blank ("APPLE_TRIAGE=", "REVIEWS_TARGET_ID=") so a
+    # fresh `cp .env.example .env` cloner sees the exact key to fill in. Pydantic
+    # coerces a present-but-empty env string toward each field's real type before
+    # falling back to a default, and "" is neither a valid bool nor a valid int — so
+    # left blank, `Settings()` raised a bare ValidationError/traceback instead of using
+    # the documented off/unset default. Only these four fields are bool/int-typed *and*
+    # shipped blank in the template; every other int/float field in .env.example carries
+    # a real numeric default, so this is not needed there.
+    @field_validator("apple_triage", "apple_notes", "apple_reminders", mode="before")
+    @classmethod
+    def _blank_bool_is_false(cls, value: object) -> object:
+        return False if value == "" else value
+
+    @field_validator("reviews_target_id", mode="before")
+    @classmethod
+    def _blank_int_is_none(cls, value: object) -> object:
+        return None if value == "" else value
+
     def owns(self, address: str | None) -> bool:
         """True if this address is one of the owner's own."""
         if not address:
