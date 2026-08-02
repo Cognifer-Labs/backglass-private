@@ -124,6 +124,41 @@ anything else touches `__main__.py`/`planner.py`.
 
 ---
 
+## Status — end of the 2026-08-02 session
+
+**Done and verified (Tier 1/2, plus a Tier 3 head start).** All eight launchd jobs are
+installed and loaded, including a new daily `com.backglass.backup`. `backglass backup`
+/ `restore` exist with rotation, integrity and ledger-shape checks. `backglass/heartbeat.py`
+drives stale-sync and missing-plan warnings on the dashboard, in the brief, and in
+`doctor`, which also now checks the data boundary, backup freshness, and
+configured-but-never-authed sources. A fresh-context verifier REFUTED the first version
+of that work and found seven defects, two live on the machine — all seven are fixed with
+regression tests, and the two live ones re-confirmed against the real system. Also
+landed: `backglass audit corrections`, much wider date resolution for academic date
+shapes, a fix to the last surviving `date()` week-bucket, and `backglass log`. Suite:
+919 green, ruff and mypy clean.
+
+**The single most important finding of the session**, from the corrections work: the
+review-queue feedback loop **has never captured one labelled correction**. Every
+`resolution_note` in the live ledger is NULL, because the queue gets cleared through the
+CLI `resolve`/`drop` path, which records no reason. So extraction cannot improve from
+use no matter what is built downstream. **Fix that next** — either capture a reason on
+the CLI path, or move queue-clearing to the dashboard buttons that already do.
+
+**Open follow-ups discovered along the way:**
+- `brief_source_health.sql` reports *failing credentials*, so an unmanaged source that
+  silently goes stale — the fall class schedule — is invisible in the brief. The
+  dashboard now names these; the brief does not.
+- `target` has no `preset_key` column, so `activities.CATEGORY_TITLE_HINTS` rebuilds the
+  category→accumulator link by matching title keywords. It works and is tested, but a
+  migration adding the key would retire the guesswork.
+- `actions.accept` stamps no timestamp, so a correction's *moment* is unrecorded and the
+  audit window falls back to extraction time.
+- The sync job exits non-zero every 30 minutes on the iMessage Full Disk Access failure.
+  Correctly surfaced as a failed source; needs the owner's GUI step.
+
+---
+
 ## The college journey: what the real ledger says (read-only survey, 2026-08-02)
 
 Facts, not plans — each verified against `data/backglass.db` read-only.
