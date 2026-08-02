@@ -262,6 +262,12 @@ class Settings(BaseSettings):
     #: not a default.
     reviews_target_id: int | None = None
 
+    # ── heartbeat (backglass/heartbeat.py) ────────────────────────────────
+    #: How old the newest completed run may get before the dashboard and the brief say
+    #: the ledger is stale. Four times the 30-minute sync cadence: one missed run is
+    #: weather, four in a row is a dead launchd job. docs/11 §8.
+    sync_stale_after_hours: float = 2.0
+
     # ── storage ───────────────────────────────────────────────────────────
     db_path: Path = Path("./data/backglass.db")
     #: Where `backglass backup` writes snapshots. Outside the checkout on purpose: a

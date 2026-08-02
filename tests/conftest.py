@@ -50,6 +50,24 @@ def panel_slice(body: str, panel_id: str) -> str:
     return rest[: nxt.start()] if nxt else rest
 
 
+def healthy_run(conn: Any, finished_at: str | None = None) -> int:
+    """One completed `run` row, so the ledger does not read as never-synced.
+
+    A freshly migrated database has no runs, and backglass/heartbeat.py correctly calls
+    that out on both surfaces. Every test that is about something *else* has to say
+    "assume the scheduler is alive" out loud rather than inherit it from the fixture —
+    otherwise muting the alarm in the fixture would mute it in the regression tests too.
+    """
+    from backglass.db import now_iso
+
+    stamp = finished_at or now_iso()
+    conn.execute(
+        "INSERT INTO run (user_id, started_at, finished_at) VALUES (1, ?, ?)",
+        (stamp, stamp),
+    )
+    return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+
 # ────────────────────────────────────────────────────────── message fixtures
 
 

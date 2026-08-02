@@ -15,7 +15,7 @@ from __future__ import annotations
 import json
 import re
 import sqlite3
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -54,8 +54,6 @@ def _demoted_friend_plan(row: dict[str, Any]) -> bool:
 
 def today_in(tz: str) -> date:
     """The owner's local date. The brief is a local-morning object, not a UTC one."""
-    from datetime import datetime
-
     return datetime.now(ZoneInfo(tz)).date()
 
 
@@ -102,8 +100,70 @@ def _status_of(due_at: Any, today: date) -> str:
 # docs/05: "Each of these is more valuable than any section it displaces."
 
 
-def failure_section(conn: sqlite3.Connection, today: date) -> Section:
+def _staleness_lines(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    today: date,
+    now: datetime | None,
+    section: Section,
+) -> None:
+    """The two claims nothing else in the brief can make: the ledger stopped moving,
+    and no plan exists for the day this brief is about.
+
+    Both are sourced like everything else — the run row and the day the plan was owed.
+    B2 has no exception for infrastructure; "your scheduler is dead" is a claim about
+    the world and the reader gets to check it.
+    """
+    from backglass import heartbeat as heartbeat_mod
+
+    beat = heartbeat_mod.read(conn, settings, today, now)
+
+    if beat.never_ran:
+        section.lines.append(
+            Line(
+                text="Sync has never run — nothing in this brief comes from your mail.",
+                provenance=LedgerRef("sources", "sync", "run log · empty"),
+                status="overdue",
+            )
+        )
+    elif beat.stale:
+        # The failing sources are the *why*: a stale ledger with Gmail broken is an
+        # auth problem, a stale ledger with every source healthy is a dead launchd job,
+        # and the fix differs. Naming them here costs six words and saves the hunt.
+        tail = f" — {beat.failed_phrase}" if beat.failed_phrase else ""
+        section.lines.append(
+            Line(
+                text=f"Ledger last updated {beat.age_phrase}{tail}. This brief may be stale.",
+                provenance=LedgerRef(
+                    "runs", str(beat.last_run_id), f"run · {str(beat.last_run_at)[:10]}"
+                ),
+                status="overdue",
+            )
+        )
+
+    if beat.plan_missing:
+        section.lines.append(
+            Line(
+                text="No plan for today — the 05:45 planner did not run.",
+                provenance=LedgerRef("plans", today.isoformat(), f"day plan · {today}"),
+                status="overdue",
+            )
+        )
+
+
+def failure_section(
+    conn: sqlite3.Connection,
+    today: date,
+    settings: Settings,
+    now: datetime | None = None,
+) -> Section:
     section = Section(priority=0, title="Attention")
+
+    # docs/11 §8, the silent failure: a brief generated from a ledger that stopped
+    # updating three days ago reads exactly like a quiet week. Said first, because every
+    # line below it is only as current as this one. `now` is injected so the claim is
+    # testable without a wall clock.
+    _staleness_lines(conn, settings, today, now, section)
 
     for row in _rows(
         conn, "brief_source_health", {"user_id": USER_ID, "today": today.isoformat()}
@@ -543,7 +603,7 @@ def build(conn: sqlite3.Connection, settings: Settings, for_date: date | None = 
     brief = Brief(generated_for_date=today.isoformat(), kind="daily")
 
     for section in (
-        failure_section(conn, today),
+        failure_section(conn, today, settings),
         timezone_section(conn, today, settings),
         plan_section(conn, today),
         capacity_section(conn, today),
