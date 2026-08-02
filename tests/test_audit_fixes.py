@@ -13,14 +13,23 @@ import sqlite3
 from datetime import date
 
 import pytest
+from fastapi.testclient import TestClient
 
 from backglass.config import Settings
 from backglass.connectors import base
 from backglass.db import now_iso
 from backglass.ledger import USER_ID, Ledger
 from backglass.sync import SpendCap, _in_parallel
+from backglass.web.app import create_app
+from tests.conftest import healthy_run
 
 TODAY = date(2026, 8, 1)
+
+
+@pytest.fixture
+def client(conn: sqlite3.Connection, settings: Settings) -> TestClient:
+    del conn
+    return TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
 
 
 def _commitment(
@@ -250,3 +259,54 @@ class TestErrorRedaction:
 
     def test_it_is_bounded(self) -> None:
         assert len(base.safe_error(RuntimeError("x" * 5000))) <= 300
+
+
+# ── docs/11 §8: a failure is never quiet ──────────────────────────────────
+
+
+class TestFailedWriteIsVisible:
+    """HTMX swaps nothing on a non-2xx, so a refused or lost write left no trace.
+
+    The realistic case is not a stale row — `actions._require_open` only checks that
+    the commitment EXISTS, so resolving an already-resolved one is idempotent and
+    returns 200. It is the server going away mid-click (launchd restart, a crash)
+    and any 5xx: HTMX fires `htmx:sendError`/`htmx:responseError`, nothing listened,
+    and the click looked exactly like a click that worked.
+    """
+
+    def test_every_page_carries_the_strip_and_its_handler(
+        self, client: TestClient
+    ) -> None:
+        for path in ("/", "/goals", "/people", "/roadmaps", "/schedule", "/memory"):
+            body = client.get(path).text
+            assert 'id="oops"' in body, path
+            assert "/static/oops.js" in body, path
+
+    def test_the_handler_is_served(self, client: TestClient) -> None:
+        response = client.get("/static/oops.js")
+        assert response.status_code == 200
+        assert "htmx:sendError" in response.text
+        assert "htmx:responseError" in response.text
+
+    def test_a_page_with_nothing_wrong_carries_no_alarm_ink(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """§8 rule 1 spends vermilion on overdue and destroy alone, so the strip is
+        empty at rest and builds its chip in JS. A dormant k-verm in every page would
+        put the alarm ink on surfaces that are not alarming.
+
+        The healthy run is required, not incidental: a never-synced ledger legitimately
+        raises a vermilion sidebar alert, and this test is about the strip, not that.
+        """
+        healthy_run(conn)
+        conn.commit()
+        assert "k-verm" not in client.get("/people").text
+
+    def test_the_refusal_reason_reaches_the_owner(
+        self, client: TestClient, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The detail strings are already written for the owner, so the strip shows
+        them verbatim rather than replacing them with a generic apology."""
+        response = client.post("/commitments/9999/resolve")
+        assert response.status_code == 422
+        assert response.json()["detail"] == "no commitment 9999"

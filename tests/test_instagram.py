@@ -344,6 +344,115 @@ def test_live_lane_reads_only_allowlisted_threads_and_keeps_an_iso_cursor(
     assert list(again.fetch(connector.cursor)) == []
 
 
+def windowed_client(threads: list[SimpleNamespace]) -> Any:
+    """A client that honours `amount` the way instagrapi does: the newest N, not a page.
+
+    The plain `fake_client` above returns every message whatever is asked for, so it can
+    never express the case this connector's watermark logic exists for. Requested window
+    sizes are recorded because "did it go back for a deeper one" is the behaviour under
+    test, not just the item list.
+    """
+    requested: list[int] = []
+
+    def direct_messages(thread_id: str, amount: int) -> list[SimpleNamespace]:
+        requested.append(amount)
+        messages = next(t for t in threads if t.id == thread_id).messages
+        return sorted(messages, key=lambda m: m.timestamp, reverse=True)[:amount]
+
+    return SimpleNamespace(
+        direct_threads=lambda amount: threads,
+        direct_messages=direct_messages,
+        requested=requested,
+    )
+
+
+def a_backlog(count: int, *, start: datetime) -> list[tuple[str, int, str, datetime]]:
+    return [
+        (f"m{i}", 1, f"message {i}", start + timedelta(minutes=i)) for i in range(count)
+    ]
+
+
+def test_a_full_window_is_re_read_deeper_rather_than_skipped_over(
+    boundary: Boundary,
+) -> None:
+    """The connector was down and the chat kept going: more new messages than one window.
+
+    The newest 50 come back, the oldest 10 do not, and the pre-fix watermark moved to the
+    newest of the 50 — putting the other 10 permanently below a floor no later run ever
+    dips under. The window has to reach the watermark before it may be believed.
+    """
+    start = datetime(2026, 7, 10, 8, 0, tzinfo=UTC)
+    threads = [a_thread("t1", "Goa trip", [(1, "priya.s")], a_backlog(60, start=start))]
+    client = windowed_client(threads)
+    connector = InstagramLiveConnector(
+        username="k",
+        session_file=None,
+        allowlist=Allowlist(["Goa trip"]),
+        boundary=boundary,
+        client_factory=lambda: client,
+        max_messages_amount=100,
+    )
+
+    watermark = (start - timedelta(minutes=1)).isoformat()
+    texts = [item.body_text for item in connector.fetch(watermark)]
+
+    assert len(texts) == 60, "every message above the watermark reaches the ledger"
+    assert client.requested == [50, 100], "the full first window sent it back for a deeper one"
+    assert connector.truncated_threads == 0
+    assert connector.cursor == (start + timedelta(minutes=59)).isoformat()
+
+
+def test_a_backlog_deeper_than_the_ceiling_holds_the_watermark(boundary: Boundary) -> None:
+    """Correctness over completeness: the lane would rather re-read than lose a message.
+
+    Nothing below the deepest window is covered, so there is no safe point to advance to
+    and the cursor is left unset — sync.py keeps the stored one, and the next run tries
+    the same gap again. content_hash makes the overlap free (docs/03).
+    """
+    start = datetime(2026, 7, 10, 8, 0, tzinfo=UTC)
+    threads = [a_thread("t1", "Goa trip", [(1, "priya.s")], a_backlog(200, start=start))]
+    client = windowed_client(threads)
+    connector = InstagramLiveConnector(
+        username="k",
+        session_file=None,
+        allowlist=Allowlist(["Goa trip"]),
+        boundary=boundary,
+        client_factory=lambda: client,
+        max_messages_amount=100,
+    )
+
+    items = list(connector.fetch((start - timedelta(minutes=1)).isoformat()))
+
+    assert len(items) == 100, "the deepest window it is allowed still ships what it read"
+    assert connector.truncated_threads == 1
+    assert connector.cursor is None, "the watermark must not step over the unread gap"
+
+
+def test_a_first_run_takes_the_fixed_window_without_backfilling(boundary: Boundary) -> None:
+    """No cursor means no coverage to be contiguous with, so there is no gap to lose.
+
+    Deepening here would crawl the entire inbox history on day one, which is the ban risk
+    the lane's gentle-polling defaults exist to avoid.
+    """
+    start = datetime(2026, 7, 10, 8, 0, tzinfo=UTC)
+    threads = [a_thread("t1", "Goa trip", [(1, "priya.s")], a_backlog(200, start=start))]
+    client = windowed_client(threads)
+    connector = InstagramLiveConnector(
+        username="k",
+        session_file=None,
+        allowlist=Allowlist(["Goa trip"]),
+        boundary=boundary,
+        client_factory=lambda: client,
+    )
+
+    items = list(connector.fetch(None))
+
+    assert len(items) == 50
+    assert client.requested == [50]
+    assert connector.truncated_threads == 0
+    assert connector.cursor == (start + timedelta(minutes=199)).isoformat()
+
+
 def test_live_lane_matches_a_one_to_one_thread_by_username(boundary: Boundary) -> None:
     when = datetime(2026, 7, 10, 15, 4, 5, tzinfo=UTC)
     threads = [

@@ -193,3 +193,14 @@ deterministic given the id.
   the function that does the INSERT and ask which of them the check will cover — if the
   answer is not "all of them", it belongs one layer down. A guard on one of two doors is
   not a guard, and the test that covers only that door will stay green forever.
+
+- 2026-08-02 | A duplicate-title guard compared with SQLite's `LOWER()` while the
+  resolver that answers "which activity is this" compared with Python's `str.lower()`.
+  SQLite folds ASCII only, so "Café Latino" and "CAFÉ LATINO" passed the guard as
+  distinct and then matched each other in the resolver — the name became permanently
+  unloggable and its hours split across two AMCAS rows. | When a guard and a lookup are
+  two halves of one question ("is this the same thing?"), they must share one
+  normalization function, and it must be the *stricter* engine's. Never let SQL-side and
+  Python-side comparison of the same field coexist; write `_norm()` once and route both
+  through it. Corollary: a test that exercises the rule directly will not catch this —
+  only one that drives the real door does.

@@ -307,10 +307,16 @@ class InstagramLiveConnector:
     #: biggest ban-risk reducer after never re-logging-in.
     threads_amount: int = 20
     messages_amount: int = 50
+    #: The one deeper window `fetch` is allowed when the ordinary one does not reach the
+    #: watermark, and the point past which it stops asking rather than crawl. See fetch().
+    max_messages_amount: int = 500
 
     cursor: Cursor = None
     excluded: int = 0
     excluded_by_rule: dict[str, int] = field(default_factory=dict)
+    #: Threads whose backlog was still deeper than `max_messages_amount` this run. Non-zero
+    #: means the watermark deliberately did not move — see fetch().
+    truncated_threads: int = 0
 
     @property
     def name(self) -> str:
@@ -347,8 +353,36 @@ class InstagramLiveConnector:
         return Health(name=self.name, ok=True)
 
     def fetch(self, since: Cursor) -> Iterator[SourceItem]:
+        """Allowed messages newer than the cursor, and a cursor that never outruns them.
+
+        instagrapi hands back the newest `amount` messages of a thread, not one page of a
+        walk, so a fixed window is a *view* of the backlog rather than the whole of it.
+        Moving the watermark to the newest thing in a truncated view steps over every
+        older message the window did not reach, and those are then unreachable forever:
+        the next run asks for the newest N again and discards anything at or below the
+        watermark. One missed run plus a busy group chat is the whole recipe.
+
+        So the window is paginated towards the watermark rather than fixed (option (a),
+        the shape the REST connectors already use): a window that comes back full and
+        still ends above the watermark has not reached it, and that thread is re-read once
+        at `max_messages_amount`. If even that does not reach it, the run refuses to
+        advance the watermark at all — below a truncated window nothing is covered, so the
+        oldest safely-covered point is where the run started. A re-read costs nothing
+        because content_hash absorbs it (docs/03); a skipped message costs a commitment,
+        and docs/07 says an unreachable source is the failure that matters here.
+
+        The ceiling is not a compromise on that rule, it is the ban-risk budget: crawling
+        the private mobile API to exhaustion is exactly the behaviour that gets an account
+        checkpointed, which is the risk this whole lane is organised around. Correctness
+        is bought with re-reads, never with an unbounded crawl.
+
+        A first run has no cursor and therefore no gap to lose — there is no earlier
+        coverage for the window to be contiguous with — so the fixed window stands as the
+        deliberate starting point rather than triggering a backfill of the whole inbox.
+        """
         self.excluded = 0
         self.excluded_by_rule = {}
+        self.truncated_threads = 0
         watermark = _parse_iso(since)
         highest = watermark
 
@@ -364,12 +398,10 @@ class InstagramLiveConnector:
             ):
                 self._exclude(_ALLOWLIST_RULE)
                 continue
-            for message in client.direct_messages(
-                thread.id, amount=self.messages_amount
-            ):
-                moment = _as_utc(getattr(message, "timestamp", None))
-                if moment is None or (watermark and moment <= watermark):
-                    continue
+            fresh, reached = self._messages_since(client, thread.id, watermark)
+            if not reached:
+                self.truncated_threads += 1
+            for moment, message in fresh:
                 highest = moment if highest is None else max(highest, moment)
                 text = (getattr(message, "text", None) or "").strip()
                 if not text:
@@ -402,8 +434,45 @@ class InstagramLiveConnector:
                     ),
                 )
 
-        if highest is not None:
+        # Leaving `cursor` None leaves the stored one alone (sync.py `_ingest` only writes
+        # a cursor it was given), which is precisely "hold at the last point we can prove
+        # we covered".
+        if highest is not None and not self.truncated_threads:
             self.cursor = highest.isoformat()
+
+    def _messages_since(
+        self, client: Any, thread_id: Any, watermark: datetime | None
+    ) -> tuple[list[tuple[datetime, Any]], bool]:
+        """The messages newer than `watermark`, and whether the window provably reached it.
+
+        Reached means one of three things: there is no watermark to reach, the thread
+        returned fewer messages than were asked for and is therefore exhausted, or the
+        window contains something at or below the watermark and so overlaps the covered
+        range. Anything else is a gap of unknown width, and the caller treats it as one.
+        """
+        amount = self.messages_amount
+        while True:
+            window = list(client.direct_messages(thread_id, amount=amount))
+            moments = [
+                (moment, message)
+                for message, moment in (
+                    (m, _as_utc(getattr(m, "timestamp", None))) for m in window
+                )
+                if moment is not None
+            ]
+            reached = (
+                watermark is None
+                or len(window) < amount
+                or any(moment <= watermark for moment, _ in moments)
+            )
+            if reached or amount >= self.max_messages_amount:
+                fresh = [
+                    (moment, message)
+                    for moment, message in moments
+                    if watermark is None or moment > watermark
+                ]
+                return fresh, reached
+            amount = self.max_messages_amount
 
     def _client(self) -> Any:
         if self.client_factory is not None:

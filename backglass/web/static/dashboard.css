@@ -937,3 +937,19 @@ details.panel:not([open]){padding-bottom:0}
 /* The odd panel out spans the full row (Sources): no half-empty grid cell, and
  * no stray border-right on the page's outer edge. */
 .panel.span2{grid-column:1/-1;border-right:0}
+
+/* ── The failed-write strip (audit #11 follow-up) ───────────────────────────
+ * A write that the server refuses swaps nothing, so without this the click is
+ * silent. Fixed to the bottom edge so it cannot push the panel grid around
+ * mid-action, and built from the vocabulary already in this file: a 2px keyline,
+ * square corners, the vermilion wash that §8 reserves for broken-and-overdue, and
+ * black text on it in both themes (the wash resolves to the full ink in dark). */
+.oops{position:fixed;left:0;right:0;bottom:0;z-index:10;
+  display:flex;align-items:center;gap:var(--sp-3);
+  padding:var(--sp-3) var(--sp-5);
+  background:var(--verm-wash);border-top:2px solid var(--rule);color:#000}
+.oops[hidden]{display:none}
+.oops .oops-what{flex:1;min-width:0;font-size:14px;line-height:20px}
+/* The dismiss button sits on a washed surface, so it takes the paper fill it would
+ * otherwise inherit from the strip. */
+.oops .btn{flex:0 0 auto;background:var(--paper);color:var(--ink)}

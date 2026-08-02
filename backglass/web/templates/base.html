@@ -56,6 +56,20 @@
   </div>
 </div>
 
+{# docs/11 §8's rule, applied to write-backs: never let a failure be quiet. Every
+   action on this dashboard is an HTMX post whose response replaces a panel, and HTMX
+   swaps nothing on a non-2xx — so before this existed, a refused write (a commitment
+   already resolved, a source that vanished) produced no swap, no message and no
+   console line. A click that does nothing at all is indistinguishable from a click
+   that worked, which is the failure mode the Sources panel exists to prevent one
+   layer up. It waits to be dismissed rather than timing out: a write the owner
+   believes happened and did not is worth an interruption. #}
+{# Empty at rest, deliberately: the chip is built in JS when a write actually fails.
+   A dormant `k-verm` chip sitting in every page would put the alarm ink on surfaces
+   that are not alarming, which §8 rule 1 spends vermilion on overdue and destroy
+   alone — and a test already guards that a page with nothing wrong carries none. #}
+<div id="oops" class="oops" role="alert" aria-live="assertive" hidden></div>
+
 <script>
 function toggleTheme() {
   const root = document.documentElement;
@@ -74,7 +88,9 @@ function toggleTheme() {
     if (pages[event.key]) { window.location.href = pages[event.key]; event.preventDefault(); }
   });
 })();
+
 </script>
+<script src="/static/oops.js"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
