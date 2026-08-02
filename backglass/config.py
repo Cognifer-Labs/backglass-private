@@ -140,7 +140,7 @@ class Settings(BaseSettings):
     dashboard_base_url: str = "http://127.0.0.1:8765"
 
     # ── model + cost ──────────────────────────────────────────────────────
-    model_backend: Literal["claude_cli", "deepinfra", "anthropic"] = "claude_cli"
+    model_backend: Literal["claude_cli", "deepinfra", "anthropic"] = "anthropic"
     model_triage: str = "haiku"
     model_extract: str = "sonnet"
     model_api_key: str = ""
