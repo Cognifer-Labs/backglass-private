@@ -27,6 +27,17 @@ def client(conn: sqlite3.Connection, settings: Settings) -> TestClient:
     return TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
 
 
+@pytest.fixture(autouse=True)
+def sync_is_alive(conn: sqlite3.Connection) -> None:
+    """A migrated-but-never-synced ledger raises its own vermilion alert (heartbeat.py).
+    Correct, and not what these tests are about — they assume the scheduler is alive.
+    The alert itself is covered in tests/test_heartbeat.py."""
+    from tests.conftest import healthy_run
+
+    healthy_run(conn)
+    conn.commit()
+
+
 def _seed_goal(conn: sqlite3.Connection, title: str, target_kind: str = "cadence") -> int:
     cur = conn.execute(
         "INSERT INTO goal (user_id, title, horizon, target_date, definition_of_done,"

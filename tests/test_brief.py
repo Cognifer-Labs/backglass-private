@@ -27,6 +27,17 @@ TODAY = date(2026, 7, 30)
 BASE = "http://127.0.0.1:8765"
 
 
+@pytest.fixture(autouse=True)
+def sync_is_alive(conn):  # type: ignore[no-untyped-def]
+    """Every test here is about a brief's *content*, so each one assumes the pipeline
+    ran. Said once, out loud: without a completed run the ledger has never synced and
+    heartbeat.py puts that at the top of the brief, which is correct and is covered in
+    tests/test_heartbeat.py rather than silently absorbed here."""
+    from tests.conftest import healthy_run
+
+    healthy_run(conn)
+
+
 def a_source(n: int = 1) -> SourceRef:
     return SourceRef(
         source="gmail:personal",

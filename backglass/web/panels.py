@@ -301,7 +301,13 @@ class Sidebar:
     more_alerts: int = 0
 
 
-def sidebar(conn: sqlite3.Connection, settings: Settings, today: date) -> Sidebar:
+def sidebar(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    today: date,
+    now: datetime | None = None,
+) -> Sidebar:
+    from backglass import heartbeat as heartbeat_mod
     from backglass.goals import health
     from backglass.people import touch
     from backglass.web.routes.roadmaps import list_roadmaps
@@ -346,6 +352,27 @@ def sidebar(conn: sqlite3.Connection, settings: Settings, today: date) -> Sideba
     # status, not an alert — it lives in the GOALS block below (and on /goals),
     # so sustained_risk no longer duplicates itself here. Format-audit ruling.
     alerts: list[dict[str, str]] = []
+
+    # First, because a dead scheduler makes every other panel a confident lie: they are
+    # all reporting the ledger accurately, and the ledger stopped moving. docs/11 §8.
+    beat = heartbeat_mod.read(conn, settings, today, now)
+    if beat.never_ran:
+        alerts.append(
+            {"level": "verm", "text": "Sync has never run — nothing here is from your mail",
+             "href": "/#panel-sources"}
+        )
+    elif beat.stale:
+        alerts.append(
+            {"level": "verm",
+             "text": f"Last sync ran {beat.age_phrase} — scheduled jobs may be dead",
+             "href": "/#panel-sources"}
+        )
+    if beat.plan_missing:
+        alerts.append(
+            {"level": "gold", "text": "No plan for today — the 05:45 planner did not run",
+             "href": "/schedule"}
+        )
+
     for s in sources.rows:
         if s["status"] != "ok" and s["enabled"]:
             # docs/11 §Cross-cutting rule 4: failures are louder than successes —

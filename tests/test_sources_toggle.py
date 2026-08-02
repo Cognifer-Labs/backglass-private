@@ -45,11 +45,11 @@ def test_disabled_source_is_not_a_brief_failure(
     from backglass.brief import daily
 
     credentials.mark_failed(conn, "gmail:personal", "invalid_grant")
-    failing = daily.failure_section(conn, TODAY)
+    failing = daily.failure_section(conn, TODAY, settings)
     assert any("gmail:personal" in line.text for line in failing.lines)
 
     credentials.set_enabled(conn, "gmail:personal", False)
-    quiet = daily.failure_section(conn, TODAY)
+    quiet = daily.failure_section(conn, TODAY, settings)
     assert not any("gmail:personal" in line.text for line in quiet.lines)
 
 
