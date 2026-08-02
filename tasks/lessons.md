@@ -120,3 +120,12 @@ deterministic given the id.
   asserts the registry and docs ends mechanically, and `unmanaged_sources.sql` names
   evidence that no connector owns. If a surface reads FROM one table to describe "all of
   X", ask what X can exist without a row in that table.
+
+- 2026-08-02 | Wrote two regression tests for a `date(occurred_at)` week-bucket bug,
+  saw them pass, and nearly shipped. They passed against the *broken* code too: the
+  timestamps crossed a day boundary but the query buckets by WEEK, and both times sat
+  comfortably inside the week either way. | A boundary test must sit inside the broken
+  window of the *specific* comparison under test, not of the bug class in general — a
+  day-boundary time proves nothing about a week-bucketed query. Prove it: revert the
+  fix, watch the test go red, restore. "It passes" is not evidence until you have seen
+  it fail.
