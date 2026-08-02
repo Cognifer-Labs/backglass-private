@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import date
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -339,6 +340,90 @@ def test_today_is_the_date_in_the_zone_the_owner_is_actually_in() -> None:
     departing = _with(["2026-08-05..2026-08-20:Asia/Kolkata"])
     pre_departure = _dt(2026, 8, 4, 19, 0, tzinfo=_utc)  # Phoenix noon on the 4th
     assert timezones.today_for(departing, pre_departure) == date(2026, 8, 4)
+
+
+def test_a_westward_stay_never_reports_a_day_that_has_not_started() -> None:
+    """The fallback path used to skip the tie-break entirely.
+
+    When no candidate zone agrees with itself — which is what happens on the first day
+    of a stay *west* of `default_tz` — the function returned the default zone's date,
+    which is the later one for that direction. `--on` then accepted a date 24.5 hours
+    ahead of the real instant. The floor is now the earliest date any candidate zone is
+    in, which can never be later than the owner's real local date.
+    """
+    from datetime import UTC as _utc
+    from datetime import datetime as _dt
+
+    # Home is Kolkata; the stay is westward, to Phoenix, starting on the 3rd.
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        default_tz="Asia/Kolkata",
+        tz_ranges=["2026-08-03..2026-08-20:America/Phoenix"],
+    )
+    # 18:30Z = 00:00 on the 3rd in Kolkata, but still 11:30 on the 2nd in Phoenix.
+    moment = _dt(2026, 8, 2, 18, 30, tzinfo=_utc)
+
+    today = timezones.today_for(settings, moment)
+
+    assert today == date(2026, 8, 2)
+    # The property that matters, stated directly: whatever zone this answer implies, the
+    # day must actually have begun there.
+    assert moment.astimezone(ZoneInfo(timezones.active_tz(settings, today))).date() >= today
+
+
+def test_an_unusable_zone_name_is_skipped_however_it_is_malformed() -> None:
+    """`ZoneInfo` raises ZoneInfoNotFoundError for an unknown zone but ValueError for a
+    malformed key, and `_RANGE` accepts a trailing slash. Catching only the first left
+    `Asia/` — one character from the typo this guard was added for — still tracebacking
+    out of `backglass log`."""
+    from datetime import UTC as _utc
+    from datetime import datetime as _dt
+
+    moment = _dt(2026, 8, 4, 19, 0, tzinfo=_utc)
+    for bad in ("Asia/Kolkatta", "Asia/", "Nowhere/Atall"):
+        settings = Settings(
+            _env_file=None,  # type: ignore[call-arg]
+            default_tz="America/Phoenix",
+            tz_ranges=[f"2026-01-01..2026-01-10:{bad}"],
+        )
+        assert timezones.today_for(settings, moment) == date(2026, 8, 4), bad
+
+
+def test_a_malformed_range_line_does_not_raise_from_today_for() -> None:
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        default_tz="America/Phoenix",
+        tz_ranges=["not-a-range"],
+    )
+    from datetime import UTC as _utc
+    from datetime import datetime as _dt
+
+    assert timezones.today_for(
+        settings, _dt(2026, 8, 4, 19, 0, tzinfo=_utc)
+    ) == date(2026, 8, 4)
+
+
+def test_doctor_is_where_a_bad_timezone_config_gets_reported() -> None:
+    """The write path degrades silently; the preflight is what says why."""
+    ok = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        default_tz="America/Phoenix",
+        tz_ranges=["2026-08-03..2026-08-20:Asia/Kolkata"],
+    )
+    assert timezones.zone_problems(ok) == []
+
+    for bad, expect in (
+        (["2026-01-01..2026-01-10:Asia/Kolkatta"], "not a timezone"),
+        (["2026-01-01..2026-01-10:Asia/"], "not a timezone"),
+        (["not-a-range"], "bad TZ_RANGES entry"),
+    ):
+        broken = Settings(
+            _env_file=None,  # type: ignore[call-arg]
+            default_tz="America/Phoenix",
+            tz_ranges=bad,
+        )
+        problems = timezones.zone_problems(broken)
+        assert problems and expect in problems[0], bad
 
 
 def test_a_stale_timezone_typo_cannot_break_logging(settings: Settings) -> None:

@@ -73,6 +73,53 @@ def local_now_iso(settings: Settings, day: date | None = None) -> str:
     return datetime.now(ZoneInfo(zone)).replace(microsecond=0).isoformat()
 
 
+def stays_of(settings: Settings) -> list[Stay]:
+    """The configured stays, or none at all if `TZ_RANGES` cannot be parsed.
+
+    `parse_ranges` raises on a malformed line, which is right for a validator and wrong
+    for the dozen read paths that call it — a single bad character in `.env` otherwise
+    tracebacks out of the day planner, the brief, and `backglass log` alike. Degrading
+    here means one unreadable setting costs the *ranges*, not the application, and
+    `zone_problems` is what tells the owner it happened.
+    """
+    try:
+        return parse_ranges(settings.tz_ranges)
+    except TimezoneError:
+        return []
+
+
+def _zone(name: str) -> ZoneInfo:
+    """`ZoneInfo(name)`, raising the same way for every kind of unusable name.
+
+    `ZoneInfo` raises `ZoneInfoNotFoundError` for an unknown zone but `ValueError` for
+    a malformed key (`"asia/"` — which `_RANGE` happily accepts). Callers that mean
+    "skip a zone I cannot use" have to catch both, and catching only the first is how a
+    stale typo still took down `backglass log`.
+    """
+    return ZoneInfo(name)
+
+
+def zone_problems(settings: Settings) -> list[str]:
+    """Human-readable complaints about `TZ_RANGES`, for `doctor`. Empty when it is fine.
+
+    Config validation belongs here, once, and not in every function that later has to
+    survive a bad value. `Settings` does not check zone names, so a typo sits inert
+    until the day the stay begins and then breaks the working window, the brief's
+    delivery time and every day-boundary query at once.
+    """
+    try:
+        stays = parse_ranges(settings.tz_ranges)
+    except TimezoneError as exc:
+        return [str(exc)]
+    problems = []
+    for name in [*(stay.zone for stay in stays), settings.default_tz]:
+        try:
+            _zone(name)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            problems.append(f"{name!r} is not a timezone ({exc})")
+    return problems
+
+
 def today_for(settings: Settings, now: datetime | None = None) -> date:
     """The owner's local date, in the zone they are actually in.
 
@@ -97,20 +144,30 @@ def today_for(settings: Settings, now: datetime | None = None) -> date:
     that is occasionally too strict is a guard; one that is occasionally too loose is not.
     """
     moment = now or datetime.now(UTC)
-    fallback = moment.astimezone(ZoneInfo(settings.default_tz)).date()
-    days = []
-    for zone in [*(stay.zone for stay in parse_ranges(settings.tz_ranges)),
-                 settings.default_tz]:
+    zones = [stay.zone for stay in stays_of(settings)]
+    zones.append(settings.default_tz)
+
+    everywhere: list[date] = []
+    consistent: list[date] = []
+    for zone in zones:
         try:
-            day = moment.astimezone(ZoneInfo(zone)).date()
-        except ZoneInfoNotFoundError:
-            # A typo in a stay that is not even in effect must not take down the ledger's
-            # primary write path. `Settings` does not validate zone names, and a stale
-            # `TZ_RANGES` line outlives the trip it described.
+            day = moment.astimezone(_zone(zone)).date()
+        except (ZoneInfoNotFoundError, ValueError):
+            # An unusable zone name — a typo, a trailing slash — in a stay that may not
+            # even be in effect. Skipped here; `doctor` names it.
             continue
+        everywhere.append(day)
         if active_tz(settings, day).lower() == zone.lower():
-            days.append(day)
-    return min(days) if days else fallback
+            consistent.append(day)
+
+    # When nothing agrees with itself — which happens on a westward stay's first day,
+    # where the default zone's date says the stay has begun and the stay's date says it
+    # has not — falling back to the *default* zone's answer silently reinstated the
+    # later date and let a future-dated `--on` through, exactly what the tie-break above
+    # exists to stop. The floor is the earliest date any candidate zone is in, which can
+    # never be later than the owner's real local date.
+    pool = consistent or everywhere
+    return min(pool) if pool else moment.date()
 
 
 def local_noon_iso(settings: Settings, day: date) -> str:
@@ -194,7 +251,7 @@ def active_tz(settings: Settings, day: date) -> str:
     override it rather than be shadowed by it.
     """
     zone = settings.default_tz
-    for stay in parse_ranges(settings.tz_ranges):
+    for stay in stays_of(settings):
         if stay.covers(day):
             zone = stay.zone
     return zone

@@ -2242,6 +2242,15 @@ def doctor() -> None:
     for label, needs in _unauthed_remote_sources(settings, {str(r["source"]) for r in rows}):
         typer.echo(f"[ -- ] {label} configured but never authed — {needs}")
 
+    # ── timezone config ───────────────────────────────────────────────────
+    # Validated once, here, rather than defended against in every function that reads
+    # it: a bad zone name in TZ_RANGES is inert until the stay begins and then moves the
+    # working window, the brief's delivery time and every day-boundary query at once.
+    from backglass.plan import timezones as tz_mod
+
+    for problem in tz_mod.zone_problems(settings):
+        check("timezone config", False, problem)
+
     # ── data boundary (docs/08, CLAUDE.md rule 6 — legal weight) ──────────
     verdict = _boundary_verdict(
         settings,
