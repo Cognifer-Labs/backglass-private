@@ -129,3 +129,21 @@ deterministic given the id.
   day-boundary time proves nothing about a week-bucketed query. Prove it: revert the
   fix, watch the test go red, restore. "It passes" is not evidence until you have seen
   it fail.
+
+- 2026-08-02 | Wrote the boundary doctor check deriving "is a scoped source live" from
+  the `credential` table — in the same session that had just recorded the lesson "if a
+  surface reads FROM one table to describe all of X, ask what X can exist without a row
+  in that table," and against a ledger that already held 200 credential-less
+  `calendar:asu` items. The check was silent on the exact data it existed to catch, and
+  a fresh-context verifier found it, not me. | Writing a lesson down is not applying it.
+  When a lesson lands, immediately grep the working tree for the same shape — every
+  other query that derives a population from one table — rather than trusting that the
+  next instance will feel familiar. The instance I missed was two hours old.
+
+- 2026-08-02 | `backglass log --on 2026-09-14` filed the hours under today. `local_now_iso(settings, day)`
+  takes a `day` argument, but uses it only to choose the timezone — it always stamps
+  *now*. The signature reads like backdating and is not. | A parameter that looks like it
+  controls the value but only controls a detail of it is a trap with one job: catching
+  the next caller. Added `local_noon_iso` for the backdating case and a test asserting
+  the stamp lands on the named day in both of the owner's zones. When a helper takes a
+  date and returns a timestamp, test that the timestamp is *on* that date before using it.
