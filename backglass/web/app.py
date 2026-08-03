@@ -100,8 +100,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from backglass.web.routes import people as people_routes
     from backglass.web.routes import roadmaps as roadmap_routes
     from backglass.web.routes import schedule as schedule_routes
+    from backglass.web.routes import source as source_routes
 
     app.include_router(schedule_routes.build_router(templates, resolved, get_conn, today))
+    app.include_router(source_routes.build_router(templates, resolved, get_conn, today))
     app.include_router(goals_routes.build_router(templates, resolved, get_conn, today))
     app.include_router(people_routes.build_router(templates, resolved, get_conn, today))
     app.include_router(roadmap_routes.build_router(templates, resolved, get_conn, today))

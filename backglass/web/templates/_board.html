@@ -43,6 +43,12 @@
             {%- if c['estimated_minutes'] %} · {{ c['estimated_minutes'] }}m{% endif %}
             {%- if c['goal_title'] %} · {{ c['goal_title'] }}{% endif %}
             · {{ m.source_link(c) }}
+            {#- How many documents say this. Only shown above one: the register form's
+                ruling is one line per commitment, and "1 mention" on every row is a
+                column of noise. Above one it is real information — a promise restated
+                across a thread is not the same object as one said once — and the
+                sentences themselves are one click away on the source page. -#}
+            {%- if c['mention_count'] and c['mention_count'] > 1 %} · {{ c['mention_count'] }} mentions{% endif %}
           </p>
           <div class="acts">
             {# docs/11 §3: no confirmation on resolve. The action is reversible and the

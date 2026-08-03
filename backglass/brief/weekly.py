@@ -170,7 +170,8 @@ def monday(conn: sqlite3.Connection, settings: Settings, day: date) -> Brief:
     # ── commitments aging past 14 days with no movement
     aging = Section(priority=6, title="Aging")
     rows = conn.execute(
-        "SELECT c.id, c.what, c.rollover_count, e.canonical_name AS counterparty, "
+        "SELECT c.id, c.what, c.rollover_count, c.source_item_id, "
+        "       e.canonical_name AS counterparty, "
         "       s.source, s.external_id, s.occurred_at, s.title "
         "FROM commitment c JOIN source_item s ON s.id = c.source_item_id "
         "LEFT JOIN entity e ON e.id = c.counterparty_entity_id "
@@ -263,7 +264,7 @@ def friday(conn: sqlite3.Connection, settings: Settings, day: date) -> Section:
     # is a claim about a commitment the owner made, and an unconfirmed extraction has no
     # business making it. It stays in the review queue until accepted.
     rolled = conn.execute(
-        "SELECT c.id, c.what, c.rollover_count, "
+        "SELECT c.id, c.what, c.rollover_count, c.source_item_id, "
         "       s.source, s.external_id, s.occurred_at, s.title "
         "FROM commitment c JOIN source_item s ON s.id = c.source_item_id "
         "WHERE c.user_id = ? AND c.status = 'open' AND c.rollover_count >= ? "
@@ -314,6 +315,7 @@ def _source_ref(row: dict[str, Any]) -> Any:
             external_id=str(row["external_id"]),
             occurred_at=str(row["occurred_at"]),
             title=row["title"],
+            source_item_id=int(row["source_item_id"]),
         )
     return LedgerRef("commitments", str(row["id"]), "ledger")
 

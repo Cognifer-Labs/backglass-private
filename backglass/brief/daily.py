@@ -62,11 +62,13 @@ def _rows(conn: sqlite3.Connection, name: str, params: dict[str, Any]) -> list[d
 
 
 def _source_of(row: dict[str, Any]) -> SourceRef:
+    item_id = row.get("source_item_id")
     return SourceRef(
         source=str(row["source"]),
         external_id=str(row["source_external_id"]),
         occurred_at=str(row["source_occurred_at"]),
         title=row.get("source_title"),
+        source_item_id=int(item_id) if item_id is not None else None,
     )
 
 
@@ -393,6 +395,7 @@ def goal_section(conn: sqlite3.Connection, today: date, settings: Settings) -> S
                     external_id=snapshot["external_id"],
                     occurred_at=snapshot["occurred_at"],
                     title=snapshot["title"],
+                    source_item_id=int(snapshot["item_id"]),
                 ),
             )
         )
@@ -469,6 +472,7 @@ def rollover_section(conn: sqlite3.Connection, today: date, settings: Settings) 
                     external_id=str(row["external_id"]),
                     occurred_at=str(row["occurred_at"]),
                     title=row["title"],
+                    source_item_id=int(row["source_item_id"]),
                 ),
                 status="slipping",
                 commitment_id=int(row["id"]),
@@ -502,6 +506,7 @@ def follow_up_section(conn: sqlite3.Connection, today: date, settings: Settings)
                     external_id=str(t.source_row["source_external_id"]),
                     occurred_at=str(t.source_row["source_occurred_at"]),
                     title=t.source_row["source_title"],
+                    source_item_id=int(t.source_row["source_item_id"]),
                 ),
                 status="slipping",
             )

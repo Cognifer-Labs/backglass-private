@@ -48,6 +48,10 @@ class SourceRef:
     external_id: str
     occurred_at: str
     title: str | None = None
+    #: The `source_item` rowid, which is what `/source/{id}` is keyed by. `external_id`
+    #: cannot stand in for it: it is only unique *within* a source, so two connectors can
+    #: legitimately hand back the same string.
+    source_item_id: int | None = None
 
     @property
     def label(self) -> str:
@@ -59,10 +63,19 @@ class SourceRef:
 
         Gmail's `#all/<id>` form opens the message regardless of which label it lives
         under, which matters because the connector does not track labels.
+
+        Everything else lands on the local source page. This used to be
+        `/source/{external_id}`, a route that has never existed — and since the ledger
+        holds no Gmail at all until the owner authenticates it, that meant every
+        provenance link in the brief was a 404. B2 says a line with no provenance does
+        not render; a line whose provenance link is dead passes that check and fails the
+        reader, which is worse.
         """
         if self.source.startswith("gmail"):
             return f"https://mail.google.com/mail/u/0/#all/{self.external_id}"
-        return f"{base.rstrip('/')}/source/{self.external_id}"
+        if self.source_item_id is not None:
+            return f"{base.rstrip('/')}/source/{self.source_item_id}"
+        return f"{base.rstrip('/')}/#panel-sources"
 
 
 @dataclass(frozen=True)
@@ -82,7 +95,32 @@ class LedgerRef:
         return self.described
 
     def url(self, base: str) -> str:
-        return f"{base.rstrip('/')}/{self.table}/{self.row_id}"
+        """The dashboard surface that shows this row.
+
+        `/{table}/{row_id}` read like a REST resource and routed to nothing: `/plans/…`,
+        `/goals/12`, `/commitments/21` and `/checklist/3` are not pages (the last two are
+        POST-only write endpoints, so clicking one got a 405 rather than even an honest
+        404). The map below points at surfaces that exist, and
+        tests/test_provenance.py walks every URL the brief generates against the app's
+        real route table so a future rename cannot quietly restore the 404s.
+        """
+        root = base.rstrip("/")
+        if self.table == "plans":
+            return f"{root}/schedule?date={self.row_id}"
+        if self.table == "goals":
+            return f"{root}/goals"
+        if self.table in ("sources", "runs"):
+            # Both land on the Sources panel: it is the surface that states when each
+            # source last ran and what it said. A dedicated /runs page is worth building
+            # (the `run` table is rendered nowhere), and this points at the panel that
+            # answers the same question today rather than at the page that does not
+            # exist yet.
+            return f"{root}/#panel-sources"
+        if self.table == "checklist":
+            return f"{root}/#panel-checklist"
+        if self.table == "commitments":
+            return f"{root}/#panel-board"
+        return f"{root}/"
 
 
 @dataclass(frozen=True)

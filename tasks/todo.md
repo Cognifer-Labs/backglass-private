@@ -1,3 +1,56 @@
+# Evidence plumbing — sentence-level provenance, end to end
+
+Started 2026-08-02. Fixes the three provenance defects found in the 2026-08-02 survey.
+The OSS release plan that used to be this file is finished and follows below.
+
+## Why
+
+1. `extract/schemas.py:63` — the model returns the exact source sentence as
+   `ExtractedCommitment.evidence`, described in that file as "provenance at the sentence
+   level". `ledger.insert_commitment` never stored it. The review queue then rendered the
+   *email subject* under a comment quoting docs/11 §4 "the exact source sentence beneath
+   it in quotes" (`web/templates/_review.html:17`).
+2. `brief/model.py:65` — every non-Gmail brief line links to `{base}/source/{external_id}`
+   and no such route exists. The live ledger is 100% non-Gmail today (calendar:asu 200,
+   apple-notes 65, anki 64, reminders 23, manual 13, avorio 3), so every provenance link
+   in the brief is dead. Rule 1 says a claim with no provenance does not ship.
+3. One commitment cites exactly one source_item. A restatement is silently discarded by
+   the dedup step (`extract/commitments.py:112-117`), so the second and third sighting of
+   an obligation leave no trace — and when dedup misses, the ledger grows a near-duplicate
+   instead (live: ids 20/28, 21/29, 22/30 are the same three obligations twice).
+
+## Steps
+
+- [x] 0. Commit the tree's finished user_id/schema-reference work as a baseline.
+- [x] 1. Migration `0013_commitment_evidence.sql`: `commitment_evidence`
+      (user_id, commitment_id, source_item_id, quote, kind, seen_at, UNIQUE per pair),
+      backfilled with one `original` row per existing commitment so every commitment has
+      at least one citation. Add to FROZEN_CHECKSUMS, regenerate `specs/schema.sql`.
+- [x] 2. `Ledger.record_evidence()` — idempotent (ON CONFLICT DO NOTHING, counts a write
+      only when a row actually lands, so rule 3 still holds on a second run).
+      `insert_commitment(evidence=…, evidence_kind=…)` writes the `original` row.
+- [x] 3. `extract/commitments.py`: `_is_duplicate` → `_duplicate_of` returning the matched
+      id; a dedup hit now records a `restated` citation on the commitment it matched
+      instead of dropping the sentence. Quick-add (`web/actions.py:375`) records the
+      owner's own words as a `manual` citation — the second door, per the 2026-08-02
+      lesson about guards written at one call site.
+- [x] 4. Queries carry the quote and the mention count: `open_commitments`,
+      `dashboard_board`, `brief_needs_review`; brief queries gain `c.source_item_id` so a
+      SourceRef can point at a real page.
+- [x] 5. `GET /source/{id}` — the raw item, its triage verdict and reason, and everything
+      derived from it (commitments, facts). `SourceRef.url()` and `_macros.source_link`
+      point at it. Gmail keeps its external deep-link alongside.
+- [x] 6. Tests: quote stored and rendered (drive the real door, not the function),
+      restatement recorded without a second commitment, second run writes zero, brief
+      provenance URL resolves against the app's real route table, unknown id 404s.
+
+## Verification
+
+`uv run pytest` green, ruff + mypy clean, and the review panel rendered from the demo db
+shows a model sentence rather than a subject line.
+
+---
+
 # Backglass open-source release plan
 
 Written 2026-08-01. Old todo.md (finished personal build log) archived to

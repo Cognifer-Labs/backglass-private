@@ -381,4 +381,9 @@ def quick_add(
         estimate_source="manual" if minutes else None,
         confidence=1.0,
         source_item_id=source_item_id,
+        # The owner's own sentence is the evidence for a hand-entered claim. Citing it
+        # keeps the read path uniform — every commitment on every surface has a quote,
+        # and a manual row does not render as the one with nothing behind it.
+        evidence=body,
+        evidence_kind="manual",
     )

@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+
+{% block title %}Backglass — {{ item['title'] or item['source'] }}{% endblock %}
+{% block meta %}{{ item['source'] }} · {{ (item['occurred_at'] or '')[:10] }}{% endblock %}
+
+{% block content %}
+{# The document half of "documents as evidence". Read-only: a source item is immutable
+   (docs/03), and the records below are owned by the board's and Memory's write paths. #}
+<section class="sec" id="source">
+  {{ m.banner(item['title'] or 'No subject', item['source']) }}
+  <div class="inner">
+    <p class="b2">
+      {% if item['author'] %}{{ item['author'] }} · {% endif %}
+      {{ item['occurred_at'] }}
+      {%- if external_url %} · <a href="{{ external_url }}" rel="noreferrer">open in Gmail</a>{% endif %}
+    </p>
+    <p class="conf">
+      {# Why nothing came out of this item is the question this page is most often
+         opened to answer, so the verdict is stated rather than implied by an empty
+         list below. #}
+      triage: {{ item['triage_verdict'] or 'not yet triaged' }}
+      {%- if item['extraction_version'] %} · extracted by {{ item['extraction_version'] }}{% endif %}
+    </p>
+    {% if item['triage_reason'] %}<p class="quote">{{ item['triage_reason'] }}</p>{% endif %}
+  </div>
+</section>
+
+<section class="sec" id="source-derived">
+  {{ m.banner('What came out of it', derived|length ~ ' commitments') }}
+  <div class="inner">
+    {% if not derived %}
+      <p class="empty">No commitments cite this item.</p>
+    {% endif %}
+    {% for r in derived %}
+      <div class="row">
+        <span class="time">{{ 'origin' if r['is_origin'] else r['cited_as'] }}</span>
+        <div class="grow">
+          <p class="b1">{% if r['direction'] == 'i_owe' %}You owe{% else %}Owed to you{% endif %}:
+            {{ r['what'] }}{% if r['counterparty'] %} — {{ r['counterparty'] }}{% endif %}</p>
+          {# The sentence this claim rests on. Stored since migration 0013; rows written
+             before it have the document but not the sentence, and say so rather than
+             falling back to the subject line, which is what the review queue used to do
+             and is not evidence. #}
+          {% if r['quote'] %}
+            <p class="quote">“{{ r['quote'] }}”</p>
+          {% else %}
+            <p class="b2">Sentence not recorded — extracted before citations were kept.</p>
+          {% endif %}
+          <p class="b2">{{ '%.0f'|format(r['confidence'] * 100) }}% confident · {{ r['status'] }}
+            {%- if r['due_at'] %} · due {{ r['due_at'][:10] }}{% endif %}</p>
+        </div>
+      </div>
+    {% endfor %}
+
+    {% for f in facts %}
+      <div class="row">
+        <span class="time">fact</span>
+        <div class="grow">
+          <p class="b1">{{ f['subject'] }} · {{ f['key'] }} — {{ f['value'] }}</p>
+          {% if f['note'] %}<p class="b2">{{ f['note'] }}</p>{% endif %}
+        </div>
+      </div>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="sec" id="source-body">
+  {{ m.banner('Raw text', item['body_length'] ~ ' chars' if item['body_length'] else 'empty') }}
+  <div class="inner">
+    {% if item['body_text'] %}
+      {# Pre-wrapped rather than reflowed: the text is evidence, and evidence keeps the
+         line breaks it arrived with. #}
+      <p class="raw">{{ item['body_text'] }}</p>
+    {% else %}
+      <p class="empty">This item has no text body.</p>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

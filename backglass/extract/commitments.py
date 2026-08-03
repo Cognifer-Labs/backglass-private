@@ -90,7 +90,7 @@ def apply(
 ) -> ApplyReport:
     """Post-processing steps 1–5, in order."""
     report = ApplyReport()
-    accepted_in_this_message: list[tuple[str, int | None, str]] = []
+    accepted_in_this_message: list[tuple[str, int | None, str, int]] = []
 
     for candidate in extraction.commitments:
         # ── step 1: resolve the counterparty to an entity, create on miss
@@ -109,12 +109,23 @@ def apply(
         # candidate would be dropped, and step 4 below would never run. The original
         # commitment would then stay `open` forever, which is precisely the bug the
         # supersede path exists to prevent.
-        if not candidate.resolves and _is_duplicate(
-            candidate, entity_id, ledger, settings, accepted_in_this_message
-        ):
-            report.deduped += 1
-            ledger.stats.commitments_deduped += 1
-            continue
+        if not candidate.resolves:
+            duplicate_of = _duplicate_of(
+                candidate, entity_id, ledger, settings, accepted_in_this_message
+            )
+            if duplicate_of is not None:
+                # The restatement is a second sighting of the same obligation, not noise.
+                # Dropping the row was always right; dropping the *sentence* meant a
+                # thread that repeated a promise four times left one citation, and the
+                # owner had no way to see that it had been said again since. Recorded
+                # against the commitment it matched, deduplicated on (commitment, item)
+                # so re-reading the same message writes nothing.
+                ledger.record_evidence(
+                    duplicate_of, source_item_id, candidate.evidence, kind="restated"
+                )
+                report.deduped += 1
+                ledger.stats.commitments_deduped += 1
+                continue
 
         # ── step 2: estimated_minutes.
         # The type-default table lives in docs/04 §capacity, which is Phase 4, and nothing
@@ -131,9 +142,12 @@ def apply(
             estimate_source=estimate_source,
             confidence=candidate.confidence,
             source_item_id=source_item_id,
+            evidence=candidate.evidence,
         )
         report.inserted += 1
-        accepted_in_this_message.append((candidate.direction, entity_id, candidate.what))
+        accepted_in_this_message.append(
+            (candidate.direction, entity_id, candidate.what, new_id)
+        )
 
         # ── step 3: below threshold goes to the review queue, never into the brief.
         # The row is still created with status 'open'; what changes is who reads it.
@@ -169,30 +183,34 @@ def apply(
 # ────────────────────────────────────────────────────────────────── helpers
 
 
-def _is_duplicate(
+def _duplicate_of(
     candidate: ExtractedCommitment,
     entity_id: int | None,
     ledger: Ledger,
     settings: Settings,
-    accepted: list[tuple[str, int | None, str]],
-) -> bool:
+    accepted: list[tuple[str, int | None, str, int]],
+) -> int | None:
     """Step 5. "A thread restating the same promise must not produce five rows."
+
+    Returns the id of the commitment this candidate restates, so the caller can cite the
+    restatement against it. It used to return a bare bool, which threw away the one fact
+    the dedup pass had just established — which existing row this sentence is about.
 
     Two passes, because a restatement can be either already in the ledger from an earlier
     message in the thread, or repeated twice inside one message.
     """
-    for direction, other_entity, what in accepted:
+    for direction, other_entity, what, commitment_id in accepted:
         if (
             direction == candidate.direction
             and other_entity == entity_id
             and entities.similar(what, candidate.what) >= settings.dedup_threshold
         ):
-            return True
+            return commitment_id
 
     for existing in ledger.open_commitments_for(candidate.direction, entity_id):
         if entities.similar(str(existing["what"]), candidate.what) >= settings.dedup_threshold:
-            return True
-    return False
+            return int(existing["id"])
+    return None
 
 
 def _find_resolved(

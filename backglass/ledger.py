@@ -37,6 +37,7 @@ class LedgerStats:
     commitments_inserted: int = 0
     commitments_deduped: int = 0
     commitments_superseded: int = 0
+    evidence_recorded: int = 0
     triage_recorded: int = 0
 
 
@@ -227,11 +228,23 @@ class Ledger:
         estimate_source: str | None,
         confidence: float,
         source_item_id: int,
+        evidence: str | None = None,
+        evidence_kind: str = "original",
     ) -> int:
+        """`evidence` is the verbatim sentence the claim rests on (schemas.py).
+
+        It is written here, next to the row it justifies, rather than by the caller:
+        there are two doors into this table — extraction and the dashboard's quick-add —
+        and a citation written at one of them is not a citation rule, it is a coincidence.
+        """
         self.stats.commitments_inserted += 1
         self.writes += 1
         if self.dry_run:
-            return self._pseudo_id()
+            commitment_id = self._pseudo_id()
+            self.record_evidence(
+                commitment_id, source_item_id, evidence, kind=evidence_kind
+            )
+            return commitment_id
         cursor = self.conn.execute(
             "INSERT INTO commitment "
             "(user_id, direction, counterparty_entity_id, what, due_at, estimated_minutes, "
@@ -250,7 +263,46 @@ class Ledger:
                 now_iso(),
             ),
         )
-        return int(cursor.lastrowid or 0)
+        commitment_id = int(cursor.lastrowid or 0)
+        self.record_evidence(commitment_id, source_item_id, evidence, kind=evidence_kind)
+        return commitment_id
+
+    def record_evidence(
+        self,
+        commitment_id: int,
+        source_item_id: int,
+        quote: str | None,
+        *,
+        kind: str = "restated",
+    ) -> bool:
+        """Cite a source item for a commitment. Returns True when a row was written.
+
+        Idempotent on (commitment, source_item), which is what keeps rule 3 true: the
+        second sync over an unchanged item conflicts and writes nothing, so `writes`
+        still lands on zero. The write is only counted when a row actually appears —
+        counting the attempt would make an idempotent re-read look like work.
+
+        A citation is never updated in place. If the same document is read again and the
+        model quotes a different sentence from it, the first quote is what the owner
+        already saw on the board, and rewriting it under them is the kind of silent
+        change docs/03's immutability rule exists to prevent.
+        """
+        if self.dry_run:
+            self.stats.evidence_recorded += 1
+            self.writes += 1
+            return True
+        cursor = self.conn.execute(
+            "INSERT INTO commitment_evidence "
+            "(user_id, commitment_id, source_item_id, quote, kind, seen_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (user_id, commitment_id, source_item_id) DO NOTHING",
+            (USER_ID, commitment_id, source_item_id, quote, kind, now_iso()),
+        )
+        if cursor.rowcount != 1:
+            return False
+        self.stats.evidence_recorded += 1
+        self.writes += 1
+        return True
 
     def supersede(self, commitment_id: int, superseded_by: int) -> None:
         """Post-processing step 4. Never delete — docs/03 §Retention is explicit."""

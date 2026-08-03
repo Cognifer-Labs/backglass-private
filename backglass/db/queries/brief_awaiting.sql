@@ -7,7 +7,7 @@
 --
 -- Params: :user_id, :today (ISO date), :confidence_threshold
 SELECT
-  c.id, c.direction, c.what, c.due_at, c.confidence,
+  c.id, c.direction, c.what, c.due_at, c.confidence, c.source_item_id,
   e.canonical_name AS counterparty,
   s.source, s.external_id AS source_external_id, s.occurred_at AS source_occurred_at,
   s.title AS source_title,

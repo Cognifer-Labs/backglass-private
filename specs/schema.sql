@@ -378,3 +378,18 @@ CREATE TABLE model_batch_item (
 );
 
 CREATE INDEX idx_batch_item_source ON model_batch_item(source_item_id);
+
+CREATE TABLE commitment_evidence (
+  id             INTEGER PRIMARY KEY,
+  user_id        INTEGER NOT NULL DEFAULT 1,
+  commitment_id  INTEGER NOT NULL REFERENCES commitment(id),
+  source_item_id INTEGER NOT NULL REFERENCES source_item(id),
+  quote          TEXT,                                    -- verbatim; NULL = document only
+  kind           TEXT    NOT NULL DEFAULT 'original',     -- original|restated|manual
+  seen_at        TEXT    NOT NULL,
+  UNIQUE (user_id, commitment_id, source_item_id)
+);
+
+CREATE INDEX idx_commitment_evidence ON commitment_evidence(user_id, commitment_id, id);
+
+CREATE INDEX idx_evidence_by_source  ON commitment_evidence(user_id, source_item_id);

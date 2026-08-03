@@ -21,6 +21,14 @@ SELECT
   s.external_id             AS source_external_id,
   s.occurred_at             AS source_occurred_at,
   s.title                   AS source_title,
+  -- The sentence the claim rests on, and how many documents have said it. Both come
+  -- from commitment_evidence (migration 0013); the quote is the first one recorded,
+  -- because that is the one the owner has already been shown.
+  (SELECT ce.quote FROM commitment_evidence ce
+    WHERE ce.commitment_id = c.id AND ce.quote IS NOT NULL
+    ORDER BY ce.id LIMIT 1)                          AS evidence_quote,
+  (SELECT COUNT(*) FROM commitment_evidence ce
+    WHERE ce.commitment_id = c.id)                   AS mention_count,
   CASE WHEN c.confidence < :confidence_threshold THEN 1 ELSE 0 END AS needs_review
 FROM commitment c
 JOIN source_item s ON s.id = c.source_item_id

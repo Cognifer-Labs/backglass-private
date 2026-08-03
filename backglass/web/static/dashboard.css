@@ -953,3 +953,12 @@ details.panel:not([open]){padding-bottom:0}
 /* The dismiss button sits on a washed surface, so it takes the paper fill it would
  * otherwise inherit from the strip. */
 .oops .btn{flex:0 0 auto;background:var(--paper);color:var(--ink)}
+
+/* ── Raw source text (the /source page) ────────────────────────────────────
+ * Evidence keeps the line breaks it arrived with, so this is the one place on the
+ * dashboard that does not reflow its text. Body copy sizing rather than a monospace
+ * block: an email is prose, and setting it in code type would state that it is not.
+ * Long unbroken strings (tracking URLs, base64 fragments) wrap instead of stretching
+ * the panel grid — the page has to stay readable for the mail nobody wrote by hand. */
+.raw{margin:var(--sp-3) 0 0;font-size:14px;line-height:20px;
+  white-space:pre-wrap;overflow-wrap:anywhere}

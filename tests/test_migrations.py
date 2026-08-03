@@ -203,6 +203,9 @@ FROZEN_CHECKSUMS = {
     "0012_user_id_everywhere.sql": (
         "3787276d05174c3661d43d2a6b39fb4bf767a94dbf8cb0ce973b329f4d9e4b05"
     ),
+    "0013_commitment_evidence.sql": (
+        "1a46f91cb48df63fa9bba74d1f934eb1076023684868428c8798bc6a1179d242"
+    ),
 }
 
 

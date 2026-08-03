@@ -23,11 +23,21 @@
   {#- docs/11 §Cross-cutting rule 1: provenance everywhere, no exceptions. Every claim on
       every surface links to its source. -#}
   {%- set sid = row['source_external_id'] -%}
-  {%- if row['source'] and row['source'].startswith('gmail') -%}
+  {%- set item_id = row['source_item_id'] if 'source_item_id' in row.keys() else none -%}
+  {%- if item_id -%}
+    {#- The local source page: the raw item and everything derived from it. Every row
+        that carries a source_item_id gets one, including Gmail — the mail client shows
+        the message, this shows what Backglass made of it, and only one of those answers
+        "why is this on my board?". -#}
+    <a href="/source/{{ item_id }}">{{ row['source'] }} · {{ (row['source_occurred_at'] or '')[:10] }}</a>
+    {%- if row['source'] and row['source'].startswith('gmail') %}
+      <a href="https://mail.google.com/mail/u/0/#all/{{ sid }}" rel="noreferrer">↗</a>
+    {%- endif -%}
+  {%- elif row['source'] and row['source'].startswith('gmail') -%}
     <a href="https://mail.google.com/mail/u/0/#all/{{ sid }}" rel="noreferrer">{{ row['source'] }} · {{ (row['source_occurred_at'] or '')[:10] }}</a>
   {%- else -%}
-    {#- No external deep-link exists for this source; naming it without a fake href is
-        honest provenance. A dead /design/ link is worse than no link. -#}
+    {#- No source item on the row and no external deep-link: naming the source without a
+        fake href is honest provenance. A dead link is worse than no link. -#}
     <span>{{ row['source'] }} · {{ (row['source_occurred_at'] or '')[:10] }}</span>
   {%- endif -%}
 {%- endmacro %}

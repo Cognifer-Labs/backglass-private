@@ -125,7 +125,7 @@ def flagged_for_question(conn: sqlite3.Connection, settings: Settings) -> list[d
     # fact — the review queue is where an unconfirmed extraction belongs until the owner
     # accepts it. Every other brief query carries this predicate; this one did not.
     return conn.execute(
-        "SELECT c.id, c.what, c.rollover_count, c.due_at, "
+        "SELECT c.id, c.what, c.rollover_count, c.due_at, c.source_item_id, "
         "       s.source, s.external_id, s.occurred_at, s.title "
         "FROM commitment c JOIN source_item s ON s.id = c.source_item_id "
         "WHERE c.user_id = ? AND c.status = 'open' AND c.rollover_count >= ? "

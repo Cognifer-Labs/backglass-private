@@ -13,8 +13,20 @@
             {% if r['direction'] == 'i_owe' %}You owe{% else %}Owed to you{% endif %}:
             {{ r['what'] }}{% if r['counterparty'] %} — {{ r['counterparty'] }}{% endif %}</span>
           </p>
-          {# docs/11 §4 step 2: "the exact source sentence beneath it in quotes". #}
-          <p class="quote">{{ r['source_title'] or 'no subject' }} — {{ m.source_link(r) }}</p>
+          {# docs/11 §4 step 2: "the exact source sentence beneath it in quotes".
+             This used to render the subject line, which is not the sentence and cannot
+             settle the question the queue asks — "Fall housing" does not tell anyone
+             whether a commitment is really in that mail. The model has always returned
+             the sentence (extract/schemas.py); since migration 0013 it is stored, and
+             rows extracted before that have the document but not the sentence, which is
+             said plainly rather than papered over with the subject again. #}
+          {% if r['evidence_quote'] %}
+            <p class="quote">“{{ r['evidence_quote'] }}”</p>
+            <p class="b2">{{ r['source_title'] or 'no subject' }} — {{ m.source_link(r) }}
+              {%- if r['mention_count'] and r['mention_count'] > 1 %} · said in {{ r['mention_count'] }} places{% endif %}</p>
+          {% else %}
+            <p class="quote">{{ r['source_title'] or 'no subject' }} — {{ m.source_link(r) }}</p>
+          {% endif %}
           <p class="conf">{{ '%.0f'|format(r['confidence'] * 100) }}% confident{% if r['due_at'] %} · due {{ r['due_at'][:10] }}{% endif %}</p>
           {# docs/11 §4: "Accept and Reject as equal-weight buttons." Never make Accept the
              primary button, style it larger, or preselect it — a nudge toward accepting

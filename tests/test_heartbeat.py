@@ -299,11 +299,18 @@ class TestBriefLines:
         self, conn: sqlite3.Connection, settings: Settings
     ) -> None:
         """B2 has no exception for infrastructure: "your scheduler is dead" is a claim
-        about the world, and the reader gets to check it."""
-        run_id = a_run(conn, timedelta(hours=26))
+        about the world, and the reader gets to check it.
+
+        The link used to be `/runs/<id>`, which nothing served — checking the claim
+        landed on a 404, which is the same as not being able to check it. It now points
+        at the Sources panel, the surface that actually states when each source last ran.
+        tests/test_provenance.py holds the general rule; this keeps the run row's own
+        reference pinned.
+        """
+        a_run(conn, timedelta(hours=26))
         a_plan(conn)
         line = daily.failure_section(conn, TODAY, settings, NOW).lines[0]
-        assert line.provenance.url("http://x") == f"http://x/runs/{run_id}"
+        assert line.provenance.url("http://x") == "http://x/#panel-sources"
 
     def test_a_fresh_ledger_says_nothing(
         self, conn: sqlite3.Connection, settings: Settings
@@ -318,7 +325,7 @@ class TestBriefLines:
         a_plan(conn)
         line = daily.failure_section(conn, TODAY, settings, NOW).lines[0]
         assert line.text.startswith("Sync has never run")
-        assert line.provenance.url("http://x") == "http://x/sources/sync"
+        assert line.provenance.url("http://x") == "http://x/#panel-sources"
 
     def test_a_missing_plan_is_stated_and_sourced_to_the_day_it_was_owed(
         self, conn: sqlite3.Connection, settings: Settings
@@ -326,7 +333,7 @@ class TestBriefLines:
         a_run(conn, timedelta(minutes=20))
         line = daily.failure_section(conn, TODAY, settings, NOW).lines[0]
         assert line.text == "No plan for today — the 05:45 planner did not run."
-        assert line.provenance.url("http://x") == "http://x/plans/2026-07-30"
+        assert line.provenance.url("http://x") == "http://x/schedule?date=2026-07-30"
 
     def test_a_planned_day_says_nothing_about_the_plan(
         self, conn: sqlite3.Connection, settings: Settings
