@@ -39,6 +39,9 @@ class LedgerStats:
     commitments_superseded: int = 0
     evidence_recorded: int = 0
     triage_recorded: int = 0
+    engagements_inserted: int = 0
+    engagements_deduped: int = 0
+    engagements_advanced: int = 0
 
 
 class Ledger:
@@ -302,6 +305,178 @@ class Ledger:
             return False
         self.stats.evidence_recorded += 1
         self.writes += 1
+        return True
+
+    # ───────────────────────────────────────────────────────────── engagements
+
+    def open_engagements(self) -> list[dict[str, Any]]:
+        """Live plans, for the dedup pass in extract/engagements.py.
+
+        Unscoped where the commitment equivalent is scoped to (direction, counterparty),
+        because an engagement's participants live in a child table and the message being
+        read may name a different subset of them than the message that created the row —
+        "dinner with Priya and Sam" then "see you Friday, Priya" is one plan mentioned
+        twice. Matching happens in Python over the returned rows; the population is
+        small by construction, since a plan stops being live once it happens.
+        """
+        return list(self.conn.execute(query("open_engagements"), {"user_id": USER_ID}))
+
+    def insert_engagement(
+        self,
+        *,
+        kind: str,
+        what: str,
+        starts_at: str | None,
+        ends_at: str | None,
+        when_is_explicit: bool,
+        location: str | None,
+        status: str,
+        confidence: float,
+        source_item_id: int,
+        entity_ids: list[int],
+        evidence: str | None = None,
+        evidence_kind: str = "original",
+    ) -> int:
+        """Write a plan and everyone in it, citing the sentence it rests on.
+
+        The people links and the citation are written here rather than by the caller for
+        the reason `insert_commitment` gives: a rule applied at one of several call sites
+        is not a rule. Every door into this table leaves a row that knows who is going
+        and which sentence said so.
+        """
+        self.stats.engagements_inserted += 1
+        self.writes += 1
+        if self.dry_run:
+            engagement_id = self._pseudo_id()
+            self.record_engagement_evidence(
+                engagement_id, source_item_id, evidence, kind=evidence_kind
+            )
+            return engagement_id
+        cursor = self.conn.execute(
+            "INSERT INTO engagement "
+            "(user_id, kind, what, starts_at, ends_at, when_is_explicit, location, "
+            " status, confidence, source_item_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                USER_ID,
+                kind,
+                what,
+                starts_at,
+                ends_at,
+                int(when_is_explicit),
+                location,
+                status,
+                confidence,
+                source_item_id,
+                now_iso(),
+            ),
+        )
+        engagement_id = int(cursor.lastrowid or 0)
+        for entity_id in entity_ids:
+            self.link_engagement_person(engagement_id, entity_id)
+        self.record_engagement_evidence(
+            engagement_id, source_item_id, evidence, kind=evidence_kind
+        )
+        return engagement_id
+
+    def link_engagement_person(self, engagement_id: int, entity_id: int) -> bool:
+        """Idempotent on (engagement, entity). Returns True when a row was written.
+
+        A second sync over the same message re-resolves the same people and must not
+        grow the guest list, so the conflict is the no-op rather than an error.
+        """
+        if self.dry_run:
+            return True
+        cursor = self.conn.execute(
+            "INSERT INTO engagement_person (user_id, engagement_id, entity_id) "
+            "VALUES (?, ?, ?) "
+            "ON CONFLICT (user_id, engagement_id, entity_id) DO NOTHING",
+            (USER_ID, engagement_id, entity_id),
+        )
+        if cursor.rowcount != 1:
+            return False
+        self.writes += 1
+        return True
+
+    def record_engagement_evidence(
+        self,
+        engagement_id: int,
+        source_item_id: int,
+        quote: str | None,
+        *,
+        kind: str = "restated",
+    ) -> bool:
+        """Cite a source item for a plan. Idempotent on (engagement, source_item).
+
+        The counting rule is `record_evidence`'s, for the same reason: a write is
+        counted only when a row actually lands, so an unchanged second sync still
+        totals zero and rule 3 holds.
+        """
+        if self.dry_run:
+            self.stats.evidence_recorded += 1
+            self.writes += 1
+            return True
+        cursor = self.conn.execute(
+            "INSERT INTO engagement_evidence "
+            "(user_id, engagement_id, source_item_id, quote, kind, seen_at) "
+            "VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (user_id, engagement_id, source_item_id) DO NOTHING",
+            (USER_ID, engagement_id, source_item_id, quote, kind, now_iso()),
+        )
+        if cursor.rowcount != 1:
+            return False
+        self.stats.evidence_recorded += 1
+        self.writes += 1
+        return True
+
+    def advance_engagement(
+        self,
+        engagement_id: int,
+        *,
+        status: str,
+        starts_at: str | None = None,
+        ends_at: str | None = None,
+        location: str | None = None,
+    ) -> bool:
+        """Move a plan forward as later messages settle it. Returns True on a change.
+
+        Only ever fills in and moves on: a NULL time learns a time, a `proposed` plan
+        becomes `confirmed`. The caller decides whether the move is legal (see
+        engagements.ADVANCES_TO); this method refuses to overwrite a value it already
+        has, so a vaguer later mention cannot erase what an earlier, more specific one
+        established. Returns False when nothing would change, which is what keeps an
+        unchanged re-read at zero writes.
+        """
+        row = self.conn.execute(
+            "SELECT status, starts_at, ends_at, location FROM engagement "
+            "WHERE user_id = ? AND id = ?",
+            (USER_ID, engagement_id),
+        ).fetchone()
+        if row is None:
+            return False
+
+        updates: dict[str, Any] = {}
+        if status != row["status"]:
+            updates["status"] = status
+        # Fill a hole, never repaint a wall.
+        if starts_at is not None and row["starts_at"] is None:
+            updates["starts_at"] = starts_at
+        if ends_at is not None and row["ends_at"] is None:
+            updates["ends_at"] = ends_at
+        if location is not None and row["location"] is None:
+            updates["location"] = location
+        if not updates:
+            return False
+
+        self.stats.engagements_advanced += 1
+        self.writes += 1
+        if self.dry_run:
+            return True
+        assignments = ", ".join(f"{column} = ?" for column in updates)
+        self.conn.execute(
+            f"UPDATE engagement SET {assignments} WHERE user_id = ? AND id = ?",
+            (*updates.values(), USER_ID, engagement_id),
+        )
         return True
 
     def supersede(self, commitment_id: int, superseded_by: int) -> None:

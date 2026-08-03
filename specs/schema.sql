@@ -393,3 +393,50 @@ CREATE TABLE commitment_evidence (
 CREATE INDEX idx_commitment_evidence ON commitment_evidence(user_id, commitment_id, id);
 
 CREATE INDEX idx_evidence_by_source  ON commitment_evidence(user_id, source_item_id);
+
+CREATE TABLE engagement (
+  id               INTEGER PRIMARY KEY,
+  user_id          INTEGER NOT NULL DEFAULT 1,
+  kind             TEXT    NOT NULL,                      -- social|professional
+  what             TEXT    NOT NULL,
+  starts_at        TEXT,                                  -- NULL = agreed in principle, no time yet
+  ends_at          TEXT,
+  when_is_explicit INTEGER NOT NULL DEFAULT 0,
+  location         TEXT,
+  status           TEXT    NOT NULL DEFAULT 'proposed',   -- proposed|confirmed|declined|done|superseded
+  confidence       REAL    NOT NULL,
+  source_item_id   INTEGER NOT NULL REFERENCES source_item(id),
+  superseded_by    INTEGER REFERENCES engagement(id),
+  created_at       TEXT    NOT NULL,
+  resolved_at      TEXT
+);
+
+CREATE INDEX idx_engagement_upcoming ON engagement(user_id, status, starts_at)
+  WHERE status IN ('proposed', 'confirmed');
+
+CREATE TABLE engagement_person (
+  id            INTEGER PRIMARY KEY,
+  user_id       INTEGER NOT NULL DEFAULT 1,
+  engagement_id INTEGER NOT NULL REFERENCES engagement(id) ON DELETE CASCADE,
+  entity_id     INTEGER NOT NULL REFERENCES entity(id),
+  UNIQUE (user_id, engagement_id, entity_id)
+);
+
+CREATE INDEX idx_engagement_person_by_entity
+  ON engagement_person(user_id, entity_id, engagement_id);
+
+CREATE TABLE engagement_evidence (
+  id             INTEGER PRIMARY KEY,
+  user_id        INTEGER NOT NULL DEFAULT 1,
+  engagement_id  INTEGER NOT NULL REFERENCES engagement(id),
+  source_item_id INTEGER NOT NULL REFERENCES source_item(id),
+  quote          TEXT,                                    -- verbatim; NULL = document only
+  kind           TEXT    NOT NULL DEFAULT 'original',     -- original|restated|manual
+  seen_at        TEXT    NOT NULL,
+  UNIQUE (user_id, engagement_id, source_item_id)
+);
+
+CREATE INDEX idx_engagement_evidence ON engagement_evidence(user_id, engagement_id, id);
+
+CREATE INDEX idx_engagement_evidence_by_source
+  ON engagement_evidence(user_id, source_item_id);

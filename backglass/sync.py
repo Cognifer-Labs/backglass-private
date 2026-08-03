@@ -26,6 +26,7 @@ from backglass.connectors import base, credentials
 from backglass.connectors.base import Connector
 from backglass.db import now_iso, query
 from backglass.extract import commitments as tier2
+from backglass.extract import engagements as engagement_tier2
 from backglass.extract import noise as noise_mod
 from backglass.extract import prompts, rules
 from backglass.extract import triage as tier1
@@ -53,6 +54,8 @@ class SyncReport:
     commitments_inserted: int = 0
     commitments_deduped: int = 0
     commitments_superseded: int = 0
+    engagements_inserted: int = 0
+    engagements_advanced: int = 0
     review_queue: int = 0
     writes: int = 0
     spend_cents: int = 0
@@ -430,14 +433,27 @@ def _extract_pass(
                 ledger=ledger,
                 settings=settings,
             )
+            # Inside the same transaction as the commitments and the version stamp: one
+            # response is one read of one message, and applying half of it is the
+            # half-applied state the comment above rejects.
+            plans = engagement_tier2.apply(
+                extraction,
+                source_item_id=item_id,
+                occurred_at=str(item["occurred_at"]),
+                ledger=ledger,
+                settings=settings,
+            )
             ledger.record_extraction_version(item_id, prompt.stamp)
         except Exception:
             conn.execute("ROLLBACK")
             raise
         conn.execute("COMMIT")
         report.extracted += 1
-        report.review_queue += applied.review_queue
+        report.review_queue += applied.review_queue + plans.review_queue
+        report.engagements_inserted += plans.inserted
+        report.engagements_advanced += plans.advanced
         report.date_notes.extend(applied.date_notes)
+        report.date_notes.extend(plans.date_notes)
 
 
 # ──────────────────────────────────────────────────────────────── helpers

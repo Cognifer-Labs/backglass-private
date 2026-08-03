@@ -29,6 +29,7 @@ from backglass.config import Settings
 from backglass.connectors.base import Connector
 from backglass.db import now_iso, query
 from backglass.extract import commitments as tier2
+from backglass.extract import engagements as engagement_tier2
 from backglass.extract import pricing, prompts
 from backglass.extract.client import ModelClient, anthropic_api_key, build_request
 from backglass.extract.schemas import CommitmentExtraction, json_schema
@@ -318,6 +319,16 @@ def collect(
                     ledger=ledger,
                     settings=settings,
                 )
+                # Batched and live extraction read the same response through the same
+                # two appliers, so a plan found overnight is the same row as one found
+                # on demand. tests/test_connectors.py's drift rule applies here too.
+                plans = engagement_tier2.apply(
+                    extraction,
+                    source_item_id=item_id,
+                    occurred_at=str(current["occurred_at"]),
+                    ledger=ledger,
+                    settings=settings,
+                )
                 ledger.record_extraction_version(item_id, str(row["prompt_stamp"]))
                 conn.execute(
                     "UPDATE model_batch_item SET status = 'succeeded'"
@@ -329,7 +340,7 @@ def collect(
                 raise
             conn.execute("COMMIT")
             extracted += 1
-            report.review_queue += applied.review_queue
+            report.review_queue += applied.review_queue + plans.review_queue
 
         cap.charge(batch_usd)
         spend_usd += batch_usd

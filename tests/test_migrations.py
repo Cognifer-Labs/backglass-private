@@ -206,6 +206,9 @@ FROZEN_CHECKSUMS = {
     "0013_commitment_evidence.sql": (
         "1a46f91cb48df63fa9bba74d1f934eb1076023684868428c8798bc6a1179d242"
     ),
+    "0014_engagements.sql": (
+        "f0de85ad6651de7e4b0f55bd725817e06197b2a18cf15883dc14cd64a3107499"
+    ),
 }
 
 

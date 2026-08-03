@@ -68,10 +68,45 @@ class ExtractedCommitment(Strict):
     resolves_what: str | None = None
 
 
+class ExtractedEngagement(Strict):
+    """A plan to be somewhere with someone, as the model returns it.
+
+    Distinct from a commitment because the question it answers is different: a
+    commitment asks what is still owed, an engagement asks who the owner is seeing and
+    whether they have answered yet. See migration 0014 for why they are separate rows.
+    """
+
+    kind: Literal["social", "professional"]
+    what: str
+    #: Names or emails as written. Plural because "drinks with Priya and Sam" is one
+    #: plan, and asking "when did I last see Sam" has to find it through either name.
+    people: list[str] = Field(default_factory=list)
+    #: Null is meaningful, not missing: "we should get dinner sometime" is a real plan
+    #: with no time, and it is exactly the kind that goes stale unanswered.
+    starts_at: str | None = None
+    ends_at: str | None = None
+    when_is_explicit: bool = False
+    location: str | None = None
+    #: Someone suggesting dinner is not dinner. Only `confirmed` earns a day-plan block.
+    status: Literal["proposed", "confirmed", "declined"] = "proposed"
+    confidence: float = Field(ge=0.0, le=1.0)
+    #: Same rule as the commitment above — rule 1 applies to every generated claim.
+    evidence: str
+
+
 class CommitmentExtraction(Strict):
-    """An empty list is a valid and common result. Do not invent one to be useful."""
+    """One tier-2 read produces both record types.
+
+    Deliberately one response and not two calls: docs/02's two-tier design spends model
+    money once per item, and a second careful pass over the same text to ask a second
+    question would double extraction cost for every message the owner ever receives.
+    The name is now narrower than the contents; it is kept because it is what
+    `batch.py`, the CLI and the fixtures all refer to, and renaming it would churn more
+    than it clarifies.
+    """
 
     commitments: list[ExtractedCommitment] = Field(default_factory=list)
+    engagements: list[ExtractedEngagement] = Field(default_factory=list)
 
 
 def json_schema(model: type[BaseModel]) -> dict[str, Any]:

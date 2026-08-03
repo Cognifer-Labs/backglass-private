@@ -1,6 +1,6 @@
 ---
 id: extract-commitments
-version: 3
+version: 4
 model: careful
 output: strict JSON, schema-validated, one retry on malformed
 ---
@@ -18,6 +18,13 @@ output: strict JSON, schema-validated, one retry on malformed
      Also: counterparty direction made explicit; the eval showed occasional swaps on
      owed_to_me. -->
 
+<!-- v4 (2026-08-02): the read now also returns engagements — plans to be somewhere with
+     someone. They were invisible before: not a commitment (nobody owes anything), and
+     calendar invites are dropped at tier 0 as "owned by the calendar connector", which
+     reads nothing on an account with no calendar connected. Same call, not a second
+     pass: a separate careful read to ask a second question would double extraction cost
+     per item for the life of the system. -->
+
 # Tier 2 commitment extraction
 
 Runs only on items where triage returned `keep=true`. This is where money is spent and it
@@ -26,11 +33,15 @@ is worth spending.
 ## Prompt
 
 ```
-Extract commitments from this message.
+Extract two kinds of record from this message: commitments and engagements.
 
 A commitment is a specific obligation with an owner. Two directions:
   i_owe        the user promised to do or provide something
   owed_to_me   someone promised the user something
+
+An engagement is a plan to be somewhere with someone — dinner with a friend,
+a conference, an interview, office hours, a call. Nobody owes anybody an
+artifact; the substance is the meeting itself.
 
 The user is {{owner_name}} <{{owner_email}}>.
 
@@ -45,7 +56,55 @@ For each commitment, return:
   confidence         0.0 to 1.0
   evidence           the exact sentence you extracted it from, verbatim
 
+For each engagement, return:
+  kind               social | professional
+  what               the occasion, in under 12 words ("dinner at Ravi's",
+                     "AAMC advising call", "BioBridge volunteer shift")
+  people             everyone going other than the user, names or emails as
+                     written; [] if the message names nobody
+  starts_at          ISO 8601 date or datetime, or null if no time is agreed
+  ends_at            ISO 8601, or null — only if the message states an end
+  when_is_explicit   true if a date was stated, false if you inferred it
+  location           as written, or null
+  status             proposed | confirmed | declined
+  confidence         0.0 to 1.0
+  evidence           the exact sentence you extracted it from, verbatim
+
+SOCIAL OR PROFESSIONAL
+  social         friends, family, anything whose purpose is the company
+  professional   work, study, medicine, research, admissions, networking —
+                 anything you would put on a CV or prepare for
+When a plan is plainly both (a mentor who is also a friend), choose by why it
+is happening, not by who is going.
+
+STATUS
+  proposed   someone suggested it and nobody has agreed yet, including when
+             the user is the one who suggested it
+  confirmed  both sides have agreed, or it is stated as settled fact
+  declined   it was turned down or cancelled
+"Dinner Friday?" is proposed. "Friday works, see you at 7" is confirmed.
+An invitation the user has not answered stays proposed — that is the whole
+point of tracking it, because it is what the user still owes a reply to.
+
+COMMITMENT OR ENGAGEMENT — do not return the same thing as both.
+Ask what the message is actually about. If it is about producing or sending
+something, it is a commitment, even when a meeting is mentioned as the
+deadline ("I'll have the slides ready before we meet Tuesday" is a
+commitment). If it is about being somewhere with someone, it is an
+engagement, even when the user promised to attend ("I'll be at your defence
+Tuesday" is an engagement). A message can legitimately produce one of each
+when it contains both ("I'll send the draft Thursday, and are you free for
+lunch Friday?") — that is two records about two different things, not a
+double count.
+
+Do not return an engagement for:
+  - a meeting between other people that does not involve the user
+  - a mass invitation with no personal element (a newsletter's webinar, a
+    building-wide fire drill, a marketing event blast)
+  - something already over, unless the message is arranging the next one
+
 DATE RESOLUTION — this is the most important rule here.
+It applies to `due_at` and to `starts_at`/`ends_at` alike.
 Resolve all relative dates against the message date {{occurred_at}}, never
 against today. "By Friday" in a message sent 2026-07-10 means 2026-07-17,
 even if today is 2026-08-30. Getting this wrong produces confidently wrong
@@ -106,11 +165,26 @@ Subject: {{title}}
       "resolves": false,
       "resolves_what": null
     }
+  ],
+  "engagements": [
+    {
+      "kind": "social",
+      "what": "dinner at Ravi's",
+      "people": ["Priya Raman <priya@example.com>", "Sam"],
+      "starts_at": "2026-07-17T19:00",
+      "ends_at": null,
+      "when_is_explicit": true,
+      "location": "Ravi's on 5th",
+      "status": "confirmed",
+      "confidence": 0.88,
+      "evidence": "Friday works — 7pm at Ravi's on 5th, Sam's coming too."
+    }
   ]
 }
 ```
 
-Empty `commitments` array is a valid and common result. Do not invent one to be useful.
+Both arrays are independent, and an empty one is a valid and common result. Most
+messages produce neither. Do not invent either to be useful.
 
 ## Post-processing, in code not prompt
 
@@ -125,6 +199,18 @@ Empty `commitments` array is a valid and common result. Do not invent one to be 
 5. Deduplicate against existing open commitments on `(direction, counterparty, what)`
    fuzzy match before insert. A thread restating the same promise must not produce five
    rows.
+
+Engagements take the same five steps, with two differences that follow from what they
+are (`backglass/extract/engagements.py`):
+
+6. Every name in `people` resolves to its own `entity`; the links live in
+   `engagement_person`, so one plan can involve several people.
+7. Dedup matches on `(what, people, day)` rather than on direction. A match does not
+   drop the sighting — it applies the new `status` to the row it matched, which is how
+   "dinner Friday?" becomes confirmed when the reply arrives, and records the sentence
+   as a `restated` citation. A status only ever moves forward: proposed → confirmed →
+   done, or → declined. Nothing walks back to proposed, because a later message
+   restating an agreed plan is not a fresh proposal.
 
 ## Failure handling
 
