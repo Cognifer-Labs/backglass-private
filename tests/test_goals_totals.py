@@ -463,3 +463,86 @@ class TestRoadmapEditsAndUnlog:
         cid = conn.execute("SELECT id FROM checkpoint").fetchone()["id"]
         page = client.get(f"/roadmaps/{rid}").text
         assert f"/roadmaps/{rid}/totals/{tid}/unlog/{cid}" in page
+
+
+class TestLinkCommand:
+    """`goals link` and `add --goal` — the only writers of `commitment.goal_id`.
+
+    docs/04 §2 puts the product's value in "the join: schedule against capacity,
+    commitments against goals". Every reader of that column was already correct — the
+    planner ranks a goal-linked commitment first, resolving one records a checkpoint,
+    the weekly retro groups by goal, the board card prints the goal's title — and none
+    of it could fire, because nothing outside a test ever wrote the link.
+    """
+
+    @pytest.fixture
+    def cli(self, settings: Settings, conn: sqlite3.Connection, monkeypatch):  # type: ignore[no-untyped-def]
+        from backglass import __main__ as cli_mod
+
+        del conn  # migrated, and the CLI opens the same file
+        monkeypatch.setattr(cli_mod, "get_settings", lambda: settings)
+        return cli_mod
+
+    def _run(self, cli, *args: str):  # type: ignore[no-untyped-def]
+        from typer.testing import CliRunner
+
+        return CliRunner().invoke(cli.app, list(args))
+
+    def _commitment(self, cli, what: str = "Draft the personal statement") -> int:  # type: ignore[no-untyped-def]
+        result = self._run(cli, "add", what, "--owe")
+        assert result.exit_code == 0, result.output
+        return int(result.output.split()[1])
+
+    def test_link_points_a_commitment_at_a_goal(
+        self, cli, conn: sqlite3.Connection
+    ) -> None:
+        goal_id = _goal(conn)
+        cid = self._commitment(cli)
+        result = self._run(cli, "goals", "link", str(cid), str(goal_id))
+        assert result.exit_code == 0, result.output
+        assert "Medical school application" in result.output
+        assert conn.execute(
+            "SELECT goal_id FROM commitment WHERE id = ?", (cid,)
+        ).fetchone()["goal_id"] == goal_id
+
+    def test_an_unknown_goal_says_so_and_writes_nothing(
+        self, cli, conn: sqlite3.Connection
+    ) -> None:
+        cid = self._commitment(cli)
+        result = self._run(cli, "goals", "link", str(cid), "9999")
+        assert result.exit_code == 1
+        assert "no goal 9999" in result.output
+        assert conn.execute(
+            "SELECT goal_id FROM commitment WHERE id = ?", (cid,)
+        ).fetchone()["goal_id"] is None
+
+    def test_an_unknown_commitment_says_so(self, cli, conn: sqlite3.Connection) -> None:
+        # The silent failure this guards: the UPDATE matches no row and the command
+        # would otherwise report a link that does not exist.
+        goal_id = _goal(conn)
+        result = self._run(cli, "goals", "link", "9999", str(goal_id))
+        assert result.exit_code == 1
+        assert "no commitment 9999" in result.output
+
+    def test_add_links_at_entry_time(self, cli, conn: sqlite3.Connection) -> None:
+        goal_id = _goal(conn)
+        result = self._run(
+            cli, "add", "Ask Dr. Chen for a letter", "--owe", "--goal", str(goal_id)
+        )
+        assert result.exit_code == 0, result.output
+        row = conn.execute(
+            "SELECT id, goal_id FROM commitment WHERE what = ?",
+            ("Ask Dr. Chen for a letter",),
+        ).fetchone()
+        assert row["goal_id"] == goal_id
+        assert f"linked to goal {goal_id}" in result.output
+
+    def test_add_with_an_unknown_goal_writes_no_commitment(
+        self, cli, conn: sqlite3.Connection
+    ) -> None:
+        # The connection is autocommit, so validating after the insert would leave the
+        # commitment written and unlinked — the state the owner cannot see is wrong.
+        result = self._run(cli, "add", "Ask for a letter", "--owe", "--goal", "9999")
+        assert result.exit_code == 1
+        assert "no goal 9999" in result.output
+        assert conn.execute("SELECT COUNT(*) AS n FROM commitment").fetchone()["n"] == 0

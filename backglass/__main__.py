@@ -1119,8 +1119,18 @@ def add_commitment(
     who: Annotated[str | None, typer.Option("--who")] = None,
     due: Annotated[str | None, typer.Option("--due", help="YYYY-MM-DD")] = None,
     minutes: Annotated[int | None, typer.Option("--minutes")] = None,
+    goal: Annotated[
+        int | None,
+        typer.Option("--goal", help="Goal id this commitment serves (see `goals link`)"),
+    ] = None,
 ) -> None:
-    """Quick-add a commitment by hand. Provenance is a manual source item."""
+    """Quick-add a commitment by hand. Provenance is a manual source item.
+
+    `--goal` is the same link `goals link` makes, at the moment the commitment is typed:
+    docs/04 §2 wants commitments read against goals, and a link nobody can set at entry
+    time is a link nobody sets at all.
+    """
+    from backglass.goals import checkpoints
     from backglass.web import actions
 
     if owe == owed:
@@ -1129,6 +1139,12 @@ def add_commitment(
     settings = get_settings()
     conn = _open(settings)
     migrate(conn)
+    # Checked before the insert, not after: the connection is autocommit, so linking a
+    # bad goal id afterwards would leave the commitment written and unlinked.
+    goal_title = _goal_title(conn, goal) if goal is not None else None
+    if goal is not None and goal_title is None:
+        typer.echo(f"no goal {goal}", err=True)
+        raise typer.Exit(code=1)
     cid = actions.quick_add(
         conn,
         settings,
@@ -1138,6 +1154,10 @@ def add_commitment(
         due_at=due,
         minutes=minutes,
     )
+    if goal is not None:
+        checkpoints.link_commitment(conn, cid, goal)
+        typer.echo(f"commitment {cid} added, linked to goal {goal}: {goal_title}")
+        return
     typer.echo(f"commitment {cid} added")
 
 
@@ -1148,6 +1168,50 @@ app.add_typer(roadmap_app, name="roadmap")
 
 goals_app = typer.Typer(help="Goal targets beyond what the dashboard edits.")
 app.add_typer(goals_app, name="goals")
+
+
+def _goal_title(conn: sqlite3.Connection, goal_id: int) -> str | None:
+    row = conn.execute(
+        "SELECT title FROM goal WHERE id = ? AND user_id = ?", (goal_id, USER_ID)
+    ).fetchone()
+    return str(row["title"]) if row is not None else None
+
+
+@goals_app.command("link")
+def goals_link(
+    commitment_id: Annotated[int, typer.Argument(help="Commitment to point at a goal")],
+    goal_id: Annotated[int, typer.Argument(help="The goal it serves")],
+) -> None:
+    """Point a commitment at the goal it serves — docs/04's "commitments against goals".
+
+    Everything downstream of `commitment.goal_id` already reads it: the planner ranks a
+    goal-linked commitment ahead of an unlinked one, closing a linked commitment records
+    a checkpoint, the weekly retro groups the week's work by goal, and the board card
+    shows the goal's title. None of it fires until something writes the link, and until
+    this command there was no way to.
+    """
+    from backglass.goals import checkpoints
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    row = conn.execute(
+        "SELECT what FROM commitment WHERE id = ? AND user_id = ?",
+        (commitment_id, USER_ID),
+    ).fetchone()
+    if row is None:
+        typer.echo(f"no commitment {commitment_id}", err=True)
+        raise typer.Exit(code=1)
+    try:
+        checkpoints.link_commitment(conn, commitment_id, goal_id)
+    except checkpoints.CheckpointError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    conn.commit()
+    typer.echo(
+        f"commitment {commitment_id} ({row['what']}) → goal {goal_id}: "
+        f"{_goal_title(conn, goal_id)}"
+    )
 
 
 @goals_app.command("add-total")
@@ -2340,20 +2404,38 @@ def _unauthed_remote_sources(
     iterates credentials and the Sources panel renders them, so a Gmail account listed
     in `.env` that never completed OAuth reads as if it were never asked for. That is
     the difference between "widened intake" and "believed I widened intake."
+
+    The remedy printed with each one is the command as `auth` actually takes it — a bare
+    label plus `--source`, the spelling detect.py already prints. `auth gmail:personal`
+    stores under `gmail:gmail:personal`, which no connector ever loads, so the next
+    doctor run would print the identical line and the "run doctor, do what it says, run
+    doctor again" loop would never converge.
+
+    The names are the ones connectors register under, `source:label`, not the bare kind:
+    a token source whose credential row reads `canvas:canvas` never matches a `canvas`
+    entry, so a working source would be reported as never authed forever.
     """
+    from backglass.connectors.canvas import CanvasConnector
+    from backglass.connectors.github import GithubConnector
+    from backglass.connectors.slack import SlackConnector
+
+    sync_first = "run `backglass sync` once to record the credential"
     wanted: list[tuple[str, str]] = []
-    for label in settings.gmail_accounts:
-        wanted.append((f"gmail:{label}", f"run `backglass auth gmail:{label}`"))
-    for label in settings.calendar_accounts:
-        wanted.append((f"calendar:{label}", f"run `backglass auth calendar:{label}`"))
-    for label in settings.drive_accounts:
-        wanted.append((f"drive:{label}", f"run `backglass auth drive:{label}`"))
+    for kind, labels in (
+        ("gmail", settings.gmail_accounts),
+        ("calendar", settings.calendar_accounts),
+        ("drive", settings.drive_accounts),
+    ):
+        for label in labels:
+            wanted.append(
+                (f"{kind}:{label}", f"run `backglass auth {label} --source {kind}`")
+            )
     if settings.canvas_base_url and settings.canvas_token:
-        wanted.append(("canvas", "run `backglass sync` once to record the credential"))
+        wanted.append((f"canvas:{CanvasConnector.label}", sync_first))
     if settings.github_token:
-        wanted.append(("github", "run `backglass sync` once to record the credential"))
+        wanted.append((f"github:{GithubConnector.label}", sync_first))
     if settings.slack_token and settings.slack_channels:
-        wanted.append(("slack", "run `backglass sync` once to record the credential"))
+        wanted.append((f"slack:{SlackConnector.label}", sync_first))
     return [(source, needs) for source, needs in wanted if source not in known]
 
 

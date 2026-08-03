@@ -135,7 +135,11 @@ def test_a_configured_gmail_account_that_never_authed_is_named() -> None:
     settings = _cfg(gmail_accounts=["personal", "school"])
     unauthed = dict(_unauthed_remote_sources(settings, known=set()))
     assert set(unauthed) == {"gmail:personal", "gmail:school"}
-    assert "backglass auth gmail:personal" in unauthed["gmail:personal"]
+    # The hint must be runnable as printed. `auth` takes a bare label plus --source and
+    # stores under f"{source}:{account}", so `auth gmail:personal` would write
+    # gmail:gmail:personal — a row no connector loads, leaving doctor printing the same
+    # line forever. detect.py already prints this spelling; both must agree.
+    assert unauthed["gmail:personal"] == "run `backglass auth personal --source gmail`"
 
 
 def test_an_authed_account_is_not_reported() -> None:
@@ -157,8 +161,18 @@ def test_token_sources_need_a_sync_not_an_auth_flow() -> None:
         slack_channels=["general"],
     )
     unauthed = dict(_unauthed_remote_sources(settings, known=set()))
-    assert set(unauthed) == {"canvas", "github", "slack"}
+    # source:label, exactly as the connectors register — a bare "canvas" would never
+    # match the canvas:canvas credential row a synced Canvas writes, so a working
+    # source would be reported as never authed on every doctor run forever.
+    assert set(unauthed) == {"canvas:canvas", "github:personal", "slack:personal"}
     assert all("backglass sync" in needs for needs in unauthed.values())
+
+
+def test_a_synced_token_source_stops_being_reported() -> None:
+    # The regression the names above exist for: the credential row a Canvas sync writes
+    # is named after the connector, and doctor has to recognise it as the same source.
+    settings = _cfg(canvas_base_url="https://example.instructure.com", canvas_token="t")
+    assert _unauthed_remote_sources(settings, known={"canvas:canvas"}) == []
 
 
 def test_a_half_configured_token_source_is_not_reported() -> None:
