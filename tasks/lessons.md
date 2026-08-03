@@ -359,3 +359,17 @@ deterministic given the id.
   lets an unrelated tie-break (`id DESC`) produce the right answer by accident. And when
   a verifier refutes, expect the repair itself to need verifying — the second pass found
   three defects in the first pass's fixes, one of which was worse than what it replaced.
+
+- 2026-08-02 | Third verifier pass, third refutation, and all three defects were one
+  missing line: a dedup hit `continue`d without recording which row it had claimed, so
+  the same-response guard was empty precisely when the first candidate matched instead of
+  inserting. Every test across three rounds had covered insert-then-insert or
+  match-then-insert; none covered match-then-match, so the whole bookkeeping was only
+  ever proven on rows that response had created. | When a loop has a "handled it, move
+  on" branch and a "made something new" branch, the accumulator has to be fed by BOTH —
+  and the test matrix is the cross product, not the diagonal. Write the cases out: for
+  two candidates and two outcomes there are four orderings, and the one nobody writes is
+  the one where the early-return path happens first. Corollary from the same pass: when
+  several stored rows can legitimately satisfy a match, "matches" is not a selection —
+  add an explicit ranking (here, nearest start time), because "first row returned" is an
+  arbitrary choice that reads as deterministic and silently prefers the oldest.

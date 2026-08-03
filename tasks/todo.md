@@ -100,7 +100,17 @@ link back to the sentence it came from. Idempotency asserted by a second run wri
 
 ## Verification outcome
 
-Two fresh-context verifier passes, both refuting, seventeen commits in total.
+Three fresh-context verifier passes, all three refuting, fourteen defects fixed.
+
+**Third pass** found three, all one root cause: a dedup hit returned without recording the
+row it claimed, so a second candidate in the same response could land on it too — the
+match-then-match path no test had ever taken. It destroyed one plan outright ("coffee
+Friday 9am" then "9am or 4pm?" wrote no 4pm row and repainted the 9am one), collapsed
+same-day pairs on re-extraction, and — independently — the scan took the first agreeing
+row in id order, so settling a second option repainted the first one instead. Matched rows
+now join the same-response set, and the scan ranks agreeing rows by nearest start time.
+The re-extraction thrash it flagged as minor is fixed too: a known time is only moved by a
+message at least as recent as the newest already cited.
 
 **Second pass** found five more, three of them defects in the first pass's *repairs* —
 including one that was worse than the bug it replaced: separating plans on the clock
@@ -153,6 +163,15 @@ small write surface, which is a design call rather than a fix.
 - **Nothing yet exercises this against real messages.** Every test drives canned model
   responses. Whether the model reliably tells a commitment from an engagement is an eval
   question, and `evals/` is where it belongs — it never gates CI (docs/10).
+- **A reschedule to a different DAY still duplicates.** "Dinner Friday at 7" followed by
+  "let's push it to Saturday" leaves two rows, as does a plan moved past midnight.
+  Matching cross-message on the day is what makes a same-day reschedule repaint instead of
+  duplicating; relaxing it to wording-and-people alone would fuse a weekly standing
+  arrangement, which an earlier round fixed. There is no signal in the data to tell "moved
+  to Saturday" from "also meeting Saturday" — the honest fix is a `replaces_earlier` field
+  in the extraction schema, mirroring `resolves` on commitments, which is a prompt version
+  bump and a re-extraction and should be a deliberate decision rather than the tail end of
+  a long session.
 - **Legacy commitments that are really plans still double up.** Confirmed on the live
   ledger: six of the owner's commitments share a source item with one of the five
   engagements re-extraction produced, because everything read before the v4 prompt could
