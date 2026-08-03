@@ -590,7 +590,11 @@ def engagement_section(
             "brief_engagements",
             {
                 "user_id": USER_ID,
+                "today": today.isoformat(),
                 "horizon": horizon.isoformat(),
+                # An undated plan is judged on the age of the message that proposed it,
+                # over the same window it would have been shown for had it had a date.
+                "floor": (today - timedelta(days=FRIEND_PLANS_HORIZON_DAYS)).isoformat(),
                 "confidence_threshold": settings.confidence_threshold,
             },
         )
@@ -705,6 +709,27 @@ def review_section(conn: sqlite3.Connection, today: date, settings: Settings) ->
                 provenance=_source_of(row),
                 status="needs_review",
                 commitment_id=int(row["id"]),
+            )
+        )
+    # Rule 2 has two clauses, and engagements only honoured the first: they were kept out
+    # of the brief as fact, and then went to no queue at all, because every review surface
+    # read FROM commitment. The post-processing pass counted them and the CLI printed the
+    # count, so the run claimed a queue entry nobody could reach.
+    for row in _rows(
+        conn,
+        "brief_needs_review_plans",
+        {"user_id": USER_ID, "confidence_threshold": settings.confidence_threshold},
+    ):
+        who = f" with {row['people']}" if row["people"] else ""
+        when = _plan_phrase(row["starts_at"], today)
+        section.lines.append(
+            Line(
+                text=(
+                    f"Is this a real plan: {row['what']}{who}, {when}? "
+                    f"({row['confidence']:.0%} confident)"
+                ),
+                provenance=_source_of(row),
+                status="needs_review",
             )
         )
     return section

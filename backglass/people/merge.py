@@ -62,6 +62,42 @@ def merge(conn: sqlite3.Connection, winner_id: int, loser_id: int) -> dict[str, 
             "UPDATE commitment SET counterparty_entity_id = ? WHERE counterparty_entity_id = ?",
             (winner_id, loser_id),
         ).rowcount
+        # Every table that names an entity has to be repointed before the DELETE below,
+        # or the foreign key refuses and the whole merge rolls back. engagement_person
+        # is UNIQUE on (user_id, engagement_id, entity_id), so a plan both halves of the
+        # duplicate already attend cannot simply be updated onto the winner — that row
+        # already exists. Drop the loser's link in that case and repoint the rest; the
+        # guest list is a set, and the winner is already in it.
+        conn.execute(
+            "DELETE FROM engagement_person WHERE user_id = ? AND entity_id = ? "
+            "  AND engagement_id IN ("
+            "    SELECT engagement_id FROM engagement_person"
+            "     WHERE user_id = ? AND entity_id = ?)",
+            (USER_ID, loser_id, USER_ID, winner_id),
+        )
+        plans_repointed = conn.execute(
+            "UPDATE engagement_person SET entity_id = ? WHERE user_id = ? AND entity_id = ?",
+            (winner_id, USER_ID, loser_id),
+        ).rowcount
+        # The remaining two references to entity, neither of which was ever repointed —
+        # both predate engagements and both were live 500s on the People page.
+        #
+        # An activity's contact is a person; when that person turns out to be a duplicate,
+        # the activity's contact is the survivor.
+        conn.execute(
+            "UPDATE activity SET contact_entity_id = ? "
+            "WHERE user_id = ? AND contact_entity_id = ?",
+            (winner_id, USER_ID, loser_id),
+        )
+        # And a merge audit row names the entity that won. Merging a past winner into
+        # someone else — the second merge in a cleanup pass, which is exactly when it
+        # happens — left that row pointing at a row about to be deleted. The history now
+        # belongs to whoever survives, which is also the truthful reading: this is where
+        # those aliases ended up.
+        conn.execute(
+            "UPDATE entity_merge SET winner_id = ? WHERE user_id = ? AND winner_id = ?",
+            (winner_id, USER_ID, loser_id),
+        )
         conn.execute(
             "INSERT INTO entity_merge (user_id, winner_id, loser_snapshot_json, merged_at)"
             " VALUES (?, ?, ?, ?)",
@@ -72,4 +108,9 @@ def merge(conn: sqlite3.Connection, winner_id: int, loser_id: int) -> dict[str, 
     except Exception:
         conn.execute("ROLLBACK")
         raise
-    return {"winner_id": winner_id, "commitments_repointed": repointed, "aliases": aliases}
+    return {
+        "winner_id": winner_id,
+        "commitments_repointed": repointed,
+        "plans_repointed": plans_repointed,
+        "aliases": aliases,
+    }

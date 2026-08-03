@@ -152,8 +152,18 @@ def fixed_events(conn: sqlite3.Connection, day: date, tz: str) -> list[FixedEven
     return sorted(events, key=lambda e: e.starts_at)
 
 
-def engagement_events(conn: sqlite3.Connection, day: date, tz: str) -> list[FixedEvent]:
+def engagement_events(
+    conn: sqlite3.Connection, day: date, tz: str, *, min_confidence: float = 0.0
+) -> list[FixedEvent]:
     """Confirmed plans on `day`, as fixed events.
+
+    `min_confidence` is the same gate the brief applies, and it belongs here for a
+    stronger reason than symmetry. CLAUDE.md rule 2 keeps a low-confidence extraction
+    out of the brief because it is not yet a fact; letting one silently delete seventy
+    minutes from the owner's real capacity is the same error with a heavier consequence,
+    since the brief at least renders nothing while the planner would quietly plan less
+    work and never say why. It defaults to 0.0 so a caller that has no settings gets
+    every row, and `compute` — which does have settings — always passes the threshold.
 
     A plan the owner has agreed to occupies the day exactly as a calendar event does —
     dinner at seven is not time available for deep work — so it is subtracted from
@@ -184,8 +194,8 @@ def engagement_events(conn: sqlite3.Connection, day: date, tz: str) -> list[Fixe
     rows = conn.execute(
         "SELECT what, starts_at, ends_at, location FROM engagement "
         "WHERE user_id = ? AND status = 'confirmed' AND starts_at IS NOT NULL "
-        "  AND substr(starts_at, 1, 10) = ?",
-        (USER_ID, day.isoformat()),
+        "  AND confidence >= ? AND substr(starts_at, 1, 10) = ?",
+        (USER_ID, min_confidence, day.isoformat()),
     ).fetchall()
 
     events: list[FixedEvent] = []
@@ -262,7 +272,9 @@ def compute(
     if events is not None:
         fixed = list(events)
     else:
-        fixed = fixed_events(conn, day, tz) + engagement_events(conn, day, tz)
+        fixed = fixed_events(conn, day, tz) + engagement_events(
+            conn, day, tz, min_confidence=settings.confidence_threshold
+        )
     fixed = [e for e in fixed if e.ends_at > window_start and e.starts_at < window_end]
     fixed.sort(key=lambda e: e.starts_at)
 

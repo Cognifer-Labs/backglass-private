@@ -972,3 +972,32 @@ class TestEngagementsOnTheDay:
         )
         assert capacity_mod.engagement_events(conn, THURSDAY, PHOENIX) == []
         assert len(capacity_mod.engagement_events(conn, FRIDAY, PHOENIX)) == 1
+
+    def test_a_plan_the_system_does_not_believe_takes_no_time(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings
+    ) -> None:
+        """CLAUDE.md rule 2, on the surface where breaking it costs the most.
+
+        The brief filters low-confidence plans and the capacity model did not, so a
+        0.3-confidence guess silently deleted 70 minutes from a real day: a named fixed
+        block the owner never agreed to, and less work planned with no explanation. The
+        brief rendering nothing while the planner acts on it is the tell.
+        """
+        before = capacity_mod.compute(conn, sett, THURSDAY).capacity_minutes
+        conn.execute(
+            "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at,"
+            " when_is_explicit, location, status, confidence, source_item_id, created_at)"
+            " VALUES (?, 'social', 'dubious lunch', ?, NULL, 1, NULL, 'confirmed',"
+            " 0.3, ?, ?)",
+            (
+                USER_ID,
+                f"{THURSDAY.isoformat()}T11:00:00-07:00",
+                _any_source_item(conn),
+                now_iso(),
+            ),
+        )
+
+        after = capacity_mod.compute(conn, sett, THURSDAY)
+
+        assert after.capacity_minutes == before
+        assert [e.title for e in after.fixed] == []

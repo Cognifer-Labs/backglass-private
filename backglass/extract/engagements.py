@@ -217,6 +217,15 @@ def _same_row(
     )
 
 
+def _has_clock(value: str) -> bool:
+    """Does this stored time name an hour, or only a day?
+
+    `dates.resolve_due` returns a bare `YYYY-MM-DD` when the message stated no time and
+    an ISO datetime when it did, so the separator is the whole test.
+    """
+    return "T" in value or " " in value
+
+
 def _agrees(
     what: str,
     ids: set[int],
@@ -234,11 +243,20 @@ def _agrees(
     if ids and other_ids and not (ids & other_ids):
         return False
 
-    # Both pinned to a day, so the day decides — and it has to, because the people can
+    # Both pinned to a time, so the time decides — and it has to, because the people can
     # never separate a standing arrangement. Weekly coffee with the same friend is a new
     # plan each week; letting the shared guest fuse them would keep one row and silently
     # swallow every later occurrence.
+    #
+    # Compared at whatever precision BOTH sides carry. Two plans on one day at different
+    # hours are two plans — "coffee at 9" and "coffee at 4" is not one coffee — and
+    # matching on the date alone dropped the second, because `advance_engagement` fills
+    # holes and never repaints, so the losing hour was not even recorded. Where only one
+    # side states an hour the comparison falls back to the day, which is the "how's
+    # Friday" case gaining a time.
     if starts_at is not None and other_start is not None:
+        if _has_clock(starts_at) and _has_clock(other_start):
+            return starts_at[:16] == other_start[:16]
         return starts_at[:10] == other_start[:10]
 
     # At most one has a time. That is the case where a plan acquires its date — "we

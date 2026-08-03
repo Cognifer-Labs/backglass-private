@@ -24,7 +24,19 @@
 -- characters are the local day under all three shapes and convert nothing. See
 -- tasks/lessons.md, 2026-08-01.
 --
--- Params: :user_id, :horizon (ISO date), :confidence_threshold
+-- Bounded at BOTH ends. Only the top was bounded at first, and nothing in the codebase
+-- can move a plan to `done` — no CLI command, no route, and the status machine cannot
+-- reach it — so every plan the owner ever made stayed in this section forever, reported
+-- as "was 933d ago". docs/05 specifies a brief read in under two minutes; a section that
+-- only grows is a section that eventually eats it. A plan whose day has passed is
+-- history, and history belongs on the person's page, which already keeps it.
+--
+-- Undated plans are floored on the age of the message that proposed them instead. "We
+-- should get dinner sometime" deserves to be nagged about — it is the plan most likely
+-- to decay — but not indefinitely: after the same horizon it is no longer news either.
+--
+-- Params: :user_id, :today (ISO date), :horizon (ISO date), :floor (ISO date),
+--         :confidence_threshold
 SELECT
   e.id,
   e.kind,
@@ -47,6 +59,12 @@ LEFT JOIN entity p ON p.id = ep.entity_id
 WHERE e.user_id = :user_id
   AND e.status IN ('proposed', 'confirmed')
   AND e.confidence >= :confidence_threshold
-  AND (e.starts_at IS NULL OR substr(e.starts_at, 1, 10) <= :horizon)
+  AND (
+        CASE WHEN e.starts_at IS NULL
+             -- undated: judged on how old the proposal itself is
+             THEN substr(s.occurred_at, 1, 10) >= :floor
+             ELSE substr(e.starts_at, 1, 10) BETWEEN :today AND :horizon
+        END
+      )
 GROUP BY e.id
 ORDER BY (e.starts_at IS NULL) ASC, substr(e.starts_at, 1, 10) ASC, e.id ASC;

@@ -142,6 +142,16 @@ def build_router(
             merge_mod.merge(conn, winner_id, loser_id)
         except merge_mod.MergeError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except sqlite3.Error as exc:
+            # A merge repoints every table that names the loser and then deletes it, so
+            # a table added later and not repointed fails the foreign key here. That is
+            # a bug in merge(), but it must not reach the owner as a 500 with a
+            # traceback: merge() rolls its transaction back, so nothing is half-applied
+            # and the honest answer is that the merge did not happen and why.
+            raise HTTPException(
+                status_code=500,
+                detail=f"merge failed and was rolled back; both people are unchanged: {exc}",
+            ) from exc
         return RedirectResponse(url=f"/people/{winner_id}", status_code=303)
 
     return router

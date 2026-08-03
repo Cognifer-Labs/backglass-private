@@ -309,3 +309,128 @@ class TestDerivedProfile:
         assert record["mentions"] == 0
         assert record["lean"] is None
         assert record["channels"] == []
+
+
+class TestMergeCarriesPlans:
+    def test_merging_a_duplicate_person_keeps_their_plans(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Migration 0014 gave `engagement_person` a NOT NULL foreign key to entity with
+        no ON DELETE, and merge() repointed commitments and then deleted the loser — so
+        merging anyone who appeared in a single plan failed the constraint, rolled the
+        whole merge back, and reached the owner as a 500. Duplicate-person merge is the
+        main curation action on the People page, and it worked before engagements landed.
+        """
+        from backglass.people import merge as merge_mod
+
+        winner = _entity(conn, "Priya Raman")
+        loser = _entity(conn, "P. Raman")
+        _plan(conn, [loser], what="squash", starts_at="2026-08-05")
+
+        result = merge_mod.merge(conn, winner, loser)
+
+        assert result["plans_repointed"] == 1
+        carried = profiles.plans(conn, winner, TODAY.isoformat())["upcoming"]
+        assert [p["what"] for p in carried] == ["squash"]
+
+    def test_a_plan_they_both_attended_does_not_break_the_unique_guest_list(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """The guest list is a set. Repointing the loser onto a plan the winner is
+        already in would collide with UNIQUE (user_id, engagement_id, entity_id)."""
+        from backglass.people import merge as merge_mod
+
+        winner = _entity(conn, "Priya Raman")
+        loser = _entity(conn, "P. Raman")
+        _plan(conn, [winner, loser], what="dinner", starts_at="2026-08-05")
+
+        merge_mod.merge(conn, winner, loser)
+
+        rows = conn.execute("SELECT COUNT(*) AS n FROM engagement_person").fetchone()
+        assert rows["n"] == 1
+        assert conn.execute("SELECT COUNT(*) AS n FROM entity").fetchone()["n"] == 1
+
+
+class TestPlanOrdering:
+    def test_an_evening_plan_sorts_by_its_own_local_day(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """people_plans.sql orders on the local date prefix. Under date() an
+        offset-bearing evening plan collates into the next day and can overtake a
+        bare-date plan that really is later — the one engagement reader that had no test.
+        """
+        priya = _entity(conn, "Priya Raman")
+        _plan(conn, [priya], what="evening of the 5th",
+              starts_at="2026-08-05T19:00:00-07:00", n=1)
+        _plan(conn, [priya], what="all day the 6th", starts_at="2026-08-06", n=2)
+
+        ahead = profiles.plans(conn, priya, TODAY.isoformat())["upcoming"]
+        upcoming = [p["what"] for p in ahead]
+
+        assert upcoming == ["evening of the 5th", "all day the 6th"]
+
+    def test_every_table_that_names_an_entity_survives_a_merge(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """The invariant, asserted mechanically instead of in prose.
+
+        merge() repoints references and then deletes the loser, so a table added later
+        that names an entity and is not repointed turns the People page's main action
+        into a 500 — which is exactly how `engagement_person` broke it, and how
+        `activity.contact_entity_id` and `entity_merge.winner_id` had been broken since
+        before that. Derived from the live schema rather than a hand-written list, so the
+        next table to forget fails here and not in the owner's browser.
+        """
+        from backglass.people import merge as merge_mod
+
+        referencing = {
+            (str(row["name"]), str(fk["from"]))
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' "
+                "AND name NOT LIKE 'sqlite_%'"
+            )
+            for fk in conn.execute(f"PRAGMA foreign_key_list({row['name']})")
+            if str(fk["table"]) == "entity"
+        }
+        assert referencing, "the schema should still have foreign keys to entity"
+
+        winner = _entity(conn, "Survivor")
+        for table, column in sorted(referencing):
+            loser = _entity(conn, f"Dupe for {table}.{column}")
+            _seed_reference(conn, table, column, loser)
+            merge_mod.merge(conn, winner, loser)
+            left = conn.execute(
+                f"SELECT COUNT(*) AS n FROM {table} WHERE {column} = ?", (loser,)
+            ).fetchone()
+            assert left["n"] == 0, f"{table}.{column} still points at the deleted entity"
+
+
+def _seed_reference(
+    conn: sqlite3.Connection, table: str, column: str, entity_id: int
+) -> None:
+    """One row in `table` whose `column` names `entity_id`, whatever the table is."""
+    if table == "engagement_person":
+        _plan(conn, [entity_id], what=f"plan {entity_id}", starts_at="2026-08-05",
+              n=1000 + entity_id)
+        return
+    if table == "commitment":
+        _interaction(conn, entity_id, f"2026-07-1{entity_id % 10}T09:00:00-07:00")
+        return
+    if table == "entity_merge":
+        conn.execute(
+            "INSERT INTO entity_merge (user_id, winner_id, loser_snapshot_json, merged_at)"
+            " VALUES (1, ?, '{}', '2026-07-01T00:00:00Z')",
+            (entity_id,),
+        )
+        return
+    if table == "activity":
+        conn.execute(
+            "INSERT INTO activity (user_id, title, category, contact_entity_id, created_at)"
+            " VALUES (1, ?, 'research', ?, '2026-07-01T00:00:00Z')",
+            (f"activity {entity_id}", entity_id),
+        )
+        return
+    raise AssertionError(
+        f"{table}.{column} references entity and this test does not know how to seed it — "
+        "add a case so the merge invariant covers it"
+    )

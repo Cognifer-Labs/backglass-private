@@ -310,7 +310,11 @@ class Ledger:
     # ───────────────────────────────────────────────────────────── engagements
 
     def open_engagements(self) -> list[dict[str, Any]]:
-        """Live plans, for the dedup pass in extract/engagements.py.
+        """Plans the dedup pass in extract/engagements.py must be able to see.
+
+        Includes `declined`, which is not "open" in any other sense — the name is kept
+        for its callers. A cancelled plan has to stay visible to dedup or re-extraction
+        files the invitation that arranged it as a fresh proposal; see the query.
 
         Unscoped where the commitment equivalent is scoped to (direction, counterparty),
         because an engagement's participants live in a child table and the message being

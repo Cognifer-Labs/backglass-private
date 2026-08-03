@@ -472,3 +472,77 @@ class TestEndToEndThroughSync:
 
         assert second.writes == 0
         assert conn.execute("SELECT COUNT(*) AS n FROM engagement").fetchone()["n"] == 1
+
+
+class TestDeclinedStaysDeclined:
+    def test_re_extraction_does_not_resurrect_a_cancelled_plan(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """A prompt version bump re-reads the whole ledger (pending_extraction.sql), so
+        the message that proposed a plan is read again after the message that cancelled
+        it. While `declined` was hidden from the dedup query, that second reading matched
+        nothing and filed a fresh `proposed` row — and the brief asked the owner to reply
+        to a dinner they had already called off.
+        """
+        first, at_one = ingest(ledger := Ledger(conn, settings), boundary)
+        run(ledger, settings, first, at_one, engagement())
+
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        run(ledger, settings, second, at_two, engagement(status="declined"))
+        assert [r["status"] for r in rows(conn)] == ["declined"]
+
+        # …now re-extract the original message, exactly as a version bump would.
+        report = run(ledger, settings, first, at_one, engagement())
+
+        assert report.inserted == 0
+        assert [r["status"] for r in rows(conn)] == ["declined"]
+
+    def test_a_declined_plan_is_not_offered_for_review_or_the_brief(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        ledger = Ledger(conn, settings)
+        item_id, occurred_at = ingest(ledger, boundary)
+        run(ledger, settings, item_id, occurred_at, engagement(status="declined"))
+        live = conn.execute(
+            "SELECT COUNT(*) AS n FROM engagement WHERE status IN ('proposed','confirmed')"
+        ).fetchone()
+        assert live["n"] == 0
+
+
+class TestSameDayDifferentHours:
+    def test_two_plans_on_one_day_at_different_times_stay_two(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """Matching on the day alone fused them and kept only the first — and because
+        `advance_engagement` fills holes rather than repainting, the losing hour was not
+        even recorded anywhere. The 4pm coffee vanished from the ledger, the day plan and
+        the brief."""
+        ledger = Ledger(conn, settings)
+        item_id, occurred_at = ingest(ledger, boundary)
+
+        report = run(
+            ledger,
+            settings,
+            item_id,
+            occurred_at,
+            engagement(what="coffee with Priya", starts_at="Friday at 9am"),
+            engagement(what="coffee with Priya", starts_at="Friday at 4pm"),
+        )
+
+        assert report.inserted == 2
+        assert sorted(str(r["starts_at"])[11:16] for r in rows(conn)) == ["09:00", "16:00"]
+
+    def test_an_undated_plan_still_matches_the_message_that_times_it(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """The fallback the hour comparison must not break: when only one side names an
+        hour, the day still carries the match."""
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(ledger, settings, first, at_one, engagement(starts_at="Friday"))
+
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        report = run(ledger, settings, second, at_two, engagement(starts_at="Friday at 7pm"))
+
+        assert report.inserted == 0
+        assert len(rows(conn)) == 1

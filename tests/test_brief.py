@@ -716,3 +716,63 @@ class TestPlansSection:
             (source_id, now_iso()),
         )
         assert len(plan_lines(conn, settings)) == 1
+
+    def test_a_plan_whose_day_has_passed_stops_being_news(
+        self, conn, settings: Settings
+    ) -> None:
+        """Nothing in the codebase can move a plan to `done` — no CLI, no route, and the
+        status machine cannot reach it — so with only an upper bound every plan the owner
+        ever made stayed in this section forever, reported as "was 933d ago". docs/05
+        specifies a brief read in under two minutes."""
+        seed_plan(conn, settings, what="last year's dinner", starts_at="2024-01-05")
+        assert plan_lines(conn, settings) == []
+
+    def test_an_undated_plan_ages_out_on_the_message_that_proposed_it(
+        self, conn, settings: Settings
+    ) -> None:
+        """"We should get dinner sometime" earns a nag — it is the plan most likely to
+        decay — but not an indefinite one."""
+        conn.execute(
+            "INSERT INTO source_item (user_id, source, external_id, fetched_at,"
+            " occurred_at, author, title, body_text, raw_json, content_hash,"
+            " triage_verdict) VALUES (?, 'gmail:personal', 'old', ?,"
+            " '2024-02-02T09:00:00-07:00', 'Priya', 'dinner', 'b', '{}', 'oldhash','keep')",
+            (USER_ID, now_iso()),
+        )
+        source_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at,"
+            " when_is_explicit, location, status, confidence, source_item_id, created_at)"
+            " VALUES (1, 'social', 'dinner sometime', NULL, NULL, 0, NULL, 'proposed',"
+            " 0.9, ?, ?)",
+            (source_id, now_iso()),
+        )
+        assert plan_lines(conn, settings) == []
+
+    def test_a_recent_undated_plan_is_still_shown(self, conn, settings: Settings) -> None:
+        seed_plan(conn, settings, what="dinner sometime", starts_at=None, status="proposed")
+        assert plan_lines(conn, settings) != []
+
+
+class TestPlansNeedingReview:
+    def review_lines(self, conn, settings: Settings) -> list[str]:  # type: ignore[no-untyped-def]
+        return [line.text for line in daily.review_section(conn, TODAY, settings).lines]
+
+    def test_a_low_confidence_plan_reaches_the_review_queue(
+        self, conn, settings: Settings
+    ) -> None:
+        """Rule 2 has two clauses. Engagements honoured "never into the brief as fact"
+        from the start and silently dropped "goes to a review queue", because every
+        review surface read FROM commitment — while post-processing counted the entry and
+        the CLI printed the count. A guess the owner can never see is invisible work
+        reported as done."""
+        seed_plan(conn, settings, what="maybe drinks", starts_at="2026-08-01",
+                  confidence=0.3)
+        lines = self.review_lines(conn, settings)
+        assert any("maybe drinks" in text for text in lines), lines
+        assert any("30% confident" in text for text in lines)
+
+    def test_a_believed_plan_is_not_asked_about(self, conn, settings: Settings) -> None:
+        seed_plan(conn, settings, what="confirmed dinner", starts_at="2026-08-01",
+                  confidence=0.95)
+        assert self.review_lines(conn, settings) == []
