@@ -62,19 +62,43 @@ def monday(conn: sqlite3.Connection, settings: Settings, day: date) -> Brief:
     # ── last week's targets, hit and missed, with counts
     scored = Section(priority=1, title="Last week")
     for target in targets_mod.progress(conn, settings, last_week + timedelta(days=1)):
-        mark = "hit" if target.complete else "missed"
         label = f"{target.goal_title} — {target.title}"
-        count = (
-            f"{target.done_this_week}/{target.weekly_count}"
-            if target.weekly_count
-            else str(target.done_this_week)
-        )
+        source = LedgerRef("goals", str(target.goal_id), f"goal · {target.goal_title}")
+        # A weekly verdict is a cadence concept, and `TargetProgress.complete` means
+        # three different things by kind (goals/targets.py). Scoring every kind against
+        # it wrote "0 missed." for milestones that were never weekly and for totals
+        # measured over a lifetime — on a real ledger, 54 such lines ate the 400-word
+        # budget and B1 dropped Capacity, At risk, Unrealistic and Aging to make room.
+        # Same guard as the daily brief's goals section, for the same reason.
+        if target.kind == "milestone":
+            # A milestone is reached or it is not yet. "Missed" is not a state it has,
+            # so it appears here only on the week it was actually reached.
+            if target.done_this_week:
+                scored.lines.append(Line(text=f"{label}: reached.", provenance=source))
+            continue
+        if target.kind == "total":
+            # A lifetime accumulator reports movement, never a weekly verdict — a week
+            # with no entry is not a missed week against a total with no cadence.
+            if target.done_this_week:
+                lifetime = (
+                    f"{target.lifetime_done}/{target.total_count}"
+                    if target.total_count
+                    else str(target.lifetime_done)
+                )
+                scored.lines.append(
+                    Line(
+                        text=f"{label}: +{target.done_this_week}, {lifetime} lifetime.",
+                        provenance=source,
+                    )
+                )
+            continue
+        if not target.weekly_count:
+            continue
+        mark = "hit" if target.complete else "missed"
         scored.lines.append(
             Line(
-                text=f"{label}: {count} {mark}.",
-                provenance=LedgerRef(
-                    "goals", str(target.goal_id), f"goal · {target.goal_title}"
-                ),
+                text=f"{label}: {target.done_this_week}/{target.weekly_count} {mark}.",
+                provenance=source,
                 status=None if target.complete else "slipping",
             )
         )
