@@ -14,7 +14,11 @@
 -- guest list and a start time). Fusing them would mean NULL-padding both sides and a
 -- caller that switches on a discriminator column anyway.
 --
--- Params: :user_id, :confidence_threshold
+-- Bounded below, like the Plans section above it. A guess about a plan that was meant to
+-- happen last year is not a question worth asking every morning forever; commitments need
+-- no equivalent because a commitment has no date on which it becomes moot.
+--
+-- Params: :user_id, :confidence_threshold, :floor (ISO date)
 SELECT
   e.id,
   e.kind,
@@ -42,5 +46,6 @@ LEFT JOIN entity p ON p.id = ep.entity_id
 WHERE e.user_id = :user_id
   AND e.status IN ('proposed', 'confirmed')
   AND e.confidence < :confidence_threshold
+  AND (e.starts_at IS NULL OR substr(e.starts_at, 1, 10) >= :floor)
 GROUP BY e.id
 ORDER BY e.confidence DESC, e.id ASC;

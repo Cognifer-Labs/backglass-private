@@ -28,6 +28,24 @@ from backglass.db import now_iso, query
 USER_ID = 1  # docs/03: "user_id on every table, always 1."
 
 
+def _sharpens(new: str | None, current: str | None) -> bool:
+    """Is `new` worth writing over `current` for an engagement's time?
+
+    Yes when there was nothing there, and yes when a later message moves a time that was
+    already known — a reschedule is the single most common thing a follow-up message
+    does. No when `new` is absent, unchanged, or *less* precise than what is stored: a
+    message that mentions only the day must not blank an hour an earlier one established,
+    or every passing reference to a plan would erode it.
+    """
+    if new is None or new == current:
+        return False
+    if current is None:
+        return True
+    has_clock = "T" in new or " " in new
+    had_clock = "T" in current or " " in current
+    return has_clock or not had_clock
+
+
 @dataclass
 class LedgerStats:
     source_items_inserted: int = 0
@@ -433,6 +451,23 @@ class Ledger:
         self.writes += 1
         return True
 
+    def cites_engagement(self, engagement_id: int, source_item_id: int) -> bool:
+        """Has this message already been read against this plan?
+
+        The one question that separates re-extraction from a fresh invitation. A
+        cancelled plan has to stay visible to dedup so a prompt-version bump cannot
+        resurrect it, but a `declined` row that matches everything forever becomes a sink:
+        someone proposing the same thing again months later would be filed onto the dead
+        row and reach no surface at all. A citation for this exact source item means the
+        ledger has seen this sentence before.
+        """
+        row = self.conn.execute(
+            "SELECT 1 FROM engagement_evidence "
+            "WHERE user_id = ? AND engagement_id = ? AND source_item_id = ?",
+            (USER_ID, engagement_id, source_item_id),
+        ).fetchone()
+        return row is not None
+
     def advance_engagement(
         self,
         engagement_id: int,
@@ -444,12 +479,20 @@ class Ledger:
     ) -> bool:
         """Move a plan forward as later messages settle it. Returns True on a change.
 
-        Only ever fills in and moves on: a NULL time learns a time, a `proposed` plan
-        becomes `confirmed`. The caller decides whether the move is legal (see
-        engagements.ADVANCES_TO); this method refuses to overwrite a value it already
-        has, so a vaguer later mention cannot erase what an earlier, more specific one
-        established. Returns False when nothing would change, which is what keeps an
-        unchanged re-read at zero writes.
+        A NULL time learns a time, a `proposed` plan becomes `confirmed`, and a stated
+        time that has *changed* is repainted — "can we push dinner to 7:30" is the same
+        dinner, and refusing to move it meant either keeping the wrong hour or (worse,
+        once dedup started separating on the clock) growing a second row that
+        double-booked the day.
+
+        What it will not do is let a vaguer sighting erase a sharper one. A later message
+        that names only the day cannot blank an hour an earlier message established, and
+        a NULL never overwrites a value — otherwise every passing mention of a plan would
+        degrade what is known about it. The caller decides whether the status move is
+        legal (see engagements.ADVANCES_TO) and gates all of this on confidence.
+
+        Returns False when nothing would change, which is what keeps an unchanged re-read
+        at zero writes.
         """
         row = self.conn.execute(
             "SELECT status, starts_at, ends_at, location FROM engagement "
@@ -462,11 +505,10 @@ class Ledger:
         updates: dict[str, Any] = {}
         if status != row["status"]:
             updates["status"] = status
-        # Fill a hole, never repaint a wall.
-        if starts_at is not None and row["starts_at"] is None:
-            updates["starts_at"] = starts_at
-        if ends_at is not None and row["ends_at"] is None:
-            updates["ends_at"] = ends_at
+        for column, value in (("starts_at", starts_at), ("ends_at", ends_at)):
+            if _sharpens(value, row[column]):
+                updates[column] = value
+        # Location has no precision to compare; fill a hole, never repaint a wall.
         if location is not None and row["location"] is None:
             updates["location"] = location
         if not updates:

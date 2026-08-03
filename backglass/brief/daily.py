@@ -31,6 +31,10 @@ ROLLOVER_THRESHOLD = 3
 #: docs/07 §Instagram. How far ahead the Friend plans section looks. Wider than
 #: slipping's two days because a Saturday plan made on Monday should be visible all week.
 FRIEND_PLANS_HORIZON_DAYS = 14
+#: How far back the plan review queue looks. Wider than the Plans horizon because a guess
+#: is worth a second look for longer than a plan is worth announcing, but still bounded —
+#: an unanswerable question asked every morning forever is the defect, not the answer.
+REVIEW_FLOOR_DAYS = 60
 
 #: A friend plan that is *not* one of these demotes to the Friend plans section; one
 #: that is stays in the normal sections at full priority. Deterministic on purpose —
@@ -718,7 +722,13 @@ def review_section(conn: sqlite3.Connection, today: date, settings: Settings) ->
     for row in _rows(
         conn,
         "brief_needs_review_plans",
-        {"user_id": USER_ID, "confidence_threshold": settings.confidence_threshold},
+        {
+            "user_id": USER_ID,
+            "confidence_threshold": settings.confidence_threshold,
+            # Same floor the dashboard queue uses: a guess about a plan that was meant to
+            # happen last year is not a question worth asking every morning forever.
+            "floor": (today - timedelta(days=REVIEW_FLOOR_DAYS)).isoformat(),
+        },
     ):
         who = f" with {row['people']}" if row["people"] else ""
         when = _plan_phrase(row["starts_at"], today)

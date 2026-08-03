@@ -1230,3 +1230,59 @@ class TestWhenLabel:
         assert when_label("2026-09-15", today) == "15 Sep"
         assert when_label("2027-03-01", today) == "01 Mar 2027"
         assert when_label(None, today) == "no date yet"
+
+
+class TestReviewQueueHoldsBothRecords:
+    def _plan(self, conn: sqlite3.Connection, *, confidence: float, what: str) -> int:
+        conn.execute(
+            "INSERT INTO source_item (source, external_id, fetched_at, occurred_at,"
+            " author, title, body_text, content_hash, triage_verdict)"
+            " VALUES ('imessage', ?, '2026-07-20T09:00:00-07:00',"
+            " '2026-07-20T09:00:00-07:00', 'Priya', 'msg', 'b', ?, 'keep')",
+            (f"rev-{what}", f"revhash-{what}"),
+        )
+        source_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at,"
+            " when_is_explicit, location, status, confidence, source_item_id, created_at)"
+            " VALUES (1, 'social', ?, '2099-08-05', NULL, 1, NULL, 'proposed', ?, ?,"
+            " '2026-07-20T09:00:00-07:00')",
+            (what, confidence, source_id),
+        )
+        return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+    def test_a_low_confidence_plan_appears_in_the_dashboard_queue(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """The brief got plans in its review section and the dashboard panel did not, so
+        the panel — and the "N extractions awaiting review" nudge counted off it —
+        silently undercounted by every plan in the queue."""
+        self._plan(conn, confidence=0.3, what="shaky plan")
+        body = client.get("/").text
+        review = panel_slice(body, "panel-review")
+        assert "shaky plan" in review
+        assert "Is this a real plan" in review
+
+    def test_accepting_a_plan_believes_it(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        engagement_id = self._plan(conn, confidence=0.3, what="shaky plan")
+        response = client.post(f"/review/plan/{engagement_id}/accept")
+        assert response.status_code == 200
+        row = conn.execute(
+            "SELECT confidence FROM engagement WHERE id = ?", (engagement_id,)
+        ).fetchone()
+        assert float(row["confidence"]) == 1.0
+        assert "shaky plan" not in panel_slice(client.get("/").text, "panel-review")
+
+    def test_rejecting_a_plan_declines_it_so_re_extraction_cannot_revive_it(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """docs/11 §4 asks a rejection to tombstone the row. `declined` already means
+        that and is already what the dedup pass can see, so no new column is needed."""
+        engagement_id = self._plan(conn, confidence=0.3, what="shaky plan")
+        assert client.post(f"/review/plan/{engagement_id}/reject").status_code == 200
+        row = conn.execute(
+            "SELECT status FROM engagement WHERE id = ?", (engagement_id,)
+        ).fetchone()
+        assert row["status"] == "declined"

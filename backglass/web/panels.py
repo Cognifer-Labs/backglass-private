@@ -20,6 +20,9 @@ from backglass.config import Settings
 from backglass.db import query
 from backglass.ledger import USER_ID
 
+#: How far back the plan review queue looks; see `_review_floor`.
+REVIEW_FLOOR_DAYS = 60
+
 
 @dataclass
 class Panel:
@@ -258,12 +261,36 @@ def checklist_panel(conn: sqlite3.Connection, today: date) -> Panel:
 
 
 def review_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:
-    rows = _rows(
-        conn,
-        "brief_needs_review",
-        {"user_id": USER_ID, "confidence_threshold": settings.confidence_threshold},
-    )
+    """Both record types, in one queue.
+
+    Plans were missing here long after the brief had them, so the panel — and the
+    "N extractions awaiting review" nudge counted off it — silently undercounted by
+    every low-confidence plan in the ledger. `record` tells the template which shape it
+    is holding and which endpoint its buttons post to; it is not `kind`, which the
+    engagement rows already use for social/professional.
+    """
+    params = {"user_id": USER_ID, "confidence_threshold": settings.confidence_threshold}
+    rows = [dict(row, record="commitment") for row in _rows(conn, "brief_needs_review", params)]
+    rows += [
+        dict(row, record="plan")
+        for row in _rows(
+            conn, "brief_needs_review_plans", {**params, "floor": _review_floor(settings)}
+        )
+    ]
     return Panel(title="Review queue", empty_text="Nothing to review.", rows=rows)
+
+
+def _review_floor(settings: Settings) -> str:
+    """How far back the plan queue looks.
+
+    A guess about a plan that was supposed to happen last year is not a question worth
+    asking every morning forever — the same unbounded-growth defect the Plans section
+    itself had. Commitments need no equivalent because a commitment has no date it
+    becomes moot on; a plan does.
+    """
+    from backglass.brief.daily import today_in
+
+    return (today_in(settings.default_tz) - timedelta(days=REVIEW_FLOOR_DAYS)).isoformat()
 
 
 def sources_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:

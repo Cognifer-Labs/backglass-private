@@ -10,6 +10,8 @@ import json
 import sqlite3
 from datetime import date
 
+import pytest
+
 from backglass.config import Settings
 from backglass.people import profiles, touch
 
@@ -352,17 +354,26 @@ class TestMergeCarriesPlans:
 
 
 class TestPlanOrdering:
+    @pytest.mark.parametrize("evening_first", [True, False])
     def test_an_evening_plan_sorts_by_its_own_local_day(
-        self, conn: sqlite3.Connection
+        self, conn: sqlite3.Connection, evening_first: bool
     ) -> None:
         """people_plans.sql orders on the local date prefix. Under date() an
-        offset-bearing evening plan collates into the next day and can overtake a
-        bare-date plan that really is later — the one engagement reader that had no test.
+        offset-bearing evening plan collates into the next day and ties with a bare-date
+        plan that really is later.
+
+        Parametrized on insertion order, and that is the entire point. The first version
+        of this test inserted the evening plan first, so when date() produced a tie the
+        `e.id DESC` tie-break happened to yield the right answer and the test stayed green
+        against the bug it was written for — the same false proof it was written to
+        replace. One of these two orders fails under date(); a single order proves nothing.
         """
         priya = _entity(conn, "Priya Raman")
-        _plan(conn, [priya], what="evening of the 5th",
-              starts_at="2026-08-05T19:00:00-07:00", n=1)
-        _plan(conn, [priya], what="all day the 6th", starts_at="2026-08-06", n=2)
+        evening = ("evening of the 5th", "2026-08-05T19:00:00-07:00")
+        allday = ("all day the 6th", "2026-08-06")
+        first, second = (evening, allday) if evening_first else (allday, evening)
+        _plan(conn, [priya], what=first[0], starts_at=first[1], n=1)
+        _plan(conn, [priya], what=second[0], starts_at=second[1], n=2)
 
         ahead = profiles.plans(conn, priya, TODAY.isoformat())["upcoming"]
         upcoming = [p["what"] for p in ahead]
@@ -434,3 +445,26 @@ def _seed_reference(
         f"{table}.{column} references entity and this test does not know how to seed it — "
         "add a case so the merge invariant covers it"
     )
+
+
+class TestGuessesAreMarkedOnTheProfile:
+    def test_a_low_confidence_plan_is_not_stated_as_fact(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The brief and the capacity model both honour rule 2 for plans; the person page
+        rendered a 0.30-confidence plan identically to a certain one — plain text, no
+        marker — which is a guess stated as fact on the surface most likely to be read as
+        a record of the relationship."""
+        from fastapi.testclient import TestClient
+
+        from backglass.web.app import create_app
+
+        priya = _entity(conn, "Priya Raman")
+        _plan(conn, [priya], what="shaky dinner", starts_at="2099-08-05", n=77)
+        conn.execute("UPDATE engagement SET confidence = 0.3 WHERE what = 'shaky dinner'")
+
+        client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
+        body = client.get(f"/people/{priya}").text
+
+        assert "shaky dinner" in body
+        assert "unconfirmed guess" in body

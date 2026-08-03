@@ -74,7 +74,15 @@ def apply(
                 report.date_notes.append(f"{candidate.what!r}: {resolution.note}")
 
         # ── step 5: dedup, against the ledger and within this one response.
-        match = _match(candidate, entity_ids, starts.value, ledger, settings, accepted_here)
+        match = _match(
+            candidate,
+            entity_ids,
+            starts.value,
+            source_item_id,
+            ledger,
+            settings,
+            accepted_here,
+        )
         if match is not None:
             report.deduped += 1
             ledger.stats.engagements_deduped += 1
@@ -157,6 +165,7 @@ def _match(
     candidate: ExtractedEngagement,
     entity_ids: set[int],
     starts_at: str | None,
+    source_item_id: int,
     ledger: Ledger,
     settings: Settings,
     accepted: list[tuple[int, ExtractedEngagement, set[int], str | None]],
@@ -171,16 +180,45 @@ def _match(
     An undated plan matches a dated one on purpose — "we should get dinner" followed by
     "how's Friday" is the same dinner, and the second sighting is precisely how it
     acquires its date.
+
+    The clock matters differently depending on where the other sighting came from, and
+    getting that backwards produced a duplicate that double-booked the day:
+
+      * **Inside one response** the hour separates. A message that says "coffee at 9 or
+        4" describes two possible plans, and the model returns two engagements; fusing
+        them on the shared day would drop one.
+      * **Across messages** the hour is the thing most likely to have been corrected.
+        "Dinner Friday at 7" then "can we push to 7:30" is one dinner, and treating the
+        new time as a new plan leaves two overlapping blocks on the day with no way for
+        the owner to tell which is stale — the brief does not even print the hour. So a
+        later sighting matches on the day and *repaints* the time.
     """
     for engagement_id, other, other_ids, other_start in accepted:
         if _same(candidate, entity_ids, starts_at, other, other_ids, other_start, settings):
             return engagement_id
 
+    # Rows this same response already created are settled above, at clock precision.
+    # They are also in the ledger by now — insert_engagement writes immediately — and the
+    # loop below compares on the day, so without this the 4pm coffee would match the 9am
+    # one it was just distinguished from and repaint it.
+    fresh = {engagement_id for engagement_id, _, _, _ in accepted}
     for row in ledger.open_engagements():
+        if int(row["id"]) in fresh:
+            continue
         raw = row["entity_ids"]
         row_ids = {int(part) for part in str(raw).split(",")} if raw else set()
-        if _same_row(candidate, entity_ids, starts_at, row, row_ids, settings):
-            return int(row["id"])
+        if not _same_row(candidate, entity_ids, starts_at, row, row_ids, settings):
+            continue
+        # A cancelled plan stays visible so re-extraction cannot resurrect it, but it
+        # must not become a sink that swallows real invitations for the rest of time.
+        # The distinction is whether this exact message has been read against this row
+        # before: if it has, this is re-extraction and there is nothing new to file; if
+        # it has not, someone is proposing the thing again and that is a new plan.
+        if str(row["status"]) == "declined" and not ledger.cites_engagement(
+            int(row["id"]), source_item_id
+        ):
+            continue
+        return int(row["id"])
     return None
 
 
@@ -193,8 +231,16 @@ def _same(
     other_start: str | None,
     settings: Settings,
 ) -> bool:
+    """Two engagements in the SAME response — the hour separates them."""
     return _agrees(
-        candidate.what, ids, starts_at, other.what, other_ids, other_start, settings
+        candidate.what,
+        ids,
+        starts_at,
+        other.what,
+        other_ids,
+        other_start,
+        settings,
+        to_the_hour=True,
     )
 
 
@@ -206,6 +252,8 @@ def _same_row(
     row_ids: set[int],
     settings: Settings,
 ) -> bool:
+    """A candidate against a row from an EARLIER message — the day decides, because the
+    hour is the part a later message most often corrects."""
     return _agrees(
         candidate.what,
         ids,
@@ -214,6 +262,7 @@ def _same_row(
         row_ids,
         str(row["starts_at"]) if row["starts_at"] is not None else None,
         settings,
+        to_the_hour=False,
     )
 
 
@@ -234,6 +283,8 @@ def _agrees(
     other_ids: set[int],
     other_start: str | None,
     settings: Settings,
+    *,
+    to_the_hour: bool,
 ) -> bool:
     if entities.similar(what, other_what) < settings.dedup_threshold:
         return False
@@ -248,14 +299,11 @@ def _agrees(
     # plan each week; letting the shared guest fuse them would keep one row and silently
     # swallow every later occurrence.
     #
-    # Compared at whatever precision BOTH sides carry. Two plans on one day at different
-    # hours are two plans — "coffee at 9" and "coffee at 4" is not one coffee — and
-    # matching on the date alone dropped the second, because `advance_engagement` fills
-    # holes and never repaints, so the losing hour was not even recorded. Where only one
-    # side states an hour the comparison falls back to the day, which is the "how's
-    # Friday" case gaining a time.
+    # `to_the_hour` is the caller saying which question this is: two candidates in one
+    # response are separated by their clock times, while a candidate against a stored row
+    # is compared on the day so that a corrected time repaints rather than duplicating.
     if starts_at is not None and other_start is not None:
-        if _has_clock(starts_at) and _has_clock(other_start):
+        if to_the_hour and _has_clock(starts_at) and _has_clock(other_start):
             return starts_at[:16] == other_start[:16]
         return starts_at[:10] == other_start[:10]
 

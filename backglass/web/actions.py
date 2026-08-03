@@ -146,6 +146,44 @@ def reject(conn: sqlite3.Connection, commitment_id: int, reason: str) -> Result:
     return Result(ok=True, detail=REJECT_REASONS[reason])
 
 
+def accept_plan(conn: sqlite3.Connection, engagement_id: int) -> Result:
+    """The engagement half of Accept. Same act, same reasoning as `accept` above:
+    the owner confirming a plan is better evidence than any model score."""
+    row = conn.execute(
+        "SELECT confidence, status FROM engagement WHERE user_id = ? AND id = ?",
+        (USER_ID, engagement_id),
+    ).fetchone()
+    if row is None:
+        raise ActionError(f"no plan {engagement_id}")
+    if str(row["status"]) == "declined":
+        raise ActionError("that plan was already declined")
+    conn.execute("UPDATE engagement SET confidence = 1.0 WHERE id = ?", (engagement_id,))
+    return Result(ok=True, detail="accepted")
+
+
+def reject_plan(conn: sqlite3.Connection, engagement_id: int) -> Result:
+    """Reject tombstones a plan by declining it.
+
+    `declined` already means "the owner is not doing this" and is already the status the
+    dedup pass can see, so re-extraction cannot resurrect it — which is exactly the
+    property docs/11 §4 asks a rejection to have, reached with no new column. There are no
+    reason categories here, unlike a commitment's four: a plan can be wrong in only one
+    interesting way ("that was not a plan"), and inventing categories nobody chooses is
+    the mistake the commitment queue already made once and had removed.
+    """
+    row = conn.execute(
+        "SELECT status FROM engagement WHERE user_id = ? AND id = ?",
+        (USER_ID, engagement_id),
+    ).fetchone()
+    if row is None:
+        raise ActionError(f"no plan {engagement_id}")
+    conn.execute(
+        "UPDATE engagement SET status = 'declined', resolved_at = ? WHERE id = ?",
+        (now_iso(), engagement_id),
+    )
+    return Result(ok=True, detail="not a plan")
+
+
 # ── 3. tick / untick a checklist item ─────────────────────────────────────
 
 

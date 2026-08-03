@@ -6,6 +6,36 @@
       <p class="empty">Nothing to review.</p>
     {% else %}
       {% for r in d.review.rows %}
+        {% if r['record'] == 'plan' %}
+        {# A plan asks a different question from a commitment — "is this a real plan?"
+           rather than "did you promise this?" — so it says so, and its buttons post to
+           the engagement endpoints. Rejecting declines it, which is already the status
+           dedup can see, so re-extraction cannot bring it back: docs/11 §4's tombstone
+           requirement met with no new column. No reason categories, unlike a
+           commitment's four: a plan is wrong in one interesting way, and inventing
+           categories nobody picks is the mistake that was removed from the other half. #}
+        <div class="rev">
+          <p class="b1 hang">{{ m.chip('needs_review') }}<span>
+            Is this a real plan: {{ r['what'] }}{% if r['people'] %} with {{ r['people'] }}{% endif %}</span>
+          </p>
+          {% if r['evidence_quote'] %}
+            <p class="quote">“{{ r['evidence_quote'] }}”</p>
+            <p class="b2">{{ r['source_title'] or 'no subject' }} — {{ m.source_link(r) }}</p>
+          {% else %}
+            <p class="quote">{{ r['source_title'] or 'no subject' }} — {{ m.source_link(r) }}</p>
+          {% endif %}
+          <p class="conf">{{ '%.0f'|format(r['confidence'] * 100) }}% confident · {{ r['starts_at']|when(d.today) }}</p>
+          <div class="acts">
+            <button class="btn accept" hx-post="/review/plan/{{ r['id'] }}/accept"
+                    hx-target="#panel-review" hx-swap="outerHTML">Accept</button>
+          </div>
+          <div class="why">
+            <span class="lbl">or</span>
+            <button class="btn reject" hx-post="/review/plan/{{ r['id'] }}/reject"
+                    hx-target="#panel-review" hx-swap="outerHTML">Not a plan</button>
+          </div>
+        </div>
+        {% else %}
         {# design-system.md §4: dashed keyline, no fill. "In a system where color means
            certainty, a guess does not get an ink." #}
         <div class="rev">
@@ -52,6 +82,7 @@
             {% endfor %}
           </div>
         </div>
+        {% endif %}
       {% endfor %}
     {% endif %}
   </div>

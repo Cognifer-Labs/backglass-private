@@ -546,3 +546,104 @@ class TestSameDayDifferentHours:
 
         assert report.inserted == 0
         assert len(rows(conn)) == 1
+
+
+class TestReschedule:
+    def test_a_later_message_moving_the_time_moves_the_plan(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """The most common follow-up a plan ever gets.
+
+        Separating on the clock across messages turned "can we push dinner to 7:30" into
+        a second row: two overlapping fixed blocks on the day, and two byte-identical
+        lines in the brief, which does not print the hour — so the owner could not even
+        tell which was stale, and nothing can delete a plan.
+        """
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(ledger, settings, first, at_one, engagement(starts_at="Friday at 7pm"))
+
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        report = run(ledger, settings, second, at_two, engagement(starts_at="Friday at 7:30pm"))
+
+        assert report.inserted == 0
+        assert report.advanced == 1
+        (row,) = rows(conn)
+        assert str(row["starts_at"]) == "2026-07-17T19:30:00"
+
+    def test_two_times_in_one_message_are_still_two_plans(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """The other side of the same rule, and the reason it cannot simply match on the
+        day: one message offering two times describes two plans, and the row the first
+        candidate just wrote is already in the ledger when the second is matched."""
+        ledger = Ledger(conn, settings)
+        item_id, occurred_at = ingest(ledger, boundary)
+        report = run(
+            ledger,
+            settings,
+            item_id,
+            occurred_at,
+            engagement(what="coffee", starts_at="Friday at 9am", location=None),
+            engagement(what="coffee", starts_at="Friday at 4pm", location=None),
+        )
+        assert report.inserted == 2
+        assert sorted(str(r["starts_at"])[11:16] for r in rows(conn)) == ["09:00", "16:00"]
+
+    def test_a_vaguer_later_mention_cannot_blank_a_known_hour(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """Repainting must not become erosion: a message that names only the day has to
+        leave an hour an earlier message established alone."""
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(ledger, settings, first, at_one, engagement(starts_at="Friday at 7pm"))
+
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        run(ledger, settings, second, at_two, engagement(starts_at="Friday"))
+
+        (row,) = rows(conn)
+        assert str(row["starts_at"]) == "2026-07-17T19:00:00"
+
+
+class TestDeclinedIsNotASink:
+    def test_a_genuinely_new_invitation_is_a_new_plan(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """Making declined rows visible to dedup stopped re-extraction resurrecting a
+        cancelled plan — and, until this, made the dead row swallow real invitations
+        forever. An undated re-invitation months later matched the corpse, was cited onto
+        it, was never reopened, and reached no surface at all.
+
+        The distinction is whether this exact message has been read against this row
+        before: that is re-extraction, and anything else is someone asking again.
+        """
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(ledger, settings, first, at_one, engagement(starts_at=None))
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        run(ledger, settings, second, at_two, engagement(starts_at=None, status="declined"))
+        assert [r["status"] for r in rows(conn)] == ["declined"]
+
+        # Two months later, someone asks again.
+        third, at_three = ingest(ledger, boundary, sent="2026-09-20T09:00:00-07:00")
+        report = run(ledger, settings, third, at_three, engagement(starts_at=None))
+
+        assert report.inserted == 1
+        assert sorted(str(r["status"]) for r in rows(conn)) == ["declined", "proposed"]
+
+    def test_re_extracting_a_message_it_already_cites_still_writes_nothing(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """The property the declined-visibility fix exists for, kept intact by the one
+        above it."""
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(ledger, settings, first, at_one, engagement(starts_at=None))
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        run(ledger, settings, second, at_two, engagement(starts_at=None, status="declined"))
+
+        report = run(ledger, settings, first, at_one, engagement(starts_at=None))
+
+        assert report.inserted == 0
+        assert [r["status"] for r in rows(conn)] == ["declined"]

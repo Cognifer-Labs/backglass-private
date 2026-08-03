@@ -240,6 +240,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _run(actions.reject, conn, commitment_id, reason)
         return review_fragment(request, conn)
 
+    # The plan half of the queue. Separate paths rather than one polymorphic route: the
+    # ids come from different tables and a mixed-up id would accept the wrong record
+    # silently, which is the one thing a review queue must never do.
+    @app.post("/review/plan/{engagement_id}/accept", response_class=HTMLResponse)
+    def accept_plan(
+        engagement_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+    ) -> Any:
+        _run(actions.accept_plan, conn, engagement_id)
+        return review_fragment(request, conn)
+
+    @app.post("/review/plan/{engagement_id}/reject", response_class=HTMLResponse)
+    def reject_plan(
+        engagement_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+    ) -> Any:
+        _run(actions.reject_plan, conn, engagement_id)
+        return review_fragment(request, conn)
+
     @app.post("/checklist/{item_id}/tick", response_class=HTMLResponse)
     def tick(
         item_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)

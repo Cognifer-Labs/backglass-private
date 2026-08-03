@@ -58,9 +58,18 @@
       {% for e in derived['upcoming'] %}
         <div class="row">
           <div class="grow">
+            {# Two different chips for two different doubts. `proposed` means nobody has
+               answered yet; a confidence below the threshold means the system is not sure
+               this is a plan at all, and rendering that identically to a certain one
+               states a guess as fact — the rule 2 failure the brief and the capacity model
+               were both fixed for. #}
             <p class="b1">
-              {% if e['status'] == 'proposed' %}{{ m.chip('needs_review') }}{% endif %}
+              {% if e['confidence'] < settings.confidence_threshold %}{{ m.chip('needs_review') }}
+              {%- elif e['status'] == 'proposed' %}{{ m.chip('needs_review') }}{% endif %}
               {{ e['what'] }}{% if e['others'] %} with {{ e['others'] }}{% endif %}
+              {%- if e['confidence'] < settings.confidence_threshold %}
+                <span class="conf">unconfirmed guess, {{ '%.0f'|format(e['confidence'] * 100) }}% confident</span>
+              {%- endif %}
             </p>
             <p class="b2">
               {{ e['starts_at']|when(today) }}
