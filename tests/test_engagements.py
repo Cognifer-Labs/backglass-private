@@ -384,3 +384,91 @@ def test_both_kinds_round_trip(
     run(ledger, settings, item_id, occurred_at, engagement(kind=kind))
     (row,) = rows(conn)
     assert row["kind"] == kind
+
+
+class TestEndToEndThroughSync:
+    """The wiring, not the appliers.
+
+    Everything above drives `apply()` directly, which would keep passing if sync.py
+    never called it — the exact shape tasks/lessons.md keeps recording, where a rule is
+    proven at the function and the real door walks past it. This drives `sync()` and
+    then the planner, so a plan found in a message ends up on the day.
+    """
+
+    def test_a_plan_in_a_message_becomes_a_block_on_the_day(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        from datetime import date as _date
+
+        from backglass.plan import planner
+        from backglass.sync import sync
+        from tests.conftest import FakeModel
+
+        message = gmail_message(
+            {
+                "id": "plan-e2e",
+                "from": "Priya Raman <priya@example.com>",
+                "to": "owner@example.com",
+                "date": SENT,
+                "internal_date": str(int(datetime.fromisoformat(SENT).timestamp() * 1000)),
+                "subject": "Friday",
+                "body": "Lunch at Ravi's on Friday at 1? Sam is in.",
+            }
+        )
+        model = FakeModel(
+            extract={
+                "Lunch at Ravi's": {
+                    "commitments": [],
+                    "engagements": [
+                        engagement(
+                            what="lunch at Ravi's",
+                            starts_at="Friday at 1pm",
+                            status="confirmed",
+                            people=["Priya Raman <priya@example.com>"],
+                        )
+                    ],
+                }
+            },
+            triage={"Lunch at Ravi's": {"keep": True, "reason": "a plan"}},
+        )
+
+        report = sync(conn, settings, [make_connector([message], boundary)], model)
+
+        assert report.engagements_inserted == 1, report
+        row = conn.execute("SELECT * FROM engagement").fetchone()
+        assert row["status"] == "confirmed"
+        assert str(row["starts_at"]).startswith("2026-07-17T13:00")
+
+        # …and the planner puts it on that day, with its location, as a fixed block.
+        proposal = planner.propose(conn, settings, _date(2026, 7, 17))
+        fixed = [b for b in proposal.blocks if b["kind"] == "fixed"]
+        assert any("lunch at Ravi's" in str(b["title"]) for b in fixed), fixed
+
+    def test_a_second_sync_over_the_same_message_writes_nothing(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """Rule 3 through the real pipeline, where the content hash short-circuits
+        before the model is called at all."""
+        from backglass.sync import sync
+        from tests.conftest import FakeModel
+
+        message = gmail_message(
+            {
+                "id": "plan-e2e-2",
+                "from": "Priya Raman <priya@example.com>",
+                "to": "owner@example.com",
+                "date": SENT,
+                "internal_date": str(int(datetime.fromisoformat(SENT).timestamp() * 1000)),
+                "subject": "Friday",
+                "body": "Dinner at Ravi's on Friday at 7?",
+            }
+        )
+        model = FakeModel(
+            extract={"Dinner at Ravi's": {"commitments": [], "engagements": [engagement()]}},
+            triage={"Dinner at Ravi's": {"keep": True, "reason": "a plan"}},
+        )
+        sync(conn, settings, [make_connector([message], boundary)], model)
+        second = sync(conn, settings, [make_connector([message], boundary)], model)
+
+        assert second.writes == 0
+        assert conn.execute("SELECT COUNT(*) AS n FROM engagement").fetchone()["n"] == 1

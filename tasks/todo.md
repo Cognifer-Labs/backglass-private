@@ -98,6 +98,30 @@ bump re-extracts the ledger once, which is free under `MODEL_BACKEND=claude_cli`
 extracted from a real message appears as a block on the day plan with a working provenance
 link back to the sentence it came from. Idempotency asserted by a second run writing zero.
 
+## Known limits, found while building
+
+- **An evening plan never appears on the day plan.** `capacity.compute` filters fixed
+  events to the working window (default 09:00–18:00), so a 19:00 dinner is stored, is
+  correctly excluded from work capacity, and then shows up on no schedule surface. It
+  does reach the brief's Plans section, so it is not invisible — but most social plans
+  are evenings, and the day view is where someone would look. Fixing it means deciding
+  what the schedule page is: the working window, or the day. That is a design call, not
+  a bug fix, so it is written down rather than guessed at.
+- **Nothing yet exercises this against real messages.** Every test drives canned model
+  responses. Whether the model reliably tells a commitment from an engagement is an eval
+  question, and `evals/` is where it belongs — it never gates CI (docs/10).
+
+## Still dark, and blocking the rest
+
+The build is done; the sources are not connected. In value order:
+
+1. **Gmail** — `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, then `backglass auth`. Phase 1
+   of the project's own build order, never completed. Most invitations arrive here.
+2. **iMessage** — Full Disk Access for both the terminal and the `uv` binary. 101 MB of
+   real history is sitting there unread; `backglass setup` now says so honestly.
+3. **Instagram / Slack** — a Meta export and a user token respectively. See
+   `docs/07-connectors.md` §Turning on the messaging sources.
+
 ## Out of scope, deliberately
 
 Writing back to anyone's calendar, sending replies, and any connector for a platform whose

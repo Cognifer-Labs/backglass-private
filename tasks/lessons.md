@@ -264,3 +264,41 @@ deterministic given the id.
   Corollary found the same day: assertions that hardcode a derived list (the migration
   version numbers, twice) train the next author to edit the assertion instead of reading
   it. Derive from the source of truth.
+
+- 2026-08-02 | The public-repo exporter enumerated files with `git ls-files`, which lists
+  only TRACKED files. An uncommitted migration was omitted while the tracked code calling
+  its table shipped — the export built, passed the scrub gate, and would have been broken
+  on first run for everyone who cloned it. | When a build selects inputs from version
+  control, a dirty tree is a partial snapshot, not a minor variance: make the tool refuse
+  rather than documenting "commit first" in a runbook. Scope the refusal to what actually
+  ships, or it becomes noise and the next person adds a bypass flag. Corollary: the
+  release pipeline only caught this because it runs the full test suite *inside the
+  exported tree* — keep that step, it is the one check that sees what recipients see.
+
+- 2026-08-02 | Staged a feature commit with `git add -A backglass/ tests/` and swept in
+  three files another session had left modified (`__main__.py`, `test_doctor.py`,
+  `test_release_manifest.py`) — unrelated release work, now inside a commit about
+  engagements, exactly the sweep four earlier lessons already describe. Caught only by
+  reading `git show --stat` afterwards. | `git add -A <dir>` is never safe in a tree with
+  pre-existing modifications: it stages by directory, not by intent. Stage the explicit
+  file list you touched, and read `git show --stat` before moving on — the diff you
+  committed is the only record of what you actually claimed. (Recovered with
+  `reset --soft` + `restore --staged`, safe only because nothing was pushed.)
+
+- 2026-08-02 | `detect.py` reported iMessage `configured` on a machine where every sync
+  had been failing with "unable to open database file". It had a Full-Disk-Access branch,
+  but the branch rested on a stated premise — "macOS hides chat.db from unapproved
+  processes as if it did not exist" — that is false: the file stats fine, only the open
+  is refused. The unreachable branch made the check look covered. | When a guard's
+  correctness depends on a claim about the platform, test the claim, not the guard. Probe
+  a resource the way its real consumer does (same open mode, same flags) rather than
+  asking a cheaper question like `exists()` and assuming the two agree — and treat a
+  comment asserting OS behaviour as an untested assertion until something exercises it.
+
+- 2026-08-02 | Wrote the engagement dedup so a shared guest proved two sightings were the
+  same plan. Weekly coffee with the same friend then collapsed into one row and silently
+  swallowed every later week — a test caught it, but the rule had read as obviously
+  correct. | When a match is built from several signals, ask which signal can never
+  distinguish the repeating case. People recur by definition, so they cannot separate a
+  standing arrangement; only the date can. A signal that is constant across the instances
+  you need to tell apart belongs in the guard, never in the short-circuit.
