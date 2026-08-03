@@ -226,7 +226,17 @@ need exactly one, shared across all three, not one per connector.
    app** as the application type — this matches how `backglass auth` runs the consent
    flow (`InstalledAppFlow.run_local_server`, a short-lived local redirect, not a web
    callback URL).
-4. **Copy the client ID and secret into `.env`:**
+4. **Load the downloaded JSON into `.env`:**
+   ```bash
+   uv run backglass google-client ~/Downloads/client_secret_*.json
+   ```
+   This checks the client type before writing anything. Google's Credentials page hands
+   out **web** clients just as readily as Desktop ones and the filenames are identical;
+   a web client has no localhost redirect, so `backglass auth` would fail deep inside the
+   consent flow with an error about redirect URIs that names nothing you can act on. The
+   secret goes from the downloaded file straight into `.env` and is never printed.
+
+   By hand, if you prefer:
    ```
    GOOGLE_CLIENT_ID=...
    GOOGLE_CLIENT_SECRET=...

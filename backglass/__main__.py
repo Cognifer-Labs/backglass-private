@@ -64,6 +64,66 @@ def init() -> None:
     typer.echo(f"database: {settings.db_path}")
 
 
+@app.command(name="google-client")
+def google_client(
+    path: Annotated[Path, typer.Argument(help="The client_secret_*.json Google gave you")],
+    env_path: Annotated[
+        Path, typer.Option("--env-path", help="Env file to write")
+    ] = Path(".env"),
+) -> None:
+    """Load a downloaded Google OAuth client into .env, refusing the wrong kind.
+
+    Google's Credentials page will happily hand you a *web* client, and this machine
+    already had one sitting in ~/Downloads from an unrelated project. A web client has no
+    localhost redirect, so `backglass auth` fails deep inside the consent flow with an
+    error about redirect URIs that says nothing about the actual mistake. The type is
+    checked here, where the fix ("create a Desktop app client") can be stated plainly.
+
+    The secret is read from the file and written straight to .env — it is never printed,
+    and the file it came from is left alone for you to delete.
+    """
+    import json as _json
+
+    from backglass import envfile
+
+    try:
+        payload = _json.loads(path.read_text())
+    except (OSError, ValueError) as exc:
+        typer.secho(f"cannot read {path}: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(1) from exc
+
+    kind = next(iter(payload), "")
+    if kind != "installed":
+        typer.secho(
+            f"{path.name} is a '{kind or 'unknown'}' OAuth client, not a Desktop app one.",
+            fg=typer.colors.RED,
+        )
+        typer.echo(
+            "  backglass runs the consent flow on a short-lived local redirect, which\n"
+            "  only a Desktop app client allows. In the Google Cloud console:\n"
+            "    APIs & Services -> Credentials -> Create credentials -> OAuth client ID\n"
+            "    Application type: Desktop app\n"
+            "  then download that JSON and run this again."
+        )
+        raise typer.Exit(1)
+
+    client = payload[kind]
+    client_id, secret = client.get("client_id", ""), client.get("client_secret", "")
+    if not client_id or not secret:
+        typer.secho(f"{path.name} has no client_id/client_secret", fg=typer.colors.RED)
+        raise typer.Exit(1)
+
+    changed = envfile.set_keys(
+        env_path, {"GOOGLE_CLIENT_ID": client_id, "GOOGLE_CLIENT_SECRET": secret}
+    )
+    typer.secho(
+        f"wrote {len(changed) or 'no'} change(s) to {env_path}"
+        f" (project {client.get('project_id', '?')})",
+        fg=typer.colors.GREEN,
+    )
+    typer.echo("next: uv run backglass auth <label> --source gmail")
+
+
 @app.command()
 def auth(
     account: Annotated[str, typer.Argument(help="Label, e.g. 'personal'")],
