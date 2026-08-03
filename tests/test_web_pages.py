@@ -1208,3 +1208,25 @@ class TestDueLabel:
         # but the function still degrades to the dated form rather than a weekday.
         assert due_label("2026-07-20", today) == "due 20 Jul"
         assert due_label(None, today) == "no date"
+
+
+class TestWhenLabel:
+    """A plan has a date, not a deadline.
+
+    `due_label` prefixes everything with "due", which reads as an obligation to hand
+    something in — the exact distinction the engagement record exists to draw, so the
+    profile page must not borrow it.
+    """
+
+    def test_a_plan_date_never_says_due(self) -> None:
+        from datetime import date as _date
+
+        from backglass.web.panels import when_label
+
+        today = _date(2026, 7, 30)
+        assert "due" not in when_label("2026-08-01", today)
+        assert when_label("2026-07-30", today) == "today"
+        assert when_label("2026-08-01", today) == "Sat"
+        assert when_label("2026-09-15", today) == "15 Sep"
+        assert when_label("2027-03-01", today) == "01 Mar 2027"
+        assert when_label(None, today) == "no date yet"

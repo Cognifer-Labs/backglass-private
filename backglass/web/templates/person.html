@@ -63,7 +63,7 @@
               {{ e['what'] }}{% if e['others'] %} with {{ e['others'] }}{% endif %}
             </p>
             <p class="b2">
-              {% if e['starts_at'] %}{{ e['starts_at'][:10]|due(today) }}{% else %}no date yet{% endif %}
+              {{ e['starts_at']|when(today) }}
               {%- if e['location'] %} · {{ e['location'] }}{% endif %} · {{ m.source_link(e) }}
             </p>
           </div>

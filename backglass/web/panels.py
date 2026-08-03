@@ -73,6 +73,30 @@ def due_label(due_at: Any, today: date) -> str:
     return f"due {due.strftime('%d %b %Y')}"
 
 
+def when_label(starts_at: Any, today: date) -> str:
+    """`due_label`'s wording for something that is not due.
+
+    A plan has a date, not a deadline: "due Wed" reads as an obligation to hand
+    something in, which is precisely the distinction the engagement record exists to
+    draw. Same distance-sizing, same year rule, no "due".
+    """
+    if not starts_at:
+        return "no date yet"
+    try:
+        when = date.fromisoformat(str(starts_at)[:10])
+    except ValueError:
+        return str(starts_at)
+    if when == today:
+        return "today"
+    if when < today:
+        return when.strftime("%d %b") if when.year == today.year else when.strftime("%d %b %Y")
+    if (when - today).days <= 6:
+        return when.strftime("%a")
+    if when.year == today.year:
+        return when.strftime("%d %b")
+    return when.strftime("%d %b %Y")
+
+
 def relative(timestamp: Any, now: datetime | None = None) -> str:
     """ "Relative timestamp of last successful sync" — docs/06 §The Sources panel."""
     if not timestamp:
