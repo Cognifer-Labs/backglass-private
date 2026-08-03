@@ -328,3 +328,34 @@ deterministic given the id.
   one to overstate — say it only about the specific assertions you watched fail. When a
   fix touches N call sites, count them in the diff and check off a red run per site before
   writing the word "every".
+
+- 2026-08-02 | Fixed "two same-day plans collapse into one" by separating them on the
+  clock, and thereby turned every reschedule into a duplicate: "dinner Friday at 7" then
+  "push it to 7:30" became two rows, two overlapping blocks on the day, and two
+  byte-identical brief lines (the brief does not print the hour) that nothing in the
+  system can delete. The bug I replaced lost an hour; the fix double-booked the day. |
+  Before tightening a match, enumerate what ELSE the tightened signal separates. Here the
+  clock distinguishes two genuine plans *within one message* and distinguishes nothing
+  worth keeping *across* messages, where it is the field most likely to have been
+  corrected — so the same comparison is right in one direction and wrong in the other, and
+  the fix was to ask which sighting this is rather than to pick a precision. Corollary:
+  when a dedup rule stops matching, something must absorb the difference. If no code path
+  can merge, supersede or delete the loser, "not matching" means "duplicate forever".
+
+- 2026-08-02 | Mutation-tested seven fixes to prove the new tests bite; two of the
+  mutations were no-ops (`rows += [] or [...]` is still the full list; deleting a chip
+  condition left the text the assertion actually matched), so two tests looked proven and
+  were not. Only noticed because the failure list was shorter than the fix list. | A
+  revert-to-prove-red pass has to verify the revert itself: count the mutations against
+  the failures before believing any of them, and prefer deleting the block outright to
+  editing a condition — a mutation that still computes the right answer proves nothing,
+  and it is easier to write than a real one.
+
+- 2026-08-02 | Two consecutive fresh-context verifier passes both refuted work I had
+  already checked myself, and the second pass found that a test I wrote specifically to
+  pin an ordering bug passed against that bug — the same false-proof shape the commit
+  message was calling out in an earlier commit. | Ordering and tie-break bugs need the
+  input permuted, not just present: parametrize insertion order, because a single order
+  lets an unrelated tie-break (`id DESC`) produce the right answer by accident. And when
+  a verifier refutes, expect the repair itself to need verifying — the second pass found
+  three defects in the first pass's fixes, one of which was worse than what it replaced.

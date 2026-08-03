@@ -100,9 +100,19 @@ link back to the sentence it came from. Idempotency asserted by a second run wri
 
 ## Verification outcome
 
-A fresh-context verifier **refuted** the first four commits and found six defects, all of
-which reproduced and are now fixed with a regression test each, proven by reverting the
-fix and watching a named test go red:
+Two fresh-context verifier passes, both refuting, seventeen commits in total.
+
+**Second pass** found five more, three of them defects in the first pass's *repairs* —
+including one that was worse than the bug it replaced: separating plans on the clock
+turned every reschedule ("push dinner to 7:30") into a duplicate row that double-booked
+the day. Same-response matching now compares the clock, cross-message matching compares
+the day and repaints the time. The declined-visibility fix had turned a resurrection bug
+into a sink that swallowed real re-invitations; a declined row now matches only a message
+it already cites. The review queue reached the brief but not the dashboard panel; plans
+are in both now, with Accept and "Not a plan", and both queues are bounded below. The
+person page rendered a 0.30-confidence plan as fact.
+
+**First pass** found six, all reproduced and fixed with a regression test each:
 
 1. Merging two people 500'd — migration 0014's NOT NULL foreign key to `entity` was never
    repointed by `merge()`. Fixing it surfaced two references that had never been repointed
