@@ -291,12 +291,31 @@ def _review_floor(settings: Settings) -> str:
     from backglass.brief.daily import today_in
 
     return (today_in(settings.default_tz) - timedelta(days=REVIEW_FLOOR_DAYS)).isoformat()
+#: The three sources `backglass auth` actually knows how to reconnect — the OAuth
+#: providers. detect.py builds the same command for its NEEDS_SETUP hint.
+OAUTH_KINDS = ("gmail", "calendar", "drive")
+
+
+def auth_hint(source: str) -> str | None:
+    """The command that repairs `source`, or None when there is no such command.
+
+    Computed here rather than in the template because it is CLI knowledge, and because
+    the string the template used to build — `backglass auth <last segment>` — is only
+    right for gmail:<label>. For `anki` it printed `backglass auth anki`, which either
+    exits complaining about GOOGLE_CLIENT_ID or stores a junk `gmail:anki` credential.
+    """
+    kind, _, label = source.partition(":")
+    if kind in OAUTH_KINDS and label:
+        return f"backglass auth {label} --source {kind}"
+    return None
 
 
 def sources_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:
     from backglass.connectors import detect
 
     rows = _rows(conn, "dashboard_sources", {"user_id": USER_ID})
+    for row in rows:
+        row["fix"] = auth_hint(str(row["source"]))
     kill = conn.execute(query("triage_kill_rate"), {"user_id": USER_ID}).fetchone()
     total = int((kill or {}).get("total") or 0)
     rate = float((kill or {}).get("kill_rate") or 0.0)
@@ -311,6 +330,8 @@ def sources_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:
         for d in detect.detect_all(settings, authed=authed)
         if d.status == detect.FOUND and d.source not in configured
     ]
+
+    degraded = bool(last and last["degraded"])
 
     return Panel(
         title="Sources",
@@ -330,8 +351,31 @@ def sources_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:
             # A paused source is not a failing one — the owner chose the silence.
             "any_failed": any(r["status"] != "ok" and r["enabled"] for r in rows),
             "last_run": last,
-            "degraded": bool(last and last["degraded"]),
+            "degraded": degraded,
+            # One sentence, built once, read by the panel and by the sidebar alert, so
+            # the two surfaces cannot disagree about how bad the pause is. Only computed
+            # when it holds — it costs a prompt-file read and a count.
+            "degraded_note": degraded_note(conn) if degraded else None,
         },
+    )
+
+
+def degraded_note(conn: sqlite3.Connection, today: date | None = None) -> str:
+    """What "extraction paused" actually means today, in items and in dates.
+
+    The old line stopped at "triage only", which told the owner the cap had been reached
+    and nothing about the two facts that decide what to do next: how much of the ledger
+    is missing, and how long it stays missing. The cap resets on the calendar month and
+    has no other release, so a pause on the 3rd is a four-week pause.
+    """
+    from backglass import costs
+
+    stranded = costs.stranded_extractions(conn)
+    resets = costs.cap_resets_on(today)
+    return (
+        "Spend cap reached — extraction paused, triage only. "
+        f"{stranded} item{'' if stranded == 1 else 's'} waiting; "
+        f"the cap resets {resets.day} {resets:%b}."
     )
 
 
@@ -438,7 +482,7 @@ def sidebar(
             )
     if sources.meta["degraded"]:
         alerts.append(
-            {"level": "gold", "text": "Spend cap reached — extraction paused, triage only",
+            {"level": "gold", "text": sources.meta["degraded_note"],
              "href": "/#panel-sources"}
         )
     if sources.meta["kill_rate_low"]:

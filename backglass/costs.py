@@ -14,7 +14,7 @@ from __future__ import annotations
 import calendar
 import sqlite3
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from backglass.config import Settings
@@ -40,6 +40,40 @@ class MonthCosts:
 def _month_start(today: date) -> str:
     """First instant of `today`'s month, ISO, UTC — identical shape to SpendCap's."""
     return datetime(today.year, today.month, 1, tzinfo=UTC).isoformat()
+
+
+def cap_resets_on(today: date | None = None) -> date:
+    """The day the cap's budget starts over — the first of the month after `today`'s.
+
+    Derived from `_month_start` rather than computed afresh, for the reason in the module
+    docstring: enforcement and reporting share one clock. "Extraction is paused" is only
+    half a sentence without this date; the cap has no other release valve, so a run that
+    hits it on the 3rd is telling the owner about four silent weeks.
+    """
+    start = datetime.fromisoformat(_month_start(today or datetime.now(UTC).date()))
+    return date(start.year + start.month // 12, start.month % 12 + 1, 1)
+
+
+def stranded_extractions(conn: sqlite3.Connection, now: datetime | None = None) -> int:
+    """Kept items with no extraction at the current prompt version.
+
+    What the cap is actually costing, in items rather than cents: every one of these is a
+    triaged-in message whose commitments are not in the ledger, and the ledger is the
+    product. See stranded_extractions.sql for why the predicate is sync's, not a looser one.
+    """
+    from backglass.extract import prompts
+    from backglass.sync import EXTRACT_PROMPT
+
+    cutoff = (now or datetime.now(UTC)) - timedelta(hours=26)
+    row = conn.execute(
+        query("stranded_extractions"),
+        {
+            "user_id": USER_ID,
+            "extraction_version": prompts.load(EXTRACT_PROMPT).stamp,
+            "cutoff": cutoff.isoformat(),
+        },
+    ).fetchone()
+    return int(row["stranded"])
 
 
 def month(

@@ -1204,6 +1204,100 @@ class TestWeekAgenda:
         )
 
 
+class TestSourcesRepairHint:
+    """The panel's repair instruction has to be right for the source it sits under.
+
+    `backglass auth <last segment>` was rendered under every failing source. For anki or
+    imessage that command either exits complaining about GOOGLE_CLIENT_ID or writes a
+    junk `gmail:anki` credential row — a wrong instruction, which on the one panel the
+    owner consults when things break is worse than no instruction at all.
+    """
+
+    def test_an_oauth_source_names_the_command_that_reconnects_it(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        from backglass.connectors import credentials
+
+        credentials.mark_failed(conn, "gmail:personal", "invalid_grant")
+        conn.commit()
+        panel = panel_slice(client.get("/").text, "panel-sources")
+        assert "backglass auth personal --source gmail" in panel
+
+    def test_a_local_source_is_pointed_at_doctor_instead(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        from backglass.connectors import credentials
+
+        credentials.mark_failed(conn, "anki", "collection.anki2 is locked")
+        conn.commit()
+        panel = panel_slice(client.get("/").text, "panel-sources")
+        assert "collection.anki2 is locked" in panel
+        assert "backglass auth" not in panel
+        assert "backglass doctor" in panel
+
+    def test_the_hint_is_computed_in_python_not_by_splitting_a_string(self) -> None:
+        from backglass.web.panels import auth_hint
+
+        assert auth_hint("gmail:personal") == "backglass auth personal --source gmail"
+        assert auth_hint("calendar:asu") == "backglass auth asu --source calendar"
+        assert auth_hint("drive:personal") == "backglass auth personal --source drive"
+        # Not an OAuth source, a bare kind, and the Apple calendar that shares the
+        # `calendar:` prefix but not the OAuth flow — none of them have a command.
+        assert auth_hint("anki") is None
+        assert auth_hint("imessage") is None
+        assert auth_hint("gmail") is None
+        assert auth_hint("canvas") is None
+
+
+class TestSpendCapMessage:
+    """A pause with no end date and no size is not information, it is an apology."""
+
+    def _degraded_run(self, conn: sqlite3.Connection) -> None:
+        conn.execute(
+            "INSERT INTO run (user_id, started_at, degraded) VALUES (1,"
+            " '2026-08-03T05:00:00+00:00', 1)"
+        )
+
+    def _kept_but_unextracted(self, conn: sqlite3.Connection, n: int) -> None:
+        for i in range(n):
+            conn.execute(
+                "INSERT INTO source_item (user_id, source, external_id, fetched_at,"
+                " occurred_at, content_hash, triage_verdict) VALUES (1, 'gmail:personal',"
+                " ?, '2026-08-03T08:00:00Z', '2026-08-03T08:00:00Z', ?, 'keep')",
+                (f"s{i}", f"h{i}"),
+            )
+
+    def test_the_panel_states_the_backlog_and_the_reset_date(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._degraded_run(conn)
+        self._kept_but_unextracted(conn, 3)
+        conn.commit()
+        panel = panel_slice(client.get("/").text, "panel-sources")
+        assert "Spend cap reached — extraction paused, triage only." in panel
+        assert "3 items waiting" in panel
+        assert "the cap resets" in panel
+
+    def test_the_sidebar_alert_says_the_same_thing(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._degraded_run(conn)
+        self._kept_but_unextracted(conn, 1)
+        conn.commit()
+        alerts = client.get("/goals").text  # a page with no Sources panel on it
+        assert "1 item waiting" in alerts
+
+    def test_the_message_is_absent_when_the_cap_has_not_been_reached(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        conn.execute(
+            "INSERT INTO run (user_id, started_at, degraded) VALUES (1,"
+            " '2026-08-03T05:00:00+00:00', 0)"
+        )
+        conn.commit()
+        assert "Spend cap reached" not in client.get("/").text
+
+
 class TestDueLabel:
     """Due dates render in words sized to their distance, not raw ISO."""
 

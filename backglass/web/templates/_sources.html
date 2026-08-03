@@ -26,9 +26,13 @@
           <p class="note">{{ s['last_error'] }}
             {# docs/11 §8 step 4: "a Reconnect button that runs the OAuth flow inline."
                The flow needs a browser consent redirect the CLI already owns, so the
-               dashboard names the command rather than pretending to run it. Stated here
-               rather than silently omitted. #}
-            <span class="kbd">backglass auth {{ s['source'].split(':')[-1] }}</span></p>
+               dashboard names the command rather than pretending to run it. Only the
+               OAuth sources have such a command — panels.auth_hint decides, because a
+               wrong repair instruction is worse than none. Everything else gets pointed
+               at doctor, which runs each connector's own health() and says what is
+               actually wrong. #}
+            {% if s['fix'] %}<span class="kbd">{{ s['fix'] }}</span>
+            {% else %}Run <span class="kbd">backglass doctor</span> for the fix.{% endif %}</p>
         {% endif %}
       {% endfor %}
     {% endif %}
@@ -74,7 +78,9 @@
         below 85%. The rules have drifted; add senders to NOISE_SENDERS.</p>
     {% endif %}
     {% if d.sources.meta.degraded %}
-      <p class="note">Spend cap reached — extraction paused, triage only.</p>
+      {# panels.degraded_note: the stranded count and the reset date belong in the
+         sentence, not in the owner's head. Same string as the sidebar alert. #}
+      <p class="note">{{ d.sources.meta.degraded_note }}</p>
     {% endif %}
     {% if d.sources.meta.last_run %}
       {% set r = d.sources.meta.last_run %}

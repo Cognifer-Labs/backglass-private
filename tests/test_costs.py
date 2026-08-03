@@ -7,7 +7,7 @@ paid the price of a date-fragile test once.
 from __future__ import annotations
 
 import sqlite3
-from datetime import date
+from datetime import UTC, date, datetime
 
 from backglass import costs
 from backglass.config import Settings
@@ -137,11 +137,76 @@ class TestTrendAndRuns:
         assert rows[0]["spend_cents"] == 200
 
 
+class TestWhatTheCapIsCosting:
+    """The cap has one release — the calendar month — so "paused" is a duration, and the
+    backlog behind it is a size. Both belong in the sentence the owner reads."""
+
+    def _kept(
+        self, conn: sqlite3.Connection, external_id: str, extraction_version: str | None = None
+    ) -> int:
+        conn.execute(
+            "INSERT INTO source_item (user_id, source, external_id, fetched_at,"
+            " occurred_at, content_hash, triage_verdict, extraction_version)"
+            " VALUES (1, 'gmail:t', ?, '2026-08-05T00:00:00+00:00',"
+            " '2026-08-05T00:00:00+00:00', ?, 'keep', ?)",
+            (external_id, f"h:{external_id}", extraction_version),
+        )
+        return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+    def test_counts_kept_items_with_no_extraction(self, conn: sqlite3.Connection) -> None:
+        self._kept(conn, "waiting-1")
+        self._kept(conn, "waiting-2")
+        conn.execute(
+            "INSERT INTO source_item (user_id, source, external_id, fetched_at,"
+            " occurred_at, content_hash, triage_verdict)"
+            " VALUES (1, 'gmail:t', 'dropped', '2026-08-05T00:00:00+00:00',"
+            " '2026-08-05T00:00:00+00:00', 'h:dropped', 'drop')"
+        )
+        assert costs.stranded_extractions(conn) == 2
+
+    def test_an_item_extracted_at_the_current_version_is_not_waiting(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        from backglass.extract import prompts
+        from backglass.sync import EXTRACT_PROMPT
+
+        self._kept(conn, "done", prompts.load(EXTRACT_PROMPT).stamp)
+        assert costs.stranded_extractions(conn) == 0
+        # A stale stamp means the prompt moved on and the item is pending again — the
+        # predicate is sync's, so the count tracks that rather than "version IS NULL".
+        self._kept(conn, "stale", "extract-commitments@0.0.1")
+        assert costs.stranded_extractions(conn) == 1
+
+    def test_an_item_riding_a_live_batch_is_already_paid_for(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        item_id = self._kept(conn, "batched")
+        conn.execute(
+            "INSERT INTO model_batch (user_id, batch_id, model, prompt_stamp, status,"
+            " created_at) VALUES (1, 'b1', 'm', 'extract-commitments@1', 'submitted', ?)",
+            (datetime.now(UTC).isoformat(),),
+        )
+        conn.execute(
+            "INSERT INTO model_batch_item (batch_id, custom_id, source_item_id)"
+            " VALUES ('b1', ?, ?)",
+            (f"si-{item_id}", item_id),
+        )
+        assert costs.stranded_extractions(conn) == 0
+
+    def test_the_reset_date_is_the_first_of_the_next_month(self) -> None:
+        assert costs.cap_resets_on(TODAY) == date(2026, 9, 1)
+        assert costs.cap_resets_on(date(2026, 8, 31)) == date(2026, 9, 1)
+        # December has to roll the year, and _month_start is the only clock consulted.
+        assert costs.cap_resets_on(date(2026, 12, 4)) == date(2027, 1, 1)
+
+
 def test_every_costs_query_loads_and_executes(conn: sqlite3.Connection) -> None:
     """Smoke: SQL typos die here, not in the CLI."""
     params = {"user_id": 1, "month_start": "2026-08-01T00:00:00+00:00", "limit": 5, "weeks": 4}
+    params["extraction_version"] = "extract-commitments@1"
+    params["cutoff"] = "2026-08-09T00:00:00+00:00"
     for name in ("costs_month", "costs_by_run", "costs_daily", "costs_kill_trend",
-                 "costs_top_senders"):
+                 "costs_top_senders", "stranded_extractions"):
         sql = query(name)
         needed = {k: v for k, v in params.items() if f":{k}" in sql}
         conn.execute(sql, needed).fetchall()
