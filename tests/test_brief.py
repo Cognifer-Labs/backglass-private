@@ -678,3 +678,41 @@ class TestPlansSection:
             starts_at=f"{horizon_day.isoformat()}T19:00:00-07:00",
         )
         assert plan_lines(conn, settings) != []
+
+    def test_a_plan_restating_a_commitment_is_not_said_twice(
+        self, conn, settings: Settings
+    ) -> None:
+        """B4 across record types.
+
+        Everything read before the engagements prompt existed was filed as a commitment
+        or not at all, so obligation-shaped plans sit open on the board while
+        re-extraction now also files them as plans. One fact, one line.
+        """
+        seed(conn, settings, [{"direction": "i_owe", "what": "ASU dorm move-in",
+                               "due_at": "2026-07-31"}])
+        source_id = int(conn.execute("SELECT id FROM source_item").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at,"
+            " when_is_explicit, location, status, confidence, source_item_id, created_at)"
+            " VALUES (1, 'professional', 'ASU dorm move in', '2026-07-31', NULL, 1, NULL,"
+            " 'confirmed', 0.9, ?, ?)",
+            (source_id, now_iso()),
+        )
+        assert plan_lines(conn, settings) == []
+
+    def test_two_different_facts_from_one_message_both_survive(
+        self, conn, settings: Settings
+    ) -> None:
+        """The case the wording check exists to protect: "I'll send the draft Thursday,
+        and lunch Friday?" is a commitment and a plan about two different things."""
+        seed(conn, settings, [{"direction": "i_owe", "what": "send the draft",
+                               "due_at": "2026-07-30"}])
+        source_id = int(conn.execute("SELECT id FROM source_item").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at,"
+            " when_is_explicit, location, status, confidence, source_item_id, created_at)"
+            " VALUES (1, 'social', 'lunch', '2026-07-31', NULL, 1, NULL,"
+            " 'confirmed', 0.9, ?, ?)",
+            (source_id, now_iso()),
+        )
+        assert len(plan_lines(conn, settings)) == 1

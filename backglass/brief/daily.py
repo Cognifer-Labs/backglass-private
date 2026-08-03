@@ -595,6 +595,7 @@ def engagement_section(
             },
         )
     )
+    rows = [row for row in rows if not _already_a_commitment(conn, row, settings)]
     # Unanswered first, then by when. The query cannot do this ordering and also order
     # by date within each group without a second pass, and the grouping is the editorial
     # decision here, so it is made in Python where it can be read.
@@ -612,6 +613,51 @@ def engagement_section(
             )
         )
     return section
+
+
+def _already_a_commitment(
+    conn: sqlite3.Connection, row: dict[str, Any], settings: Settings
+) -> bool:
+    """Is this plan the same fact the board is already carrying?
+
+    One message can honestly produce both records — "I'll send the draft Thursday, and
+    lunch Friday?" is a commitment and a plan about two different things — so a shared
+    source item is not enough to suppress on. The wording has to match too.
+
+    What this catches is the transition. Every item read before the engagements prompt
+    landed was filed as a commitment or not at all, so obligation-shaped plans are
+    sitting open on the board while re-extraction has now also filed them as plans.
+    Saying it twice in one brief is the B4 failure with extra steps. The commitment wins:
+    it is the older record, the one the owner can act on from the board, and the one
+    docs/05 puts in an earlier section.
+
+    Deliberately narrow, and it does not catch everything. It only fires when the two
+    rows are worded alike; a legacy commitment that says the same thing at length
+    ("Move-in: Willow Hall 502, 8:00am (regular move-in — Early Start early arrival
+    declined)") scores below the dedup threshold against its own plan ("ASU dorm
+    move-in") and both still appear. Widening it means suppressing on the source item
+    alone, which would eat the honest both-in-one-message case that the test below
+    protects. The residue is bounded — it can only affect items extracted before the v4
+    prompt — and it is written down in tasks/todo.md rather than traded for a rule that
+    hides real plans.
+
+    Not a delete. The engagement row stays — it carries the hour, it belongs on the day
+    plan and on the person's page — it just does not get to repeat itself here.
+    """
+    others = conn.execute(
+        "SELECT what FROM commitment "
+        "WHERE user_id = ? AND source_item_id = ? AND status IN ('open', 'done')",
+        (USER_ID, row["source_item_id"]),
+    ).fetchall()
+    if not others:
+        return False
+    from backglass.extract import entities
+
+    what = str(row["what"])
+    return any(
+        entities.similar(what, str(other["what"])) >= settings.dedup_threshold
+        for other in others
+    )
 
 
 def _plan_phrase(starts_at: Any, today: date) -> str:

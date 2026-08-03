@@ -110,6 +110,16 @@ link back to the sentence it came from. Idempotency asserted by a second run wri
 - **Nothing yet exercises this against real messages.** Every test drives canned model
   responses. Whether the model reliably tells a commitment from an engagement is an eval
   question, and `evals/` is where it belongs — it never gates CI (docs/10).
+- **Legacy commitments that are really plans still double up.** Confirmed on the live
+  ledger: six of the owner's commitments share a source item with one of the five
+  engagements re-extraction produced, because everything read before the v4 prompt could
+  only be filed as a commitment. `_already_a_commitment` suppresses the plan when the two
+  are worded alike, but "Move-in: Willow Hall 502, 8:00am (regular move-in — Early Start
+  early arrival declined)" and "ASU dorm move-in" score below the dedup threshold, so
+  both survive. Widening the rule to suppress on the shared source item alone would eat
+  the honest case where one message carries a commitment *and* a separate plan. The right
+  fix is a decision about the four stale rows, not a looser rule — and dropping the
+  owner's open commitments is not something to do unasked.
 
 ## Still dark, and blocking the rest
 
