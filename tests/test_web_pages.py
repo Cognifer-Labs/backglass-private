@@ -49,7 +49,22 @@ class TestSidebar:
     """Phase 6 rework: the shell sidebar — alerts derived from state, goal health,
     roadmap progress — present on every page, absent when nothing holds."""
 
-    def test_quiet_state_shows_no_alerts(self, client: TestClient) -> None:
+    def test_quiet_state_shows_no_alerts(
+        self, client: TestClient, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """"Quiet" means the whole scheduler ran, and the planner is part of it.
+
+        `heartbeat._plan_due` turns true once the local clock passes 05:45 plus grace on a
+        working day, so without today's plan this assertion passes all weekend and fails
+        on Monday morning. It was green for an entire session and went red at 07:41 on a
+        Monday, which is the tell for a test that depends on the wall clock rather than on
+        what it is asserting. Established here rather than in the module fixture, because
+        an extra day_plan row shifts every rowid the other tests in this file assume.
+        """
+        from tests.conftest import todays_plan
+
+        todays_plan(conn, settings)
+        conn.commit()
         assert 'id="side-alerts"' not in client.get("/").text
 
     def test_a_source_failure_alerts_on_every_page(
@@ -119,10 +134,15 @@ class TestSidebar:
             "INSERT INTO day_plan (local_date, tz, capacity_minutes, generated_at, status)"
             " VALUES ('2026-07-30', 'America/Phoenix', 400, '2026-07-30T05:50:00', 'accepted')"
         )
+        # Derived, not hardcoded to 1. The autouse fixture writes today's plan first, so
+        # a literal id silently attached this block to *that* plan and the assertion
+        # failed a long way from the cause.
+        plan_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
         conn.execute(
             "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
-            " VALUES (1, '2026-07-30T09:00:00-07:00', '2026-07-30T10:30:00-07:00',"
-            " 'work', 'Finish deck')"
+            " VALUES (?, '2026-07-30T09:00:00-07:00', '2026-07-30T10:30:00-07:00',"
+            " 'work', 'Finish deck')",
+            (plan_id,),
         )
         conn.commit()
         page = client.get("/schedule?date=2026-07-30")

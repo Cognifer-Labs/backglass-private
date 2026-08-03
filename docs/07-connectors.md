@@ -121,7 +121,7 @@ audits.
 
 | source name | gate | cursor | boundary | how it fails |
 |---|---|---|---|---|
-| `imessage` | `IMESSAGE_DB_PATH` | max `message.ROWID` | yes — handles are addresses | without Full Disk Access the file still stats — only the *open* is refused, with `unable to open database file` rather than anything that says "denied" |
+| `imessage` | `IMESSAGE_DB_PATH` + `IMESSAGE_CHATS` | max `message.ROWID` | yes — handles are addresses | without Full Disk Access the file still stats — only the *open* is refused, with `unable to open database file` rather than anything that says "denied" |
 | `apple-notes` | `APPLE_NOTES=1` | modification-date watermark | yes — note bodies carry addresses | Automation permission denied, reported by `health()` |
 | `calendar:apple` | `APPLE_CALENDAR=1` | none — a bounded window, re-read each run | yes — titles and locations can carry addresses | Automation permission denied, reported by `health()` |
 | `reminders` | `APPLE_REMINDERS=1` | fetch-window watermark (no mtime exists) | yes | same Automation prompt as Notes |
@@ -139,6 +139,28 @@ Two rules those local stores exist to teach:
   batch item to the exact immutable row range it summarizes. A high-watermark id
   (`reviews:<day>:<max-id>`) re-emits the same id with different content after a rescan,
   which the 0002 immutability trigger turns into a failed-looking sync.
+
+## iMessage reads named conversations only
+
+`IMESSAGE_CHATS` is an allowlist, exactly like Instagram's, and for the same reason: an
+inbox-wide read of a personal message store captures mostly other people's words about
+things the owner never meant to file. Empty means the connector reports **unhealthy**, not
+"read everything" — the safe direction. Groups are named by display name, one-to-one
+threads by the other party's handle; `backglass imessage chats` lists both with counts.
+
+`IMESSAGE_LOOKBACK_DAYS` (default 90) bounds how far back a scan reaches. The cursor
+already stops the connector re-reading what it has seen; the window is what stops the
+*first* run walking an entire archive — 42,879 messages on the owner's machine, where the
+useful span for a commitment ledger is the last few months. It is applied in SQL, and the
+column is normalised from Apple's nanoseconds to seconds first: older stores and
+third-party exports hold seconds, and comparing those raw against a nanosecond threshold
+silently drops every legacy row.
+
+`backglass imessage prune` reaches backwards. Narrowing the allowlist otherwise only ever
+applies to messages not yet read, leaving everything captured under the looser rule in
+place — so the prune goes through the same delete gate the docs/08 boundary purge uses,
+since it is the same decision: content the owner has determined this system may not hold.
+Dry run unless `--apply`.
 
 ## Calendar without Google
 

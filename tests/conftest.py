@@ -68,6 +68,42 @@ def healthy_run(conn: Any, finished_at: str | None = None) -> int:
     return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
 
 
+def todays_plan(conn: Any, settings: Any = None) -> int:
+    """A day_plan for today, so heartbeat does not report the planner as missed.
+
+    The sibling of `healthy_run`, and needed for the same reason. `heartbeat._plan_due`
+    turns true once the local clock passes 05:45 plus its grace **on a working day**, so a
+    test that assumes a quiet dashboard passes all weekend and fails on Monday morning —
+    which is exactly how this was found, when a suite that had been green all session went
+    red at 07:41 on a Monday. A quiet state means the scheduler ran, and the planner is
+    part of the scheduler; saying so here keeps the assertion about the thing under test
+    rather than about what time it is.
+    """
+    from datetime import date
+
+    from backglass.db import now_iso
+    from backglass.plan import timezones
+
+    # Defers to a plan the test made itself. A second row for the same day would leave
+    # `planner.current_plan_id` choosing between them, so a helper meant to quiet one
+    # alarm would silently decide which blocks another test sees.
+    existing = conn.execute(
+        "SELECT id FROM day_plan WHERE user_id = 1 AND local_date = ?"
+        " AND status != 'superseded'",
+        (date.today().isoformat(),),
+    ).fetchone()
+    if existing is not None:
+        return int(existing["id"])
+
+    tz = timezones.active_tz(settings, date.today()) if settings else "UTC"
+    conn.execute(
+        "INSERT INTO day_plan (user_id, local_date, tz, capacity_minutes, generated_at)"
+        " VALUES (1, ?, ?, 480, ?)",
+        (date.today().isoformat(), tz, now_iso()),
+    )
+    return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+
 # ────────────────────────────────────────────────────────── message fixtures
 
 

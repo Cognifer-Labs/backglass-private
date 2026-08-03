@@ -47,10 +47,11 @@ import sqlite3
 from collections.abc import Iterator
 from contextlib import closing
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 from backglass.connectors import _typedstream
+from backglass.connectors.allowlist import Allowlist
 from backglass.connectors.base import Cursor, Health, SourceItem, content_hash
 from backglass.connectors.boundary import Boundary
 
@@ -79,6 +80,16 @@ LEFT JOIN handle ON handle.ROWID = message.handle_id
 LEFT JOIN chat_message_join ON chat_message_join.message_id = message.ROWID
 LEFT JOIN chat ON chat.ROWID = chat_message_join.chat_id
 WHERE message.ROWID > ?
+  -- Bounding the window in SQL is the point: without it the first run walks the whole
+  -- archive before Python ever sees a row.
+  --
+  -- The column is normalised to SECONDS before comparing, by the same magnitude test the
+  -- Python side uses. Modern stores hold nanoseconds since 2001-01-01 and older ones (and
+  -- third-party exports) hold seconds; comparing a raw column against a nanosecond
+  -- threshold silently drops every legacy-format row, which is a filter that looks like
+  -- an empty archive.
+  AND (CASE WHEN ABS(message.date) >= ? THEN message.date / 1000000000 ELSE message.date END)
+      >= (strftime('%s', 'now', ?) - strftime('%s', '2001-01-01'))
 ORDER BY message.ROWID
 """
 
@@ -94,6 +105,17 @@ class IMessageConnector:
 
     db_path: Path
     boundary: Boundary
+    #: The only conversations read. An inbox-wide read of a personal message store is the
+    #: wrong default — most of what is in there is other people's words about things the
+    #: owner never meant to file. Same rule and same class as Instagram's; see
+    #: connectors/allowlist.py. An empty allowlist makes the connector unhealthy rather
+    #: than making it read everything.
+    allowlist: Allowlist = field(default_factory=lambda: Allowlist(()))
+    #: How far back a scan reaches, in days. The cursor already stops the connector
+    #: re-reading what it has seen; this stops the FIRST run reaching back over an entire
+    #: archive — 42,879 messages on the owner's machine, where the useful window for a
+    #: commitment ledger is the last few months.
+    lookback_days: int = 90
 
     #: Only final once `fetch()` has been exhausted.
     cursor: Cursor = None
@@ -116,6 +138,15 @@ class IMessageConnector:
                     "hides chat.db from unapproved processes as if it did not exist"
                 ),
             )
+        if not self.allowlist:
+            return Health(
+                name=self.name,
+                ok=False,
+                detail=(
+                    "IMESSAGE_CHATS is empty — name the group chats and people to read. "
+                    "`backglass imessage chats` lists what is in the store."
+                ),
+            )
         try:
             with closing(self._connect()) as conn:
                 conn.execute("SELECT ROWID FROM message LIMIT 1").fetchone()
@@ -132,11 +163,15 @@ class IMessageConnector:
         return Health(name=self.name, ok=True)
 
     def fetch(self, since: Cursor) -> Iterator[SourceItem]:
-        """Yield messages with a ROWID above the cursor.
+        """Yield messages above the cursor, from allowed chats, inside the window.
 
         ROWID is monotonic in the Messages store — rows are appended, never renumbered —
-        so the highest one seen is a complete watermark. `since=None` is a full scan,
-        which is the first run and the only full scan there ever is.
+        so the highest one seen is a complete watermark. `since=None` would be a full
+        scan; `lookback_days` is what keeps that from meaning "the entire archive".
+
+        The watermark advances past rows the allowlist rejects. It has to: those rows are
+        a settled decision, and leaving the cursor behind them would make every later run
+        re-read and re-reject the same messages forever.
         """
         self.excluded = 0
         self.excluded_by_rule = {}
@@ -145,16 +180,35 @@ class IMessageConnector:
         highest = watermark
 
         with closing(self._connect()) as conn:
-            for row in conn.execute(_QUERY, (watermark,)):
+            window = f"-{self.lookback_days} days"
+            for row in conn.execute(_QUERY, (watermark, NANOSECOND_THRESHOLD, window)):
                 rowid = int(row["rowid"])
                 # Advance past skipped rows too. A NULL-text row that never moved the
                 # watermark would be re-read on every run forever.
                 highest = max(highest, rowid)
+                if not self._allowed(row):
+                    continue
                 item = self._to_item(row)
                 if item is not None:
                     yield item
 
         self.cursor = str(highest)
+
+    def _allowed(self, row: sqlite3.Row) -> bool:
+        """Is this message in a conversation the owner named?
+
+        A group is matched by its display name. A one-to-one has no display name in the
+        Messages store, so it is matched by the other party's handle — the phone number
+        or address the allowlist entry has to spell out.
+        """
+        chat = row["chat_name"] or None
+        handle = row["handle"] or ""
+        if self.allowlist.allows(title=chat, participants=[handle] if handle else []):
+            return True
+        self.excluded += 1
+        rule = "allowlist"
+        self.excluded_by_rule[rule] = self.excluded_by_rule.get(rule, 0) + 1
+        return False
 
     def _connect(self) -> sqlite3.Connection:
         # mode=ro, NOT immutable=1 — chat.db is WAL and immutable skips the -wal
@@ -249,3 +303,98 @@ def _parse(cursor: Cursor) -> int:
         return int(str(cursor))
     except ValueError:
         return 0
+
+
+# ── narrowing what is stored, after the fact ────────────────────────────────
+
+#: Everything that points at a source_item, child-first. Derived from the schema rather
+#: than remembered: `grep 'REFERENCES source_item' specs/schema.sql`. A table added later
+#: and left out here would make the prune fail its foreign key rather than delete
+#: silently, which is the safe direction, but the list is checked by a test so the
+#: failure arrives in CI instead.
+DEPENDENTS = (
+    "engagement_evidence",
+    "commitment_evidence",
+    "engagement",
+    "commitment",
+    "checkpoint",
+    "fact",
+    "model_batch_item",
+)
+
+
+@dataclass
+class PruneReport:
+    scanned: int = 0
+    removed: int = 0
+    kept: int = 0
+    by_chat: dict[str, int] = field(default_factory=dict)
+
+
+def prune(
+    conn: sqlite3.Connection,
+    allowlist: Allowlist,
+    *,
+    lookback_days: int,
+    today: date | None = None,
+    dry_run: bool = True,
+) -> PruneReport:
+    """Remove stored iMessage items the current allowlist and window no longer admit.
+
+    docs/03 keeps raw items forever and migration 0005 enforces it, with one sanctioned
+    exception: the docs/08 boundary purge, for content the owner has decided this system
+    may not hold. Narrowing an allowlist is that same act — the rule about what may be
+    stored got tighter, and rows captured under the looser one have to follow, or the
+    setting is a promise about the future only.
+
+    Defaults to a dry run. Deleting someone's messages on the strength of a config value
+    they just typed should require saying so twice.
+    """
+    today = today or date.today()
+    floor = (today - timedelta(days=lookback_days)).isoformat()
+    report = PruneReport()
+
+    doomed: list[int] = []
+    for row in conn.execute(
+        "SELECT id, occurred_at, raw_json FROM source_item WHERE user_id = 1 AND source = ?",
+        ("imessage",),
+    ):
+        report.scanned += 1
+        try:
+            payload = json.loads(str(row["raw_json"] or "{}"))
+        except ValueError:
+            payload = {}
+        chat = str(payload.get("chat") or "")
+        handle = str(payload.get("handle") or "")
+        allowed = allowlist.allows(
+            title=chat or None, participants=[handle] if handle else []
+        )
+        # The window is compared on the local date prefix, like every other reader of a
+        # stored timestamp in this codebase: occurred_at carries the sender's own offset.
+        in_window = str(row["occurred_at"] or "")[:10] >= floor
+        if allowed and in_window:
+            report.kept += 1
+            continue
+        doomed.append(int(row["id"]))
+        label = chat or handle or "(unknown)"
+        report.by_chat[label] = report.by_chat.get(label, 0) + 1
+
+    report.removed = len(doomed)
+    if dry_run or not doomed:
+        return report
+
+    marks = ",".join("?" * len(doomed))
+    conn.execute("BEGIN")
+    try:
+        # The 0005 delete guard, opened and closed inside one transaction exactly as the
+        # boundary purge does it — a crash rolls the gate closed with everything else.
+        conn.execute("UPDATE purge_gate SET open = 1 WHERE id = 1")
+        for table in DEPENDENTS:
+            conn.execute(f"DELETE FROM {table} WHERE source_item_id IN ({marks})", doomed)
+        conn.execute(f"DELETE FROM source_item WHERE id IN ({marks})", doomed)
+        conn.execute("UPDATE purge_gate SET open = 0 WHERE id = 1")
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return report

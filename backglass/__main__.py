@@ -64,6 +64,100 @@ def init() -> None:
     typer.echo(f"database: {settings.db_path}")
 
 
+imessage_app = typer.Typer(help="The local Messages store.")
+app.add_typer(imessage_app, name="imessage")
+
+
+@imessage_app.command("prune")
+def imessage_prune(
+    apply_it: Annotated[bool, typer.Option("--apply", help="Actually delete")] = False,
+) -> None:
+    """Remove stored messages the current IMESSAGE_CHATS and window no longer admit.
+
+    Raw items are kept forever (docs/03) with one sanctioned exception: content the owner
+    has decided this system may not hold (docs/08). Narrowing an allowlist is that same
+    decision, so it goes through the same delete gate — otherwise the setting only ever
+    applies to messages not yet read, and everything captured under a looser rule stays.
+
+    Dry run unless `--apply`.
+    """
+    from contextlib import closing
+
+    from backglass.connectors.allowlist import Allowlist
+    from backglass.connectors.imessage import prune
+
+    settings = get_settings()
+    with closing(connect(settings.db_path)) as conn:
+        report = prune(
+            conn,
+            Allowlist(settings.imessage_chats),
+            lookback_days=settings.imessage_lookback_days,
+            dry_run=not apply_it,
+        )
+    verb = "removed" if apply_it else "would remove"
+    typer.echo(f"scanned {report.scanned}, {verb} {report.removed}, kept {report.kept}")
+    for chat, n in sorted(report.by_chat.items(), key=lambda kv: -kv[1]):
+        typer.echo(f"  {n:>6}  {chat}")
+    if report.removed and not apply_it:
+        typer.echo("\nnothing was deleted — re-run with --apply")
+
+
+@imessage_app.command("chats")
+def imessage_chats(
+    days: Annotated[int, typer.Option("--days", help="Window to summarise")] = 90,
+) -> None:
+    """List conversations in the store, busiest first, for IMESSAGE_CHATS.
+
+    The allowlist is spelled in display names and handles, and neither is something
+    anyone recalls exactly — a group is "Pih ball" or "pih Ball" depending on who named
+    it, and a one-to-one is a raw phone number. Guessing is how an allowlist ends up
+    matching nothing at all, so the names are read off the store. Nothing is stored or
+    ingested by this command; it counts and prints.
+    """
+    import sqlite3 as _sqlite
+    from contextlib import closing as _closing
+
+    settings = get_settings()
+    if not settings.imessage_db_path:
+        typer.secho("IMESSAGE_DB_PATH is not set — run `backglass setup`", fg=typer.colors.RED)
+        raise typer.Exit(1)
+
+    query = """
+        SELECT COALESCE(NULLIF(chat.display_name, ''), handle.id) AS name,
+               chat.display_name IS NOT NULL AND chat.display_name != '' AS is_group,
+               COUNT(*) AS n
+        FROM message
+        LEFT JOIN handle ON handle.ROWID = message.handle_id
+        LEFT JOIN chat_message_join ON chat_message_join.message_id = message.ROWID
+        LEFT JOIN chat ON chat.ROWID = chat_message_join.chat_id
+        WHERE (CASE WHEN ABS(message.date) >= 100000000000
+                    THEN message.date / 1000000000 ELSE message.date END)
+              >= (strftime('%s', 'now', ?) - strftime('%s', '2001-01-01'))
+        GROUP BY name ORDER BY n DESC
+    """
+    try:
+        with _closing(
+            _sqlite.connect(f"file:{settings.imessage_db_path}?mode=ro", uri=True)
+        ) as conn:
+            conn.row_factory = _sqlite.Row
+            conn.execute("PRAGMA busy_timeout = 2000")
+            rows = conn.execute(query, (f"-{days} days",)).fetchall()
+    except _sqlite.Error as exc:
+        typer.secho(f"cannot read the Messages store: {exc}", fg=typer.colors.RED)
+        typer.echo("  grant Full Disk Access to this terminal and to the uv binary")
+        raise typer.Exit(1) from exc
+
+    allowed = {c.strip().casefold() for c in settings.imessage_chats}
+    typer.echo(f"Conversations in the last {days} days — copy into IMESSAGE_CHATS:\n")
+    for row in rows:
+        name = row["name"] or "(unknown)"
+        mark = "on " if name.strip().casefold() in allowed else "   "
+        kind = "group" if row["is_group"] else "1:1  "
+        typer.echo(f"  {mark} {kind}  {row['n']:>6}  {name}")
+    if not allowed:
+        typer.echo("\nIMESSAGE_CHATS is empty, so the connector reads nothing yet.")
+
+
 instagram_app = typer.Typer(help="The experimental live Instagram lane.")
 app.add_typer(instagram_app, name="instagram")
 
@@ -765,18 +859,24 @@ def _all_connectors(conn: sqlite3.Connection, settings: Settings) -> list[Connec
         )
 
     if settings.imessage_db_path:
+        from backglass.connectors.allowlist import Allowlist
         from backglass.connectors.imessage import IMessageConnector
 
         built.append(
-            IMessageConnector(db_path=settings.imessage_db_path, boundary=boundary)
+            IMessageConnector(
+                db_path=settings.imessage_db_path,
+                boundary=boundary,
+                allowlist=Allowlist(settings.imessage_chats),
+                lookback_days=settings.imessage_lookback_days,
+            )
         )
 
     if settings.instagram_chats and (
         settings.instagram_export_path
         or (settings.instagram_username and settings.instagram_session_file)
     ):
+        from backglass.connectors.allowlist import Allowlist
         from backglass.connectors.instagram import (
-            Allowlist,
             InstagramExportConnector,
             InstagramLiveConnector,
         )

@@ -392,6 +392,7 @@ def _avorio(tmp_path: Path, boundary: Boundary) -> Factory:
 
 
 def _imessage(tmp_path: Path, boundary: Boundary) -> Factory:
+    from backglass.connectors.allowlist import Allowlist
     from tests.test_imessage import build_store
 
     path = build_store(
@@ -405,7 +406,9 @@ def _imessage(tmp_path: Path, boundary: Boundary) -> Factory:
             }
         ],
     )
-    return lambda: IMessageConnector(db_path=path, boundary=boundary)
+    return lambda: IMessageConnector(
+        db_path=path, boundary=boundary, allowlist=Allowlist(("Phoenix build", "a@example.com"))
+    )
 
 
 def _instagram_export(tmp_path: Path, boundary: Boundary) -> Factory:

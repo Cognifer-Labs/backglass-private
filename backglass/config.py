@@ -235,6 +235,14 @@ class Settings(BaseSettings):
     #: Instagram DMs (docs/07 §Instagram). The allowlist names the *only* group-chat
     #: titles and people either lane reads — same deliberate narrowness as Slack.
     #: Export lane: an unzipped Meta "Download Your Information" folder.
+    #: The only iMessage conversations read. Group chats by display name, one-to-one
+    #: threads by the other party's handle (phone number or address). Empty means the
+    #: connector reports unhealthy rather than reading the whole store — see
+    #: connectors/allowlist.py for why that is the default.
+    imessage_chats: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    #: How far back an iMessage scan reaches. The cursor stops re-reading; this stops the
+    #: first run reaching over an entire archive.
+    imessage_lookback_days: int = 90
     instagram_export_path: Path | None = None
     instagram_chats: Annotated[list[str], NoDecode] = Field(default_factory=list)
     #: Live lane (experimental, ToS-violating, ban risk — see docs/07): both must be
@@ -306,6 +314,7 @@ class Settings(BaseSettings):
         "tz_ranges",
         "slack_channels",
         "instagram_chats",
+        "imessage_chats",
         "apple_calendar_skip",
         mode="before",
     )

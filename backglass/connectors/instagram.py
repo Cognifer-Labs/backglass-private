@@ -42,12 +42,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from backglass.connectors.allowlist import Allowlist, normalise
 from backglass.connectors.base import Cursor, Health, SourceItem, content_hash
 from backglass.connectors.boundary import Boundary
 
@@ -76,26 +77,9 @@ def _fix_mojibake(text: str) -> str:
         return text
 
 
-def _normalise(name: str) -> str:
-    return " ".join(name.split()).casefold()
-
-
-class Allowlist:
-    """The owner's named chats and people. Built once, shared by both lanes."""
-
-    def __init__(self, entries: Sequence[str]) -> None:
-        self._entries = frozenset(_normalise(e) for e in entries if e.strip())
-
-    def __bool__(self) -> bool:
-        return bool(self._entries)
-
-    def allows(self, *, title: str | None, participants: Sequence[str]) -> bool:
-        """A group thread by title; a one-to-one thread by either participant."""
-        if title and _normalise(title) in self._entries:
-            return True
-        if len(participants) <= 2:
-            return any(_normalise(p) in self._entries for p in participants)
-        return False
+#: Re-exported: `Allowlist` moved to connectors/allowlist.py when iMessage needed the same
+#: rule, and the callers that import it from here keep working.
+_normalise = normalise
 
 
 @dataclass(kw_only=True)
