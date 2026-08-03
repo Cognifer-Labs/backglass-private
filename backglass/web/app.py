@@ -96,6 +96,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     # ── per-page routers (Phase 6) ────────────────────────────────────────
 
+    from backglass.web.routes import brief as brief_routes
     from backglass.web.routes import chats as chats_routes
     from backglass.web.routes import goals as goals_routes
     from backglass.web.routes import memory as memory_routes
@@ -111,6 +112,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(roadmap_routes.build_router(templates, resolved, get_conn, today))
     app.include_router(memory_routes.build_router(templates, resolved, get_conn, today))
     app.include_router(chats_routes.build_router(templates, resolved, get_conn, today))
+    app.include_router(brief_routes.build_router(templates, resolved, get_conn, today))
 
     # ── read ──────────────────────────────────────────────────────────────
 

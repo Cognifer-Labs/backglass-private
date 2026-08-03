@@ -36,6 +36,27 @@ class Delivery:
     detail: str
 
 
+def unconfigured(settings: Settings) -> str | None:
+    """Why this machine cannot deliver a brief, or None when it can.
+
+    Split out of `Sender.send` so a surface that is not sending — the dashboard's
+    /brief page — can say why no brief has ever arrived without a second, drifting copy
+    of the same four checks. `send` still calls it, so there is one answer to the
+    question and both callers get it.
+    """
+    recipient = settings.brief_to.strip()
+    if not recipient:
+        return "BRIEF_TO is not set"
+    if "," in recipient:
+        # docs/08: "The brief is sent to one address, configured, and never CC'd."
+        return "BRIEF_TO must be a single address; the brief is never CC'd"
+    if not settings.resend_api_key:
+        return "RESEND_API_KEY is not set"
+    if not settings.brief_from.strip():
+        return "BRIEF_FROM is not set"
+    return None
+
+
 class Sender:
     """Sends one brief to one address."""
 
@@ -44,16 +65,10 @@ class Sender:
         self.endpoint = endpoint
 
     def send(self, *, subject: str, html: str, text: str) -> Delivery:
+        reason = unconfigured(self.settings)
+        if reason:
+            raise DeliveryError(reason)
         recipient = self.settings.brief_to.strip()
-        if not recipient:
-            raise DeliveryError("BRIEF_TO is not set")
-        if "," in recipient:
-            # docs/08: "The brief is sent to one address, configured, and never CC'd."
-            raise DeliveryError("BRIEF_TO must be a single address; the brief is never CC'd")
-        if not self.settings.resend_api_key:
-            raise DeliveryError("RESEND_API_KEY is not set")
-        if not self.settings.brief_from.strip():
-            raise DeliveryError("BRIEF_FROM is not set")
 
         payload = json.dumps(
             {

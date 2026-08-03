@@ -16,13 +16,20 @@ to legible black-on-white rather than to nonsense.
 
 The plaintext alternative is generated from the same `Brief` object, per docs/10 §Email
 delivery — "rather than by stripping tags", which is how plaintext versions rot.
+
+`parse_markdown` at the bottom reads `brief.content_md` back into a `Brief`, so the
+dashboard's /brief page renders the stored brief through these same objects rather
+than through a second, divergent notion of what a brief looks like. It lives next to
+`to_markdown` because it is that function's inverse and the two must move together.
 """
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
 from html import escape
 
-from backglass.brief.model import Brief, Line
+from backglass.brief.model import Brief, Line, Note, Section
 
 # design/tokens.css. Duplicated as literals because email cannot use CSS variables; this
 # is the one place in the codebase allowed to hard-code them, and validate-palette.mjs
@@ -182,3 +189,104 @@ def to_markdown(brief: Brief, *, base_url: str) -> str:
         out.append("")
     out.extend(f"_{note.text}_" for note in brief.notes)
     return "\n".join(out).strip()
+
+
+# ── reading a stored brief back ───────────────────────────────────────────
+# The brief row keeps `content_md` and nothing else that carries a source URL —
+# `items_json` stores provenance as a label, not a link. So the stored markdown is the
+# only record of B2 provenance for a brief that has already been generated, and reading
+# a brief back means reading that.
+#
+# This is deliberately NOT a markdown parser and must never become one: it accepts the
+# one shape `to_markdown` above emits, and nothing else. A general parser (or a
+# dependency that is one) would be a second definition of the brief format, free to
+# disagree with the first.
+
+#: The inverse of the label column in STATUS, so a stored `OVERDUE` tag comes back as
+#: the status key the chip vocabulary is written in.
+_STATUS_BY_LABEL = {label: status for status, (_, label, _) in STATUS.items()}
+
+_STORED_LINE = re.compile(
+    r"^- (?:`(?P<tag>[A-Z ]+)` )?(?P<text>.+) \(\[(?P<label>[^\]]*)\]\((?P<url>[^)]*)\)\)$"
+)
+_STORED_NOTE = re.compile(r"^(?:- )?_(?P<text>.+)_$")
+_STORED_HEADING = re.compile(r"^## (?P<title>.+)$")
+_STORED_DATE = re.compile(r"^# (?P<date>.+)$")
+
+
+@dataclass(frozen=True)
+class StoredRef:
+    """Provenance recovered from a stored brief. Satisfies the `Provenance` protocol.
+
+    Neither a SourceRef nor a LedgerRef: the markdown kept the rendered label and the
+    rendered href, not the source row they were built from, and inventing a row id to
+    reconstruct one would be a fabricated citation.
+    """
+
+    described: str
+    href: str
+
+    @property
+    def label(self) -> str:
+        return self.described
+
+    def url(self, base: str) -> str:
+        """Re-base the dashboard's own links; leave external deep links alone.
+
+        The href was written at generation time against DASHBOARD_BASE_URL. Serving it
+        back verbatim sends the reader to whatever host that was, which is not
+        necessarily the one they are reading on — a brief generated before a port change
+        would link into nothing. A link that already points at `base` comes back as a
+        path, so it resolves against the running dashboard; a Gmail deep link does not
+        match and is returned exactly as generated.
+        """
+        prefix = base.rstrip("/")
+        if prefix and self.href.startswith(f"{prefix}/"):
+            return self.href[len(prefix) :]
+        return self.href
+
+
+def parse_markdown(content_md: str, *, kind: str = "daily") -> Brief:
+    """A stored `content_md` back as a `Brief`. The inverse of `to_markdown`.
+
+    Section priority is the stored order, so `Brief.ordered()` replays the brief exactly
+    as it was sent rather than re-sorting it by a docs/05 precedence the truncation pass
+    has already applied.
+
+    A line that does not match the stored shape becomes a `Note`, never a `Line`. B2 is
+    the reason: a claim whose provenance could not be read is a claim with no source, and
+    the one thing it must not do is render as a sourced one. As a Note it keeps its text
+    and loses its authority, which is the honest outcome.
+    """
+    brief = Brief(generated_for_date="", kind=kind)
+    section: Section | None = None
+    for raw in content_md.splitlines():
+        line = raw.rstrip()
+        if not line:
+            continue
+        heading = _STORED_HEADING.match(line)
+        if heading:
+            section = Section(priority=len(brief.sections) + 1, title=heading["title"])
+            brief.sections.append(section)
+            continue
+        stamp = _STORED_DATE.match(line)
+        if stamp:
+            brief.generated_for_date = stamp["date"]
+            continue
+        note = _STORED_NOTE.match(line)
+        if note:
+            (section.notes if section else brief.notes).append(Note(note["text"]))
+            continue
+        claim = _STORED_LINE.match(line)
+        if claim and section is not None:
+            section.lines.append(
+                Line(
+                    text=claim["text"],
+                    provenance=StoredRef(described=claim["label"], href=claim["url"]),
+                    status=_STATUS_BY_LABEL.get(claim["tag"] or ""),
+                )
+            )
+            continue
+        (section.notes if section else brief.notes).append(Note(line.lstrip("- ")))
+    brief.sections = [s for s in brief.sections if not s.empty]
+    return brief

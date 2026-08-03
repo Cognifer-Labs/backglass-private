@@ -10,10 +10,12 @@ from __future__ import annotations
 from datetime import date, timedelta
 
 import pytest
+from fastapi.testclient import TestClient
 
-from backglass.brief import daily, deliver, render
+from backglass.brief import daily, deliver, render, weekly
 from backglass.brief.model import (
     Brief,
+    LedgerRef,
     Line,
     MissingProvenance,
     Section,
@@ -22,6 +24,7 @@ from backglass.brief.model import (
 from backglass.config import Settings
 from backglass.db import now_iso
 from backglass.ledger import USER_ID, Ledger
+from backglass.web.app import create_app
 
 TODAY = date(2026, 7, 30)
 BASE = "http://127.0.0.1:8765"
@@ -776,3 +779,279 @@ class TestPlansNeedingReview:
         seed_plan(conn, settings, what="confirmed dinner", starts_at="2026-08-01",
                   confidence=0.95)
         assert self.review_lines(conn, settings) == []
+# ── the read surface: /brief ──────────────────────────────────────────────
+# The brief was write-only into SQLite for its whole life: `persist` wrote it, the
+# tracking pixel recorded that an *email* had been opened, and no route ever rendered
+# `content_md`. On a machine where Resend was never configured, that is a brief nobody
+# can read — the B6 failure arriving by another road.
+
+
+@pytest.fixture
+def client(conn, settings: Settings) -> TestClient:  # type: ignore[no-untyped-def]
+    del conn  # migrated db on disk; the app opens its own connections
+    return TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
+
+
+def a_stored_brief(conn, *, for_date: date = TODAY) -> int:  # type: ignore[no-untyped-def]
+    """Persist a brief the way the CLI does — through `to_markdown`, at BASE."""
+    brief = Brief(generated_for_date=for_date.isoformat())
+    section = Section(priority=1, title="Attention")
+    section.lines.append(
+        Line(text="Send Dana the migration plan.", provenance=a_source(1), status="overdue")
+    )
+    section.lines.append(
+        Line(
+            text="Weekly targets need 6 hours.",
+            provenance=LedgerRef("goals", "3", "goal · Ship v1"),
+        )
+    )
+    brief.add(section)
+    return daily.persist(conn, brief, render.to_markdown(brief, base_url=BASE))
+
+
+def test_a_generated_brief_is_readable_without_email(client: TestClient, conn) -> None:  # type: ignore[no-untyped-def]
+    a_stored_brief(conn)
+    conn.commit()
+    page = client.get("/brief")
+    assert page.status_code == 200
+    assert "Send Dana the migration plan." in page.text
+    assert "Attention" in page.text
+
+
+def test_the_nav_reaches_the_brief_from_every_page(client: TestClient) -> None:
+    assert 'href="/brief"' in client.get("/").text
+
+
+def test_b2_provenance_survives_the_trip_through_storage(client: TestClient, conn) -> None:  # type: ignore[no-untyped-def]
+    """CLAUDE.md rule 1, on a surface that reads the brief back out of SQLite.
+
+    The links are the ones the brief was generated with: a Gmail deep link stays
+    absolute, and a dashboard link comes back as a path so it resolves against whatever
+    host is serving the page rather than against the DASHBOARD_BASE_URL of the day it
+    was written.
+    """
+    a_stored_brief(conn)
+    conn.commit()
+    body = client.get("/brief").text
+    assert 'href="https://mail.google.com/mail/u/0/#all/m1"' in body
+    assert 'href="/goals/3"' in body
+    assert BASE not in body, "a stored dashboard link must not be served back host-pinned"
+
+
+def test_delivery_state_is_stated_and_never_invented(client: TestClient, conn) -> None:  # type: ignore[no-untyped-def]
+    """The `brief` row records `sent_at` and no failure reason, so an undelivered brief
+    says "not delivered" and stops there rather than guessing at a cause."""
+    brief_id = a_stored_brief(conn)
+    conn.commit()
+    assert "not delivered" in client.get("/brief").text
+
+    conn.execute(
+        "UPDATE brief SET sent_at = ? WHERE id = ?", ("2026-07-30T06:00:12Z", brief_id)
+    )
+    conn.commit()
+    assert "delivered 2026-07-30 06:00" in client.get("/brief").text
+
+
+def test_undelivered_is_explained_as_configuration_not_as_history(
+    client: TestClient, conn
+) -> None:  # type: ignore[no-untyped-def]
+    """Why nothing has ever arrived: stated separately from the row's own delivery state,
+    in the same words `Sender.send` would raise, because it is the same check."""
+    a_stored_brief(conn)
+    conn.commit()
+    body = client.get("/brief").text
+    assert "Email delivery is not configured" in body
+    assert "BRIEF_TO is not set" in body
+
+
+def test_a_day_with_no_brief_is_an_honest_404(client: TestClient, conn) -> None:  # type: ignore[no-untyped-def]
+    a_stored_brief(conn)
+    conn.commit()
+    page = client.get("/brief/2026-07-29")
+    assert page.status_code == 404
+    assert "No brief for 2026-07-29." in page.text
+
+
+def test_an_empty_ledger_gets_an_empty_state_not_a_404(client: TestClient) -> None:
+    page = client.get("/brief")
+    assert page.status_code == 200
+    assert "No brief has been generated yet." in page.text
+
+
+def test_navigation_only_offers_days_that_have_a_brief(client: TestClient, conn) -> None:  # type: ignore[no-untyped-def]
+    """Nearest existing brief, not the calendar neighbour — the generator does not run
+    every day, and a prev link into a day that has none is a link to a 404."""
+    earlier = TODAY - timedelta(days=4)
+    a_stored_brief(conn, for_date=earlier)
+    a_stored_brief(conn, for_date=TODAY)
+    conn.commit()
+
+    latest = client.get("/brief").text
+    assert f'href="/brief/{earlier.isoformat()}"' in latest
+    # Nothing newer exists, so no next link is offered at all — the pager never renders
+    # a day the ledger cannot serve.
+    assert "next →" not in latest
+
+    middle = client.get(f"/brief/{earlier.isoformat()}").text
+    assert f'href="/brief/{TODAY.isoformat()}"' in middle
+
+
+# ── reading a stored brief back ───────────────────────────────────────────
+
+
+def test_the_stored_markdown_round_trips(conn) -> None:  # type: ignore[no-untyped-def]
+    """`parse_markdown` is `to_markdown`'s inverse, and the page depends on it staying
+    that way — which is why the two live side by side in render.py.
+
+    The one thing that legitimately changes is the dashboard's own hrefs, which come
+    back as paths — that is `StoredRef.url` doing what the page needs. Everything else,
+    section for section and tag for tag, is the identity.
+    """
+    a_stored_brief(conn)
+    stored = str(conn.execute("SELECT content_md FROM brief").fetchone()["content_md"])
+    once = render.to_markdown(render.parse_markdown(stored), base_url=BASE)
+    assert once == stored.replace(f"{BASE}/", "/")
+    # Re-reading the re-based form is a fixed point, so a brief read twice through the
+    # page does not lose a link on the second pass.
+    assert render.to_markdown(render.parse_markdown(once), base_url=BASE) == once
+
+
+def test_a_stored_line_with_unreadable_provenance_never_renders_as_a_claim() -> None:
+    """B2 on the read path. A line whose source could not be recovered keeps its text and
+    loses its authority: it comes back as a Note, which cannot carry a status chip or
+    pose as a sourced statement."""
+    parsed = render.parse_markdown("# 2026-07-30\n\n## Attention\n- Dana is waiting.\n")
+    assert parsed.all_lines() == []
+    assert parsed.ordered()[0].notes[0].text == "Dana is waiting."
+
+
+def test_status_chips_survive_the_round_trip(conn) -> None:  # type: ignore[no-untyped-def]
+    a_stored_brief(conn)
+    stored = str(conn.execute("SELECT content_md FROM brief").fetchone()["content_md"])
+    parsed = render.parse_markdown(stored)
+    assert [line.status for line in parsed.all_lines()] == ["overdue", None]
+
+
+# ── W1: Monday scores cadence targets, and only cadence targets ───────────
+# `TargetProgress.complete` means three different things by kind, so scoring every
+# active target against it wrote "0 missed." for milestones that were never weekly and
+# for totals measured over a lifetime. On the owner's ledger that was 54 lines and 393
+# of the 400-word budget, which B1 then paid for by dropping every other section.
+
+MONDAY = date(2026, 8, 3)
+
+
+def a_goal_row(conn, title: str) -> int:  # type: ignore[no-untyped-def]
+    conn.execute(
+        "INSERT INTO goal (user_id, title, horizon, definition_of_done, created_at) "
+        "VALUES (?, ?, 'annual', 'submitted', ?)",
+        (USER_ID, title, now_iso()),
+    )
+    return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+
+def a_milestone(conn, goal_id: int, title: str) -> int:  # type: ignore[no-untyped-def]
+    conn.execute(
+        "INSERT INTO target (goal_id, kind, title, active, created_at) "
+        "VALUES (?, 'milestone', ?, 1, ?)",
+        (goal_id, title, now_iso()),
+    )
+    return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+
+def test_a_milestone_target_is_never_reported_as_a_weekly_miss(
+    conn, settings: Settings
+) -> None:  # type: ignore[no-untyped-def]
+    """"Sit the MCAT" has no meaningful "0 this week". It is reached or it is not yet —
+    the same reasoning the daily brief's goals section already applies."""
+    goal_id = a_goal_row(conn, "Medical school application")
+    a_milestone(conn, goal_id, "Sit the MCAT")
+    conn.commit()
+
+    brief = weekly.monday(conn, settings, MONDAY)
+    text = " ".join(line.text for line in brief.all_lines())
+    assert "Sit the MCAT" not in text
+    assert "missed" not in text
+
+
+def test_a_milestone_reached_last_week_is_reported_as_reached(
+    conn, settings: Settings
+) -> None:  # type: ignore[no-untyped-def]
+    from backglass.goals import checkpoints
+
+    goal_id = a_goal_row(conn, "Medical school application")
+    target_id = a_milestone(conn, goal_id, "Sit the MCAT")
+    checkpoints.record(
+        conn,
+        target_id,
+        source="manual",
+        occurred_at=f"{(MONDAY - timedelta(days=4)).isoformat()}T12:00:00-07:00",
+    )
+    conn.commit()
+
+    brief = weekly.monday(conn, settings, MONDAY)
+    text = " ".join(line.text for line in brief.all_lines())
+    assert "Sit the MCAT: reached." in text
+    assert "missed" not in text
+
+
+def test_a_total_target_reports_progress_not_a_weekly_verdict(
+    conn, settings: Settings
+) -> None:  # type: ignore[no-untyped-def]
+    from backglass.goals import checkpoints
+    from backglass.roadmap import instantiate
+
+    goal_id = a_goal_row(conn, "Medical school application")
+    target_id = instantiate.add_total(conn, goal_id, "Shadowing hours", 60)
+    checkpoints.record(
+        conn,
+        target_id,
+        source="manual",
+        delta=8,
+        occurred_at=f"{(MONDAY - timedelta(days=4)).isoformat()}T12:00:00-07:00",
+    )
+    conn.commit()
+
+    brief = weekly.monday(conn, settings, MONDAY)
+    text = " ".join(line.text for line in brief.all_lines())
+    assert "Shadowing hours: +8, 8/60 lifetime." in text
+    assert "missed" not in text
+
+
+def test_a_realistic_target_mix_does_not_evict_the_rest_of_monday(
+    conn, settings: Settings
+) -> None:  # type: ignore[no-untyped-def]
+    """B1 with the guard in place. A started roadmap carries twenty milestones; before
+    the kind check each one spent a line saying "0 missed.", and the lowest-priority
+    sections — Aging among them — were dropped to pay for them."""
+    roadmap_goal = a_goal_row(conn, "Medical school application")
+    for n in range(20):
+        a_milestone(conn, roadmap_goal, f"Milestone {n}")
+    cadence_goal = a_goal_row(conn, "Ship v1")
+    conn.execute(
+        "INSERT INTO target (goal_id, kind, title, weekly_count, estimated_minutes_each, "
+        " created_at) VALUES (?, 'cadence', 'Ship something', 2, 90, ?)",
+        (cadence_goal, now_iso()),
+    )
+    seed(
+        conn,
+        settings,
+        [
+            {
+                "direction": "i_owe",
+                "what": f"Aging item {n}",
+                "occurred_at": "2026-07-06T09:00:00-07:00",
+            }
+            for n in range(4)
+        ],
+    )
+    conn.commit()
+
+    brief = weekly.monday(conn, settings, MONDAY)
+    titles = [section.title for section in brief.ordered()]
+    text = " ".join(line.text for line in brief.all_lines())
+
+    assert "Milestone" not in text, "a milestone has no weekly verdict to report"
+    assert brief.word_count() <= 400
+    assert "Aging" in titles, "the lowest-priority section survives a roadmap's milestones"
+    assert "Ship something: 0/2 missed." in text, "a cadence target still gets its verdict"

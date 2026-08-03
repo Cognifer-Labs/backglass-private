@@ -32,7 +32,8 @@
                                          ('/people', 'People', 'people', sb.counts.follow_ups if sb else none),
                                          ('/roadmaps', 'Roadmaps', 'roadmaps', sb.counts.roadmaps if sb else none),
                                          ('/memory', 'Memory', 'memory', none),
-                                         ('/chats', 'Chats', 'chats', sb.counts.new_chats if sb else none)] %}
+                                         ('/chats', 'Chats', 'chats', sb.counts.new_chats if sb else none),
+                                         ('/brief', 'Brief', 'brief', none)] %}
         <a href="{{ href }}"{% if active == key %} class="on" aria-current="page"{% endif %}>
           <span>{{ label }}</span>
           {%- if count %} <span class="ct">{{ count }}</span>{% endif %}
@@ -81,7 +82,7 @@ function toggleTheme() {
 (function () {
   // Page switching mirrors the sidebar order. Same contract as the dashboard keys:
   // learn once, use daily; skipped while typing.
-  const pages = { '1': '/', '2': '/schedule', '3': '/goals', '4': '/people', '5': '/roadmaps', '6': '/memory' };
+  const pages = { '1': '/', '2': '/schedule', '3': '/goals', '4': '/people', '5': '/roadmaps', '6': '/memory', '7': '/chats', '8': '/brief' };
   document.addEventListener('keydown', (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const tag = (event.target.tagName || '').toLowerCase();
