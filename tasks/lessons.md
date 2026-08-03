@@ -275,15 +275,18 @@ deterministic given the id.
   release pipeline only caught this because it runs the full test suite *inside the
   exported tree* — keep that step, it is the one check that sees what recipients see.
 
-- 2026-08-02 | Staged a feature commit with `git add -A backglass/ tests/` and swept in
-  three files another session had left modified (`__main__.py`, `test_doctor.py`,
-  `test_release_manifest.py`) — unrelated release work, now inside a commit about
-  engagements, exactly the sweep four earlier lessons already describe. Caught only by
-  reading `git show --stat` afterwards. | `git add -A <dir>` is never safe in a tree with
-  pre-existing modifications: it stages by directory, not by intent. Stage the explicit
-  file list you touched, and read `git show --stat` before moving on — the diff you
-  committed is the only record of what you actually claimed. (Recovered with
-  `reset --soft` + `restore --staged`, safe only because nothing was pushed.)
+- 2026-08-02 | Swept the same three foreign files (`__main__.py`, `test_doctor.py`,
+  `test_release_manifest.py`) into a commit TWICE in one session — first with
+  `git add -A backglass/ tests/`, then again with `git add backglass/ tests/` in the very
+  next commit, minutes after writing this lesson down. Four earlier lessons already
+  describe the sweep. Writing it a fifth time is not the fix. | The rule is mechanical,
+  not attentional: **never pass a directory to `git add` in a tree that has pre-existing
+  modifications.** Run `git status --short` first, write down the foreign paths, and pass
+  `git add` an explicit file list — or `git commit -o <paths> -F msg`, which cannot stage
+  anything else. Then read `git show --stat` before the next action. The recovery
+  (`reset --soft HEAD~1` + `git restore --staged <foreign>` + recommit) is cheap and safe
+  only while nothing is pushed; the real cost is that the commit message described work
+  the diff did not match, twice.
 
 - 2026-08-02 | `detect.py` reported iMessage `configured` on a machine where every sync
   had been failing with "unable to open database file". It had a Full-Disk-Access branch,
@@ -302,3 +305,26 @@ deterministic given the id.
   distinguish the repeating case. People recur by definition, so they cannot separate a
   standing arrangement; only the date can. A signal that is constant across the instances
   you need to tell apart belongs in the guard, never in the short-circuit.
+
+- 2026-08-02 | Shipped a feature with a full green suite, ruff and mypy clean, four
+  revert-to-red proofs and a real-data smoke test — and a fresh-context verifier still
+  found six defects, two of them rule violations and one a 500 in an existing dashboard
+  path I had regressed. Every test I wrote passed; none of them asked the questions that
+  mattered. | Self-verification confirms the path you built; it cannot find the paths you
+  did not think about. Two shapes recur and are worth checking by hand before claiming
+  done: (1) **a new NOT NULL foreign key breaks every existing writer that deletes the
+  parent** — after any migration, grep for who deletes rows in the referenced table, and
+  assert the invariant from the live schema (`PRAGMA foreign_key_list`) rather than from a
+  hand-written list, so the next table fails a test and not a browser; (2) **a guard added
+  to one reader of a new column is a guard on one door** — when a confidence/status filter
+  goes into one query, immediately grep every other query over that table and ask why it
+  does not need the same filter. Both are the "guard at one call site" lesson wearing a
+  schema costume.
+
+- 2026-08-02 | Wrote in a commit message that both halves of a timezone fix "were proven
+  by reverting to date() and watching the boundary tests go red". One half was: the third
+  reader, `people_plans.sql`'s ORDER BY, had no test at all and a verifier's mutation of it
+  stayed green. | A claim in a commit message is a claim, and "I proved it" is the easiest
+  one to overstate — say it only about the specific assertions you watched fail. When a
+  fix touches N call sites, count them in the diff and check off a red run per site before
+  writing the word "every".

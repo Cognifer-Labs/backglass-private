@@ -98,6 +98,39 @@ bump re-extracts the ledger once, which is free under `MODEL_BACKEND=claude_cli`
 extracted from a real message appears as a block on the day plan with a working provenance
 link back to the sentence it came from. Idempotency asserted by a second run writing zero.
 
+## Verification outcome
+
+A fresh-context verifier **refuted** the first four commits and found six defects, all of
+which reproduced and are now fixed with a regression test each, proven by reverting the
+fix and watching a named test go red:
+
+1. Merging two people 500'd — migration 0014's NOT NULL foreign key to `entity` was never
+   repointed by `merge()`. Fixing it surfaced two references that had never been repointed
+   either, both older than this work: `activity.contact_entity_id` and
+   `entity_merge.winner_id` (which broke the second merge of any cleanup pass). The
+   invariant is now derived from the live schema, so the next table to forget fails a test.
+2. A low-confidence plan was deleting real capacity from the day while the brief correctly
+   hid it — rule 2 on one surface only.
+3. Low-confidence plans reached no review queue at all; the count was reported and the
+   entry did not exist.
+4. A declined plan was invisible to dedup, so re-extraction (which the v4 prompt bump
+   forces) resurrected cancelled plans as fresh proposals.
+5. Dedup compared the day, not the hour, so two plans on one day collapsed and the second
+   time was lost.
+6. The brief had no lower bound, and nothing can move a plan to `done`, so plans stayed in
+   it forever.
+
+The lesson worth keeping: a green suite plus self-written revert-to-red proofs confirms
+the path you built and says nothing about the paths you did not think of. See
+`tasks/lessons.md` for the two recurring shapes (a new foreign key breaking existing
+deleters; a filter added to one reader of a new column).
+
+Still open from that pass: **`done` is unreachable.** Migration 0014 advertises the state,
+`ADVANCES_TO` cannot get there, and there is no command or route. The brief no longer
+grows without bound, and the person page files past plans under Earlier, so nothing is
+broken — but a plan the owner actually attended cannot be marked as such. That wants a
+small write surface, which is a design call rather than a fix.
+
 ## Known limits, found while building
 
 - **An evening plan never appears on the day plan.** `capacity.compute` filters fixed
