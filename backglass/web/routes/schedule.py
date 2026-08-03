@@ -3,6 +3,9 @@
 Reads the same tables the Today panel reads (`dashboard_today.sql` parameterized by
 date) plus fixed events through `plan/capacity.fixed_events`, so a calendar item and
 a planned block can never disagree between pages — they come from the same readers.
+
+The two readers overlap by design and describe the same event twice; `_collapse` is the
+single merge point that makes it draw once.
 """
 
 from __future__ import annotations
@@ -111,6 +114,40 @@ def _clock(minute_of_day: int) -> str:
 RawEntry = tuple[int, int, str, str, str, bool]
 
 
+def _collapse(raw: list[RawEntry]) -> list[RawEntry]:
+    """One event draws once, however many readers described it.
+
+    The page reads two overlapping surfaces on purpose (see the module docstring), and
+    both of them carry the same calendar event. `plan/planner` persists a `kind='fixed'`
+    plan_block for every event in `cap.fixed`, so `dashboard_today.sql` returns it — and
+    then `capacity.fixed_events` returns it again straight from the ledger. On top of
+    that the ledger itself holds the ASU and Apple imports of one class, which
+    `capacity._distinct` collapses inside `compute` but not on the way to this page.
+    Drawn, the copies stack pixel-identically across the two lanes and the canvas asserts
+    a triple-booked day under the capacity sentence that says the day fits.
+
+    Identity is `capacity._distinct`'s, in the coordinates this page already works in:
+    (start minute, duration, folded title). `capacity._aware` resolved the offsets and
+    the planner wrote local ISO, so a start minute here is the same instant however the
+    source spelled it. Two entries at the same minute, the same length and the same title
+    are one thing to look at.
+
+    Deduplicating here rather than filtering `kind='fixed'` blocks out is what keeps an
+    engagement-derived fixed block — "dinner at seven", which has no calendar row behind
+    it — on the timeline: it has no second copy, so nothing collapses it away.
+
+    The travel flag is OR-ed rather than taken from the winner, matching `_distinct`: the
+    plan block does not record travel, and it must not overrule the reader that did.
+    """
+    kept: dict[tuple[int, int, str], RawEntry] = {}
+    for entry in raw:
+        identity = (entry[0], entry[1], entry[2].casefold())
+        seen = kept.get(identity)
+        if seen is None or entry[5] and not seen[5]:
+            kept[identity] = entry
+    return list(kept.values())
+
+
 def _raw_entries(view: DayView) -> list[RawEntry]:
     raw: list[RawEntry] = []
     for e in view.fixed:
@@ -131,6 +168,7 @@ def _raw_entries(view: DayView) -> list[RawEntry]:
             (start, max(end - start, 1), str(b["title"]), str(b["kind"]),
              str(b["outcome"]), False)
         )
+    raw = _collapse(raw)
     raw.sort(key=lambda r: (r[0], -r[1]))
     return raw
 

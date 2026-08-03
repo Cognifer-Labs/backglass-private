@@ -3,15 +3,23 @@
 `render()` reads the actual shipped templates (no override for the template
 directory), so most of these exercise the real eight files with fake substitution
 values — the fastest way to catch a template that silently doesn't fill in.
+
+The last class covers the other thing called "schedule": the Schedule *page*, and
+specifically the one merge point where its two readers stop describing the same event
+twice (`web/routes/schedule._collapse`).
 """
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from backglass import schedule
+from backglass.plan import capacity
+from backglass.web.routes import schedule as schedule_page
 
 
 def test_every_template_renders_with_no_placeholder_left() -> None:
@@ -134,3 +142,147 @@ def test_real_run_writes_and_loads_each_job(monkeypatch, tmp_path) -> None:
         assert (written_dir / filename).read_text() == rendered[filename]
     assert len(loads) == 8
     assert all(cmd[:2] == ["launchctl", "load"] for cmd in loads)
+
+
+# ── the Schedule page: one event, one entry ───────────────────────────────
+
+DAY = date(2026, 8, 20)
+TZ = "America/Phoenix"
+
+
+def _block(starts_at: str, ends_at: str, title: str, kind: str) -> dict[str, Any]:
+    """One `dashboard_today.sql` row, cut down to the columns the timeline reads."""
+    return {
+        "starts_at": starts_at,
+        "ends_at": ends_at,
+        "title": title,
+        "kind": kind,
+        "outcome": "",
+    }
+
+
+def _view(
+    fixed: list[capacity.FixedEvent], blocks: list[dict[str, Any]]
+) -> schedule_page.DayView:
+    return schedule_page.DayView(day=DAY, tz=TZ, blocks=blocks, fixed=fixed)
+
+
+class TestTheTimelineDrawsEachEventOnce:
+    """The page reads the ledger and the persisted plan, and both hold the same event.
+
+    Found on the owner's real store: 2026-08-20 drew 16 entries for 9 things, the copies
+    stacked pixel-identically because only two lanes exist, so the canvas asserted a
+    triple-booked day directly under the capacity sentence saying the day fits.
+    """
+
+    def _real_shaped_day(self) -> schedule_page.DayView:
+        """All three duplication shapes at once, in the owner's real spellings.
+
+        HON 171 is the planner re-projection: `plan/planner` persists a `kind='fixed'`
+        block for every event in `cap.fixed`, so the class arrives once from
+        `dashboard_today.sql` and once from `capacity.fixed_events`.
+
+        PSY 101 is the ASU/Apple double import — the same lecture, stored as a local
+        offset by one connector and as UTC by the other. Both go through
+        `capacity._aware`, which resolves them to the same Phoenix wall clock, and that
+        is why identity can be a start minute.
+
+        Dinner is the shape that must SURVIVE: an engagement-derived fixed block
+        ("dinner at seven") reaches the plan through `capacity.engagement_events` and has
+        no calendar `source_item` behind it, so it exists only as a `kind='fixed'` block.
+        Filtering fixed blocks out instead of collapsing on identity would delete it.
+        """
+        return _view(
+            fixed=[
+                capacity.FixedEvent(
+                    starts_at=capacity._aware("2026-08-20T10:30:00-07:00", TZ),
+                    ends_at=capacity._aware("2026-08-20T11:45:00-07:00", TZ),
+                    title="HON 171",
+                ),
+                capacity.FixedEvent(
+                    starts_at=capacity._aware("2026-08-20T12:00:00-07:00", TZ),
+                    ends_at=capacity._aware("2026-08-20T13:15:00-07:00", TZ),
+                    title="PSY 101",
+                ),
+                capacity.FixedEvent(
+                    starts_at=capacity._aware("2026-08-20T19:00:00.000Z", TZ),
+                    ends_at=capacity._aware("2026-08-20T20:15:00.000Z", TZ),
+                    title="PSY 101",
+                ),
+            ],
+            blocks=[
+                _block(
+                    "2026-08-20T10:30:00-07:00", "2026-08-20T11:45:00-07:00", "HON 171", "fixed"
+                ),
+                _block(
+                    "2026-08-20T19:00:00-07:00", "2026-08-20T20:30:00-07:00",
+                    "Dinner — Postino", "fixed",
+                ),
+                _block(
+                    "2026-08-20T13:25:00-07:00", "2026-08-20T13:55:00-07:00",
+                    "Loan application", "work",
+                ),
+            ],
+        )
+
+    def test_every_duplication_shape_collapses_and_the_engagement_block_survives(self) -> None:
+        entries = schedule_page.timeline(self._real_shaped_day(), today=DAY).entries
+
+        assert [(e.start_label, e.title) for e in entries] == [
+            ("10:30", "HON 171"),
+            ("12:00", "PSY 101"),
+            ("13:25", "Loan application"),
+            ("19:00", "Dinner — Postino"),
+        ]
+        # Nothing was pushed into the overflow lane, because nothing overlaps any more.
+        assert {e.lane for e in entries} == {0}
+
+    def test_the_week_grid_collapses_too(self) -> None:
+        """Same defect, same fix: the week columns place `_raw_entries` output as well."""
+        week = schedule_page.week_timeline([self._real_shaped_day()], today=DAY)
+        assert len(week.cols[0].entries) == 4
+
+    def test_the_reader_that_knew_it_was_travel_is_not_overruled(self) -> None:
+        """`capacity._distinct` OR-s the flag; the copies reaching this page are worse —
+        a plan block cannot carry travel at all, so a first-wins collapse would drop the
+        commute hatching from an event the calendar had marked."""
+        view = _view(
+            fixed=[
+                capacity.FixedEvent(
+                    starts_at=capacity._aware("2026-08-20T08:00:00-07:00", TZ),
+                    ends_at=capacity._aware("2026-08-20T08:40:00-07:00", TZ),
+                    title="Drive to campus",
+                    travel=True,
+                )
+            ],
+            blocks=[
+                _block(
+                    "2026-08-20T08:00:00-07:00", "2026-08-20T08:40:00-07:00",
+                    "Drive to campus", "fixed",
+                )
+            ],
+        )
+        entries = schedule_page.timeline(view, today=DAY).entries
+        assert len(entries) == 1
+        assert entries[0].travel
+
+    def test_two_genuinely_different_events_at_the_same_minute_both_draw(self) -> None:
+        """Identity is all three fields. A double-booked hour is real information."""
+        view = _view(
+            fixed=[
+                capacity.FixedEvent(
+                    starts_at=capacity._aware("2026-08-20T09:00:00-07:00", TZ),
+                    ends_at=capacity._aware("2026-08-20T10:00:00-07:00", TZ),
+                    title="Advising",
+                ),
+                capacity.FixedEvent(
+                    starts_at=capacity._aware("2026-08-20T09:00:00-07:00", TZ),
+                    ends_at=capacity._aware("2026-08-20T10:00:00-07:00", TZ),
+                    title="Lab safety training",
+                ),
+            ],
+            blocks=[],
+        )
+        entries = schedule_page.timeline(view, today=DAY).entries
+        assert len(entries) == 2
+        assert {e.lane for e in entries} == {0, 1}
