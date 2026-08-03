@@ -248,12 +248,25 @@ def _distinct(events: list[FixedEvent]) -> list[FixedEvent]:
 
 
 def _aware(value: str, tz: str) -> datetime:
+    """The instant this event starts, expressed in the owner's zone for that day.
+
+    Converting rather than merely making it aware is what keeps the plan readable. The
+    comparisons were always correct — two aware datetimes compare by instant whatever
+    their offsets — but everything downstream *renders* with strftime, and a source that
+    stores UTC then printed a 10:30 Phoenix lecture as "17:30". The owner's own calendar
+    import stores `-07:00` and printed correctly, so the two sat side by side in one plan
+    disagreeing by seven hours, and blocks appeared to be scheduled at 01:00.
+
+    A naive value is read as already being in `tz`: it is a wall clock somebody wrote
+    down, and there is nothing else it could mean.
+    """
     from zoneinfo import ZoneInfo
 
+    zone = ZoneInfo(tz)
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=ZoneInfo(tz))
-    return parsed
+        return parsed.replace(tzinfo=zone)
+    return parsed.astimezone(zone)
 
 
 def buffer_for(event: FixedEvent, settings: Settings) -> int:

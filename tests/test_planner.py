@@ -1036,3 +1036,34 @@ class TestEngagementsOnTheDay:
 
         assert len(capacity.fixed) == 1, [e.title for e in capacity.fixed]
         assert capacity.fixed_minutes == 75
+
+    def test_a_utc_stored_event_is_placed_in_the_owners_own_hours(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings
+    ) -> None:
+        """Comparisons were always right; rendering was not.
+
+        Two aware datetimes compare by instant whatever their offsets, so a UTC-stored
+        event landed in the correct slot — and then every surface printed it with
+        strftime, so a 10:30 Phoenix lecture read as "17:30". The owner's hand-imported
+        calendar stores `-07:00` and printed correctly, so the two sat in one plan seven
+        hours apart and work appeared to be scheduled at 01:00.
+        """
+        payload = {
+            "starts_at": "2026-07-30T17:30:00.000Z",  # 10:30 in Phoenix
+            "ends_at": "2026-07-30T18:45:00.000Z",
+            "status": "confirmed",
+            "declined": False,
+            "travel": False,
+        }
+        conn.execute(
+            "INSERT INTO source_item (user_id, source, external_id, fetched_at,"
+            " occurred_at, title, raw_json, content_hash) "
+            "VALUES (?, 'calendar:apple', 'utc-1', ?, ?, 'HON 171', ?, 'h-utc')",
+            (USER_ID, now_iso(), "2026-07-30T17:30:00.000Z",
+             __import__("json").dumps(payload)),
+        )
+
+        (event,) = capacity_mod.fixed_events(conn, THURSDAY, PHOENIX)
+
+        assert event.starts_at.strftime("%H:%M") == "10:30"
+        assert event.ends_at.strftime("%H:%M") == "11:45"
