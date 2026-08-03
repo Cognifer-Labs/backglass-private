@@ -397,6 +397,14 @@ def _extract_pass(
         )
         return
 
+    # Fetched here, on the main thread, before anything is dispatched. `work` runs in a
+    # thread pool and this connection is not shared across threads — the same reason the
+    # results are written back on the main thread rather than inside the worker.
+    contexts = {
+        int(item["id"]): tier2.conversation_context(conn, int(item["id"]))
+        for item in pending
+    }
+
     def work(
         item: dict[str, Any],
     ) -> tuple[dict[str, Any], tuple[CommitmentExtraction, float] | Exception]:
@@ -414,6 +422,7 @@ def _extract_pass(
                 model=settings.model_extract,
                 budget_usd=settings.per_call_budget_usd,
                 settings=settings,
+                context=contexts.get(int(item["id"]), ""),
             )
         except Exception as exc:  # noqa: BLE001
             return item, exc

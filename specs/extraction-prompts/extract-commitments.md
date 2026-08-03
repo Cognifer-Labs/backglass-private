@@ -1,6 +1,6 @@
 ---
 id: extract-commitments
-version: 6
+version: 7
 model: careful
 output: strict JSON, schema-validated, one retry on malformed
 ---
@@ -156,6 +156,17 @@ Do not extract:
     then return them with resolves=true as above
   - commitments between two other people that do not involve the user
   - restatements of a commitment already made in an earlier quoted message
+
+EARLIER IN THIS CONVERSATION (context only, oldest first)
+{{context}}
+
+Use this to work out what the message below refers to — who "he" is, what
+"that" means, which plan "6" or "Friday" is answering. Do NOT extract from
+it: anything already arranged up there has been read on its own pass, and
+returning it again is how one plan becomes four rows.
+The `evidence` you return must be a sentence from the MESSAGE below, never
+from this context. If the message only makes sense with the context and you
+still cannot tell what it means, return nothing rather than guessing.
 
 MESSAGE
 From: {{author}}

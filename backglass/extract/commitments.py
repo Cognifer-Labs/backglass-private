@@ -33,8 +33,56 @@ class ApplyReport:
     date_notes: list[str] = field(default_factory=list)
 
 
+#: How much conversation to show above the message being read. Small on purpose: this is
+#: paid for on every extraction call, and the job is to resolve what "6" refers to, not to
+#: hand the model a transcript. Eight turns covers a plan being made and answered.
+CONTEXT_TURNS = 8
+CONTEXT_CHARS = 900
+
+
+def conversation_context(
+    conn: Any, source_item_id: int, *, turns: int = CONTEXT_TURNS
+) -> str:
+    """The few messages before this one, oldest first, as plain lines.
+
+    Empty for anything that is not part of a conversation — mail with no thread, a
+    calendar event, a note — which is exactly right: those items already carry their own
+    context in a subject line and a body.
+    """
+    from backglass.db import query as _query
+    from backglass.ledger import USER_ID
+
+    rows = list(
+        conn.execute(
+            _query("conversation_context"),
+            {"user_id": USER_ID, "source_item_id": source_item_id, "limit": turns},
+        )
+    )
+    lines: list[str] = []
+    budget = CONTEXT_CHARS
+    # Reversed because the query returns newest-first (that is how a LIMIT finds the
+    # nearest neighbours) while a conversation reads oldest-first. Truncating from the
+    # newest end keeps the turns closest to the message being read.
+    for row in rows:
+        sender = str(row["author"] or "them").split("<")[0].strip() or "them"
+        who = "me" if row["is_from_me"] else sender
+        text = " ".join(str(row["body_text"] or "").split())[:200]
+        if not text:
+            continue
+        line = f"{who}: {text}"
+        if len(line) > budget:
+            break
+        budget -= len(line)
+        lines.append(line)
+    return "\n".join(reversed(lines))
+
+
 def render_parts(
-    item: dict[str, Any], *, prompt: Prompt, settings: Settings
+    item: dict[str, Any],
+    *,
+    prompt: Prompt,
+    settings: Settings,
+    context: str = "",
 ) -> tuple[str, str]:
     """(system, user) for one item — the static instruction prefix rides in `system`
     for prompt caching (prompts.Prompt.split). Shared with the batch path
@@ -56,6 +104,7 @@ def render_parts(
         occurred_at=item.get("occurred_at") or "",
         title=item.get("title") or "",
         body_text=item.get("body_text") or "",
+        context=context or "(no earlier messages)",
     )
     return system, rendered
 
@@ -68,8 +117,9 @@ def extract(
     model: str,
     budget_usd: float,
     settings: Settings,
+    context: str = "",
 ) -> tuple[CommitmentExtraction, float]:
-    system, rendered = render_parts(item, prompt=prompt, settings=settings)
+    system, rendered = render_parts(item, prompt=prompt, settings=settings, context=context)
     result = client.complete(
         system=system, user=rendered, schema=SCHEMA, model=model, budget_usd=budget_usd
     )

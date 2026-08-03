@@ -141,7 +141,14 @@ def submit(
     schema = json_schema(CommitmentExtraction)
     requests = []
     for item in eligible:
-        system, user = tier2.render_parts(dict(item), prompt=prompt, settings=settings)
+        system, user = tier2.render_parts(
+            dict(item),
+            prompt=prompt,
+            settings=settings,
+            # The batch path renders the same prompt as the live one, so it needs the
+            # same context or an overnight run would read every reply blind.
+            context=tier2.conversation_context(conn, int(item["id"])),
+        )
         requests.append(
             {
                 "custom_id": f"si-{item['id']}",
