@@ -11,6 +11,7 @@ Two things are being protected here that are easy to break and expensive to noti
 
 from __future__ import annotations
 
+import re
 from datetime import date
 
 import pytest
@@ -445,14 +446,18 @@ def test_accept_and_reject_are_equal_weight(
     body = client.get("/").text
     review = panel_slice(body, "panel-review")
 
-    accept = [f for f in review.split("<button")[1:] if ">Accept<" in f][0]
-    reject = [f for f in review.split("<button")[1:] if ">Reject<" in f][0]
+    accepts = re.findall(r"<button[^>]*\bclass=\"btn accept\"[^>]*>", review)
+    rejects = re.findall(r"<button[^>]*\bclass=\"btn reject\"[^>]*>", review)
 
-    assert 'class="btn accept"' in accept
-    assert 'class="btn reject"' in reject
+    assert len(accepts) == 1
+    # Rejecting is choosing a category, so the reject side is the four reason buttons.
+    # A plain Reject used to sit here too, hardwired to `not_a_commitment` — it recorded
+    # a reason the owner had not chosen, which is why it is gone.
+    assert len(rejects) == len(actions.REJECT_REASONS) == 4
     for nudge in ("primary", "autofocus", "checked", "default"):
-        assert nudge not in accept, nudge
-    assert review.index(">Accept<") < review.index(">Reject<"), "order is Accept then Reject"
+        assert nudge not in accepts[0], nudge
+    # Accept must never outweigh the reject side; it may not be the only thing offered.
+    assert review.index(">Accept<") < review.index("reject as")
 
 
 def test_the_only_confirmation_is_on_drop(client: TestClient, conn, settings: Settings) -> None:  # type: ignore[no-untyped-def]
@@ -516,3 +521,26 @@ def test_the_keyboard_map_matches_docs06(client: TestClient) -> None:
     body = client.get("/").text
     for key in ("'j'", "'k'", "'x'", "'d'", "'s'", "'r'"):
         assert f"case {key}:" in body, key
+
+
+
+def test_no_reject_control_hardwires_a_reason_the_owner_did_not_choose(
+    client: TestClient, conn, settings: Settings
+) -> None:  # type: ignore[no-untyped-def]
+    """The feedback loop's one hard requirement: a recorded reason is the owner's.
+
+    A plain "Reject" button used to sit above the four categories, posting
+    `/reject/not_a_commitment` — so a rejection made for any other reason was recorded as
+    that one. `backglass audit corrections` maps the dominant reason to the file to edit,
+    so invented answers do not merely dilute the distribution, they point at the wrong
+    prompt. Every reject control must be labelled with the reason it sends.
+    """
+    commitment(conn, settings, n=1, confidence=0.4)
+    review = panel_slice(client.get("/").text, "panel-review")
+
+    posted = re.findall(r'hx-post="/review/\d+/reject/(\w+)"[^>]*>([^<]+)<', review)
+    assert len(posted) == len(actions.REJECT_REASONS)
+    for key, label in posted:
+        assert key in actions.REJECT_REASONS, key
+        # "Wrong date" names wrong_date; a button reading "Reject" names nothing.
+        assert label.strip().lower() == actions.REJECT_REASONS[key], (key, label)

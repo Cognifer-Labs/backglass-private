@@ -22,15 +22,20 @@
           <div class="acts">
             <button class="btn accept" hx-post="/review/{{ r['id'] }}/accept"
                     hx-target="#panel-review" hx-swap="outerHTML">Accept</button>
-            <button class="btn reject" hx-post="/review/{{ r['id'] }}/reject/not_a_commitment"
-                    hx-target="#panel-review" hx-swap="outerHTML">Reject</button>
           </div>
-          {# Four reason buttons, no free text. The distribution is the feedback loop. #}
+          {# Rejecting IS choosing a category — docs/11 §4 lists four buttons and no fifth.
+             There used to be a plain "Reject" here as well, sitting above these and
+             hardwired to `not_a_commitment`, so every rejection made for any other reason
+             was recorded as that one. A feedback loop fed invented answers is worse than
+             an empty one: the distribution that is supposed to say which part of the
+             extraction is wrong would have pointed at the triage prompt no matter what
+             was actually wrong. These four are now the only way to reject, which also
+             keeps the reject side visibly heavier than Accept rather than lighter. #}
           <div class="why">
             <span class="lbl">reject as</span>
             {% for key, label in [('wrong_date','Wrong date'), ('not_a_commitment','Not a commitment'),
                                   ('not_mine','Not mine'), ('already_done','Already done')] %}
-              <button class="btn" hx-post="/review/{{ r['id'] }}/reject/{{ key }}"
+              <button class="btn reject" hx-post="/review/{{ r['id'] }}/reject/{{ key }}"
                       hx-target="#panel-review" hx-swap="outerHTML">{{ label }}</button>
             {% endfor %}
           </div>
