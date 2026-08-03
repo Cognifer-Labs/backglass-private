@@ -569,7 +569,11 @@ class TestReschedule:
             settings,
             second,
             at_two,
-            engagement(starts_at="Friday at 7:30pm", replaces_earlier=True),
+            engagement(
+                starts_at="Friday at 7:30pm",
+                replaces_earlier=True,
+                replaces_start_at="Friday at 7pm",
+            ),
         )
 
         assert report.inserted == 0
@@ -771,7 +775,11 @@ class TestOlderMessagesDoNotOverwriteNewer:
             settings,
             second,
             at_two,
-            engagement(starts_at="Friday at 7:30pm", replaces_earlier=True),
+            engagement(
+                starts_at="Friday at 7:30pm",
+                replaces_earlier=True,
+                replaces_start_at="Friday at 7pm",
+            ),
         )
 
         replay = Ledger(conn, settings)
@@ -910,7 +918,11 @@ class TestOnlyAMoveMoves:
             settings,
             second,
             at_two,
-            engagement(starts_at="Saturday at 7pm", replaces_earlier=True),
+            engagement(
+                starts_at="Saturday at 7pm",
+                replaces_earlier=True,
+                replaces_start_at="Friday at 7pm",
+            ),
         )
 
         assert report.inserted == 0
@@ -982,3 +994,147 @@ class TestNewestCitationAcrossTimezones:
         newest = ledger.newest_citation_before(engagement_id, later)
 
         assert newest == "2026-07-15T20:00:00-07:00"
+
+
+class TestAMoveIsAimedAtWhereItCameFrom:
+    """`replaces_earlier` alone could not be acted on.
+
+    A move's new time is by construction near where it is GOING, so matching on it aimed
+    at the destination and repainted whichever unrelated plan already sat nearest there.
+    `replaces_start_at` names the old time — the same admission `resolves_what` makes on
+    the commitment side — and everything is compared against that instead.
+    """
+
+    def _plan(self, ledger: Ledger, boundary: Any, **kw: Any) -> tuple[int, str]:
+        return ingest(ledger, boundary, **kw)
+
+    def test_a_move_takes_the_plan_it_names_not_the_one_nearest_its_destination(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """A confirmed dinner on the 17th and an unrelated one on the 25th. Moving the
+        17th to the 24th put the 24th nearest the 25th, so the 25th was repainted and the
+        confirmed dinner was left stale on the day plan — with no duplicate to make the
+        loss visible."""
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(
+            ledger,
+            settings,
+            first,
+            at_one,
+            engagement(starts_at="2026-07-17T19:00:00", status="confirmed"),
+            engagement(starts_at="2026-07-25T20:00:00"),
+        )
+
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        run(
+            ledger,
+            settings,
+            second,
+            at_two,
+            engagement(
+                starts_at="2026-07-24T20:00:00",
+                status="confirmed",
+                replaces_earlier=True,
+                replaces_start_at="2026-07-17",
+            ),
+        )
+
+        moved = sorted(str(r["starts_at"])[:10] for r in rows(conn))
+        assert moved == ["2026-07-24", "2026-07-25"]
+
+    def test_a_move_whose_target_was_declined_does_not_eat_another_plan(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """The declined row is rightly out of reach, and a move that can only be aimed at
+        it must become a new plan rather than landing on whatever else shares the day."""
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(
+            ledger,
+            settings,
+            first,
+            at_one,
+            engagement(what="coffee", starts_at="2026-07-17T09:00:00"),
+            engagement(what="coffee", starts_at="2026-07-17T16:00:00"),
+        )
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        run(
+            ledger,
+            settings,
+            second,
+            at_two,
+            engagement(what="coffee", starts_at="2026-07-17T16:00:00", status="declined"),
+        )
+
+        third, at_three = ingest(ledger, boundary, sent="2026-07-16T10:00:00-07:00")
+        run(
+            ledger,
+            settings,
+            third,
+            at_three,
+            engagement(
+                what="coffee",
+                starts_at="2026-07-18T16:00:00",
+                replaces_earlier=True,
+                replaces_start_at="2026-07-17T16:00:00",
+            ),
+        )
+
+        assert any(str(r["starts_at"]) == "2026-07-17T09:00:00" for r in rows(conn)), (
+            "the unrelated 9am coffee must survive"
+        )
+
+    def test_a_move_with_no_stated_origin_becomes_a_new_plan(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """It cannot be aimed, so it is not fired. A duplicate is visible on the board and
+        can be dismissed; overwriting the wrong plan is silent."""
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(ledger, settings, first, at_one, engagement(starts_at="2026-07-17T19:00:00"))
+
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        report = run(
+            ledger,
+            settings,
+            second,
+            at_two,
+            engagement(starts_at="2026-07-24T20:00:00", replaces_earlier=True),
+        )
+
+        assert report.inserted == 1
+        assert len(rows(conn)) == 2
+
+
+class TestReExtractionDoesNotShuffleDayPrecisionPlans:
+    def test_two_undated_times_from_one_message_keep_their_days(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """One message producing a Friday plan and a Saturday plan, re-read with the
+        model emitting them in the opposite order. Ranking scored every day-precision row
+        as equally near, so the two swapped days and the second pass wrote twice."""
+        ledger = Ledger(conn, settings)
+        item_id, occurred_at = ingest(ledger, boundary)
+        run(
+            ledger,
+            settings,
+            item_id,
+            occurred_at,
+            engagement(what="coffee", starts_at="2026-07-17"),
+            engagement(what="coffee", starts_at="2026-07-18"),
+        )
+        before = [(r["id"], r["starts_at"]) for r in rows(conn)]
+
+        replay = Ledger(conn, settings)
+        run(
+            replay,
+            settings,
+            item_id,
+            occurred_at,
+            engagement(what="coffee", starts_at="2026-07-18"),
+            engagement(what="coffee", starts_at="2026-07-17"),
+        )
+
+        assert [(r["id"], r["starts_at"]) for r in rows(conn)] == before
+        assert replay.writes == 0

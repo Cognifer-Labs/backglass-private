@@ -1,6 +1,6 @@
 ---
 id: extract-commitments
-version: 5
+version: 6
 model: careful
 output: strict JSON, schema-validated, one retry on malformed
 ---
@@ -68,6 +68,8 @@ For each engagement, return:
   location           as written, or null
   status             proposed | confirmed | declined
   replaces_earlier   true if this MOVES a plan that was already arranged
+  replaces_start_at  when that plan was BEFORE this message moved it, ISO
+                     8601 or null if the message does not say
   confidence         0.0 to 1.0
   evidence           the exact sentence you extracted it from, verbatim
 
@@ -90,7 +92,11 @@ point of tracking it, because it is what the user still owes a reply to.
 RESCHEDULING — set replaces_earlier when a message moves an existing plan.
 "Can we push dinner to 7:30", "let's do Saturday instead", "moving lunch to
 1pm" are all the SAME plan at a new time: return one engagement, with the
-NEW time, and replaces_earlier=true.
+NEW time in starts_at, replaces_earlier=true, and the OLD time in
+replaces_start_at whenever the message names it — "Friday's dinner has to
+move to the 24th" gives replaces_start_at=Friday's date and starts_at=the
+24th. Leave replaces_start_at null if the message never says where the plan
+was; do not guess it.
 Leave it false when the message proposes something additional, even on the
 same day and with the same people — "coffee at 9, or 4 if that's easier" is
 two options, and "lunch Friday and drinks Friday" is two plans. If you are
@@ -189,6 +195,7 @@ Subject: {{title}}
       "location": "Ravi's on 5th",
       "status": "confirmed",
       "replaces_earlier": false,
+      "replaces_start_at": null,
       "confidence": 0.88,
       "evidence": "Friday works — 7pm at Ravi's on 5th, Sam's coming too."
     }

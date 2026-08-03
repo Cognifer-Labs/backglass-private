@@ -100,7 +100,18 @@ link back to the sentence it came from. Idempotency asserted by a second run wri
 
 ## Verification outcome
 
-Four fresh-context verifier passes, all four refuting, eighteen defects fixed.
+Five fresh-context verifier passes, all five refuting, twenty-one defects fixed.
+
+**Fifth pass** showed `replaces_earlier` was unusable on its own. A move's new time is by
+construction near where it is GOING, and the matcher ranked by nearness to that — so it
+aimed at the destination and repainted whichever unrelated plan already sat closest to it,
+leaving the plan that actually moved stale and destroying a bystander with no duplicate to
+make the loss visible. `replaces_start_at` (v6) names the old time, exactly as
+`resolves_what` names the commitment being resolved, and the match and the ranking are
+both aimed at that instead. A move the message cannot aim — no stated origin — becomes a
+new plan rather than an overwrite of the wrong one. Also fixed: day-precision rows all
+scored as equally near, so re-reading a message that produced a Friday plan and a Saturday
+plan could swap them and write on the second pass.
 
 **Fourth pass** found four. Three shared a root cause I had now been wrong about in both
 directions three times: matching picked a nearest row but never *rejected* one, so a 4pm

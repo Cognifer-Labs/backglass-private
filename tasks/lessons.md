@@ -397,3 +397,14 @@ deterministic given the id.
   MAX, MIN and ORDER BY on that column, not just to WHERE — and a careful comparison
   downstream cannot rescue a wrong value chosen upstream. When a column is documented as
   "not comparable as text", grep it for aggregates too.
+
+- 2026-08-02 | Added `replaces_earlier` so the model could say "this message moves an
+  existing plan", and matched the move by nearness to its NEW time. A move's new time is
+  near where it is going, not near the plan it is leaving, so the matcher aimed at the
+  destination: it repainted whichever unrelated plan already sat closest to the new slot
+  and left the plan that actually moved untouched. The flag was right and unusable —
+  half a fact. | A signal that identifies a CHANGE has two ends, and the useful one is
+  usually the end you are moving away from. Before adding a flag, write the lookup it is
+  supposed to enable and check the flag actually keys it: "this is a move" does not say
+  *what* moved, and the commitment side had already learned this — `resolves` ships with
+  `resolves_what` for exactly this reason and I copied only the boolean.

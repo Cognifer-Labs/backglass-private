@@ -100,6 +100,16 @@ class ExtractedEngagement(Strict):
     #: "coffee at 9" is a different coffee or the same coffee moved, and only the sentence
     #: knows which. This is the same admission `resolves` makes for commitments.
     replaces_earlier: bool = False
+    #: When `replaces_earlier` is set, the time the plan had BEFORE this message moves it
+    #: — "Friday's dinner has to move" gives Friday. Null when the message does not say.
+    #:
+    #: The flag alone is not enough to act on, which cost a verification round to learn: a
+    #: move is identified by what it moves FROM, and its new time is by construction near
+    #: where it is GOING. Matching on the new time picked whichever unrelated plan already
+    #: sat near the destination and repainted that instead. With no stated old time the
+    #: move cannot be aimed, so it becomes a new plan — visible, and dismissible — rather
+    #: than a silent overwrite of the wrong one. Mirrors `resolves_what` above.
+    replaces_start_at: str | None = None
     #: Same rule as the commitment above — rule 1 applies to every generated claim.
     evidence: str
 

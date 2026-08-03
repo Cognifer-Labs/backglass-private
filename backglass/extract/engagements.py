@@ -73,6 +73,16 @@ def apply(
             if resolution.note:
                 report.date_notes.append(f"{candidate.what!r}: {resolution.note}")
 
+        # A move is aimed at where the plan WAS, not where it is going. Resolved against
+        # the message like every other date here (rule 4); when the message never named
+        # the old time this stays None and the move is matched like any other sighting,
+        # which in practice means it becomes a new plan.
+        moved_from = (
+            dates.resolve_due(candidate.replaces_start_at, occurred_at=occurred_at).value
+            if candidate.replaces_earlier
+            else None
+        )
+
         # ── step 5: dedup, against the ledger and within this one response.
         match = _match(
             candidate,
@@ -82,6 +92,7 @@ def apply(
             ledger,
             settings,
             accepted_here,
+            moved_from=moved_from,
         )
         if match is not None:
             report.deduped += 1
@@ -210,6 +221,8 @@ def _match(
     ledger: Ledger,
     settings: Settings,
     accepted: list[tuple[int, ExtractedEngagement, set[int], str | None]],
+    *,
+    moved_from: str | None = None,
 ) -> int | None:
     """The id of the live plan this candidate is another sighting of, or None.
 
@@ -249,6 +262,11 @@ def _match(
     # later message settled the 4pm one. Collect every candidate row and take the nearest
     # start time; an exact time match therefore always wins, and a reschedule with no
     # exact match still lands on the plan it is closest to rather than the oldest.
+    # Everything below compares against `target`: the plan's OLD time for a move that
+    # named one, and the candidate's own time otherwise. Ranking on the new time aimed a
+    # reschedule at its destination and repainted whichever unrelated plan happened to sit
+    # nearest to it, which is the opposite of what a move means.
+    target = moved_from if moved_from is not None else starts_at
     best: tuple[int, int] | None = None
     for row in ledger.open_engagements():
         if int(row["id"]) in fresh:
@@ -263,7 +281,7 @@ def _match(
         # start time breaks the tie below).
         cited = ledger.cites_engagement(int(row["id"]), source_item_id)
         if not _same_row(
-            candidate, entity_ids, starts_at, row, row_ids, settings, already_cited=cited
+            candidate, entity_ids, target, row, row_ids, settings, already_cited=cited
         ):
             continue
         # A cancelled plan stays visible so re-extraction cannot resurrect it, but it
@@ -274,7 +292,7 @@ def _match(
         if str(row["status"]) == "declined" and not cited:
             continue
         stored = str(row["starts_at"]) if row["starts_at"] is not None else None
-        distance = _minutes_apart(starts_at, stored)
+        distance = _minutes_apart(target, stored)
         if best is None or distance < best[0]:
             best = (distance, int(row["id"]))
     return best[1] if best else None
@@ -289,19 +307,21 @@ def _minutes_apart(left: str | None, right: str | None) -> int:
     have already agreed on wording, people and day, so the worst a bad parse can do is
     pick the older of two plans that were going to be confused anyway.
     """
-    if left is None or right is None or not _has_clock(left) or not _has_clock(right):
+    if left is None or right is None:
         return 0
-    try:
-        from datetime import datetime
+    from datetime import date as _date
+    from datetime import datetime
 
-        return abs(
-            int(
-                (
-                    datetime.fromisoformat(left) - datetime.fromisoformat(right)
-                ).total_seconds()
-                // 60
-            )
-        )
+    try:
+        if _has_clock(left) and _has_clock(right):
+            delta = datetime.fromisoformat(left) - datetime.fromisoformat(right)
+            return abs(int(delta.total_seconds() // 60))
+        # At least one names only a day, so compare days. Returning 0 here — which is
+        # what "no clock, no opinion" used to do — made every same-wording plan equally
+        # near, so a re-read of a message that produced a Friday plan and a Saturday plan
+        # resolved to whichever row came back first and swapped the two.
+        days = _date.fromisoformat(left[:10]) - _date.fromisoformat(right[:10])
+        return abs(days.days) * 1440
     except ValueError:
         return 0
 
@@ -324,7 +344,6 @@ def _same(
         other_ids,
         other_start,
         settings,
-        to_the_hour=True,
         any_day=False,
     )
 
@@ -357,8 +376,9 @@ def _same_row(
         row_ids,
         str(row["starts_at"]) if row["starts_at"] is not None else None,
         settings,
-        to_the_hour=not (candidate.replaces_earlier or already_cited),
-        any_day=candidate.replaces_earlier or already_cited,
+        # `already_cited` means this message has been read against this row before, so
+        # the row may legitimately have moved since; nothing else may cross a day.
+        any_day=already_cited,
     )
 
 
@@ -380,7 +400,6 @@ def _agrees(
     other_start: str | None,
     settings: Settings,
     *,
-    to_the_hour: bool,
     any_day: bool,
 ) -> bool:
     if entities.similar(what, other_what) < settings.dedup_threshold:
@@ -396,16 +415,16 @@ def _agrees(
     # plan each week; letting the shared guest fuse them would keep one row and silently
     # swallow every later occurrence.
     #
-    # `to_the_hour` is the caller saying which question this is: two candidates in one
-    # response are separated by their clock times, while a candidate against a stored row
-    # is compared on the day so that a corrected time repaints rather than duplicating.
+    # Note that `starts_at` here is the *target* the caller chose: a move's origin when
+    # the message named one, and the candidate's own time otherwise. Comparing a move
+    # against its destination is what let it repaint whichever plan sat near where it was
+    # going rather than the plan it was leaving.
     if starts_at is not None and other_start is not None:
-        # A move is allowed to land on another day: "let's do Saturday instead" is the
-        # same dinner. Only a message that says so gets this, or a weekly standing
-        # arrangement would collapse into one row.
+        # The one case where the stored time says nothing: this message has already been
+        # read against this row, so the row may have moved on since.
         if any_day:
             return True
-        if to_the_hour and _has_clock(starts_at) and _has_clock(other_start):
+        if _has_clock(starts_at) and _has_clock(other_start):
             return starts_at[:16] == other_start[:16]
         return starts_at[:10] == other_start[:10]
 
