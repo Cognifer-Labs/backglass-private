@@ -3,10 +3,15 @@
 A personal commitment ledger that reads your email, documents, notes, and calendar, and
 gives you back a morning brief and a dashboard.
 
-Single user, runs entirely on your machine. MIT-licensed. Bring your own Anthropic or
-DeepInfra API key (or run it free against your existing Claude subscription via the
-Claude Code CLI) — there is no hosted service, no account, and nothing leaves your
-computer except a delivered brief email.
+Single user, runs on your machine. MIT-licensed. There is no hosted service and no
+account: the ledger, the database, and the dashboard never leave your computer.
+
+Extraction does call a model. Bring your own Anthropic or DeepInfra API key (or run it
+free against your existing Claude subscription via the Claude Code CLI) — and understand
+that the text of every item passing the local rule filter is sent to whichever backend you
+configure: up to 2,000 characters at triage, and the full body at extraction. Read
+[docs/08-privacy-and-data-boundary.md](docs/08-privacy-and-data-boundary.md) before you
+point this at a mailbox carrying client correspondence.
 
 > **back·glass** *(n.)* — the illuminated art panel standing at the rear of a pinball
 > machine, carrying the score reels. The one surface that tells you, at a glance and

@@ -286,3 +286,22 @@ class TestTheTimelineDrawsEachEventOnce:
         entries = schedule_page.timeline(view, today=DAY).entries
         assert len(entries) == 2
         assert {e.lane for e in entries} == {0, 1}
+
+
+def test_dedup_keeps_the_outcome_only_the_plan_block_records() -> None:
+    """The mirror of the travel rule, and the one a winner-takes-all merge loses.
+
+    `_raw_entries` appends the calendar copies first and hardcodes `outcome=""`, so the
+    plan block — the only reader that knows an event was done or rolled — is always the
+    loser on identity. Collapsing to either copy whole drops a fact the other held.
+    """
+    from backglass.web.routes.schedule import _collapse
+
+    calendar_copy = (540, 60, "CHM 113 (Lab)", "fixed", "", True)
+    plan_block = (540, 60, "CHM 113 (Lab)", "fixed", "done", False)
+
+    collapsed = _collapse([calendar_copy, plan_block])
+
+    assert len(collapsed) == 1
+    assert collapsed[0][4] == "done", "the outcome survived the collapse"
+    assert collapsed[0][5] is True, "and travel is still OR-ed, not overruled"

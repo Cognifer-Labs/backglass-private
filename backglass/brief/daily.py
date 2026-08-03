@@ -214,10 +214,15 @@ def failure_section(
 
     last = conn.execute("SELECT * FROM run ORDER BY id DESC LIMIT 1").fetchone()
     if last and last["degraded"]:
+        # One sentence, one author. The panel and the brief were each spelling this out
+        # separately, so the dashboard gained the stranded count and the reset date while
+        # the brief still said only "triage only" — two surfaces describing one pause and
+        # disagreeing about how bad it is.
+        from backglass.web.panels import degraded_note
+
         section.lines.append(
             Line(
-                text="Spend cap reached — extraction paused, triage only. New commitments "
-                "are not being extracted.",
+                text=degraded_note(conn, today),
                 provenance=LedgerRef(
                     "runs", str(last["id"]), f"run · {str(last['started_at'])[:10]}"
                 ),

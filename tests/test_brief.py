@@ -834,7 +834,10 @@ def test_b2_provenance_survives_the_trip_through_storage(client: TestClient, con
     conn.commit()
     body = client.get("/brief").text
     assert 'href="https://mail.google.com/mail/u/0/#all/m1"' in body
-    assert 'href="/goals/3"' in body
+    # `/goals/3` reads like a REST resource and is not a page — LedgerRef.url maps the
+    # goals table to the surface that exists. Asserting the row id here would re-import
+    # the 404s that map was written to remove.
+    assert 'href="/goals"' in body
     assert BASE not in body, "a stored dashboard link must not be served back host-pinned"
 
 

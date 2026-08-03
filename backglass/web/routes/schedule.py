@@ -136,15 +136,30 @@ def _collapse(raw: list[RawEntry]) -> list[RawEntry]:
     engagement-derived fixed block — "dinner at seven", which has no calendar row behind
     it — on the timeline: it has no second copy, so nothing collapses it away.
 
-    The travel flag is OR-ed rather than taken from the winner, matching `_distinct`: the
-    plan block does not record travel, and it must not overrule the reader that did.
+    Fields are merged rather than taken from a winner, because the two readers know
+    different things and each is the only one that knows its own. `capacity.fixed_events`
+    records travel and the plan block does not; the plan block records the outcome and
+    the calendar reader hardcodes `""`. Picking either copy whole therefore drops a fact
+    that only the loser held — and since `_raw_entries` appends the calendar copies first,
+    a winner-takes-all merge always loses the outcome, so a block marked done or rolled
+    would silently render as if it had never been touched.
     """
     kept: dict[tuple[int, int, str], RawEntry] = {}
     for entry in raw:
         identity = (entry[0], entry[1], entry[2].casefold())
         seen = kept.get(identity)
-        if seen is None or entry[5] and not seen[5]:
+        if seen is None:
             kept[identity] = entry
+            continue
+        start, dur, title, kind, outcome, travel = seen
+        kept[identity] = (
+            start,
+            dur,
+            title,
+            kind,
+            outcome or entry[4],
+            travel or entry[5],
+        )
     return list(kept.values())
 
 
