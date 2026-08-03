@@ -373,3 +373,27 @@ deterministic given the id.
   several stored rows can legitimately satisfy a match, "matches" is not a selection —
   add an explicit ranking (here, nearest start time), because "first row returned" is an
   arbitrary choice that reads as deterministic and silently prefers the oldest.
+
+- 2026-08-02 | Four verifier rounds, and in three of them I picked a different heuristic
+  for "is this restatement the same plan": exact time (duplicated every reschedule and
+  double-booked the day), then the day (let a 4pm plan repaint an unrelated 9am one out
+  of existence), then nearest-time ranking (which picks a winner but never rejects one,
+  so the 4pm still landed on the 9am when it was the only row). Each fix was wrong in the
+  opposite direction to the last. | When two readings of the same data are both plausible
+  and the consequences differ, no comparison of that data can settle it — stop tuning the
+  comparison and get a signal. Here the model was already being asked an almost identical
+  question for commitments (`resolves`), so `replaces_earlier` cost one schema field and a
+  prompt version. The tell that it was time: the third fix's failure mode was the mirror
+  image of the first's. Until the signal exists, pick the default by consequence, not by
+  likelihood — a duplicate is visible and dismissible, a wrong merge is silent data loss.
+
+- 2026-08-02 | `newest_citation_before` used SQL `MAX(occurred_at)` to find the most
+  recent message about a plan. That column deliberately stores each sender's own offset,
+  so MAX is a string comparison: "2026-07-16T01:00+05:30" sorts above
+  "2026-07-15T20:00-07:00" while being half a day earlier, and a stale message was
+  allowed to repaint a time a later one had corrected. The Python side comparing it was
+  scrupulous about instants; the SQL that chose the value was not. | An aggregate is a
+  comparison. Every rule about not comparing mixed-offset timestamps as strings applies to
+  MAX, MIN and ORDER BY on that column, not just to WHERE — and a careful comparison
+  downstream cannot rescue a wrong value chosen upstream. When a column is documented as
+  "not comparable as text", grep it for aggregates too.

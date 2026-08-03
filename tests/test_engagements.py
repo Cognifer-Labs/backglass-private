@@ -564,7 +564,13 @@ class TestReschedule:
         run(ledger, settings, first, at_one, engagement(starts_at="Friday at 7pm"))
 
         second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
-        report = run(ledger, settings, second, at_two, engagement(starts_at="Friday at 7:30pm"))
+        report = run(
+            ledger,
+            settings,
+            second,
+            at_two,
+            engagement(starts_at="Friday at 7:30pm", replaces_earlier=True),
+        )
 
         assert report.inserted == 0
         assert report.advanced == 1
@@ -760,7 +766,13 @@ class TestOlderMessagesDoNotOverwriteNewer:
         first, at_one = ingest(ledger, boundary)
         run(ledger, settings, first, at_one, engagement(starts_at="Friday at 7pm"))
         second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
-        run(ledger, settings, second, at_two, engagement(starts_at="Friday at 7:30pm"))
+        run(
+            ledger,
+            settings,
+            second,
+            at_two,
+            engagement(starts_at="Friday at 7:30pm", replaces_earlier=True),
+        )
 
         replay = Ledger(conn, settings)
         run(replay, settings, first, at_one, engagement(starts_at="Friday at 7pm"))
@@ -768,3 +780,205 @@ class TestOlderMessagesDoNotOverwriteNewer:
         (row,) = rows(conn)
         assert str(row["starts_at"]) == "2026-07-17T19:30:00"
         assert replay.writes == 0
+
+
+class TestOnlyAMoveMoves:
+    """A differing clock time means a different plan unless the message says otherwise.
+
+    Four verification rounds established that the times alone cannot answer this.
+    Comparing them turned every reschedule into a second row that double-booked the day;
+    ignoring them let a 4pm plan repaint an unrelated 9am one out of existence. The model
+    now reports `replaces_earlier`, and when it is absent the answer is "different plan" —
+    a duplicate is visible and dismissible, a wrongly merged plan is silent data loss.
+    """
+
+    def test_the_order_options_arrive_in_cannot_move_a_confirmed_plan(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """The ledger holds a confirmed 9am coffee; a new message offers "4pm or 9am" and
+        the model happens to emit the 4pm first. That ordering used to repaint the
+        confirmed plan to a time nobody had agreed to, while the 9am arrived as a new
+        proposal — the same two options in the other order behaved correctly, which is
+        what made it invisible."""
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(
+            ledger,
+            settings,
+            first,
+            at_one,
+            engagement(what="coffee", starts_at="Friday at 9am", status="confirmed"),
+        )
+
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        run(
+            ledger,
+            settings,
+            second,
+            at_two,
+            engagement(what="coffee", starts_at="Friday at 4pm"),
+            engagement(what="coffee", starts_at="Friday at 9am"),
+        )
+
+        settled = sorted((str(r["starts_at"])[11:16], str(r["status"])) for r in rows(conn))
+        assert settled == [("09:00", "confirmed"), ("16:00", "proposed")]
+
+    def test_a_re_invitation_cannot_land_on_an_unrelated_live_plan(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """With a declined 4pm and a live 9am, a fresh 4pm invitation was correctly kept
+        off the declined row by the citation guard — and then landed on the 9am one,
+        because nothing rejected a poor match. The 9am plan ceased to exist."""
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(
+            ledger,
+            settings,
+            first,
+            at_one,
+            engagement(what="coffee", starts_at="Friday at 9am"),
+            engagement(what="coffee", starts_at="Friday at 4pm"),
+        )
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        run(
+            ledger,
+            settings,
+            second,
+            at_two,
+            engagement(what="coffee", starts_at="Friday at 4pm", status="declined"),
+        )
+
+        third, at_three = ingest(ledger, boundary, sent="2026-07-20T09:00:00-07:00")
+        run(
+            ledger,
+            settings,
+            third,
+            at_three,
+            engagement(what="coffee", starts_at="Friday at 4pm"),
+        )
+
+        assert any(str(r["starts_at"]).endswith("09:00:00") for r in rows(conn)), (
+            "the unrelated 9am plan must survive"
+        )
+
+    def test_declining_and_replacing_in_one_message_leaves_others_alone(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """"4pm is off, let's do 3:30" — the decline puts the 4pm row beyond reach of the
+        second candidate, which then had nothing to land on but an unrelated 9am."""
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(
+            ledger,
+            settings,
+            first,
+            at_one,
+            engagement(what="coffee", starts_at="Friday at 9am"),
+            engagement(what="coffee", starts_at="Friday at 4pm"),
+        )
+
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        run(
+            ledger,
+            settings,
+            second,
+            at_two,
+            engagement(what="coffee", starts_at="Friday at 4pm", status="declined"),
+            engagement(what="coffee", starts_at="Friday at 3:30pm"),
+        )
+
+        settled = sorted((str(r["starts_at"])[11:16], str(r["status"])) for r in rows(conn))
+        assert settled == [
+            ("09:00", "proposed"),
+            ("15:30", "proposed"),
+            ("16:00", "declined"),
+        ]
+
+    def test_a_move_to_another_day_is_still_the_same_plan(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """The limit that used to be documented as unfixable. "Let's push it to Saturday"
+        is one dinner; only a message that says it is moving something gets to cross a
+        day boundary, so a weekly standing arrangement still stays separate."""
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(ledger, settings, first, at_one, engagement(starts_at="Friday at 7pm"))
+
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        report = run(
+            ledger,
+            settings,
+            second,
+            at_two,
+            engagement(starts_at="Saturday at 7pm", replaces_earlier=True),
+        )
+
+        assert report.inserted == 0
+        (row,) = rows(conn)
+        assert str(row["starts_at"]).startswith("2026-07-18")
+
+    def test_a_weekly_arrangement_is_not_swallowed_by_a_move(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """The reason `replaces_earlier` gates the cross-day match instead of it being
+        the default: without the flag, next week's coffee is a new plan."""
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(ledger, settings, first, at_one, engagement(what="coffee", starts_at="Friday"))
+
+        second, at_two = ingest(ledger, boundary, sent="2026-07-21T09:00:00-07:00")
+        report = run(
+            ledger,
+            settings,
+            second,
+            at_two,
+            engagement(what="coffee", starts_at="Friday"),
+        )
+
+        assert report.inserted == 1
+        assert len(rows(conn)) == 2
+
+
+class TestNewestCitationAcrossTimezones:
+    def test_the_newest_citation_is_chosen_by_instant_not_by_string(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """`MAX(occurred_at)` in SQL is a string comparison, and these timestamps carry
+        each sender's own offset — so across the owner's UTC-7 / UTC+5:30 split
+        "2026-07-16T01:00+05:30" sorts above "2026-07-15T20:00-07:00" while being half a
+        day earlier. Picking the wrong newest citation lets a stale message repaint a
+        time a later one corrected. Needs two prior citations with mixed offsets, which
+        is why a single-citation test could not see it.
+        """
+        ledger = Ledger(conn, settings)
+
+        def source(external_id: str, occurred_at: str) -> int:
+            """Written straight in, because the Gmail connector normalises occurred_at to
+            UTC and would erase the very mixture under test. The calendar connector does
+            not — docs/03 keeps each event's own offset — and the owner's live ledger
+            holds `-07:00` rows today, so the mixture is real."""
+            conn.execute(
+                "INSERT INTO source_item (user_id, source, external_id, fetched_at,"
+                " occurred_at, content_hash) VALUES (1, 'calendar:asu', ?, ?, ?, ?)",
+                (external_id, occurred_at, occurred_at, f"h-{external_id}"),
+            )
+            return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+        kolkata = source("k1", "2026-07-16T01:00:00+05:30")  # 07-15 19:30Z
+        phoenix = source("p1", "2026-07-15T20:00:00-07:00")  # 07-16 03:00Z — the newest
+        later = source("k2", "2026-07-16T02:00:00+05:30")  # 07-15 20:30Z
+
+        conn.execute(
+            "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at,"
+            " when_is_explicit, location, status, confidence, source_item_id, created_at)"
+            " VALUES (1, 'social', 'dinner', '2026-07-17T19:30:00', NULL, 1, NULL,"
+            " 'proposed', 0.9, ?, '2026-07-15T00:00:00+00:00')",
+            (kolkata,),
+        )
+        engagement_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        for source_id in (kolkata, phoenix):
+            ledger.record_engagement_evidence(engagement_id, source_id, "q", kind="original")
+
+        newest = ledger.newest_citation_before(engagement_id, later)
+
+        assert newest == "2026-07-15T20:00:00-07:00"

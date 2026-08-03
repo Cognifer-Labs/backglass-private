@@ -90,6 +90,16 @@ class ExtractedEngagement(Strict):
     #: Someone suggesting dinner is not dinner. Only `confirmed` earns a day-plan block.
     status: Literal["proposed", "confirmed", "declined"] = "proposed"
     confidence: float = Field(ge=0.0, le=1.0)
+    #: True when the message is MOVING a plan that was already arranged ("push dinner to
+    #: 7:30", "let's do Saturday instead") rather than proposing a new one.
+    #:
+    #: The field exists because the data cannot answer the question and four rounds of
+    #: heuristics proved it. Matching a restatement on its clock time turns every
+    #: reschedule into a second row that double-books the day; matching on the day alone
+    #: lets a 4pm plan repaint an unrelated 9am one and destroys it. "Coffee at 4" after
+    #: "coffee at 9" is a different coffee or the same coffee moved, and only the sentence
+    #: knows which. This is the same admission `resolves` makes for commitments.
+    replaces_earlier: bool = False
     #: Same rule as the commitment above — rule 1 applies to every generated claim.
     evidence: str
 

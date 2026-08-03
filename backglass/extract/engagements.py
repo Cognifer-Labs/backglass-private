@@ -255,16 +255,23 @@ def _match(
             continue
         raw = row["entity_ids"]
         row_ids = {int(part) for part in str(raw).split(",")} if raw else set()
-        if not _same_row(candidate, entity_ids, starts_at, row, row_ids, settings):
+        # A message this row already cites is a message this row already accounts for —
+        # re-extraction, not news. Its time must not be compared: after a reschedule the
+        # row has moved on, and holding the original message to the new time would file
+        # a duplicate of the plan it created. Wording and people still have to agree, so
+        # a message that produced two plans still resolves to the right one (the nearest
+        # start time breaks the tie below).
+        cited = ledger.cites_engagement(int(row["id"]), source_item_id)
+        if not _same_row(
+            candidate, entity_ids, starts_at, row, row_ids, settings, already_cited=cited
+        ):
             continue
         # A cancelled plan stays visible so re-extraction cannot resurrect it, but it
         # must not become a sink that swallows real invitations for the rest of time.
         # The distinction is whether this exact message has been read against this row
         # before: if it has, this is re-extraction and there is nothing new to file; if
         # it has not, someone is proposing the thing again and that is a new plan.
-        if str(row["status"]) == "declined" and not ledger.cites_engagement(
-            int(row["id"]), source_item_id
-        ):
+        if str(row["status"]) == "declined" and not cited:
             continue
         stored = str(row["starts_at"]) if row["starts_at"] is not None else None
         distance = _minutes_apart(starts_at, stored)
@@ -318,6 +325,7 @@ def _same(
         other_start,
         settings,
         to_the_hour=True,
+        any_day=False,
     )
 
 
@@ -328,9 +336,19 @@ def _same_row(
     row: dict[str, object],
     row_ids: set[int],
     settings: Settings,
+    *,
+    already_cited: bool = False,
 ) -> bool:
-    """A candidate against a row from an EARLIER message — the day decides, because the
-    hour is the part a later message most often corrects."""
+    """A candidate against a row from an EARLIER message.
+
+    The clock separates unless the message said it was moving something. Four rounds of
+    verification established that the times alone cannot answer this: comparing them
+    turned every reschedule into a second row that double-booked the day, and ignoring
+    them let a 4pm plan repaint an unrelated 9am one out of existence. `replaces_earlier`
+    is the sentence telling us which, and when it is absent the safe answer is "different
+    plan" — a duplicate is visible on the board and can be dismissed, while a wrongly
+    merged plan silently replaces one the owner had already agreed to.
+    """
     return _agrees(
         candidate.what,
         ids,
@@ -339,7 +357,8 @@ def _same_row(
         row_ids,
         str(row["starts_at"]) if row["starts_at"] is not None else None,
         settings,
-        to_the_hour=False,
+        to_the_hour=not (candidate.replaces_earlier or already_cited),
+        any_day=candidate.replaces_earlier or already_cited,
     )
 
 
@@ -362,6 +381,7 @@ def _agrees(
     settings: Settings,
     *,
     to_the_hour: bool,
+    any_day: bool,
 ) -> bool:
     if entities.similar(what, other_what) < settings.dedup_threshold:
         return False
@@ -380,6 +400,11 @@ def _agrees(
     # response are separated by their clock times, while a candidate against a stored row
     # is compared on the day so that a corrected time repaints rather than duplicating.
     if starts_at is not None and other_start is not None:
+        # A move is allowed to land on another day: "let's do Saturday instead" is the
+        # same dinner. Only a message that says so gets this, or a weekly standing
+        # arrangement would collapse into one row.
+        if any_day:
+            return True
         if to_the_hour and _has_clock(starts_at) and _has_clock(other_start):
             return starts_at[:16] == other_start[:16]
         return starts_at[:10] == other_start[:10]

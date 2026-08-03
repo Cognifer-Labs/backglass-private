@@ -1,6 +1,6 @@
 ---
 id: extract-commitments
-version: 4
+version: 5
 model: careful
 output: strict JSON, schema-validated, one retry on malformed
 ---
@@ -67,6 +67,7 @@ For each engagement, return:
   when_is_explicit   true if a date was stated, false if you inferred it
   location           as written, or null
   status             proposed | confirmed | declined
+  replaces_earlier   true if this MOVES a plan that was already arranged
   confidence         0.0 to 1.0
   evidence           the exact sentence you extracted it from, verbatim
 
@@ -85,6 +86,17 @@ STATUS
 "Dinner Friday?" is proposed. "Friday works, see you at 7" is confirmed.
 An invitation the user has not answered stays proposed — that is the whole
 point of tracking it, because it is what the user still owes a reply to.
+
+RESCHEDULING — set replaces_earlier when a message moves an existing plan.
+"Can we push dinner to 7:30", "let's do Saturday instead", "moving lunch to
+1pm" are all the SAME plan at a new time: return one engagement, with the
+NEW time, and replaces_earlier=true.
+Leave it false when the message proposes something additional, even on the
+same day and with the same people — "coffee at 9, or 4 if that's easier" is
+two options, and "lunch Friday and drinks Friday" is two plans. If you are
+unsure, leave it false: a plan that turns out to be a duplicate is visible
+and can be dismissed, whereas a wrongly merged one silently replaces a plan
+the user already agreed to.
 
 COMMITMENT OR ENGAGEMENT — do not return the same thing as both.
 Ask what the message is actually about. If it is about producing or sending
@@ -176,6 +188,7 @@ Subject: {{title}}
       "when_is_explicit": true,
       "location": "Ravi's on 5th",
       "status": "confirmed",
+      "replaces_earlier": false,
       "confidence": 0.88,
       "evidence": "Friday works — 7pm at Ravi's on 5th, Sam's coming too."
     }

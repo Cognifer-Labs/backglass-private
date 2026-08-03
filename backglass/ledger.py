@@ -19,6 +19,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 
 from backglass.config import Settings
@@ -476,13 +477,30 @@ class Ledger:
         attempted, so including it would compare the message against itself and always
         win.
         """
-        row = self.conn.execute(
-            "SELECT MAX(s.occurred_at) AS newest FROM engagement_evidence e "
+        rows = self.conn.execute(
+            "SELECT s.occurred_at AS occurred_at FROM engagement_evidence e "
             "JOIN source_item s ON s.id = e.source_item_id "
             "WHERE e.user_id = ? AND e.engagement_id = ? AND e.source_item_id != ?",
             (USER_ID, engagement_id, source_item_id),
-        ).fetchone()
-        return str(row["newest"]) if row and row["newest"] else None
+        ).fetchall()
+        # Maximised in Python, over parsed instants. SQL's MAX() on this column is a
+        # STRING comparison, and these timestamps carry each sender's own offset — so
+        # across the owner's UTC-7 / UTC+5:30 split "2026-07-16T01:00+05:30" sorts above
+        # "2026-07-15T20:00-07:00" while being half a day earlier. Picking the wrong
+        # newest citation lets a stale message repaint a time a later one corrected.
+        newest: datetime | None = None
+        newest_raw: str | None = None
+        for row in rows:
+            raw = str(row["occurred_at"] or "")
+            try:
+                moment = datetime.fromisoformat(raw)
+            except ValueError:
+                continue
+            if moment.tzinfo is None:
+                continue  # not comparable with an instant; ignore rather than guess
+            if newest is None or moment > newest:
+                newest, newest_raw = moment, raw
+        return newest_raw
 
     def advance_engagement(
         self,

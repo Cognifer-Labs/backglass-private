@@ -100,7 +100,24 @@ link back to the sentence it came from. Idempotency asserted by a second run wri
 
 ## Verification outcome
 
-Three fresh-context verifier passes, all three refuting, fourteen defects fixed.
+Four fresh-context verifier passes, all four refuting, eighteen defects fixed.
+
+**Fourth pass** found four. Three shared a root cause I had now been wrong about in both
+directions three times: matching picked a nearest row but never *rejected* one, so a 4pm
+plan landed on an unrelated 9am row and destroyed it — while the previous round's
+exact-time rule had duplicated every reschedule instead. Four rounds is enough evidence
+that the times cannot answer the question, so the model is asked: `replaces_earlier` (v5,
+mirroring `resolves` on commitments) says whether a message MOVES an existing plan.
+Without it the answer is "different plan", because a duplicate is visible and dismissible
+while a wrongly merged plan is silent data loss. A message a row already cites is treated
+as a re-read whatever its time says, so re-extraction after a reschedule does not
+duplicate. The fourth defect: `newest_citation_before` took a SQL `MAX()` over
+offset-bearing timestamps, which is a string comparison — across the owner's two zones it
+named the wrong citation and let a stale message repaint a corrected time.
+
+This also removed the cross-day-reschedule limit that was documented as unfixable: a move
+may cross a day boundary precisely because the message says it is a move, so a weekly
+standing arrangement is still two plans.
 
 **Third pass** found three, all one root cause: a dedup hit returned without recording the
 row it claimed, so a second candidate in the same response could land on it too — the
@@ -163,15 +180,12 @@ small write surface, which is a design call rather than a fix.
 - **Nothing yet exercises this against real messages.** Every test drives canned model
   responses. Whether the model reliably tells a commitment from an engagement is an eval
   question, and `evals/` is where it belongs — it never gates CI (docs/10).
-- **A reschedule to a different DAY still duplicates.** "Dinner Friday at 7" followed by
-  "let's push it to Saturday" leaves two rows, as does a plan moved past midnight.
-  Matching cross-message on the day is what makes a same-day reschedule repaint instead of
-  duplicating; relaxing it to wording-and-people alone would fuse a weekly standing
-  arrangement, which an earlier round fixed. There is no signal in the data to tell "moved
-  to Saturday" from "also meeting Saturday" — the honest fix is a `replaces_earlier` field
-  in the extraction schema, mirroring `resolves` on commitments, which is a prompt version
-  bump and a re-extraction and should be a deliberate decision rather than the tail end of
-  a long session.
+- **A reschedule the model does not flag becomes a second plan.** `replaces_earlier` is
+  the only thing that distinguishes "push dinner to Saturday" from "also dinner Saturday",
+  so a missed flag duplicates. That is the deliberate direction: the duplicate is visible
+  on the board and in the brief, whereas merging two plans that were not the same one
+  silently deletes something the owner agreed to. Whether the model sets the flag reliably
+  is an eval question, not a test one.
 - **Legacy commitments that are really plans still double up.** Confirmed on the live
   ledger: six of the owner's commitments share a source item with one of the five
   engagements re-extraction produced, because everything read before the v4 prompt could
