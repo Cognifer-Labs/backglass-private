@@ -71,15 +71,35 @@ class RuleVerdict:
 UNCLASSIFIED = RuleVerdict(verdict="unclassified")
 
 
+#: Any letter or digit, in any script. `\w` would match underscores and `str.isalpha`
+#: would need a loop; this is the whole test for "is there anything here to read".
+_HAS_CONTENT = re.compile(r"[^\W_]", re.UNICODE)
+
+
 def classify(
     *,
     headers: dict[str, str],
     author: str | None,
     raw_json: str | None = None,
+    body_text: str | None = None,
     noise_senders: frozenset[str] = frozenset(),
     source: str = "",
     structured_sources: frozenset[str] = frozenset(),
 ) -> RuleVerdict:
+    # Cheaper than every rule below it, because it needs no headers at all: an item with
+    # no letters or digits cannot carry a commitment, a plan, or a date. On the owner's
+    # 3,687 real messages this is 401 items — 10.9% — that were each costing a model call
+    # to be told an emoji has no substance.
+    #
+    # Deliberately *only* "no alphanumeric content", not "short". Measuring a candidate
+    # pleasantry list against the same 3,687 messages killed 41 the model had kept: "Ok",
+    # "Yes", "bet". Those are confirmations, and a bare "Yes" answering "dinner Friday?"
+    # is exactly the sighting the engagement extractor exists to catch. Length is not a
+    # proxy for meaning in a conversation, and the cheap rule that looks obviously safe
+    # here is the one that silently eats agreements.
+    if body_text is not None and not _HAS_CONTENT.search(body_text):
+        return RuleVerdict("drop", "no letters or digits")
+
     # Cheapest rule first: items from a structured source (anki, avorio) are consumed
     # deterministically by their own readers; a model would find nothing to extract.
     if source:

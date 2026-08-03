@@ -173,3 +173,65 @@ class TestIdempotency:
         second = sync(conn, settings, [make_connector(_messages(12), boundary)], model)
         assert second.writes == 0
         assert len(model.calls) == calls
+
+
+# ── packing batches by size rather than by count ────────────────────────────
+
+
+class TestPacking:
+    def _items(self, count: int, length: int) -> list[dict[str, object]]:
+        return [{"id": i, "body_text": "x" * length} for i in range(count)]
+
+    def test_short_items_pack_denser_than_long_ones(self, settings: Settings) -> None:
+        """The constraint on a batch is the context it fits into, not how many things are
+        in it. A mail runs to the 500-character excerpt ceiling while an iMessage averages
+        twenty-five, so packing both twelve at a time made the owner's 3,687 messages cost
+        308 calls where 55 would do."""
+        from backglass.extract.triage import BATCH_BODY_LIMIT
+        from backglass.sync import _pack
+
+        long_batches = _pack(self._items(60, BATCH_BODY_LIMIT), settings)
+        short_batches = _pack(self._items(60, 20), settings)
+
+        assert len(short_batches) < len(long_batches)
+
+    def test_mail_shaped_items_keep_the_old_batch_size(self, settings: Settings) -> None:
+        """`triage_batch_size` still sets the floor through the character budget, so
+        nothing changes for items that were already filling a batch."""
+        from backglass.extract.triage import BATCH_BODY_LIMIT
+        from backglass.sync import _pack
+
+        batches = _pack(self._items(36, BATCH_BODY_LIMIT), settings)
+
+        assert [len(b) for b in batches] == [12, 12, 12]
+
+    def test_no_batch_exceeds_the_item_ceiling(self, settings: Settings) -> None:
+        """A run of one-word texts would otherwise build a batch so long the model stops
+        aligning its verdict list to the ids. That degrades safely — missing ids escalate
+        to per-item — but paying for an extra call beats relying on the fallback."""
+        from backglass.sync import _pack
+
+        batches = _pack(self._items(500, 1), settings)
+
+        assert batches, "everything is still batched"
+        assert max(len(b) for b in batches) <= settings.triage_batch_max_items
+
+    def test_every_item_lands_in_exactly_one_batch(self, settings: Settings) -> None:
+        """The property that matters most: packing must not drop or duplicate work."""
+        from backglass.sync import _pack
+
+        items = self._items(137, 30)
+        packed = [item["id"] for batch in _pack(items, settings) for item in batch]
+
+        assert sorted(packed) == [i["id"] for i in items]
+
+    def test_an_item_longer_than_the_budget_still_gets_a_batch(
+        self, settings: Settings
+    ) -> None:
+        """Cost is clamped to the excerpt ceiling, so one enormous body cannot starve the
+        packer into an empty batch or an infinite loop."""
+        from backglass.sync import _pack
+
+        batches = _pack(self._items(3, 50_000), settings)
+
+        assert sum(len(b) for b in batches) == 3

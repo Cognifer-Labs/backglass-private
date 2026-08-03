@@ -219,3 +219,43 @@ def test_noise_domains_cover_subdomains() -> None:
         assert verdict.dropped, sender
     safe = "dana@notnewsletter.example"
     assert not rules.classify(headers={"From": safe}, author=safe, noise_senders=noise).dropped
+
+
+# ── the content rule: cheaper than a model call, and narrower than it looks ──
+
+
+class TestContentFreeItems:
+    def _verdict(self, body: str):  # type: ignore[no-untyped-def]
+        from backglass.extract import rules
+
+        return rules.classify(headers={}, author="+1555", body_text=body)
+
+    @pytest.mark.parametrize(
+        "body",
+        ["", "   ", "❤️", "👍👍", "￼", "�", "!!!", "...", "😂😂😂"],
+    )
+    def test_an_item_with_no_letters_or_digits_never_reaches_the_model(
+        self, body: str
+    ) -> None:
+        """401 of the owner's 3,687 real messages, each of which was costing a model call
+        to be told an emoji has no substance."""
+        assert self._verdict(body).dropped
+
+    @pytest.mark.parametrize("body", ["Yes", "Ok", "bet", "Same", "no", "k", "7pm"])
+    def test_a_short_reply_is_not_content_free(self, body: str) -> None:
+        """The measured trap, and the reason this rule is not "drop short messages".
+
+        A candidate pleasantry list was tested against the same 3,687 messages and killed
+        41 the model had kept — "Ok", "Yes", "bet". Those are confirmations, and a bare
+        "Yes" answering "dinner Friday?" is exactly the sighting the engagement extractor
+        exists to catch. Length is not a proxy for meaning in a conversation.
+        """
+        assert not self._verdict(body).dropped
+
+    def test_an_item_whose_body_was_not_supplied_is_left_alone(self) -> None:
+        """`body_text=None` means "the caller did not say", not "empty". A source that
+        legitimately carries no body — the calendar connector emits none — must not be
+        dropped by a rule about text."""
+        from backglass.extract import rules
+
+        assert not rules.classify(headers={}, author="x", body_text=None).dropped

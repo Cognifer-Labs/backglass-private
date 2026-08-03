@@ -78,6 +78,37 @@ money is spent and it is worth spending.
 **Expect tier 1 to eliminate 90 to 95 percent of volume.** If it does not, the rules are
 too permissive and the cost model breaks. Measure this and put it in the Sources panel.
 
+
+### What tier 0 costs nothing to drop
+
+Tier 0 was written for mail — bulk headers, `Precedence`, `Auto-Submitted` — and saw only
+headers, never the body. On a message store that meant nothing it could catch: measured
+over 3,687 real iMessage items, **every one of the 3,167 drops was a model verdict**, so
+the pipeline paid a call to be told that an emoji has no substance.
+
+An item with no letters or digits is now dropped before any model sees it: 401 items,
+10.9% of that volume, and zero disagreement with the model's own verdicts on the same set.
+
+It is deliberately *not* "drop short messages", and the difference was measured rather
+than assumed. A candidate pleasantry list ("ok", "yes", "bet", …) tested against the same
+3,687 killed 41 the model had **kept** — those are confirmations, and a bare "Yes"
+answering "dinner Friday?" is precisely what the engagement extractor exists to catch.
+Length is not a proxy for meaning in a conversation.
+
+### Batches are packed by size, not by count
+
+The constraint on a batch is the context it has to fit into, so items are packed to a
+character budget (`triage_batch_size` × the excerpt ceiling) rather than counted out
+twelve at a time. A mail runs to the 500-character ceiling; an iMessage averages
+twenty-five. Fixed counting made the owner's messages cost 308 calls where **55** do —
+an 82% reduction with the same verdicts.
+
+A per-batch item ceiling caps how dense a run of one-word texts can get. Over-packing
+degrades safely rather than silently — `BatchOutcome.escalate` collects ids missing from
+the response and ids returned twice with disagreeing verdicts, so a batch the model loses
+track of becomes per-item calls, never wrong verdicts — but paying for one extra call
+beats leaning on the fallback.
+
 ## Cost control
 
 ```

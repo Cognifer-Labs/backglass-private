@@ -207,6 +207,11 @@ class Settings(BaseSettings):
     # Uncertain/missing verdicts escalate to the full per-item pass automatically.
     triage_batch_size: int = 12
     triage_batch_min: int = 4
+    # Batches are packed by character budget (`triage_batch_size` × the excerpt ceiling),
+    # so short items pack denser than long ones. This caps how many can ride in one call
+    # regardless: a verdict list the model stops aligning to the ids is worse than paying
+    # for an extra call.
+    triage_batch_max_items: int = 60
 
     # Which mailboxes to ingest. Each becomes a `credential` row with
     # source = "gmail:<label>", because credential is UNIQUE(user_id, source) and two

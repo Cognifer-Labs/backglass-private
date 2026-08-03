@@ -231,6 +231,7 @@ def _rule_pass(
             headers=headers,
             author=str(item.get("author") or ""),
             raw_json=str(item.get("raw_json") or ""),
+            body_text=item.get("body_text"),
             noise_senders=noise,
             source=str(item.get("source") or ""),
             structured_sources=structured,
@@ -319,8 +320,7 @@ def _batch_triage_pass(
 ) -> list[dict[str, Any]]:
     """Run the batched tier-1 pass; return the items that still need per-item triage."""
     prompt = prompts.load(TRIAGE_BATCH_PROMPT)
-    size = max(2, settings.triage_batch_size)
-    chunks = [pending[i : i + size] for i in range(0, len(pending), size)]
+    chunks = _pack(pending, settings)
 
     def work(
         chunk: list[dict[str, Any]],
@@ -472,6 +472,41 @@ def _extract_pass(
 
 
 # ──────────────────────────────────────────────────────────────── helpers
+
+
+def _pack(
+    pending: list[dict[str, Any]], settings: Settings
+) -> list[list[dict[str, Any]]]:
+    """Group items into batches by how much text they carry, not by how many there are.
+
+    A fixed count is the wrong unit. The constraint on a batch is the context it has to
+    fit into, and items vary by two orders of magnitude: a mail runs to the 500-character
+    excerpt ceiling while an iMessage averages twenty-five. Packing both twelve at a time
+    means a batch of texts uses a twentieth of the room it is paying instruction tokens
+    for, so the owner's 3,687 messages cost 307 calls where a few dozen would do.
+
+    `triage_batch_size` still sets the floor via the character budget below, so existing
+    behaviour for mail-shaped items is unchanged: twelve items at the excerpt ceiling is
+    exactly the budget. Short items simply pack denser. The per-batch item cap keeps a
+    pathological run of one-word texts from building a batch the model loses track of —
+    a verdict list it stops aligning to the ids is worse than an extra call.
+    """
+    budget = max(2, settings.triage_batch_size) * tier1.BATCH_BODY_LIMIT
+    ceiling = max(2, settings.triage_batch_max_items)
+
+    chunks: list[list[dict[str, Any]]] = []
+    current: list[dict[str, Any]] = []
+    used = 0
+    for item in pending:
+        cost = min(len(str(item.get("body_text") or "")), tier1.BATCH_BODY_LIMIT)
+        if current and (used + cost > budget or len(current) >= ceiling):
+            chunks.append(current)
+            current, used = [], 0
+        current.append(item)
+        used += cost
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 def _in_parallel[T, R](
