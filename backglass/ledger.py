@@ -468,6 +468,22 @@ class Ledger:
         ).fetchone()
         return row is not None
 
+    def newest_citation_before(self, engagement_id: int, source_item_id: int) -> str | None:
+        """When the most recent OTHER message about this plan was sent.
+
+        Used to keep an older sighting from repainting what a newer one established. The
+        current message is excluded because its citation is written before the advance is
+        attempted, so including it would compare the message against itself and always
+        win.
+        """
+        row = self.conn.execute(
+            "SELECT MAX(s.occurred_at) AS newest FROM engagement_evidence e "
+            "JOIN source_item s ON s.id = e.source_item_id "
+            "WHERE e.user_id = ? AND e.engagement_id = ? AND e.source_item_id != ?",
+            (USER_ID, engagement_id, source_item_id),
+        ).fetchone()
+        return str(row["newest"]) if row and row["newest"] else None
+
     def advance_engagement(
         self,
         engagement_id: int,
@@ -476,6 +492,7 @@ class Ledger:
         starts_at: str | None = None,
         ends_at: str | None = None,
         location: str | None = None,
+        may_repaint: bool = True,
     ) -> bool:
         """Move a plan forward as later messages settle it. Returns True on a change.
 
@@ -506,8 +523,15 @@ class Ledger:
         if status != row["status"]:
             updates["status"] = status
         for column, value in (("starts_at", starts_at), ("ends_at", ends_at)):
-            if _sharpens(value, row[column]):
-                updates[column] = value
+            if not _sharpens(value, row[column]):
+                continue
+            # Filling a hole is always safe; moving a time that is already known is only
+            # safe from the newest message about the plan. Without that, re-extraction
+            # replayed an old "Friday at 7" over the "push it to 7:30" that superseded it
+            # and the row ping-ponged on every version bump.
+            if row[column] is not None and not may_repaint:
+                continue
+            updates[column] = value
         # Location has no precision to compare; fill a hole, never repaint a wall.
         if location is not None and row["location"] is None:
             updates["location"] = location

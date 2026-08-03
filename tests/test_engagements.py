@@ -647,3 +647,124 @@ class TestDeclinedIsNotASink:
 
         assert report.inserted == 0
         assert [r["status"] for r in rows(conn)] == ["declined"]
+
+
+class TestMatchThenMatch:
+    """The path three rounds of tests missed: a candidate that DEDUPES rather than
+    inserting. Every earlier test exercised match-then-insert or insert-then-insert, so
+    the same-response bookkeeping was only ever proven on rows this response created."""
+
+    def test_a_second_option_survives_when_the_first_matched_an_existing_plan(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """"Coffee Friday 9am", then "coffee Friday — 9am or 4pm?".
+
+        The first candidate matches the stored 9am plan and the second must become a new
+        row. Because a dedup hit never joined the same-response set, the guard that keeps
+        the second candidate off the first one's row was empty exactly when it was needed:
+        both deduped onto the stored plan, the 4pm coffee was never written at all, and
+        the 9am one was repainted to 16:00.
+        """
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(
+            ledger,
+            settings,
+            first,
+            at_one,
+            engagement(what="coffee", starts_at="Friday at 9am"),
+        )
+
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        report = run(
+            ledger,
+            settings,
+            second,
+            at_two,
+            engagement(what="coffee", starts_at="Friday at 9am"),
+            engagement(what="coffee", starts_at="Friday at 4pm"),
+        )
+
+        assert report.inserted == 1
+        assert sorted(str(r["starts_at"])[11:16] for r in rows(conn)) == ["09:00", "16:00"]
+
+    def test_re_extracting_two_same_day_plans_leaves_both_alone(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """A prompt-version bump re-reads every item, and both candidates then dedupe.
+        Collapsing them lost the 9am plan and left two identical 4pm rows — with nothing
+        in the system able to delete either."""
+        ledger = Ledger(conn, settings)
+        item_id, occurred_at = ingest(ledger, boundary)
+        both = (
+            engagement(what="coffee", starts_at="Friday at 9am"),
+            engagement(what="coffee", starts_at="Friday at 4pm"),
+        )
+        run(ledger, settings, item_id, occurred_at, *both)
+        before = [(r["id"], r["starts_at"]) for r in rows(conn)]
+
+        second = Ledger(conn, settings)
+        run(second, settings, item_id, occurred_at, *both)
+
+        assert [(r["id"], r["starts_at"]) for r in rows(conn)] == before
+        assert second.writes == 0
+
+    def test_a_later_message_settles_the_option_it_names_not_the_first_one(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """With two plans agreeing on wording, people and day, "agreeing" cannot pick
+        one. Taking the first row in id order repainted the already-confirmed 9am coffee
+        when a later message settled the 4pm one, and left the 4pm row an unreachable
+        duplicate."""
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(
+            ledger,
+            settings,
+            first,
+            at_one,
+            engagement(what="coffee", starts_at="Friday at 9am"),
+            engagement(what="coffee", starts_at="Friday at 4pm"),
+        )
+
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        run(
+            ledger,
+            settings,
+            second,
+            at_two,
+            engagement(what="coffee", starts_at="Friday at 9am", status="confirmed"),
+        )
+        third, at_three = ingest(ledger, boundary, sent="2026-07-16T10:00:00-07:00")
+        run(
+            ledger,
+            settings,
+            third,
+            at_three,
+            engagement(what="coffee", starts_at="Friday at 4pm", status="confirmed"),
+        )
+
+        settled = sorted((str(r["starts_at"])[11:16], str(r["status"])) for r in rows(conn))
+        assert settled == [("09:00", "confirmed"), ("16:00", "confirmed")]
+
+
+class TestOlderMessagesDoNotOverwriteNewer:
+    def test_replaying_the_message_a_reschedule_superseded_changes_nothing(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """Re-extraction replays messages in the order they were sent, so the "Friday at
+        7" that a "push it to 7:30" corrected gets read again. Without a recency check the
+        row ping-ponged on every version bump — the final state was right, but each pass
+        wrote twice and any read between them saw the superseded time."""
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(ledger, settings, first, at_one, engagement(starts_at="Friday at 7pm"))
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        run(ledger, settings, second, at_two, engagement(starts_at="Friday at 7:30pm"))
+
+        replay = Ledger(conn, settings)
+        run(replay, settings, first, at_one, engagement(starts_at="Friday at 7pm"))
+
+        (row,) = rows(conn)
+        assert str(row["starts_at"]) == "2026-07-17T19:30:00"
+        assert replay.writes == 0

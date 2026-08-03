@@ -94,8 +94,23 @@ def apply(
             # A restatement can also name someone the first sighting did not.
             for entity_id in entity_ids:
                 ledger.link_engagement_person(match, entity_id)
-            if _advance(candidate, match, starts.value, ends.value, ledger, settings):
+            if _advance(
+                candidate,
+                match,
+                starts.value,
+                ends.value,
+                ledger,
+                settings,
+                source_item_id=source_item_id,
+                occurred_at=occurred_at,
+            ):
                 report.advanced += 1
+            # Recorded exactly like an insert. A row this response has already touched is
+            # spoken for, whether it was created here or matched here — and leaving the
+            # matched ones out was the whole defect: "coffee Friday, 9am or 4pm" against
+            # a ledger that already held the 9am one deduped BOTH candidates onto it, so
+            # the 4pm plan was never written and the 9am one was repainted to 16:00.
+            accepted_here.append((match, candidate, entity_ids, starts.value))
             continue
 
         engagement_id = ledger.insert_engagement(
@@ -129,6 +144,9 @@ def _advance(
     ends_at: str | None,
     ledger: Ledger,
     settings: Settings,
+    *,
+    source_item_id: int,
+    occurred_at: str,
 ) -> bool:
     """Apply a later sighting to the plan it restates.
 
@@ -145,13 +163,36 @@ def _advance(
     if current is None:
         return False
     status = candidate.status if candidate.status in ADVANCES_TO[current] else current
+    newest = ledger.newest_citation_before(engagement_id, source_item_id)
     return ledger.advance_engagement(
         engagement_id,
         status=status,
         starts_at=starts_at,
         ends_at=ends_at,
         location=candidate.location,
+        may_repaint=_at_least_as_recent(occurred_at, newest),
     )
+
+
+def _at_least_as_recent(sighting: str, newest: str | None) -> bool:
+    """Is this message no older than the newest one already cited on the plan?
+
+    Compared as instants, not as strings: these timestamps carry the sender's own offset,
+    so "2026-07-15T09:00:00-07:00" and "2026-07-15T20:00:00+05:30" are the same moment and
+    string order would disagree. An unparseable pair defaults to True — the pre-existing
+    behaviour, and a repaint is recoverable where refusing one loses a correction.
+    """
+    if newest is None:
+        return True
+    from datetime import datetime
+
+    try:
+        left, right = datetime.fromisoformat(sighting), datetime.fromisoformat(newest)
+    except ValueError:
+        return True
+    if (left.tzinfo is None) != (right.tzinfo is None):
+        return True  # cannot compare a wall clock with an instant; do not guess
+    return left >= right
 
 
 def _status_of(engagement_id: int, ledger: Ledger) -> str | None:
@@ -202,6 +243,13 @@ def _match(
     # loop below compares on the day, so without this the 4pm coffee would match the 9am
     # one it was just distinguished from and repaint it.
     fresh = {engagement_id for engagement_id, _, _, _ in accepted}
+    # More than one stored plan can agree on wording, people and day — that is exactly
+    # what "coffee Friday, 9am or 4pm" leaves behind — so agreeing is not enough to pick
+    # one. Taking the first row in id order repainted the confirmed 9am coffee when a
+    # later message settled the 4pm one. Collect every candidate row and take the nearest
+    # start time; an exact time match therefore always wins, and a reschedule with no
+    # exact match still lands on the plan it is closest to rather than the oldest.
+    best: tuple[int, int] | None = None
     for row in ledger.open_engagements():
         if int(row["id"]) in fresh:
             continue
@@ -218,8 +266,37 @@ def _match(
             int(row["id"]), source_item_id
         ):
             continue
-        return int(row["id"])
-    return None
+        stored = str(row["starts_at"]) if row["starts_at"] is not None else None
+        distance = _minutes_apart(starts_at, stored)
+        if best is None or distance < best[0]:
+            best = (distance, int(row["id"]))
+    return best[1] if best else None
+
+
+def _minutes_apart(left: str | None, right: str | None) -> int:
+    """How far apart two stored start times are, for choosing between agreeing rows.
+
+    Zero whenever either side names no hour: the two are indistinguishable at day
+    precision and the caller falls back to the first, which is all the information there
+    is. Deliberately tolerant of anything unparseable — this only ranks candidates that
+    have already agreed on wording, people and day, so the worst a bad parse can do is
+    pick the older of two plans that were going to be confused anyway.
+    """
+    if left is None or right is None or not _has_clock(left) or not _has_clock(right):
+        return 0
+    try:
+        from datetime import datetime
+
+        return abs(
+            int(
+                (
+                    datetime.fromisoformat(left) - datetime.fromisoformat(right)
+                ).total_seconds()
+                // 60
+            )
+        )
+    except ValueError:
+        return 0
 
 
 def _same(
