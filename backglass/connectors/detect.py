@@ -11,9 +11,14 @@ one of four honest states —
                        the hint is the exact next command or step.
   * ``missing``      — nothing to detect; the app is not installed or has no data.
 
-Detection is read-only and shallow (stat calls and one small JSON read), so it is
-cheap enough to run on every dashboard render and every doctor pass. It never
-writes anything — `backglass setup` is the writer, this is the eyes.
+Detection is read-only and shallow (stat calls, one small JSON read, and for a
+local SQLite store one `PRAGMA` on a read-only handle), so it is cheap enough to
+run on every dashboard render and every doctor pass. It never writes anything —
+`backglass setup` is the writer, this is the eyes.
+
+A store is only reported readable if it was actually opened. A stat is not proof:
+macOS lets a process without Full Disk Access stat chat.db and still refuses the
+open, so `exists()` returns True for a store every read will fail on.
 
 The home directory is injectable so tests probe a fake tree, never the real one.
 """
@@ -22,6 +27,8 @@ from __future__ import annotations
 
 import json
 import shutil
+import sqlite3
+from contextlib import closing
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -76,12 +83,61 @@ def actionable(detections: list[Detection]) -> list[Detection]:
     return [d for d in detections if d.status in (FOUND, NEEDS_SETUP)]
 
 
+def unreadable(store: Path) -> str | None:
+    """None when `store` opens, else the error a fetch would hit.
+
+    Opened exactly the way the connectors open their stores — `mode=ro` over a URI,
+    never `immutable=1`, with the same busy timeout — so that a clean probe means the
+    connector will get through rather than merely that a file is present. `PRAGMA
+    schema_version` is the cheapest statement that still forces SQLite to open the
+    database (and, for a WAL store, its -shm sidecar), which is where a permission
+    failure actually surfaces.
+    """
+    try:
+        with closing(sqlite3.connect(f"file:{store}?mode=ro", uri=True)) as conn:
+            conn.execute("PRAGMA busy_timeout = 2000")
+            conn.execute("PRAGMA schema_version").fetchone()
+    except sqlite3.Error as exc:
+        return f"{type(exc).__name__}: {exc}"
+    return None
+
+
 # ── local stores ─────────────────────────────────────────────────────────
+
+
+def _verified(source: str, store: Path, env_key: str, label: str) -> Detection:
+    """`configured`, downgraded when the configured store will not actually open.
+
+    A path in .env is a claim, not a guarantee: the app it belongs to can be
+    uninstalled, the store moved, or the permission revoked long after setup wrote
+    the line. Reporting `configured` off the .env value alone is how a source stays
+    green on the Sources panel while every sync fails against it.
+    """
+    if not store.exists():
+        return Detection(
+            source,
+            MISSING,
+            env_key=env_key,
+            env_value=str(store),
+            hint=f"{label} is configured at {store}, which is not there any more",
+        )
+    error = unreadable(store)
+    if error is not None:
+        return Detection(
+            source,
+            NEEDS_SETUP,
+            env_key=env_key,
+            env_value=str(store),
+            hint=f"{label} at {store} will not open ({error})",
+        )
+    return Detection(source, CONFIGURED, hint=str(store))
 
 
 def _anki(settings: Settings, home: Path) -> Detection:
     if settings.anki_db_path:
-        return Detection("anki", CONFIGURED, hint=str(settings.anki_db_path))
+        return _verified(
+            "anki", Path(settings.anki_db_path), "ANKI_DB_PATH", "Anki's collection"
+        )
     profiles = sorted(
         home.glob("Library/Application Support/Anki2/*/collection.anki2"),
         key=lambda p: p.stat().st_mtime,
@@ -90,6 +146,15 @@ def _anki(settings: Settings, home: Path) -> Detection:
     if not profiles:
         return Detection("anki", MISSING, hint="no Anki profile on this machine")
     newest = profiles[0]
+    error = unreadable(newest)
+    if error is not None:
+        return Detection(
+            "anki",
+            NEEDS_SETUP,
+            env_key="ANKI_DB_PATH",
+            env_value=str(newest),
+            hint=f"found {newest}, but it will not open ({error})",
+        )
     note = f" ({len(profiles)} profiles; newest chosen)" if len(profiles) > 1 else ""
     return Detection(
         "anki",
@@ -102,10 +167,21 @@ def _anki(settings: Settings, home: Path) -> Detection:
 
 def _avorio(settings: Settings, home: Path) -> Detection:
     if settings.avorio_db_path:
-        return Detection("avorio", CONFIGURED, hint=str(settings.avorio_db_path))
+        return _verified(
+            "avorio", Path(settings.avorio_db_path), "AVORIO_DB_PATH", "the Avorio store"
+        )
     store = home / "Library/Application Support/Avorio/avorio.db"
     if not store.exists():
         return Detection("avorio", MISSING, hint="Avorio has no local store here")
+    error = unreadable(store)
+    if error is not None:
+        return Detection(
+            "avorio",
+            NEEDS_SETUP,
+            env_key="AVORIO_DB_PATH",
+            env_value=str(store),
+            hint=f"found {store}, but it will not open ({error})",
+        )
     return Detection(
         "avorio", FOUND, env_key="AVORIO_DB_PATH", env_value=str(store), hint=str(store)
     )
@@ -153,29 +229,59 @@ def _instagram(settings: Settings, home: Path) -> Detection:
 
 
 def _imessage(settings: Settings, home: Path) -> Detection:
-    if settings.imessage_db_path:
-        return Detection("imessage", CONFIGURED, hint=str(settings.imessage_db_path))
-    store = home / "Library/Messages/chat.db"
-    if store.exists():
+    """iMessage is the one local store whose file can be seen but not read.
+
+    Full Disk Access is granted per-binary, so `stat` succeeds while `open` is refused —
+    an earlier version of this function assumed macOS hid chat.db outright and reported
+    `configured` on a store every sync had been failing to read. The permission state is
+    therefore established by opening the database, never by its presence.
+    """
+    pinned = settings.imessage_db_path
+    configured = pinned is not None
+    store = Path(pinned) if pinned is not None else home / "Library/Messages/chat.db"
+
+    if not store.exists():
+        # Absence is not proof of absence either: depending on how macOS refuses, an
+        # unapproved process can find the whole Messages directory unlistable, so the
+        # store reads as gone when it is merely off limits. Both refusal shapes get
+        # the same instruction; only a store that opens is called usable.
         return Detection(
             "imessage",
-            FOUND,
+            MISSING if configured else NEEDS_SETUP,
             env_key="IMESSAGE_DB_PATH",
             env_value=str(store),
-            hint=str(store),
+            hint=(
+                f"no Messages store at the configured path {store}"
+                if configured
+                else "chat.db is not visible — if Messages is set up on this Mac, "
+                "grant Full Disk Access to the program running Backglass (System "
+                "Settings → Privacy & Security → Full Disk Access), then rerun setup"
+            ),
         )
-    # macOS hides chat.db from processes without Full Disk Access as if it did not
-    # exist — so "absent" usually means "no permission", and saying "missing" would
-    # send the owner looking for a file that is right there.
+
+    error = unreadable(store)
+    if error is not None:
+        return Detection(
+            "imessage",
+            NEEDS_SETUP,
+            env_key="IMESSAGE_DB_PATH",
+            env_value=str(store),
+            hint=(
+                f"chat.db is present but will not open ({error}) — grant Full Disk "
+                "Access to the program running Backglass (System Settings → Privacy & "
+                "Security → Full Disk Access). Scheduled runs go through uv, so add "
+                "the uv binary as well as the terminal, then rerun setup"
+            ),
+        )
+
+    if configured:
+        return Detection("imessage", CONFIGURED, hint=str(store))
     return Detection(
         "imessage",
-        NEEDS_SETUP,
+        FOUND,
         env_key="IMESSAGE_DB_PATH",
         env_value=str(store),
-        hint=(
-            "chat.db not visible — grant Full Disk Access to this terminal "
-            "(System Settings → Privacy & Security), then rerun setup"
-        ),
+        hint=str(store),
     )
 
 

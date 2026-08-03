@@ -26,20 +26,27 @@ from backglass.connectors import detect
 # ─────────────────────────────────────────────────────────────── fake home
 
 
+def _store(path: Path) -> Path:
+    """A real, openable SQLite file.
+
+    Detection opens local stores rather than stat-ing them, so a placeholder byte
+    would now read as an unreadable store — and a fixture that cannot be opened is
+    not standing in for a collection anyone could sync from anyway.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(path) as conn:
+        conn.execute("CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY)")
+    return path
+
+
 def _fake_home(tmp_path: Path) -> Path:
     home = tmp_path / "home"
-    old = home / "Library/Application Support/Anki2/Old profile"
-    new = home / "Library/Application Support/Anki2/User 1"
-    old.mkdir(parents=True)
-    new.mkdir(parents=True)
-    (old / "collection.anki2").write_bytes(b"x")
-    (new / "collection.anki2").write_bytes(b"x")
+    old = _store(home / "Library/Application Support/Anki2/Old profile/collection.anki2")
+    _store(home / "Library/Application Support/Anki2/User 1/collection.anki2")
     stale = time.time() - 10_000
-    os.utime(old / "collection.anki2", (stale, stale))
+    os.utime(old, (stale, stale))
 
-    avorio = home / "Library/Application Support/Avorio"
-    avorio.mkdir(parents=True)
-    (avorio / "avorio.db").write_bytes(b"x")
+    _store(home / "Library/Application Support/Avorio/avorio.db")
 
     obsidian = home / "Library/Application Support/obsidian"
     obsidian.mkdir(parents=True)
@@ -104,16 +111,58 @@ class TestDetect:
         assert d["imessage"].status == detect.NEEDS_SETUP
         assert "Full Disk Access" in d["imessage"].hint
 
+    def test_present_but_unopenable_chat_db_is_not_configured(
+        self, bare: Settings, tmp_path: Path
+    ) -> None:
+        """The defect this probe exists for.
+
+        Full Disk Access is granted per-binary, so on a machine without it chat.db
+        stats fine and refuses to open — detection used to return `configured`
+        straight off the .env path and every sync failed behind a green Sources
+        panel. A file that is not a database stands in for the refused open: the
+        branch under test is "the store did not open", not any one errno.
+        """
+        home = _fake_home(tmp_path)
+        chat = home / "Library/Messages/chat.db"
+        chat.parent.mkdir(parents=True)
+        chat.write_bytes(b"not a database")
+        bound = bare.model_copy(update={"imessage_db_path": chat})
+
+        d = _by_source(detect.detect_all(bound, home=home))
+
+        assert d["imessage"].status == detect.NEEDS_SETUP
+        assert "Full Disk Access" in d["imessage"].hint
+
+    def test_readable_chat_db_is_configured(
+        self, bare: Settings, tmp_path: Path
+    ) -> None:
+        """The pass branch, so the probe is known to go green as well as red."""
+        home = _fake_home(tmp_path)
+        chat = _store(home / "Library/Messages/chat.db")
+        bound = bare.model_copy(update={"imessage_db_path": chat})
+        d = _by_source(detect.detect_all(bound, home=home))
+        assert d["imessage"].status == detect.CONFIGURED
+
     def test_configured_sources_report_configured(
         self, bare: Settings, tmp_path: Path
     ) -> None:
         home = _fake_home(tmp_path)
         bound = bare.model_copy(
-            update={"anki_db_path": home / "x.anki2", "github_token": "ghp_x"}
+            update={"anki_db_path": _store(home / "x.anki2"), "github_token": "ghp_x"}
         )
         d = _by_source(detect.detect_all(bound, home=home))
         assert d["anki"].status == detect.CONFIGURED
         assert d["github"].status == detect.CONFIGURED
+
+    def test_configured_store_that_vanished_stops_reading_configured(
+        self, bare: Settings, tmp_path: Path
+    ) -> None:
+        """An .env path is a claim about the past. Anki uninstalled, or the profile
+        renamed, must not leave the source green on the Sources panel."""
+        home = _fake_home(tmp_path)
+        bound = bare.model_copy(update={"anki_db_path": home / "gone.anki2"})
+        d = _by_source(detect.detect_all(bound, home=home))
+        assert d["anki"].status == detect.MISSING
 
     def test_drifted_obsidian_registry_degrades_never_raises(
         self, bare: Settings, tmp_path: Path
