@@ -41,8 +41,12 @@ reserve           = configured slack, default 45 min/day, never zero
 **The reserve is not optional and defaults to non-zero.** A plan that fills every minute
 is a plan that fails at 10:15 and stays failed. The reserve absorbs the first overrun.
 
-**Engagements count as fixed, but only once they are two things: confirmed, and at an
-hour.** A plan the owner agreed to occupies the day exactly as a meeting does — dinner at
+**Engagements count as fixed, but only once they are three things: believed, confirmed,
+and at an hour.** Below the confidence threshold a plan does not touch capacity at all —
+CLAUDE.md rule 2 keeps a guess out of the brief, and letting the same guess silently
+delete an hour from a real day is the same error with a heavier consequence, because the
+brief at least renders nothing while the planner would quietly plan less work and never
+say why. It goes to the review queue with the low-confidence commitments. A plan the owner agreed to occupies the day exactly as a meeting does — dinner at
 seven is not time available for deep work — so it is subtracted through the same path
 (`capacity.engagement_events`). The two exclusions are what keep that safe. A `proposed`
 plan is not reserved, or anyone who emails the owner could delete an evening from their

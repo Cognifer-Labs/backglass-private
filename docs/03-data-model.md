@@ -78,6 +78,17 @@ or `→ declined` — and it only ever moves forward, so a later "still on for F
 unconfirm a plan. Only `confirmed` earns a block on the day plan; `proposed` is what the
 owner still owes a reply to, and it is what the brief asks about.
 
+`status` is also what keeps a cancellation cancelled. A `declined` row stays visible to
+the dedup pass — the same reasoning that keeps `dropped` commitments in
+`open_commitments_for_dedup` — because re-extraction re-reads the message that proposed
+the plan after the one that called it off, and a dedup pass that cannot see the decision
+files a fresh proposal for a dinner nobody is having.
+
+Anything that names an entity has to be repointed by `people/merge.py` before the loser
+row is deleted; `engagement_person`'s foreign key is NOT NULL, so forgetting it turns
+merging two people into a rolled-back 500. `tests/test_people.py` derives that list from
+`PRAGMA foreign_key_list` rather than hard-coding it.
+
 `starts_at` is nullable, and that is the point: "we should get dinner sometime" is a real
 plan with a real person and no time, and it is the one most likely to decay unnoticed.
 It stores the time **as the message stated it** — the resolver never converts timezones —
