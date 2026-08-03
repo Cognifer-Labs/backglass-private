@@ -253,3 +253,14 @@ deterministic given the id.
   write the case where the config is IN EFFECT, and drive at least one real door (CLI
   command, HTTP route) rather than only the function under repair — the door is what
   reaches the callers you did not think of.
+
+- 2026-08-02 | An invariant CLAUDE.md called settled ("user_id on every table") had been
+  false for eight tables for months, and specs/schema.sql — step 3 of the project's own
+  reading order — described 14 tables against 25 live. Both drifted silently because
+  nothing checked them. | A documented invariant with no test is a comment. When
+  correcting one, add the check that makes the next drift fail loudly (here: a generated
+  schema reference plus a test asserting the column exists on every table), and prefer
+  generating a reference file over hand-syncing it — hand-syncing is exactly what failed.
+  Corollary found the same day: assertions that hardcode a derived list (the migration
+  version numbers, twice) train the next author to edit the assertion instead of reading
+  it. Derive from the source of truth.

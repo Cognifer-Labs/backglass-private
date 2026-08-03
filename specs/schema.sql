@@ -1,11 +1,24 @@
 -- Backglass schema. SQLite.
--- Rationale in docs/03-data-model.md and docs/04-daily-schedule-and-goals.md §3.
--- user_id is on every table and is always 1. Do not remove it.
+--
+-- GENERATED from backglass/db/migrations/ — do not hand-edit. Change the schema by
+-- adding a migration, then run:  uv run python -m tests.test_schema_reference
+-- tests/test_schema_reference.py fails if this file and the migrations disagree.
+--
+-- Rationale for each table lives in the migration that introduced it, and in
+-- docs/03-data-model.md and docs/04-daily-schedule-and-goals.md §3.
+--
+-- user_id is on every table except schema_version (which records what this database
+-- has applied, not whose data it is) and is always 1. Do not remove it.
 
 PRAGMA foreign_keys = ON;
 PRAGMA journal_mode = WAL;
 
--- ─────────────────────────────────────────────────────────── credentials
+CREATE TABLE schema_version (
+  version    INTEGER PRIMARY KEY,
+  filename   TEXT    NOT NULL,
+  checksum   TEXT    NOT NULL,       -- sha256 of the migration file as applied
+  applied_at TEXT    NOT NULL
+);
 
 CREATE TABLE credential (
   id            INTEGER PRIMARY KEY,
@@ -18,13 +31,10 @@ CREATE TABLE credential (
   scopes        TEXT,
   status        TEXT    NOT NULL DEFAULT 'ok',   -- ok|failed|revoked
   last_error    TEXT,
-  updated_at    TEXT    NOT NULL,
+  updated_at    TEXT    NOT NULL, enabled INTEGER NOT NULL DEFAULT 1,
   UNIQUE (user_id, source)
 );
 
--- ─────────────────────────────────────────────────────────── raw capture
-
--- Immutable. Written once, never updated except extraction_version/triage_verdict.
 CREATE TABLE source_item (
   id                 INTEGER PRIMARY KEY,
   user_id            INTEGER NOT NULL DEFAULT 1,
@@ -39,15 +49,14 @@ CREATE TABLE source_item (
   content_hash       TEXT    NOT NULL,
   triage_verdict     TEXT,                 -- keep|drop|unclassified
   triage_reason      TEXT,
-  extraction_version TEXT,
+  extraction_version TEXT, template_hash TEXT,
   UNIQUE (user_id, source, external_id)
 );
 
 CREATE INDEX idx_source_hash    ON source_item(user_id, content_hash);
+
 CREATE INDEX idx_source_pending ON source_item(user_id, extraction_version)
   WHERE triage_verdict = 'keep';
-
--- ─────────────────────────────────────────────────────────── entities
 
 CREATE TABLE entity (
   id             INTEGER PRIMARY KEY,
@@ -55,11 +64,9 @@ CREATE TABLE entity (
   kind           TEXT    NOT NULL,         -- person|org|project
   canonical_name TEXT    NOT NULL,
   aliases_json   TEXT    NOT NULL DEFAULT '[]',
-  notes          TEXT,
+  notes          TEXT, role TEXT, org TEXT, tags_json TEXT NOT NULL DEFAULT '[]', profile_json TEXT, updated_at TEXT,
   UNIQUE (user_id, kind, canonical_name)
 );
-
--- ─────────────────────────────────────────────────────────── goals
 
 CREATE TABLE goal (
   id                INTEGER PRIMARY KEY,
@@ -76,15 +83,13 @@ CREATE TABLE goal (
 CREATE TABLE target (
   id                     INTEGER PRIMARY KEY,
   goal_id                INTEGER NOT NULL REFERENCES goal(id) ON DELETE CASCADE,
-  kind                   TEXT    NOT NULL, -- cadence|milestone|maintenance|total (0006)
+  kind                   TEXT    NOT NULL, -- cadence|milestone|maintenance
   title                  TEXT    NOT NULL,
   weekly_count           INTEGER,          -- NULL for milestone
   estimated_minutes_each INTEGER,          -- feeds the weekly capacity check
   active                 INTEGER NOT NULL DEFAULT 1,
   created_at             TEXT    NOT NULL
-);
-
--- ─────────────────────────────────────────────────────────── commitments
+, total_count INTEGER, user_id INTEGER NOT NULL DEFAULT 1);
 
 CREATE TABLE commitment (
   id                    INTEGER PRIMARY KEY,
@@ -108,16 +113,15 @@ CREATE TABLE commitment (
 
 CREATE INDEX idx_commitment_open ON commitment(user_id, status, due_at)
   WHERE status = 'open';
+
 CREATE INDEX idx_commitment_awaiting ON commitment(user_id, direction, status)
   WHERE direction = 'owed_to_me' AND status = 'open';
+
 CREATE INDEX idx_commitment_review ON commitment(user_id, confidence)
   WHERE status = 'open';
+
 CREATE INDEX idx_commitment_goal ON commitment(goal_id) WHERE goal_id IS NOT NULL;
 
--- ─────────────────────────────────────────────────────────── checkpoints
-
--- 0007 adds activity_id (nullable) and the activity registry table — hours logged
--- against a total target can name the discrete extracurricular they belong to.
 CREATE TABLE checkpoint (
   id             INTEGER PRIMARY KEY,
   target_id      INTEGER NOT NULL REFERENCES target(id) ON DELETE CASCADE,
@@ -127,11 +131,9 @@ CREATE TABLE checkpoint (
   commitment_id  INTEGER REFERENCES commitment(id),
   note           TEXT,
   delta          INTEGER NOT NULL DEFAULT 1
-);
+, activity_id INTEGER REFERENCES activity(id), user_id INTEGER NOT NULL DEFAULT 1);
 
 CREATE INDEX idx_checkpoint_target ON checkpoint(target_id, occurred_at);
-
--- ─────────────────────────────────────────────────────────── checklist
 
 CREATE TABLE checklist_item (
   id           INTEGER PRIMARY KEY,
@@ -141,18 +143,14 @@ CREATE TABLE checklist_item (
   active       INTEGER NOT NULL DEFAULT 1,
   sort_order   INTEGER NOT NULL DEFAULT 0
 );
--- Seven-item cap is enforced in application code, not here, so the error message
--- can explain why. See docs/04-daily-schedule-and-goals.md C1.
 
 CREATE TABLE checklist_tick (
   id                INTEGER PRIMARY KEY,
   checklist_item_id INTEGER NOT NULL REFERENCES checklist_item(id) ON DELETE CASCADE,
   local_date        TEXT    NOT NULL,      -- YYYY-MM-DD in the active timezone
-  ticked_at         TEXT    NOT NULL,
+  ticked_at         TEXT    NOT NULL, user_id INTEGER NOT NULL DEFAULT 1,
   UNIQUE (checklist_item_id, local_date)
 );
-
--- ─────────────────────────────────────────────────────────── day planning
 
 CREATE TABLE day_plan (
   id               INTEGER PRIMARY KEY,
@@ -181,7 +179,7 @@ CREATE TABLE plan_block (
   pinned         INTEGER NOT NULL DEFAULT 0,
   outcome        TEXT    NOT NULL DEFAULT 'pending', -- pending|done|rolled|dropped
   rollover_count INTEGER NOT NULL DEFAULT 0  -- denormalized on purpose, read on every render
-);
+, user_id INTEGER NOT NULL DEFAULT 1);
 
 CREATE INDEX idx_block_plan ON plan_block(day_plan_id, starts_at);
 
@@ -194,8 +192,6 @@ CREATE TABLE shutdown_note (
   created_at TEXT    NOT NULL,
   UNIQUE (user_id, local_date)
 );
-
--- ─────────────────────────────────────────────────────────── output
 
 CREATE TABLE brief (
   id                 INTEGER PRIMARY KEY,
@@ -211,8 +207,6 @@ CREATE TABLE brief (
   UNIQUE (user_id, generated_for_date, kind)
 );
 
--- ─────────────────────────────────────────────────────────── run telemetry
-
 CREATE TABLE run (
   id                INTEGER PRIMARY KEY,
   user_id           INTEGER NOT NULL DEFAULT 1,
@@ -226,20 +220,161 @@ CREATE TABLE run (
   spend_cents       INTEGER NOT NULL DEFAULT 0,
   degraded          INTEGER NOT NULL DEFAULT 0,  -- 1 when spend cap forced triage-only
   errors_json       TEXT
+, kind TEXT NOT NULL DEFAULT 'sync');
+
+CREATE TRIGGER source_item_immutable
+BEFORE UPDATE ON source_item
+FOR EACH ROW
+WHEN OLD.user_id      IS NOT NEW.user_id
+  OR OLD.source       IS NOT NEW.source
+  OR OLD.external_id  IS NOT NEW.external_id
+  OR OLD.fetched_at   IS NOT NEW.fetched_at
+  OR OLD.occurred_at  IS NOT NEW.occurred_at
+  OR OLD.author       IS NOT NEW.author
+  OR OLD.title        IS NOT NEW.title
+  OR OLD.body_text    IS NOT NEW.body_text
+  OR OLD.raw_json     IS NOT NEW.raw_json
+  OR OLD.content_hash IS NOT NEW.content_hash
+BEGIN
+  SELECT RAISE(
+    ABORT,
+    'source_item is immutable; only triage_verdict, triage_reason and extraction_version may change (docs/03)'
+  );
+END;
+
+CREATE TABLE roadmap (
+  id                       INTEGER PRIMARY KEY,
+  user_id                  INTEGER NOT NULL DEFAULT 1,
+  path_id                  TEXT    NOT NULL,
+  path_version             TEXT    NOT NULL,
+  title                    TEXT    NOT NULL,
+  goal_id                  INTEGER NOT NULL REFERENCES goal(id),
+  status                   TEXT    NOT NULL DEFAULT 'active',  -- active|done|dropped
+  personalized             INTEGER NOT NULL DEFAULT 0,
+  interview_source_item_id INTEGER REFERENCES source_item(id),
+  created_at               TEXT    NOT NULL,
+  closed_at                TEXT
 );
 
--- 0008 adds the `fact` table — the personal knowledge base (subject/key/value with
--- commitment-style supersession). See backglass/db/migrations/0008_facts.sql.
+CREATE TABLE roadmap_step (
+  id           INTEGER PRIMARY KEY,
+  roadmap_id   INTEGER NOT NULL REFERENCES roadmap(id) ON DELETE CASCADE,
+  step_key     TEXT    NOT NULL,           -- preset key; 'interview:<slug>'/'manual:<slug>' when added later
+  title        TEXT    NOT NULL,
+  detail       TEXT,
+  sort_order   INTEGER NOT NULL,
+  planned_date TEXT,
+  status       TEXT    NOT NULL DEFAULT 'pending',  -- pending|active|done|skipped
+  target_id    INTEGER REFERENCES target(id),
+  origin       TEXT    NOT NULL DEFAULT 'preset',   -- preset|interview|manual
+  done_at      TEXT, user_id INTEGER NOT NULL DEFAULT 1,
+  UNIQUE (roadmap_id, step_key)
+);
 
--- 0009 adds `learned_noise` — senders the tier-1 model kept dropping, promoted into
--- free tier-0 drops. Evidence-gated in backglass/extract/noise.py; rows are disabled,
--- never deleted. See backglass/db/migrations/0009_learned_noise.sql.
+CREATE INDEX idx_roadmap_step ON roadmap_step(roadmap_id, sort_order);
 
--- 0010 adds `source_item.template_hash` — the item's shape with URLs/dates/digits
--- stripped, for free rule-drops of recurring templated mail. Derived and recomputable,
--- deliberately outside the 0002 immutability trigger. See
--- backglass/db/migrations/0010_template_hash.sql and backglass/extract/templates.py.
+CREATE TABLE roadmap_cadence (
+  id          INTEGER PRIMARY KEY,
+  roadmap_id  INTEGER NOT NULL REFERENCES roadmap(id) ON DELETE CASCADE,
+  cadence_key TEXT    NOT NULL,
+  target_id   INTEGER NOT NULL REFERENCES target(id), user_id INTEGER NOT NULL DEFAULT 1,
+  UNIQUE (roadmap_id, cadence_key)
+);
 
--- 0011 adds `model_batch` + `model_batch_item` — outstanding Message Batches and
--- their item mapping, for `backglass batch` (extraction at half price overnight).
--- See backglass/db/migrations/0011_model_batch.sql and backglass/batch.py.
+CREATE TABLE entity_merge (
+  id                  INTEGER PRIMARY KEY,
+  user_id             INTEGER NOT NULL DEFAULT 1,
+  winner_id           INTEGER NOT NULL REFERENCES entity(id),
+  loser_snapshot_json TEXT    NOT NULL,
+  merged_at           TEXT    NOT NULL
+);
+
+CREATE TABLE purge_gate (
+  id   INTEGER PRIMARY KEY CHECK (id = 1),
+  open INTEGER NOT NULL DEFAULT 0
+, user_id INTEGER NOT NULL DEFAULT 1);
+
+CREATE TRIGGER source_item_no_delete
+BEFORE DELETE ON source_item
+WHEN (SELECT open FROM purge_gate WHERE id = 1) = 0
+BEGIN
+  SELECT RAISE(ABORT, 'source_item rows are kept forever (docs/03); only the boundary purge (docs/08 D6) may delete');
+END;
+
+CREATE TABLE activity (
+  id                INTEGER PRIMARY KEY,
+  user_id           INTEGER NOT NULL DEFAULT 1,
+  title             TEXT    NOT NULL,
+  org               TEXT,
+  role              TEXT,
+  category          TEXT    NOT NULL DEFAULT 'other',
+  contact_entity_id INTEGER REFERENCES entity(id),
+  started_on        TEXT,                        -- YYYY-MM-DD
+  ended_on          TEXT,                        -- NULL while ongoing
+  is_ongoing        INTEGER NOT NULL DEFAULT 1,
+  most_meaningful   INTEGER NOT NULL DEFAULT 0,  -- AMCAS allows 3; surfaced, not enforced
+  active            INTEGER NOT NULL DEFAULT 1,
+  created_at        TEXT    NOT NULL
+);
+
+CREATE INDEX idx_checkpoint_activity ON checkpoint(activity_id) WHERE activity_id IS NOT NULL;
+
+CREATE TABLE fact (
+  id             INTEGER PRIMARY KEY,
+  user_id        INTEGER NOT NULL DEFAULT 1,
+  subject        TEXT    NOT NULL,          -- kebab lane: identity|housing|premed|...
+  key            TEXT    NOT NULL,
+  value          TEXT    NOT NULL,
+  note           TEXT,                      -- evidence pointer, in words
+  source         TEXT    NOT NULL,          -- manual|extraction|assistant
+  source_item_id INTEGER REFERENCES source_item(id),
+  status         TEXT    NOT NULL DEFAULT 'active', -- active|superseded|retracted
+  superseded_by  INTEGER REFERENCES fact(id),
+  created_at     TEXT    NOT NULL
+);
+
+CREATE INDEX idx_fact_active ON fact(user_id, subject, key) WHERE status = 'active';
+
+CREATE TABLE learned_noise (
+  id             INTEGER PRIMARY KEY,
+  user_id        INTEGER NOT NULL DEFAULT 1,
+  kind           TEXT    NOT NULL CHECK (kind IN ('address', 'domain')),
+  value          TEXT    NOT NULL,          -- lowercased bare address or domain
+  evidence_count INTEGER NOT NULL,          -- model-drop verdicts at promotion time
+  first_seen     TEXT,                      -- occurred_at of the earliest evidence item
+  last_seen      TEXT,
+  promoted_at    TEXT    NOT NULL,
+  promoted_by    TEXT    NOT NULL DEFAULT 'cli',  -- 'cli' | 'auto'
+  enabled        INTEGER NOT NULL DEFAULT 1,
+  UNIQUE (user_id, kind, value)
+);
+
+CREATE INDEX idx_source_template ON source_item(user_id, template_hash)
+  WHERE template_hash IS NOT NULL;
+
+CREATE TABLE model_batch (
+  id           INTEGER PRIMARY KEY,
+  user_id      INTEGER NOT NULL DEFAULT 1,
+  batch_id     TEXT    NOT NULL UNIQUE,          -- msgbatch_...
+  kind         TEXT    NOT NULL DEFAULT 'extract',
+  model        TEXT    NOT NULL,                  -- concrete model id at submit time
+  prompt_stamp TEXT    NOT NULL,                  -- extraction_version this batch targets
+  status       TEXT    NOT NULL DEFAULT 'submitted',
+               -- submitted | collected | expired | failed | canceled
+  created_at   TEXT    NOT NULL,
+  collected_at TEXT,
+  spend_cents  INTEGER NOT NULL DEFAULT 0,
+  error        TEXT
+);
+
+CREATE TABLE model_batch_item (
+  id             INTEGER PRIMARY KEY,
+  batch_id       TEXT    NOT NULL REFERENCES model_batch(batch_id),
+  custom_id      TEXT    NOT NULL,                -- "si-<source_item_id>"
+  source_item_id INTEGER NOT NULL REFERENCES source_item(id),
+  status         TEXT    NOT NULL DEFAULT 'pending', user_id INTEGER NOT NULL DEFAULT 1,
+                 -- pending | succeeded | errored | expired
+  UNIQUE (batch_id, custom_id)
+);
+
+CREATE INDEX idx_batch_item_source ON model_batch_item(source_item_id);

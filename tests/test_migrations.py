@@ -9,13 +9,32 @@ from pathlib import Path
 
 import pytest
 
-from backglass.db import MigrationError, connect, migrate
+from backglass.db import QUERIES_DIR, MigrationError, connect, migrate
+
+MIGRATIONS_DIR = QUERIES_DIR.parent / "migrations"
+
+
+def _versions_on_disk() -> list[int]:
+    """Derived, never a literal: a hardcoded list makes every new migration fail
+    tests that are not about it, which teaches the next author to edit the
+    assertion rather than read it."""
+    return sorted(
+        int(path.name[:4])
+        for path in MIGRATIONS_DIR.glob("[0-9][0-9][0-9][0-9]_*.sql")
+    )
 
 
 def test_init_creates_the_schema(tmp_path: Path) -> None:
     conn = connect(tmp_path / "a.db")
     applied = migrate(conn)
-    assert applied == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    # Derived from the files rather than a literal: a hardcoded list makes every new
+    # migration fail a test that is not about the new migration, which trains whoever
+    # adds one to edit the assertion instead of reading it.
+    expected = _versions_on_disk()
+    assert applied == expected
+    assert expected[0] == 1 and expected == list(range(1, len(expected) + 1)), (
+        "migrations must be numbered contiguously from 0001"
+    )
 
     tables = {
         row["name"] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
@@ -49,11 +68,11 @@ def test_init_is_idempotent(tmp_path: Path) -> None:
     """`backglass init` is safe to run repeatedly — the first assertion of rule 3."""
     path = tmp_path / "b.db"
     conn = connect(path)
-    assert migrate(conn) == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    assert migrate(conn) == _versions_on_disk()
     assert migrate(conn) == []
     assert migrate(conn) == []
     versions = [row["version"] for row in conn.execute("SELECT version FROM schema_version")]
-    assert versions == [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    assert versions == _versions_on_disk()
     conn.close()
 
 
@@ -180,6 +199,9 @@ FROZEN_CHECKSUMS = {
     ),
     "0011_model_batch.sql": (
         "9c42a187902517ca3117740f19d7617d058ee5885dc41478a76196a4f6b6277e"
+    ),
+    "0012_user_id_everywhere.sql": (
+        "3787276d05174c3661d43d2a6b39fb4bf767a94dbf8cb0ce973b329f4d9e4b05"
     ),
 }
 
