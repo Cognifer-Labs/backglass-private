@@ -276,6 +276,23 @@ def _imessage(settings: Settings, home: Path) -> Detection:
         )
 
     if configured:
+        # A readable store is not a usable source. IMESSAGE_CHATS is an allowlist and an
+        # empty one means the connector reads nothing (see connectors/allowlist.py), so
+        # reporting `configured` here would put a green line on the Sources panel above a
+        # connector that `doctor` is simultaneously calling failed. That split — detection
+        # green, health red — is the same shape as the chat.db permission bug this
+        # function was rewritten for.
+        if not settings.imessage_chats:
+            return Detection(
+                "imessage",
+                NEEDS_SETUP,
+                env_key="IMESSAGE_CHATS",
+                env_value="",
+                hint=(
+                    "readable, but IMESSAGE_CHATS is empty so nothing is read — "
+                    "`backglass imessage chats` lists the conversations to name"
+                ),
+            )
         return Detection("imessage", CONFIGURED, hint=str(store))
     return Detection(
         "imessage",

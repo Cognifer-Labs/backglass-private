@@ -139,9 +139,27 @@ class TestDetect:
         """The pass branch, so the probe is known to go green as well as red."""
         home = _fake_home(tmp_path)
         chat = _store(home / "Library/Messages/chat.db")
-        bound = bare.model_copy(update={"imessage_db_path": chat})
+        bound = bare.model_copy(
+            update={"imessage_db_path": chat, "imessage_chats": ["Phoenix build"]}
+        )
         d = _by_source(detect.detect_all(bound, home=home))
         assert d["imessage"].status == detect.CONFIGURED
+
+    def test_a_readable_store_with_no_named_chats_is_not_configured(
+        self, bare: Settings, tmp_path: Path
+    ) -> None:
+        """A readable store is not a usable source. IMESSAGE_CHATS is an allowlist and an
+        empty one means the connector reads nothing, so `configured` here would put a
+        green line on the Sources panel above a connector `doctor` calls failed — the same
+        detection-green/health-red split the chat.db permission bug had."""
+        home = _fake_home(tmp_path)
+        chat = _store(home / "Library/Messages/chat.db")
+        bound = bare.model_copy(update={"imessage_db_path": chat, "imessage_chats": []})
+
+        d = _by_source(detect.detect_all(bound, home=home))
+
+        assert d["imessage"].status == detect.NEEDS_SETUP
+        assert "IMESSAGE_CHATS" in d["imessage"].hint
 
     def test_configured_sources_report_configured(
         self, bare: Settings, tmp_path: Path
