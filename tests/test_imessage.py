@@ -431,10 +431,15 @@ def test_an_empty_allowlist_is_unhealthy_rather_than_reading_everything(
     store: Path, enforcing: Boundary
 ) -> None:
     """The safe direction. A connector that silently reads the whole store because nobody
-    filled in a setting is the failure this default exists to prevent."""
+    has chosen anything is the failure this default exists to prevent.
+
+    Unhealthy but not inert: `sync` fetches without consulting `health()`, so the
+    connector still discovers conversations while none are monitored. Without that the
+    page would have nothing to offer and there would be no way to bootstrap.
+    """
     health = IMessageConnector(db_path=store, boundary=enforcing).health()
     assert health.ok is False
-    assert "IMESSAGE_CHATS" in (health.detail or "")
+    assert "/chats" in (health.detail or "")
 
 
 def test_the_watermark_advances_past_rejected_messages(

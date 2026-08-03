@@ -289,8 +289,8 @@ def _imessage(settings: Settings, home: Path) -> Detection:
                 env_key="IMESSAGE_CHATS",
                 env_value="",
                 hint=(
-                    "readable, but IMESSAGE_CHATS is empty so nothing is read — "
-                    "`backglass imessage chats` lists the conversations to name"
+                    "readable, but no conversations are monitored yet — open /chats to "
+                    "choose from what the sync has found"
                 ),
             )
         return Detection("imessage", CONFIGURED, hint=str(store))

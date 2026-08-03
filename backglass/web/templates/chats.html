@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = 'chats' %}
+
+{% block title %}Backglass — Conversations{% endblock %}
+
+{% block content %}
+
+{# Waiting first, and on its own, because it is the only part of this page that is a
+   question. Everything below is a record of answers already given. #}
+<section class="sec" id="panel-waiting">
+  {{ m.banner('Waiting on you', waiting|length ~ ' new') }}
+  <div class="inner">
+    {% if not waiting %}
+      <p class="empty">No new conversations. Anything that appears will be listed here
+        before it is read.</p>
+    {% else %}
+      {% for c in waiting %}
+        {# design-system.md §4: a question gets the dashed keyline and no fill. Nothing
+           here has been read yet, so nothing here gets an ink. #}
+        <div class="rev">
+          <p class="b1 hang">{{ m.chip('needs_review') }}<span>
+            {{ c.display_name }}</span>
+          </p>
+          <p class="conf">{{ c.source }} · {{ 'group' if c.kind == 'group' else 'direct message' }}
+            · {{ c.messages_seen }} message{{ '' if c.messages_seen == 1 else 's' }} seen
+            · last {{ c.last_seen_at[:10] }}</p>
+          {# Equal weight, same as the review queue. Monitoring someone's conversation is
+             not the obvious answer, so the button for it is not styled as one. #}
+          <div class="acts">
+            <form method="post" action="/chats/{{ c.id }}/monitor" style="display:inline">
+              <button class="btn accept" type="submit">Monitor</button>
+            </form>
+            <form method="post" action="/chats/{{ c.id }}/ignore" style="display:inline">
+              <button class="btn reject" type="submit">Ignore</button>
+            </form>
+          </div>
+        </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+</section>
+
+<div class="grid">
+
+<section class="panel" id="panel-monitored">
+  {{ m.banner('Monitored', monitored|length ~ ' reading') }}
+  <div class="inner">
+    {% if not monitored %}
+      <p class="empty">Nothing is being read yet.</p>
+    {% else %}
+      {% for c in monitored %}
+        <div class="row">
+          <div class="grow">
+            <p class="b1">{{ c.display_name }}</p>
+            <p class="b2">{{ c.source }} · {{ c.messages_seen }} seen
+              · last {{ c.last_seen_at[:10] }}</p>
+          </div>
+          <form method="post" action="/chats/{{ c.id }}/ignore" style="margin:0">
+            <button class="btn reject" type="submit">Stop</button>
+          </form>
+        </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+</section>
+
+<section class="panel" id="panel-ignored">
+  {{ m.banner('Ignored', ignored|length ~ ' declined') }}
+  <div class="inner">
+    {% if not ignored %}
+      <p class="empty">Nothing declined.</p>
+    {% else %}
+      {# Kept rather than deleted, and that is the point: without the row the next sync
+         would see the conversation again and ask a second time. #}
+      {% for c in ignored %}
+        <div class="row">
+          <div class="grow">
+            <p class="b1">{{ c.display_name }}</p>
+            <p class="b2">{{ c.source }} · never read</p>
+          </div>
+          <form method="post" action="/chats/{{ c.id }}/monitor" style="margin:0">
+            <button class="btn accept" type="submit">Monitor</button>
+          </form>
+        </div>
+      {% endfor %}
+    {% endif %}
+  </div>
+</section>
+
+</div>
+{% endblock %}

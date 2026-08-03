@@ -795,6 +795,7 @@ def _google_service(
 def _all_connectors(conn: sqlite3.Connection, settings: Settings) -> list[Connector]:
     """Every configured source. docs/02 §Failure policy: one failing source does not stop
     the others, so an unauthorised connector is skipped rather than fatal."""
+    from backglass import chats as chats_mod
     from backglass.connectors.calendar import SCOPES as CAL_SCOPES
     from backglass.connectors.calendar import CalendarConnector
     from backglass.connectors.canvas import CanvasConnector
@@ -859,14 +860,23 @@ def _all_connectors(conn: sqlite3.Connection, settings: Settings) -> list[Connec
         )
 
     if settings.imessage_db_path:
-        from backglass.connectors.allowlist import Allowlist
         from backglass.connectors.imessage import IMessageConnector
+
+        # Migration path, run before the allowlist is read: whatever is still named in
+        # `.env` becomes a `monitor` row, so a machine configured the old way keeps
+        # working and the page shows those chats as already decided.
+        chats_mod.seed_from_env(conn, "imessage", settings.imessage_chats)
 
         built.append(
             IMessageConnector(
                 db_path=settings.imessage_db_path,
                 boundary=boundary,
-                allowlist=Allowlist(settings.imessage_chats),
+                # From the table, not the setting. `.env` entries are seeded in on the
+                # first run so an existing configuration keeps working, after which the
+                # decisions the owner made on the page are the only thing that matters.
+                allowlist=chats_mod.allowlist_for(
+                    conn, "imessage", settings.imessage_chats
+                ),
                 lookback_days=settings.imessage_lookback_days,
             )
         )

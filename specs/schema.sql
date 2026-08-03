@@ -440,3 +440,21 @@ CREATE INDEX idx_engagement_evidence ON engagement_evidence(user_id, engagement_
 
 CREATE INDEX idx_engagement_evidence_by_source
   ON engagement_evidence(user_id, source_item_id);
+
+CREATE TABLE monitored_chat (
+  id            INTEGER PRIMARY KEY,
+  user_id       INTEGER NOT NULL DEFAULT 1,
+  source        TEXT    NOT NULL,          -- imessage|instagram|instagram:live
+  key           TEXT    NOT NULL,          -- title for a group, handle for a one-to-one
+  display_name  TEXT,
+  kind          TEXT    NOT NULL DEFAULT 'group',  -- group|dm
+  decision      TEXT,                      -- monitor|ignore|NULL = not yet decided
+  participants  INTEGER,                   -- best-effort, for the page's "12 people"
+  messages_seen INTEGER NOT NULL DEFAULT 0,
+  first_seen_at TEXT    NOT NULL,
+  last_seen_at  TEXT    NOT NULL,
+  decided_at    TEXT,
+  UNIQUE (user_id, source, key)
+);
+
+CREATE INDEX idx_monitored_chat_undecided ON monitored_chat(user_id, decision, last_seen_at);

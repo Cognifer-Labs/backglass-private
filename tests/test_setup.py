@@ -159,7 +159,7 @@ class TestDetect:
         d = _by_source(detect.detect_all(bound, home=home))
 
         assert d["imessage"].status == detect.NEEDS_SETUP
-        assert "IMESSAGE_CHATS" in d["imessage"].hint
+        assert "/chats" in d["imessage"].hint
 
     def test_configured_sources_report_configured(
         self, bare: Settings, tmp_path: Path

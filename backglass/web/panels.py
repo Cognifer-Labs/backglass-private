@@ -446,6 +446,17 @@ def sidebar(
             {"level": "gold", "text": "Triage kill rate below 85% — rules have drifted",
              "href": "/#panel-sources"}
         )
+    from backglass import chats as chats_mod
+
+    waiting = chats_mod.undecided(conn)
+    if waiting:
+        n = len(waiting)
+        alerts.append(
+            {"level": "dash",
+             "text": f"{n} new conversation{'s' if n != 1 else ''} to monitor or ignore",
+             "href": "/chats"}
+        )
+
     if review.rows:
         n = len(review.rows)
         alerts.append(
@@ -466,6 +477,7 @@ def sidebar(
             "open": len(board.rows),
             "follow_ups": len(touch.needing_follow_up(conn, settings, today)),
             "roadmaps": len(roadmaps),
+            "new_chats": len(waiting),
         },
         more_alerts=more,
     )

@@ -1,3 +1,59 @@
+# Monitored conversations — the owner decides what is watched
+
+Started 2026-08-03. `IMESSAGE_CHATS` and `INSTAGRAM_CHATS` are comma-separated env vars,
+so choosing what the ledger reads means hand-editing `.env` with names guessed from
+memory. Worse, a conversation the allowlist does not name is dropped in silence: a new
+group chat where plans are actually being made never surfaces, and the owner has no way
+to know they are missing it.
+
+## The shape
+
+The same shape the review queue already has, and for the same reason: the system finds
+something, the owner decides once, the decision is remembered. A chat is not a setting to
+be typed, it is a decision to be made.
+
+- **`monitored_chat` table.** (source, key, display_name, kind, decision, counts, dates).
+  `decision` is `monitor` | `ignore` | NULL, and NULL is the whole feature — it means
+  *seen but not yet decided*, which is what raises the prompt.
+- **Connectors report sightings.** They already count `excluded_by_rule["allowlist"]`;
+  they will also record *which* conversations they saw, on the same
+  connector-reports/sync-writes seam that `excluded` uses. A connector still never writes.
+- **The allowlist comes from the table**, falling back to the env var so nothing breaks
+  the moment this lands. Env entries are seeded into the table as `monitor` on first run,
+  which is also the migration path.
+- **Undecided chats raise a prompt** — a dashboard panel, exactly like Needs review, with
+  Monitor / Ignore as equal-weight buttons. Ignoring is a real decision and is remembered,
+  so the same chat is never asked about twice.
+
+## Steps
+
+- [x] 1. Migration `0015_monitored_chats.sql` + regenerate `specs/schema.sql`, add to
+      `FROZEN_CHECKSUMS`.
+- [x] 2. `backglass/chats.py` — read the allowlist from the table, record sightings,
+      apply decisions. One module both connectors and the web layer use.
+- [x] 3. iMessage + Instagram: record every conversation seen, allowed or not.
+- [x] 4. `sync.py` writes the sightings; new ones land undecided.
+- [x] 5. Dashboard panel + `/chats` page with Monitor/Ignore, and routes for the decision.
+- [x] 6. Seed from `IMESSAGE_CHATS`/`INSTAGRAM_CHATS` so existing config keeps working.
+- [x] 7. Tests at every step; docs/07 gains the flow.
+
+## Outcome
+
+Run against the owner's real store: **47 conversations discovered**, every one awaiting a
+decision — three busy group chats, the rest one-to-one. None is read until it is chosen.
+
+Instagram still reads its env allowlist; the table is wired for it (`source` is already
+per-service) but the connector does not yet report sightings. That is the obvious next
+step and is deliberately not claimed here.
+
+## Deliberately not
+
+Auto-monitoring anything. A new chat is a question, never a default — the whole point is
+that the owner has not consented to it yet. And no per-message opt-in: the unit of consent
+is the conversation, because that is the unit a person thinks in.
+
+---
+
 # Engagements — the plans people make with each other
 
 Started 2026-08-02. The owner asked for four things: connect every social account, build

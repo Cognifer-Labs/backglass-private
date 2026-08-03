@@ -31,7 +31,8 @@
                                          ('/goals', 'Goals', 'goals', none),
                                          ('/people', 'People', 'people', sb.counts.follow_ups if sb else none),
                                          ('/roadmaps', 'Roadmaps', 'roadmaps', sb.counts.roadmaps if sb else none),
-                                         ('/memory', 'Memory', 'memory', none)] %}
+                                         ('/memory', 'Memory', 'memory', none),
+                                         ('/chats', 'Chats', 'chats', sb.counts.new_chats if sb else none)] %}
         <a href="{{ href }}"{% if active == key %} class="on" aria-current="page"{% endif %}>
           <span>{{ label }}</span>
           {%- if count %} <span class="ct">{{ count }}</span>{% endif %}

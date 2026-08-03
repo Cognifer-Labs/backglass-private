@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
+from backglass import chats as chats_mod
 from backglass.config import Settings
 from backglass.connectors import base, credentials
 from backglass.connectors.base import Connector
@@ -56,6 +57,10 @@ class SyncReport:
     commitments_superseded: int = 0
     engagements_inserted: int = 0
     engagements_advanced: int = 0
+    #: Conversations seen for the first time and not yet decided about. Reported so the
+    #: CLI can say a new chat is waiting rather than leaving it only on the dashboard.
+    new_chats: int = 0
+    new_chat_names: list[str] = field(default_factory=list)
     review_queue: int = 0
     writes: int = 0
     spend_cents: int = 0
@@ -196,6 +201,16 @@ def _ingest(
         report.excluded += getattr(connector, "excluded", 0)
         for rule, count in (getattr(connector, "excluded_by_rule", None) or {}).items():
             report.excluded_by_rule[rule] = report.excluded_by_rule.get(rule, 0) + count
+
+        # What the connector saw, whether or not it was allowed to read it. Written here
+        # rather than by the connector, on the same seam as the counters above: a
+        # connector emits SourceItems and nothing else. A conversation nobody has named
+        # lands undecided, which is what puts it on the prompt instead of dropping it.
+        sightings = getattr(connector, "seen_chats", None)
+        if sightings and not dry_run:
+            seen = chats_mod.record(conn, connector.name, list(sightings.values()))
+            report.new_chats += seen.new
+            report.new_chat_names.extend(seen.names)
 
 
 # ──────────────────────────────────────────────────────────────── stage 2

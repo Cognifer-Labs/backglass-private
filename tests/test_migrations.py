@@ -209,6 +209,9 @@ FROZEN_CHECKSUMS = {
     "0014_engagements.sql": (
         "f0de85ad6651de7e4b0f55bd725817e06197b2a18cf15883dc14cd64a3107499"
     ),
+    "0015_monitored_chats.sql": (
+        "08e897e5f38ec4a2eb46b0c6ea2ae22f83e24ae557fa7181237f394148765348"
+    ),
 }
 
 

@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
+from backglass.chats import Sighting
 from backglass.connectors import _typedstream
 from backglass.connectors.allowlist import Allowlist
 from backglass.connectors.base import Cursor, Health, SourceItem, content_hash
@@ -121,6 +122,12 @@ class IMessageConnector:
     cursor: Cursor = None
     excluded: int = 0
     excluded_by_rule: dict[str, int] = field(default_factory=dict)
+    #: Every conversation this fetch touched, allowed or not, keyed the way the allowlist
+    #: matches. Reported rather than written: a connector emits SourceItems and nothing
+    #: else, so `sync` is what records these — the same seam `excluded_by_rule` uses.
+    #: This is what lets a chat nobody has named surface as a question instead of being
+    #: dropped in silence.
+    seen_chats: dict[str, Sighting] = field(default_factory=dict)
 
     @property
     def name(self) -> str:
@@ -143,8 +150,9 @@ class IMessageConnector:
                 name=self.name,
                 ok=False,
                 detail=(
-                    "IMESSAGE_CHATS is empty — name the group chats and people to read. "
-                    "`backglass imessage chats` lists what is in the store."
+                    "no conversations are monitored yet — open /chats to choose, or run "
+                    "`backglass imessage chats`. The sync still discovers conversations "
+                    "while none are chosen, so the list fills itself in."
                 ),
             )
         try:
@@ -175,6 +183,7 @@ class IMessageConnector:
         """
         self.excluded = 0
         self.excluded_by_rule = {}
+        self.seen_chats = {}
 
         watermark = _parse(since)
         highest = watermark
@@ -203,12 +212,30 @@ class IMessageConnector:
         """
         chat = row["chat_name"] or None
         handle = row["handle"] or ""
+        self._note(chat, handle)
         if self.allowlist.allows(title=chat, participants=[handle] if handle else []):
             return True
         self.excluded += 1
         rule = "allowlist"
         self.excluded_by_rule[rule] = self.excluded_by_rule.get(rule, 0) + 1
         return False
+
+    def _note(self, chat: str | None, handle: str) -> None:
+        """Remember that this conversation exists, whatever the allowlist says about it.
+
+        Keyed exactly the way `_allowed` matches, or the page would offer the owner a
+        button that turns on something the connector then fails to recognise.
+        """
+        key = chat or handle
+        if not key:
+            return
+        seen = self.seen_chats.get(key)
+        self.seen_chats[key] = Sighting(
+            key=key,
+            display_name=key,
+            kind="group" if chat else "dm",
+            messages=(seen.messages if seen else 0) + 1,
+        )
 
     def _connect(self) -> sqlite3.Connection:
         # mode=ro, NOT immutable=1 — chat.db is WAL and immutable skips the -wal

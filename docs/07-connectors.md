@@ -140,6 +140,26 @@ Two rules those local stores exist to teach:
   (`reviews:<day>:<max-id>`) re-emits the same id with different content after a rescan,
   which the 0002 immutability trigger turns into a failed-looking sync.
 
+## Choosing what is read
+
+`monitored_chat` holds the answer, and `/chats` is where it is given. A conversation gets
+a row the first time a connector sees it, `decision` NULL, which does not mean "off" — it
+means *seen and not yet decided*, and that is what raises the prompt on the dashboard and
+lists it on the page. Nothing is ever monitored by default: consent to read one group says
+nothing about the next.
+
+`ignore` is stored rather than treated as absence. Without it every sync would re-raise
+every conversation the owner has already declined, and a prompt that repeats itself is one
+people stop reading.
+
+Connectors report what they saw and never write it — the same seam `excluded_by_rule` uses.
+`sync` records the sightings, which is also why a connector with nothing monitored is
+*unhealthy but not inert*: it still discovers conversations, or the page would have nothing
+to offer and there would be no way to start.
+
+`IMESSAGE_CHATS` / `INSTAGRAM_CHATS` still work and are seeded into the table as `monitor`
+on the first run. A click beats a stale setting: re-seeding never overrules an `ignore`.
+
 ## iMessage reads named conversations only
 
 `IMESSAGE_CHATS` is an allowlist, exactly like Instagram's, and for the same reason: an
