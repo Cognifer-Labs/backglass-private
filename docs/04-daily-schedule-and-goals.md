@@ -30,7 +30,8 @@ hard constraint rather than a display value.
 
 ```
 working_window    = configured per weekday (default 09:00–18:00 local)
-fixed             = calendar events marked busy, minus declined
+fixed             = calendar events marked busy, minus declined,
+                    plus confirmed engagements with a stated hour
 buffer            = 10 min after any meeting ≥ 30 min, 5 min otherwise
 commute/travel    = any calendar event tagged travel, plus its buffer
 capacity_minutes  = working_window − fixed − buffer − travel − reserve
@@ -39,6 +40,15 @@ reserve           = configured slack, default 45 min/day, never zero
 
 **The reserve is not optional and defaults to non-zero.** A plan that fills every minute
 is a plan that fails at 10:15 and stays failed. The reserve absorbs the first overrun.
+
+**Engagements count as fixed, but only once they are two things: confirmed, and at an
+hour.** A plan the owner agreed to occupies the day exactly as a meeting does — dinner at
+seven is not time available for deep work — so it is subtracted through the same path
+(`capacity.engagement_events`). The two exclusions are what keep that safe. A `proposed`
+plan is not reserved, or anyone who emails the owner could delete an evening from their
+week by suggesting one; it reaches them through the brief, which asks for a reply. A plan
+with a day but no hour ("lunch on Friday") is not placed either, because there is no
+honest hour to give it and an ISO date parses to midnight. Both stay visible in the brief.
 
 | ID | Requirement |
 |----|-------------|

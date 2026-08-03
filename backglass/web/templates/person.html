@@ -18,6 +18,22 @@
     {% if p['aliases'] %}
       <p class="b2">Known as: {{ p['aliases']|join(' · ') }}</p>
     {% endif %}
+
+    {# What the ledger worked out, kept visually apart from the fields the owner
+       typed above: one is evidence, the other is assertion, and the page should
+       not blur which is which. #}
+    {% if derived and derived['mentions'] %}
+      <p class="b2" id="panel-derived">
+        {% if derived['lean'] == 'both' %}Seen socially and professionally
+        {% elif derived['lean'] == 'social' %}Seen socially
+        {% elif derived['lean'] == 'professional' %}Seen professionally
+        {% else %}Known from{% endif %}
+        {%- if derived['channels'] %} via
+          {{ derived['channels']|map(attribute='source')|join(', ') }}{% endif %}.
+        {{ derived['mentions'] }} mention{{ '' if derived['mentions'] == 1 else 's' }}
+        {%- if derived['first_at'] %} since {{ derived['first_at'][:10] }}{% endif %}.
+      </p>
+    {% endif %}
     {% if p['notes'] %}<p class="b1" style="margin-top:12px">{{ p['notes'] }}</p>{% endif %}
 
     <details class="addform" style="margin-top:16px">
@@ -30,6 +46,51 @@
         <button class="btn ok" type="submit">Save</button>
       </form>
     </details>
+  </div>
+</section>
+
+<section class="panel" id="panel-plans">
+  {{ m.banner('Plans', derived['upcoming']|length ~ ' ahead') }}
+  <div class="inner">
+    {% if not derived['upcoming'] and not derived['past_plans'] %}
+      <p class="empty">No plans with {{ p['canonical_name'] }} on record.</p>
+    {% else %}
+      {% for e in derived['upcoming'] %}
+        <div class="row">
+          <div class="grow">
+            <p class="b1">
+              {% if e['status'] == 'proposed' %}{{ m.chip('needs_review') }}{% endif %}
+              {{ e['what'] }}{% if e['others'] %} with {{ e['others'] }}{% endif %}
+            </p>
+            <p class="b2">
+              {% if e['starts_at'] %}{{ e['starts_at'][:10]|due(today) }}{% else %}no date yet{% endif %}
+              {%- if e['location'] %} · {{ e['location'] }}{% endif %} · {{ m.source_link(e) }}
+            </p>
+          </div>
+        </div>
+      {% endfor %}
+      {# Past plans are the relationship's history — "you cancelled the last three" is
+         exactly what someone opens this page to find out — but they are not news, so
+         they fold away. #}
+      {% if derived['past_plans'] %}
+        <details class="addform">
+          <summary class="lbl">
+            Earlier ({{ derived['past_plans']|length }})
+          </summary>
+          {% for e in derived['past_plans'] %}
+            <div class="row">
+              <div class="grow">
+                <p class="b1">{{ e['what'] }}{% if e['status'] == 'declined' %} — declined{% endif %}</p>
+                <p class="b2">
+                  {% if e['starts_at'] %}{{ e['starts_at'][:10] }}{% else %}undated{% endif %}
+                  · {{ m.source_link(e) }}
+                </p>
+              </div>
+            </div>
+          {% endfor %}
+        </details>
+      {% endif %}
+    {% endif %}
   </div>
 </section>
 

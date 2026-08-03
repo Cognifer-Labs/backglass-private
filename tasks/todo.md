@@ -1,3 +1,110 @@
+# Engagements — the plans people make with each other
+
+Started 2026-08-02. The owner asked for four things: connect every social account, build
+a profile for each contact, identify plans with friends and professional events, and plan
+the day around them. A survey of the tree found that two of the four already exist, one is
+an activation problem rather than a build, and exactly one is genuinely missing.
+
+## What the survey found
+
+| Ask | State | Evidence |
+|---|---|---|
+| Plan the day for you | **Built and running daily** | `backglass/plan/planner.py:223`, day_plan rows for 2026-08-03, launchd `com.backglass.plan` at 05:45 |
+| Profile per contact | **Half built** | `backglass/people/` has search, timeline, touch/staleness, merge, a `/people/{id}` page and a brief section. But nothing derives a profile — 0 of 26 entities have `profile_json`, and every `role`/`org` present was typed by hand |
+| Connect social media | **Built, not activated** | iMessage, Instagram (export + live) and Slack connectors are complete and registered (`backglass/__main__.py:583-628`). None is running |
+| Identify plans / events | **Missing entirely** | `extract/schemas.py` defines five models, all commitment- or triage-shaped. `extract/rules.py:120` *drops calendar invites at tier 0*. There is no record type for a plan with a person |
+
+Two findings reframe the request and belong at the top:
+
+1. **Gmail has never been connected.** `.env` has no `GOOGLE_CLIENT_ID`; the credential
+   table holds no google row; `source_item` holds zero gmail items. The 200 `calendar:asu`
+   rows were hand-imported. CLAUDE.md's build order calls Gmail extraction Phase 1, and it
+   is dark. Most invitations — a friend proposing dinner, a recruiter proposing a call,
+   Meetup/Eventbrite/LinkedIn notifications — arrive by mail. No amount of extraction work
+   pays off until this source is live.
+2. **`detect.py` reports iMessage as `configured` when it is not readable.** The file
+   exists (101 MB, modified today) so the path check passes, but the process has no Full
+   Disk Access and the real fetch dies with `OperationalError: unable to open database
+   file` — which is what the credential row records. A check that passes on a source that
+   cannot be read is the exact shape `tasks/lessons.md` warns about: a check nobody has
+   seen fail.
+
+## What "all social media" can honestly mean
+
+Not every platform is reachable, and pretending otherwise would build scrapers that break
+or violate terms. The defensible split:
+
+- **Reachable, already built, needs activation:** iMessage (local SQLite, needs Full Disk
+  Access), Instagram (Meta data export, or the experimental live lane), Slack (user token).
+- **Reachable, not built:** Telegram has an official user-level API. Discord and WhatsApp
+  both offer a personal data export that is a file-parsing job of the same shape as the
+  Instagram export lane.
+- **Not reachable on defensible terms:** LinkedIn and X forbid scraping / paywall the API;
+  WhatsApp and Signal live traffic is end-to-end encrypted with no supported local read.
+  **These reach us as email.** LinkedIn invitations, Meetup RSVPs, Eventbrite tickets and
+  Facebook events all arrive in the inbox, which is another reason finding #1 dominates.
+
+So the plan does not add six connectors. It makes the sources that exist produce the
+record the owner actually asked for, from whatever channel carries it.
+
+## The one idea
+
+An **engagement** is a plan involving other people at a time: dinner with a friend, a
+conference, an interview, office hours. It is a first-class typed record beside the
+commitment — same ledger, same provenance rule, same review queue. This is not a new
+subsystem; it is a second noun in the one the project already has.
+
+Critically it is extracted by the **existing** tier-2 pass, not a new one. Adding a second
+model call per item would double extraction cost and violate the two-tier design in
+`docs/02`. `extract-commitments.md` gains an engagements block and a version bump; the
+bump re-extracts the ledger once, which is free under `MODEL_BACKEND=claude_cli`.
+
+## Steps
+
+- [x] 1. **Make the activation state honest.** `detect.py` must *open* the iMessage db, not
+      stat it — report `needs_setup` with the Full Disk Access instruction when the read
+      fails. Both branches get a test (lessons.md: a check earns a test for its pass *and*
+      its fail branch). Same treatment for any other detector that only checks a path.
+- [x] 2. **Migration `0014_engagements.sql`** — `engagement` (user_id, kind
+      social|professional, what, starts_at, ends_at, when_is_explicit, location, status
+      proposed|confirmed|declined|done, confidence, source_item_id, created_at) and
+      `engagement_person` (engagement_id, entity_id, role) so one plan can involve several
+      people. Add to `FROZEN_CHECKSUMS`, regenerate `specs/schema.sql`.
+- [x] 3. **Schema + prompt.** `ExtractedEngagement` in `extract/schemas.py`;
+      `CommitmentExtraction` gains `engagements: list[...]`; the `## Output schema` block in
+      `extract-commitments.md` gains the matching block and the version bumps. The two must
+      change in the same commit — that file's header says so.
+- [x] 4. **`extract/engagements.py::apply()`** mirroring the commitment post-processing:
+      resolve each participant to an entity, resolve the time against the *source item's*
+      timestamp (rule 4), dedup against open engagements, route low confidence to the review
+      queue (rule 2), record the evidence sentence (rule 1). Idempotent — a second run over
+      the same item writes zero rows (rule 3).
+- [x] 5. **Planner integration.** A confirmed engagement with a time is a `fixed` block in
+      the day plan, exactly as a calendar event is; `plan/capacity.py::fixed_events()` is the
+      single place that has to learn about it. A proposed one that has gone unanswered
+      surfaces in the brief as something owed a reply.
+- [x] 6. **Derived contact profiles.** Query-time, no new table — consistent with how
+      `people/touch.py` and `people/timeline` already work. Per person: channels seen on,
+      first and last contact, interaction count, social-vs-professional lean derived from
+      engagement kinds and org presence, upcoming engagements. Rendered on `/people/{id}`.
+- [x] 7. **Docs and wiring contract.** `docs/03-data-model.md` gains the two tables,
+      `docs/07-connectors.md` gains the activation section for the three dark social
+      sources, `docs/04` gains the engagement input to the planner. `tests/test_connectors.py`
+      already asserts the registry and docs ends mechanically — keep it green.
+
+## Verification
+
+`uv run pytest` green, ruff and mypy clean, and — the one that matters — a real engagement
+extracted from a real message appears as a block on the day plan with a working provenance
+link back to the sentence it came from. Idempotency asserted by a second run writing zero.
+
+## Out of scope, deliberately
+
+Writing back to anyone's calendar, sending replies, and any connector for a platform whose
+terms forbid it. The owner is told what a plan is; the owner answers it.
+
+---
+
 # Evidence plumbing — sentence-level provenance, end to end
 
 Started 2026-08-02. Fixes the three provenance defects found in the 2026-08-02 survey.

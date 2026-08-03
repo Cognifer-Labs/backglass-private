@@ -86,6 +86,7 @@ def build_router(
                 "touch": touches.get(entity_id),
                 "timeline": profiles.timeline(conn, entity_id),
                 "commitments": profiles.open_commitments(conn, entity_id),
+                "derived": profiles.derived(conn, entity_id, today().isoformat()),
                 "today": today(),
                 "settings": settings,
             },

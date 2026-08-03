@@ -842,3 +842,133 @@ class TestCatchUpPlan:
         first = planner.current_plan_id(conn, THURSDAY)
         self._run(sett, monkeypatch)
         assert planner.current_plan_id(conn, THURSDAY) != first
+
+
+# ── confirmed plans occupy the day the way meetings do ──────────────────────
+
+
+def add_engagement(  # type: ignore[no-untyped-def]
+    conn,
+    *,
+    what: str,
+    starts_at: str | None,
+    ends_at: str | None = None,
+    status: str = "confirmed",
+    location: str | None = None,
+) -> int:
+    cursor = conn.execute(
+        "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at, "
+        " when_is_explicit, location, status, confidence, source_item_id, created_at) "
+        "VALUES (?, 'social', ?, ?, ?, 1, ?, ?, 0.9, ?, ?)",
+        (
+            USER_ID,
+            what,
+            starts_at,
+            ends_at,
+            location,
+            status,
+            _any_source_item(conn),
+            now_iso(),
+        ),
+    )
+    return int(cursor.lastrowid or 0)
+
+
+def _any_source_item(conn) -> int:  # type: ignore[no-untyped-def]
+    """engagement.source_item_id is NOT NULL — every plan cites the message it came
+    from, so a fixture has to supply one rather than pass NULL."""
+    row = conn.execute("SELECT id FROM source_item LIMIT 1").fetchone()
+    if row is not None:
+        return int(row["id"])
+    cursor = conn.execute(
+        "INSERT INTO source_item (user_id, source, external_id, fetched_at, occurred_at,"
+        " content_hash) VALUES (?, 'manual', 'plan-fixture', ?, ?, 'h')",
+        (USER_ID, now_iso(), now_iso()),
+    )
+    return int(cursor.lastrowid or 0)
+
+
+class TestEngagementsOnTheDay:
+    def test_a_confirmed_plan_subtracts_from_capacity(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """Dinner at seven is not time available for deep work."""
+        before = capacity_mod.compute(conn, sett, THURSDAY).capacity_minutes
+        add_engagement(
+            conn, what="dinner at Ravi's", starts_at=f"{THURSDAY.isoformat()}T11:00:00-07:00"
+        )
+        after = capacity_mod.compute(conn, sett, THURSDAY).capacity_minutes
+        assert after < before
+
+    def test_a_proposed_plan_does_not_touch_the_day(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """Someone suggesting Thursday is not Thursday.
+
+        Reserving time for an unanswered invitation would let anyone who emails the owner
+        delete an evening from their week. Proposals are surfaced in the brief instead.
+        """
+        before = capacity_mod.compute(conn, sett, THURSDAY).capacity_minutes
+        add_engagement(
+            conn,
+            what="drinks maybe",
+            starts_at=f"{THURSDAY.isoformat()}T11:00:00-07:00",
+            status="proposed",
+        )
+        after = capacity_mod.compute(conn, sett, THURSDAY).capacity_minutes
+        assert after == before
+
+    def test_a_plan_with_a_day_but_no_hour_is_not_placed(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings
+    ) -> None:
+        """"Lunch on Thursday" has no honest hour. Parsed as an ISO date it would land at
+        midnight and either vanish outside the window or block the top of the morning for
+        something nobody said was in the morning."""
+        before = capacity_mod.compute(conn, sett, THURSDAY).capacity_minutes
+        add_engagement(conn, what="lunch sometime", starts_at=THURSDAY.isoformat())
+        after = capacity_mod.compute(conn, sett, THURSDAY).capacity_minutes
+        assert after == before
+        assert capacity_mod.engagement_events(conn, THURSDAY, PHOENIX) == []
+
+    def test_a_plan_with_no_stated_end_runs_an_hour(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        add_engagement(
+            conn, what="coffee", starts_at=f"{THURSDAY.isoformat()}T11:00:00-07:00"
+        )
+        (event,) = capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)
+        assert event.minutes == 60
+
+    def test_a_stated_end_wins_over_the_default(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        add_engagement(
+            conn,
+            what="conference session",
+            starts_at=f"{THURSDAY.isoformat()}T11:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T14:00:00-07:00",
+        )
+        (event,) = capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)
+        assert event.minutes == 180
+
+    def test_no_work_block_is_scheduled_across_a_confirmed_plan(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings
+    ) -> None:
+        """P5 applies to a plan exactly as it does to a meeting."""
+        add_engagement(
+            conn,
+            what="lunch with Priya",
+            starts_at=f"{THURSDAY.isoformat()}T12:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T13:00:00-07:00",
+        )
+        for index in range(6):
+            add_commitment(conn, sett, f"task {index}", minutes=60, n=index + 1)
+
+        proposal = planner.propose(conn, sett, THURSDAY)
+
+        busy_start, busy_end = at(THURSDAY, "12:00"), at(THURSDAY, "13:00")
+        for block in proposal.blocks:
+            if block["kind"] == "fixed":
+                continue
+            start = datetime.fromisoformat(str(block["starts_at"]))
+            end = datetime.fromisoformat(str(block["ends_at"]))
+            assert end <= busy_start or start >= busy_end, block
+
+    def test_a_plan_on_another_day_is_left_alone(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        add_engagement(
+            conn, what="dinner", starts_at=f"{FRIDAY.isoformat()}T18:00:00-07:00"
+        )
+        assert capacity_mod.engagement_events(conn, THURSDAY, PHOENIX) == []
+        assert len(capacity_mod.engagement_events(conn, FRIDAY, PHOENIX)) == 1

@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from backglass.config import Settings
 from backglass.web.app import create_app
+from tests.conftest import panel_slice
 
 
 @pytest.fixture
@@ -164,6 +165,52 @@ class TestPeoplePages:
         assert profile_page.status_code == 200
         assert "Nothing open with Ravi Menon" in profile_page.text
         assert client.get("/people/99999").status_code == 404
+
+    def test_a_persons_plans_render_on_their_page(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """Driven through the real route, not the query.
+
+        tasks/lessons.md keeps recording the same shape: a check written against the
+        function passes while the door a person actually uses walks past it. The page is
+        the door here, and it is the one that has to show the plan.
+        """
+        conn.execute(
+            "INSERT INTO entity (kind, canonical_name, aliases_json, tags_json)"
+            " VALUES ('person', 'Priya Raman', '[]', '[]')"
+        )
+        entity_id = int(conn.execute("SELECT id FROM entity").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO source_item (source, external_id, fetched_at, occurred_at,"
+            " author, title, body_text, content_hash, triage_verdict)"
+            " VALUES ('imessage', 'p1', '2026-07-20T09:00:00-07:00',"
+            " '2026-07-20T09:00:00-07:00', 'Priya', 'dinner', 'b', 'ph1', 'keep')"
+        )
+        source_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at,"
+            " when_is_explicit, location, status, confidence, source_item_id, created_at)"
+            " VALUES (1, 'social', 'dinner downtown', '2099-08-05', NULL, 1,"
+            " 'Fifth Street', 'proposed', 0.9, ?, '2026-07-20T09:00:00-07:00')",
+            (source_id,),
+        )
+        engagement_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO engagement_person (user_id, engagement_id, entity_id)"
+            " VALUES (1, ?, ?)",
+            (engagement_id, entity_id),
+        )
+
+        page = client.get(f"/people/{entity_id}")
+
+        assert page.status_code == 200
+        plans = panel_slice(page.text, "panel-plans")
+        assert "dinner downtown" in plans
+        assert "Fifth Street" in plans
+        # Known socially, and through iMessage — derived from the evidence, not typed.
+        derived = panel_slice(page.text, "panel-derived")
+        assert "Seen socially" in derived
+        assert "imessage" in derived
 
     def test_quick_add_appears_on_board(self, client: TestClient) -> None:
         response = client.post(

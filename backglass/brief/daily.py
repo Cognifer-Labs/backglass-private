@@ -571,6 +571,71 @@ def friend_plans_section(
     return section
 
 
+def engagement_section(
+    conn: sqlite3.Connection, today: date, settings: Settings
+) -> Section:
+    """The week's plans, and the invitations still waiting on an answer.
+
+    Priority 6 puts this above the review queue and the friend-plan tail but below
+    anything overdue: a plan is a fact about the day, not a fire. Unanswered proposals
+    lead within the section because they are the only lines here the owner can act on by
+    reading them — a confirmed plan is a reminder, an unanswered one is a question, and
+    the whole reason to track a plan separately is that invitations rot in silence.
+    """
+    section = Section(priority=6, title="Plans")
+    horizon = today + timedelta(days=FRIEND_PLANS_HORIZON_DAYS)
+    rows = list(
+        _rows(
+            conn,
+            "brief_engagements",
+            {
+                "user_id": USER_ID,
+                "horizon": horizon.isoformat(),
+                "confidence_threshold": settings.confidence_threshold,
+            },
+        )
+    )
+    # Unanswered first, then by when. The query cannot do this ordering and also order
+    # by date within each group without a second pass, and the grouping is the editorial
+    # decision here, so it is made in Python where it can be read.
+    rows.sort(key=lambda r: (str(r["status"]) != "proposed",))
+    for row in rows:
+        who = f" with {row['people']}" if row["people"] else ""
+        where = f" at {row['location']}" if row["location"] else ""
+        when = _plan_phrase(row["starts_at"], today)
+        lead = "Reply — " if str(row["status"]) == "proposed" else ""
+        section.lines.append(
+            Line(
+                text=f"{lead}{row['what']}{who}{where}. {when}.",
+                provenance=_source_of(row),
+                status="needs_review" if str(row["status"]) == "proposed" else None,
+            )
+        )
+    return section
+
+
+def _plan_phrase(starts_at: Any, today: date) -> str:
+    """When a plan is, in the owner's own local terms.
+
+    Reads the leading ten characters rather than parsing the whole value: the column
+    holds the time exactly as the message stated it, so it may be a bare date, a naive
+    datetime or an offset-bearing one, and only the local-day prefix is common to all
+    three. Anything that parses the rest would have to decide what an absent offset
+    means, and there is no honest answer to that here.
+    """
+    if not starts_at:
+        return "no date yet"
+    when = date.fromisoformat(str(starts_at)[:10])
+    delta = (when - today).days
+    if delta < 0:
+        return f"was {abs(delta)}d ago"
+    if delta == 0:
+        return "today"
+    if delta == 1:
+        return "tomorrow"
+    return f"in {delta}d"
+
+
 def review_section(conn: sqlite3.Connection, today: date, settings: Settings) -> Section:
     """docs/05 §8. Guesses, rendered as questions.
 
@@ -618,6 +683,7 @@ def build(conn: sqlite3.Connection, settings: Settings, for_date: date | None = 
         rollover_section(conn, today, settings),
         follow_up_section(conn, today, settings),
         checklist_section(conn, today, settings),
+        engagement_section(conn, today, settings),
         review_section(conn, today, settings),
         friend_plans_section(conn, today, settings),
     ):

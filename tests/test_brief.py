@@ -7,7 +7,7 @@ here is "which promise did I break", not "what does this assert".
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -531,3 +531,150 @@ def test_a_day_with_a_protected_block_is_not_flagged_as_fully_booked(
     )
     brief = daily.build(conn, settings, TODAY)
     assert not any(s.title == "Attention" for s in brief.sections)
+
+
+# ── Plans: the week's arrangements, and the invitations still unanswered ─────
+
+
+def seed_plan(  # type: ignore[no-untyped-def]
+    conn,
+    settings: Settings,
+    *,
+    what: str,
+    starts_at: str | None,
+    status: str = "confirmed",
+    people: tuple[str, ...] = ("Priya Raman <priya@example.com>",),
+    confidence: float = 0.9,
+    location: str | None = None,
+    n: int = 90,
+) -> int:
+    ledger = Ledger(conn, settings)
+    conn.execute(
+        "INSERT INTO source_item (user_id, source, external_id, fetched_at, occurred_at,"
+        " author, title, body_text, raw_json, content_hash, triage_verdict) "
+        "VALUES (?, 'gmail:personal', ?, ?, '2026-07-28T09:00:00-07:00', "
+        " 'Priya <priya@example.com>', 'dinner', 'b', '{}', ?, 'keep')",
+        (USER_ID, f"p{n}", now_iso(), f"planhash{n}"),
+    )
+    source_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    cursor = conn.execute(
+        "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at, when_is_explicit,"
+        " location, status, confidence, source_item_id, created_at) "
+        "VALUES (?, 'social', ?, ?, NULL, 1, ?, ?, ?, ?, ?)",
+        (USER_ID, what, starts_at, location, status, confidence, source_id, now_iso()),
+    )
+    engagement_id = int(cursor.lastrowid or 0)
+    for raw in people:
+        entity_id = ledger.resolve_entity(raw)
+        if entity_id is not None:
+            conn.execute(
+                "INSERT INTO engagement_person (user_id, engagement_id, entity_id) "
+                "VALUES (?, ?, ?)",
+                (USER_ID, engagement_id, entity_id),
+            )
+    return engagement_id
+
+
+def plan_lines(conn, settings: Settings) -> list[str]:  # type: ignore[no-untyped-def]
+    section = daily.engagement_section(conn, TODAY, settings)
+    return [line.text for line in section.lines]
+
+
+class TestPlansSection:
+    def test_a_confirmed_plan_reads_as_a_reminder(  # type: ignore[no-untyped-def]
+        self, conn, settings: Settings
+    ) -> None:
+        seed_plan(
+            conn,
+            settings,
+            what="dinner",
+            starts_at="2026-07-31",
+            location="Ravi's",
+        )
+        (text,) = plan_lines(conn, settings)
+        assert text == "dinner with Priya Raman at Ravi's. tomorrow."
+
+    def test_an_unanswered_invitation_asks_for_a_reply(  # type: ignore[no-untyped-def]
+        self, conn, settings: Settings
+    ) -> None:
+        """The failure this record type exists to catch: an invitation nobody answers."""
+        seed_plan(conn, settings, what="lunch", starts_at="2026-08-03", status="proposed")
+        (text,) = plan_lines(conn, settings)
+        assert text.startswith("Reply — ")
+
+    def test_unanswered_invitations_lead_the_section(  # type: ignore[no-untyped-def]
+        self, conn, settings: Settings
+    ) -> None:
+        """A confirmed plan is a reminder; an unanswered one is a question, and only the
+        question can be acted on by reading it."""
+        seed_plan(conn, settings, what="dinner", starts_at="2026-07-31", n=1)
+        seed_plan(
+            conn, settings, what="squash", starts_at="2026-08-02", status="proposed", n=2
+        )
+        first, second = plan_lines(conn, settings)
+        assert first.startswith("Reply — squash")
+        assert not second.startswith("Reply — ")
+
+    def test_a_plan_with_no_date_still_appears(  # type: ignore[no-untyped-def]
+        self, conn, settings: Settings
+    ) -> None:
+        """"We should get dinner sometime" is the plan that decays silently — nothing
+        else in the brief would ever surface it."""
+        seed_plan(conn, settings, what="dinner sometime", starts_at=None, status="proposed")
+        (text,) = plan_lines(conn, settings)
+        assert "no date yet" in text
+
+    def test_an_evening_plan_is_reported_on_its_own_local_day(  # type: ignore[no-untyped-def]
+        self, conn, settings: Settings
+    ) -> None:
+        """The 2026-08-01 lesson, in the shape it actually bites.
+
+        A 19:00 Phoenix plan is 02:00 the next day in UTC, so any comparison that lets
+        SQLite normalise the offset first reports it a day late. The hour is chosen
+        inside the broken window, not near it: a midday fixture passes against the
+        broken query too and would prove nothing.
+        """
+        seed_plan(conn, settings, what="dinner", starts_at="2026-07-30T19:00:00-07:00")
+        (text,) = plan_lines(conn, settings)
+        assert text.endswith("today.")
+
+    def test_a_low_confidence_plan_stays_out_of_the_brief(  # type: ignore[no-untyped-def]
+        self, conn, settings: Settings
+    ) -> None:
+        """Rule 2: it belongs in the review queue, never in the brief as fact."""
+        seed_plan(conn, settings, what="maybe drinks", starts_at="2026-07-31", confidence=0.3)
+        assert plan_lines(conn, settings) == []
+
+    def test_a_plan_beyond_the_horizon_is_not_todays_news(  # type: ignore[no-untyped-def]
+        self, conn, settings: Settings
+    ) -> None:
+        seed_plan(conn, settings, what="conference", starts_at="2027-03-01")
+        assert plan_lines(conn, settings) == []
+
+    def test_every_plan_line_carries_its_source(  # type: ignore[no-untyped-def]
+        self, conn, settings: Settings
+    ) -> None:
+        """Rule 1, on the new section as on every other."""
+        seed_plan(conn, settings, what="dinner", starts_at="2026-07-31")
+        section = daily.engagement_section(conn, TODAY, settings)
+        assert all(line.provenance is not None for line in section.lines)
+
+    def test_an_evening_plan_on_the_horizon_day_is_still_inside_the_horizon(  # type: ignore[no-untyped-def]
+        self, conn, settings: Settings
+    ) -> None:
+        """The same lesson, one layer down, where SQL does the comparing.
+
+        The horizon is the 14th day out. A plan at 19:00 local on that very day is
+        02:00 the day *after* the horizon once SQLite normalises the offset to UTC, so a
+        date()-based filter drops it — the owner's last day of visible plans quietly
+        loses its evening. Placed exactly on the boundary and in the evening, because
+        neither alone reproduces it.
+        """
+        horizon_day = TODAY + timedelta(days=daily.FRIEND_PLANS_HORIZON_DAYS)
+        seed_plan(
+            conn,
+            settings,
+            what="farewell dinner",
+            starts_at=f"{horizon_day.isoformat()}T19:00:00-07:00",
+        )
+        assert plan_lines(conn, settings) != []

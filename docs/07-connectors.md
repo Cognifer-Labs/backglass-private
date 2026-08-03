@@ -102,7 +102,7 @@ audits.
 
 | source name | gate | cursor | boundary | how it fails |
 |---|---|---|---|---|
-| `imessage` | `IMESSAGE_DB_PATH` | max `message.ROWID` | yes — handles are addresses | macOS hides `chat.db` without Full Disk Access, so the error is `unable to open database file`, not "denied" |
+| `imessage` | `IMESSAGE_DB_PATH` | max `message.ROWID` | yes — handles are addresses | without Full Disk Access the file still stats — only the *open* is refused, with `unable to open database file` rather than anything that says "denied" |
 | `apple-notes` | `APPLE_NOTES=1` | modification-date watermark | yes — note bodies carry addresses | Automation permission denied, reported by `health()` |
 | `reminders` | `APPLE_REMINDERS=1` | fetch-window watermark (no mtime exists) | yes | same Automation prompt as Notes |
 | `files` | `INBOX_FOLDER_PATH` | mtime watermark | yes | unsupported file types are counted and reported, never silently skipped |
@@ -119,6 +119,44 @@ Two rules those local stores exist to teach:
   batch item to the exact immutable row range it summarizes. A high-watermark id
   (`reviews:<day>:<max-id>`) re-emits the same id with different content after a rescan,
   which the 0002 immutability trigger turns into a failed-looking sync.
+
+## Turning on the messaging sources
+
+Three connectors read the places plans actually get made — and all three need something
+only the owner can give them, so they ship built and switched off. `backglass setup`
+reports the state of each; it now proves a local store by opening it, so "configured"
+means the next sync will read it rather than that a file is on disk.
+
+**iMessage.** Grant Full Disk Access in System Settings → Privacy & Security. Add both
+the terminal and the `uv` binary: launchd jobs run through `uv`, and TCC grants are
+per-binary, so approving only the terminal leaves every scheduled sync failing while
+manual runs work. Then `backglass setup` writes `IMESSAGE_DB_PATH`.
+
+**Instagram.** Request a data export in JSON (not HTML) at `accountscenter.instagram.com`
+and unzip it into `~/Downloads`; detection finds any `instagram-*` folder containing a
+`messages/inbox`. Set `INSTAGRAM_CHATS` to the threads worth reading — the connector is
+allowlist-only by design, because a DM archive is the least filtered thing the owner owns.
+A live lane exists (`INSTAGRAM_SESSION_FILE`) and is experimental.
+
+**Slack.** A user token in `SLACK_TOKEN` plus the channel ids in `SLACK_CHANNELS`. Named
+channels only; there is no inbox discovery, for the same reason Instagram is allowlisted.
+
+### Platforms with no connector, and why
+
+Not everything is reachable on defensible terms, and this is the honest split rather than
+a roadmap:
+
+- **WhatsApp, Signal** — live traffic is end-to-end encrypted with no supported local
+  read. WhatsApp offers a per-chat export; that would be a file-parsing job of the same
+  shape as the Instagram export lane, and nobody has written it.
+- **LinkedIn, X** — scraping is against their terms and the APIs are closed or paywalled.
+- **Discord, Telegram** — Discord's personal DMs are unreachable without a user token,
+  which its terms forbid; Telegram has an official user-level API and no connector yet.
+
+Those platforms still reach the ledger, because the things that matter from them arrive
+as mail: LinkedIn invitations, Meetup RSVPs, Eventbrite tickets, Facebook event notices.
+That is an argument for connecting Gmail before writing any new connector, not for
+scraping.
 
 ## Sources with no connector
 

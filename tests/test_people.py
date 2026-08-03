@@ -190,3 +190,122 @@ class TestFollowUpSection:
         brief = daily.build(conn, settings, for_date=TODAY)
         assert brief.word_count() <= 400
         assert any(s.title == "Follow up" for s in brief.sections)
+
+
+# ── plans and the derived profile ───────────────────────────────────────────
+
+
+def _plan(
+    conn: sqlite3.Connection,
+    entity_ids: list[int],
+    *,
+    what: str,
+    starts_at: str | None,
+    kind: str = "social",
+    status: str = "confirmed",
+    source: str = "imessage",
+    n: int = 1,
+) -> int:
+    cur = conn.execute(
+        "INSERT INTO source_item (source, external_id, fetched_at, occurred_at, author,"
+        " title, body_text, content_hash, triage_verdict)"
+        " VALUES (?, ?, '2026-07-20T09:00:00-07:00', '2026-07-20T09:00:00-07:00',"
+        " 'someone', 'msg', 'body', ?, 'keep')",
+        (source, f"plan-{n}", f"planhash-{n}"),
+    )
+    sid = int(cur.lastrowid)
+    cur = conn.execute(
+        "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at, when_is_explicit,"
+        " location, status, confidence, source_item_id, created_at)"
+        " VALUES (1, ?, ?, ?, NULL, 1, NULL, ?, 0.9, ?, '2026-07-20T09:00:00-07:00')",
+        (kind, what, starts_at, status, sid),
+    )
+    engagement_id = int(cur.lastrowid)
+    for entity_id in entity_ids:
+        conn.execute(
+            "INSERT INTO engagement_person (user_id, engagement_id, entity_id)"
+            " VALUES (1, ?, ?)",
+            (engagement_id, entity_id),
+        )
+    return engagement_id
+
+
+class TestPlans:
+    def test_upcoming_and_past_are_split_on_the_local_day(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        priya = _entity(conn, "Priya Raman")
+        _plan(conn, [priya], what="old dinner", starts_at="2026-07-01", n=1)
+        _plan(conn, [priya], what="next dinner", starts_at="2026-08-05", n=2)
+
+        split = profiles.plans(conn, priya, TODAY.isoformat())
+
+        assert [p["what"] for p in split["upcoming"]] == ["next dinner"]
+        assert [p["what"] for p in split["past"]] == ["old dinner"]
+
+    def test_an_evening_plan_today_is_still_upcoming(self, conn: sqlite3.Connection) -> None:
+        """The offset-normalisation trap, at the boundary where it bites: 19:00 in
+        Phoenix is the next day in UTC, and anything that lets SQLite convert first
+        files tonight's dinner under history."""
+        priya = _entity(conn, "Priya Raman")
+        _plan(conn, [priya], what="dinner", starts_at=f"{TODAY.isoformat()}T19:00:00-07:00")
+        split = profiles.plans(conn, priya, TODAY.isoformat())
+        assert [p["what"] for p in split["upcoming"]] == ["dinner"]
+
+    def test_a_declined_plan_is_history_whatever_its_date(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        priya = _entity(conn, "Priya Raman")
+        _plan(conn, [priya], what="drinks", starts_at="2026-08-05", status="declined")
+        split = profiles.plans(conn, priya, TODAY.isoformat())
+        assert split["upcoming"] == []
+        assert [p["what"] for p in split["past"]] == ["drinks"]
+
+    def test_a_shared_plan_names_the_other_guests_not_the_subject(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        priya = _entity(conn, "Priya Raman")
+        sam = _entity(conn, "Sam Ellis")
+        _plan(conn, [priya, sam], what="dinner", starts_at="2026-08-05")
+
+        (row,) = profiles.plans(conn, priya, TODAY.isoformat())["upcoming"]
+        assert row["others"] == "Sam Ellis"
+
+
+class TestDerivedProfile:
+    def test_the_lean_follows_the_evidence(self, conn: sqlite3.Connection) -> None:
+        priya = _entity(conn, "Priya Raman")
+        _plan(conn, [priya], what="dinner", starts_at="2026-08-05", kind="social", n=1)
+        _plan(conn, [priya], what="lab meeting", starts_at="2026-08-06",
+              kind="professional", n=2)
+
+        record = profiles.derived(conn, priya, TODAY.isoformat())
+
+        assert record["lean"] == "both"
+        assert record["social_count"] == 1
+        assert record["professional_count"] == 1
+
+    def test_channels_count_both_commitments_and_plans(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """How the owner knows someone is a fact about where they talk, and the two
+        record types are two halves of the same answer."""
+        priya = _entity(conn, "Priya Raman")
+        _interaction(conn, priya, "2026-07-10T09:00:00-07:00")  # gmail, via a commitment
+        _plan(conn, [priya], what="dinner", starts_at="2026-08-05", source="imessage")
+
+        record = profiles.derived(conn, priya, TODAY.isoformat())
+
+        sources = {c["source"]: c["count"] for c in record["channels"]}
+        assert sources == {"gmail:personal": 1, "imessage": 1}
+        assert record["mentions"] == 2
+
+    def test_someone_with_no_evidence_yet_reads_as_empty_not_as_an_error(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """A manually created profile has nothing behind it, and the page still renders."""
+        alone = _entity(conn, "Nobody Yet")
+        record = profiles.derived(conn, alone, TODAY.isoformat())
+        assert record["mentions"] == 0
+        assert record["lean"] is None
+        assert record["channels"] == []

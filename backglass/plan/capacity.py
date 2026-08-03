@@ -45,6 +45,12 @@ BUSY_STATUSES = {"confirmed", "tentative", "busy"}
 #: surrender the day to.
 REVIEW_CAP_MINUTES = 120
 
+#: How long a confirmed plan is assumed to run when the message never said. An hour is
+#: the honest floor for "dinner at seven": people rarely state an end time for social
+#: arrangements, and assuming a shorter one would hand the planner minutes the owner does
+#: not have. It is only ever a fallback — a stated `ends_at` always wins.
+DEFAULT_ENGAGEMENT = timedelta(minutes=60)
+
 
 @dataclass(frozen=True)
 class FixedEvent:
@@ -146,6 +152,65 @@ def fixed_events(conn: sqlite3.Connection, day: date, tz: str) -> list[FixedEven
     return sorted(events, key=lambda e: e.starts_at)
 
 
+def engagement_events(conn: sqlite3.Connection, day: date, tz: str) -> list[FixedEvent]:
+    """Confirmed plans on `day`, as fixed events.
+
+    A plan the owner has agreed to occupies the day exactly as a calendar event does —
+    dinner at seven is not time available for deep work — so it is subtracted from
+    capacity through the same path rather than through a parallel one.
+
+    Two exclusions, both load-bearing:
+
+      * `proposed` plans are not fixed. Someone suggesting Thursday is not Thursday, and
+        reserving the evening for an invitation the owner has not answered would let
+        anyone who emails them delete an evening from their week. Proposals reach the
+        owner through the brief, which asks for a reply instead of assuming one.
+      * A plan with a date but no clock time ("lunch on Friday") is not placed. There is
+        no honest hour to give it, and midnight — what an ISO date parses to — would
+        either sit outside the window silently or block the start of the day for
+        something nobody said was in the morning. It stays visible in the brief.
+    """
+    # Selected on the local date prefix, NOT with datetime() against day bounds the way
+    # fixed_events() reads the calendar. The two columns are different things: the
+    # calendar connector writes a true instant with the event's own offset, while
+    # engagement.starts_at holds whatever the message said, as it was said — the resolver
+    # deliberately never converts timezones, so the column carries bare dates
+    # ('2026-07-17'), naive local datetimes ('2026-07-17T19:00:00') and offset-bearing
+    # ones side by side. Handing that mixture to SQLite's datetime() normalises the
+    # offset-bearing rows to UTC and marches a 19:00 Phoenix dinner into the next day,
+    # which is the failure tasks/lessons.md records for 2026-08-01. The leading ten
+    # characters are the local day the message named, under every one of the three
+    # shapes, and comparing them converts nothing.
+    rows = conn.execute(
+        "SELECT what, starts_at, ends_at, location FROM engagement "
+        "WHERE user_id = ? AND status = 'confirmed' AND starts_at IS NOT NULL "
+        "  AND substr(starts_at, 1, 10) = ?",
+        (USER_ID, day.isoformat()),
+    ).fetchall()
+
+    events: list[FixedEvent] = []
+    for row in rows:
+        raw_start = str(row["starts_at"])
+        if "T" not in raw_start and " " not in raw_start:
+            continue  # a day, not an hour — see the docstring
+        try:
+            begins = _aware(raw_start, tz)
+        except ValueError:
+            continue
+        raw_end = row["ends_at"]
+        try:
+            ends = _aware(str(raw_end), tz) if raw_end else begins + DEFAULT_ENGAGEMENT
+        except ValueError:
+            ends = begins + DEFAULT_ENGAGEMENT
+        if ends <= begins:
+            ends = begins + DEFAULT_ENGAGEMENT
+        title = str(row["what"])
+        if row["location"]:
+            title = f"{title} — {row['location']}"
+        events.append(FixedEvent(starts_at=begins, ends_at=ends, title=title))
+    return sorted(events, key=lambda e: e.starts_at)
+
+
 def _aware(value: str, tz: str) -> datetime:
     from zoneinfo import ZoneInfo
 
@@ -190,7 +255,14 @@ def compute(
             _min_capacity=settings.min_capacity_minutes,
         )
 
-    fixed = events if events is not None else fixed_events(conn, day, tz)
+    # An explicit `events` list is a caller supplying the whole fixed picture (the tests
+    # do this, and so does any what-if); it is not extended from the ledger, or a caller
+    # asking "what would the day look like with these three meetings" would silently get
+    # a fourth.
+    if events is not None:
+        fixed = list(events)
+    else:
+        fixed = fixed_events(conn, day, tz) + engagement_events(conn, day, tz)
     fixed = [e for e in fixed if e.ends_at > window_start and e.starts_at < window_end]
     fixed.sort(key=lambda e: e.starts_at)
 

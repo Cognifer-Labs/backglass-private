@@ -9,6 +9,7 @@ truth for structure.
 source_item      immutable raw capture, kept forever
 entity           people, orgs, projects
 commitment       the heart of the system
+engagement       a plan to be somewhere with someone
 brief            generated output, kept for the feedback loop
 credential       per-source OAuth tokens
 ```
@@ -56,11 +57,46 @@ resolving an earlier commitment updates status rather than creating a second row
 `goal_id` is nullable and at most one. Multi-goal linkage sounds useful and makes
 progress uninterpretable.
 
+## engagement
+
+```
+id, user_id, kind, what, starts_at, ends_at, when_is_explicit, location,
+status, confidence, source_item_id, superseded_by, created_at, resolved_at
+
+engagement_person    (engagement_id, entity_id)  — many people per plan
+engagement_evidence  (engagement_id, source_item_id, quote, kind, seen_at)
+```
+
+A commitment answers "what do I still owe, and when is it late". An engagement answers
+"who am I seeing, when, and have I answered them yet". Dinner on Friday, a conference, an
+interview: nobody owes anyone an artifact, so none of them is a commitment, and before
+this table they had nowhere to live. Migration `0014_engagements.sql` carries the full
+reasoning for keeping them apart rather than adding a flag to `commitment`.
+
+`kind` is `social|professional`. `status` is a lifecycle — `proposed → confirmed → done`,
+or `→ declined` — and it only ever moves forward, so a later "still on for Friday?" cannot
+unconfirm a plan. Only `confirmed` earns a block on the day plan; `proposed` is what the
+owner still owes a reply to, and it is what the brief asks about.
+
+`starts_at` is nullable, and that is the point: "we should get dinner sometime" is a real
+plan with a real person and no time, and it is the one most likely to decay unnoticed.
+It stores the time **as the message stated it** — the resolver never converts timezones —
+so the column mixes bare dates, naive datetimes and offset-bearing ones. Compare and sort
+it on `substr(starts_at, 1, 10)`, never through `date()`/`datetime()`, which normalise to
+UTC first and walk an evening plan into the following day.
+
 ## entity
 
 ```
-id, user_id, kind, canonical_name, aliases_json, notes
+id, user_id, kind, canonical_name, aliases_json, role, org, tags_json, notes,
+profile_json, updated_at
 ```
+
+An entity's profile is read at query time from the evidence — channels, first and last
+contact, how many mentions, whether the two of them meet socially or professionally —
+rather than cached on the row. `backglass/people/profiles.py::derived` is that read. A
+cached summary can be wrong in a way the underlying rows are not, and being checkable is
+the whole product.
 
 Resolution merges "Dave", "David R.", and `drodriguez@…` into one entity. Alias table
 with manual override. Get this wrong and the "awaiting others" view fragments into
