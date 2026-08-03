@@ -98,6 +98,24 @@ def mark_failed(conn: sqlite3.Connection, source: str, error: str) -> None:
     )
 
 
+def mark_ok(conn: sqlite3.Connection, source: str) -> None:
+    """The other half of `mark_failed` — the successful fetch it says clears the state.
+
+    docs/07 §Health promises 'failed' lasts "until a successful fetch", and nothing wrote
+    that transition back: `save_tokens` clears it but is only reachable through
+    `backglass auth`, which knows about gmail/calendar/drive alone. Every other source —
+    anki, imessage, notes, files, canvas, calendar:apple — had no route back to green, so
+    one bad afternoon printed "failed since today" at the top of every brief forever.
+    """
+    conn.execute(
+        "INSERT INTO credential (user_id, source, status, last_error, updated_at) "
+        "VALUES (?, ?, 'ok', NULL, ?) "
+        "ON CONFLICT (user_id, source) DO UPDATE SET "
+        "  status = 'ok', last_error = NULL, updated_at = excluded.updated_at",
+        (USER_ID, source, now_iso()),
+    )
+
+
 def set_enabled(conn: sqlite3.Connection, source: str, enabled: bool) -> None:
     """The pause switch. Upserts so a source can be disabled before its first sync
     ever runs — the row exists from this moment either way."""

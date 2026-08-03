@@ -18,13 +18,18 @@ from typing import Any
 import pytest
 
 from backglass.config import Settings
+from backglass.connectors import credentials
+from backglass.connectors.base import Health, SourceItem, content_hash
 from backglass.connectors.boundary import Boundary
 from backglass.connectors.calendar import CalendarConnector
 from backglass.connectors.canvas import CanvasConnector
 from backglass.connectors.drive import DriveConnector
 from backglass.connectors.notes import NotesConnector
+from backglass.db import query
 from backglass.ledger import Ledger
 from backglass.plan import capacity as capacity_mod
+from backglass.sync import sync
+from tests.conftest import FakeModel
 
 DENY = ["clientexample.gov"]
 
@@ -756,3 +761,119 @@ def test_every_connector_is_documented_in_docs_07() -> None:
             f"{cls} ships but docs/07-connectors.md does not mention it — "
             f"a source that is not in that file is a source nobody audits"
         )
+# ── the route back to green (docs/07 §Health) ─────────────────────────────
+
+
+class _RecordingConnector:
+    """The smallest thing that satisfies the Connector protocol, with one item.
+
+    Hand-rolled rather than reusing a real connector because the property under test is
+    sync's, not any one source's: what happens to `credential.status` after a fetch that
+    did not raise. `cursor` exists only when `advertises_cursor` — the cursorless shape is
+    the whole reason mark_ok cannot live inside the save_cursor branch.
+    """
+
+    def __init__(self, name: str, *, advertises_cursor: bool = True):
+        self._name = name
+        if advertises_cursor:
+            self.cursor: str | None = "tok-1"
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    def health(self) -> Health:
+        return Health(name=self._name, ok=True)
+
+    def fetch(self, since: Any) -> Any:
+        del since
+        occurred_at = "2026-07-30T09:00:00-07:00"
+        yield SourceItem(
+            source=self._name,
+            external_id="x1",
+            occurred_at=occurred_at,
+            content_hash=content_hash(
+                author="Dana", title="Standup", body_text="body", occurred_at=occurred_at
+            ),
+            author="Dana",
+            title="Standup",
+            body_text="body",
+        )
+
+
+def _credential(conn: Any, source: str) -> tuple[str, Any]:
+    row = conn.execute(
+        "SELECT status, last_error FROM credential WHERE source = ?", (source,)
+    ).fetchone()
+    return str(row["status"]), row["last_error"]
+
+
+def test_a_successful_fetch_clears_a_failed_source(conn, settings: Settings) -> None:  # type: ignore[no-untyped-def]
+    """docs/07 §Health: 'failed' "stays there until a successful fetch" — and nothing ever
+    wrote that transition for a non-OAuth source, so one blip left anki red forever and
+    the brief opened with "anki failed since today" every single morning."""
+    credentials.mark_failed(conn, "anki", "collection is locked")
+    assert _credential(conn, "anki") == ("failed", "collection is locked")
+
+    sync(conn, settings, [_RecordingConnector("anki")], FakeModel())
+
+    assert _credential(conn, "anki") == ("ok", None)
+
+
+def test_a_recovered_source_drops_out_of_the_brief(conn, settings: Settings) -> None:  # type: ignore[no-untyped-def]
+    """The user-visible half: brief_source_health is the query behind the Attention line,
+    so recovery is only real once that query goes quiet."""
+    credentials.mark_failed(conn, "anki", "collection is locked")
+    params = {"user_id": 1, "today": "2026-07-30"}
+    assert [r["source"] for r in conn.execute(query("brief_source_health"), params)] == ["anki"]
+
+    sync(conn, settings, [_RecordingConnector("anki")], FakeModel())
+
+    assert list(conn.execute(query("brief_source_health"), params)) == []
+
+
+def test_a_cursorless_source_recovers_too(conn, settings: Settings) -> None:  # type: ignore[no-untyped-def]
+    """The case the obvious fix misses. `save_cursor` runs only when the connector exposes
+    a truthy cursor, so hanging recovery off it would leave calendar:apple, files, notes
+    and reminders permanently red."""
+    connector = _RecordingConnector("calendar:apple", advertises_cursor=False)
+    assert getattr(connector, "cursor", None) is None, "the fixture must be cursorless"
+
+    credentials.mark_failed(conn, "calendar:apple", "Calendar.app is not running")
+    sync(conn, settings, [connector], FakeModel())
+
+    assert _credential(conn, "calendar:apple") == ("ok", None)
+
+
+def test_recovery_does_not_cost_the_second_run_its_idempotency(  # type: ignore[no-untyped-def]
+    conn, settings: Settings
+) -> None:
+    """CLAUDE.md rule 3. mark_ok touches the credential row on every successful fetch,
+    the same bargain save_cursor already made: credential is bookkeeping *about* the
+    fetch, not a ledger row, so it stays outside the write count the rule is about."""
+    model = FakeModel()
+    credentials.mark_failed(conn, "anki", "collection is locked")
+
+    first = sync(conn, settings, [_RecordingConnector("anki")], model)
+    assert first.writes > 0, "the first run must actually do something"
+    second = sync(conn, settings, [_RecordingConnector("anki")], model)
+
+    assert second.writes == 0
+    assert _credential(conn, "anki") == ("ok", None)
+
+
+def test_a_fetch_that_raises_is_still_marked_failed(conn, settings: Settings) -> None:  # type: ignore[no-untyped-def]
+    """The other direction: an unconditional mark_ok must not paint over a failure."""
+
+    class Exploding(_RecordingConnector):
+        def fetch(self, since: Any) -> Any:
+            del since
+            raise RuntimeError("collection is locked")
+            yield  # pragma: no cover - keeps this a generator
+
+    report = sync(conn, settings, [Exploding("anki")], FakeModel())
+
+    assert report.failed_sources == ["anki"]
+    status, error = _credential(conn, "anki")
+    assert status == "failed"
+    assert "collection is locked" in str(error)

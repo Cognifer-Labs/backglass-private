@@ -186,6 +186,13 @@ def _ingest(
             new_cursor = getattr(connector, "cursor", None)
             if not dry_run and new_cursor:
                 credentials.save_cursor(conn, connector.name, str(new_cursor))
+            if not dry_run:
+                # docs/07 §Health: 'failed' stays until a *successful fetch* — this is
+                # that fetch. Deliberately outside the cursor branch: a cursorless
+                # connector (calendar:apple, files, notes) never reaches save_cursor,
+                # and gating recovery on a cursor would leave exactly those sources
+                # red forever.
+                credentials.mark_ok(conn, connector.name)
         except Exception as exc:  # noqa: BLE001 - rule 5: degrade, never block
             # Redacted before it is persisted. This detail lands in credential.last_error
             # AND in run.errors_json — a table outside `credential`, which docs/08 says
