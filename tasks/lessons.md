@@ -408,3 +408,24 @@ deterministic given the id.
   supposed to enable and check the flag actually keys it: "this is a move" does not say
   *what* moved, and the commitment side had already learned this — `resolves` ships with
   `resolves_what` for exactly this reason and I copied only the boolean.
+
+- 2026-08-02 | Two more from committing with `git commit -o`: it takes whole FILES, so a
+  file I genuinely had to edit (`__main__.py`, for a connector registry entry) carried a
+  prior session's unrelated one-line scrub into my commit. `-o` fixes the "stage a whole
+  directory" mistake and not the "this file already had someone else's edit" one, and
+  `git add -p` is unavailable in this environment. | When a file you must touch is
+  already modified, there is no clean split available — so decide deliberately and say so
+  in the commit or the summary, rather than discovering it afterwards. Read
+  `git show HEAD -- <file>` for every file you did not create.
+
+- 2026-08-02 | Asked to find sources myself rather than request permissions, and found
+  Calendar.app already holding BOTH of the owner's Google calendars plus 77 Contacts,
+  reachable through the automation bridge that Notes and Reminders were already using —
+  no OAuth client, no consent flow, no Full Disk Access. The Google connector had been
+  the documented answer for months and was never usable here. | Before asking someone to
+  grant access, check what the machine already has. macOS apps sync accounts locally and
+  expose them through a permission the project may already hold; "the API for this
+  service" and "the data from this service" are different questions. Corollary that only
+  running it revealed: two sources describing the same events collide in ways no test
+  imagines — the same class in two local calendars under different UIDs, and the same
+  instant written `10:30-07:00` in one source and `17:30Z` in another.
