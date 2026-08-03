@@ -286,6 +286,7 @@ class TestSetupCommand:
                 "obsidian_vault_path": tmp_path / "v",
                 "apple_notes": True,
                 "apple_reminders": True,
+                "apple_calendar": True,
                 "imessage_db_path": tmp_path / "chat.db",
             }
         )

@@ -248,6 +248,13 @@ class Settings(BaseSettings):
     #: System Settings → Automation, not in an env var.
     apple_notes: bool = False
     apple_reminders: bool = False
+    #: Read Calendar.app through the automation bridge. Reaches whatever accounts macOS
+    #: already syncs, so it needs no Google OAuth client and no Full Disk Access — see
+    #: connectors/apple_calendar.py for why that is the point.
+    apple_calendar: bool = False
+    #: Calendars to leave out, comma-separated. Subscribed holiday and birthday feeds
+    #: would otherwise consume the day planner's capacity every week.
+    apple_calendar_skip: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     # ── Spaced-repetition sources ─────────────────────────────────────────
     #: Paths to the review apps' own local SQLite stores; empty disables. Opened
@@ -299,6 +306,7 @@ class Settings(BaseSettings):
         "tz_ranges",
         "slack_channels",
         "instagram_chats",
+        "apple_calendar_skip",
         mode="before",
     )
     @classmethod
@@ -315,7 +323,9 @@ class Settings(BaseSettings):
     # the documented off/unset default. Only these four fields are bool/int-typed *and*
     # shipped blank in the template; every other int/float field in .env.example carries
     # a real numeric default, so this is not needed there.
-    @field_validator("apple_triage", "apple_notes", "apple_reminders", mode="before")
+    @field_validator(
+        "apple_triage", "apple_notes", "apple_reminders", "apple_calendar", mode="before"
+    )
     @classmethod
     def _blank_bool_is_false(cls, value: object) -> object:
         return False if value == "" else value

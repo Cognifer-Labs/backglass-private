@@ -74,6 +74,7 @@ def detect_all(
         _obsidian(settings, home),
         _apple("apple_notes", "APPLE_NOTES", settings.apple_notes),
         _apple("apple_reminders", "APPLE_REMINDERS", settings.apple_reminders),
+        _apple("apple_calendar", "APPLE_CALENDAR", settings.apple_calendar),
         *_credentialed(settings, authed or set()),
     ]
 
@@ -317,6 +318,14 @@ def _obsidian(settings: Settings, home: Path) -> Detection:
 
 
 def _apple(source: str, env_key: str, enabled: bool) -> Detection:
+    """The automation-bridge sources, which cannot be probed cheaply.
+
+    Deliberately NOT opened the way `_verified` opens a local SQLite store. Asking
+    Calendar.app for its events costs ~18 seconds on a machine with eleven calendars,
+    and detection runs on every dashboard render. `found` here is an offer to configure,
+    not a claim that the bridge answers — that claim belongs to `health()`, which the
+    doctor and every sync already call, and which reports the Automation prompt properly.
+    """
     if enabled:
         return Detection(source, CONFIGURED)
     if shutil.which("osascript") is None:  # not macOS — nothing to offer

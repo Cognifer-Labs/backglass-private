@@ -104,6 +104,7 @@ audits.
 |---|---|---|---|---|
 | `imessage` | `IMESSAGE_DB_PATH` | max `message.ROWID` | yes — handles are addresses | without Full Disk Access the file still stats — only the *open* is refused, with `unable to open database file` rather than anything that says "denied" |
 | `apple-notes` | `APPLE_NOTES=1` | modification-date watermark | yes — note bodies carry addresses | Automation permission denied, reported by `health()` |
+| `calendar:apple` | `APPLE_CALENDAR=1` | none — a bounded window, re-read each run | yes — titles and locations can carry addresses | Automation permission denied, reported by `health()` |
 | `reminders` | `APPLE_REMINDERS=1` | fetch-window watermark (no mtime exists) | yes | same Automation prompt as Notes |
 | `files` | `INBOX_FOLDER_PATH` | mtime watermark | yes | unsupported file types are counted and reported, never silently skipped |
 | `github` | `GITHUB_TOKEN` | two watermarks in one string: search time + notifications `Last-Modified` | yes | 401 on a revoked token; the search quota is per-minute, so requests stay serialized |
@@ -119,6 +120,28 @@ Two rules those local stores exist to teach:
   batch item to the exact immutable row range it summarizes. A high-watermark id
   (`reviews:<day>:<max-id>`) re-emits the same id with different content after a rescan,
   which the 0002 immutability trigger turns into a failed-looking sync.
+
+## Calendar without Google
+
+`calendar:apple` (`backglass/connectors/apple_calendar.py`) reads Calendar.app through
+the same automation bridge as Notes and Reminders. That matters more than it sounds: Calendar.app already holds whatever accounts
+macOS syncs — Google ones included — so on a Mac that has signed into its calendars, real
+events reach the day planner with **no Google Cloud project, no OAuth client, no consent
+flow and no Full Disk Access**. `APPLE_CALENDAR=1` is the whole setup.
+
+The Google connector above is still the right answer for an account macOS does not have,
+or for a machine where Calendar.app is not configured. Where both are on, they will
+produce the same meeting twice under different ids; run one.
+
+Two behaviours worth knowing:
+
+- **It deduplicates across calendars.** The same event commonly sits in more than one
+  local calendar with different UIDs, and undeduplicated the planner subtracts it from
+  the day twice. Identity is (title, start, end), and the survivor is chosen by sorting
+  so the ledger does not churn between two spellings of one event.
+- **`APPLE_CALENDAR_SKIP`** drops calendars by name. Subscribed holiday and birthday
+  feeds are the reason it exists: they are all-day events, so they are excluded from
+  capacity anyway, but naming them keeps the source list honest.
 
 ## Turning on the messaging sources
 

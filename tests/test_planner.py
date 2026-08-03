@@ -1001,3 +1001,38 @@ class TestEngagementsOnTheDay:
 
         assert after.capacity_minutes == before
         assert [e.title for e in after.fixed] == []
+
+    def test_one_meeting_counts_once_however_many_sources_described_it(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings
+    ) -> None:
+        """Found on the owner's real ledger, not imagined.
+
+        200 hand-imported `calendar:asu` rows plus Calendar.app's `calendar:apple` rows
+        describe the same classes, and they store the same instant differently —
+        `2026-08-20T10:30:00-07:00` against `2026-08-20T17:30:00.000Z` — so nothing
+        textual catches it. Every class was subtracted twice and the day's capacity fell
+        from ten hours to ten minutes.
+        """
+        for source, starts, ends in (
+            ("calendar:asu", "2026-07-30T10:30:00-07:00", "2026-07-30T11:45:00-07:00"),
+            ("calendar:apple", "2026-07-30T17:30:00.000Z", "2026-07-30T18:45:00.000Z"),
+        ):
+            payload = {
+                "starts_at": starts,
+                "ends_at": ends,
+                "status": "confirmed",
+                "declined": False,
+                "travel": False,
+            }
+            conn.execute(
+                "INSERT INTO source_item (user_id, source, external_id, fetched_at,"
+                " occurred_at, title, raw_json, content_hash) "
+                "VALUES (?, ?, ?, ?, ?, 'HON 171', ?, ?)",
+                (USER_ID, source, f"e-{source}", now_iso(), starts,
+                 __import__("json").dumps(payload), f"h-{source}"),
+            )
+
+        capacity = capacity_mod.compute(conn, sett, THURSDAY)
+
+        assert len(capacity.fixed) == 1, [e.title for e in capacity.fixed]
+        assert capacity.fixed_minutes == 75

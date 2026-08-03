@@ -644,6 +644,15 @@ def _all_connectors(conn: sqlite3.Connection, settings: Settings) -> list[Connec
 
         built.append(RemindersConnector(boundary=boundary))
 
+    if settings.apple_calendar:
+        from backglass.connectors.apple_calendar import AppleCalendarConnector
+
+        built.append(
+            AppleCalendarConnector(
+                boundary=boundary, skip=tuple(settings.apple_calendar_skip)
+            )
+        )
+
     # ── Spaced-repetition sources. No boundary: review
     # tallies carry no addresses and no card content is ingested. ──
     if settings.anki_db_path or settings.avorio_db_path:
@@ -2108,7 +2117,7 @@ def _boundary_verdict(
     """
     def _family(source: str) -> str:
         # Normalized, because the rows this has to catch are hand imports and a hand
-        # import picks its own spelling: `Calendar:ASU`, `  calendar:asu`, `GCAL:asu`.
+        # import picks its own spelling: `Calendar:WORK`, `  calendar:work`, `GCAL:work`.
         # An unnormalized comparison silently passed every one of those — the same
         # blind spot in a new coat.
         head = source.strip().lower().split(":")[0].strip()

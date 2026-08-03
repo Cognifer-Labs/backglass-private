@@ -221,6 +221,32 @@ def engagement_events(
     return sorted(events, key=lambda e: e.starts_at)
 
 
+def _distinct(events: list[FixedEvent]) -> list[FixedEvent]:
+    """One meeting counts once, however many sources described it.
+
+    Not hypothetical: the owner's ledger holds 200 hand-imported `calendar:asu` rows and,
+    once Calendar.app is connected, the same classes arrive again as `calendar:apple`.
+    The two store the same instant differently — `2026-08-20T10:30:00-07:00` against
+    `2026-08-20T17:30:00.000Z` — so nothing textual catches it, and the day's capacity
+    collapsed from ten hours to ten minutes with every class subtracted twice.
+
+    Identity is (title, start instant, end instant). Comparing instants is what makes the
+    two spellings collapse, and it is only possible here because `_aware` has already
+    resolved both. A genuinely distinct event does not share all three: two meetings at
+    the same minute with the same title are one meeting.
+
+    The travel flag is OR-ed rather than taken from the winner, so a source that knew a
+    block was a commute is not silently overruled by one that did not.
+    """
+    kept: dict[tuple[str, datetime, datetime], FixedEvent] = {}
+    for event in events:
+        identity = (event.title.casefold(), event.starts_at, event.ends_at)
+        seen = kept.get(identity)
+        if seen is None or event.travel and not seen.travel:
+            kept[identity] = event
+    return list(kept.values())
+
+
 def _aware(value: str, tz: str) -> datetime:
     from zoneinfo import ZoneInfo
 
@@ -272,8 +298,9 @@ def compute(
     if events is not None:
         fixed = list(events)
     else:
-        fixed = fixed_events(conn, day, tz) + engagement_events(
-            conn, day, tz, min_confidence=settings.confidence_threshold
+        fixed = _distinct(
+            fixed_events(conn, day, tz)
+            + engagement_events(conn, day, tz, min_confidence=settings.confidence_threshold)
         )
     fixed = [e for e in fixed if e.ends_at > window_start and e.starts_at < window_end]
     fixed.sort(key=lambda e: e.starts_at)
