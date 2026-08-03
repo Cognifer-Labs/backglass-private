@@ -18,6 +18,12 @@ dependencies = [
     "anthropic>=0.120.2",
 ]
 
+# The live Instagram lane only. Deliberately an extra rather than a dependency: it drives
+# the private mobile API, most installs will never want it, and `uv sync` should not pull
+# a large tree for a connector that ships switched off. `uv sync --extra instagram`.
+[project.optional-dependencies]
+instagram = ["instagrapi>=2.1"]
+
 [project.scripts]
 backglass = "backglass.__main__:app"
 

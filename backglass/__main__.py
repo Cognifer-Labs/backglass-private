@@ -64,6 +64,119 @@ def init() -> None:
     typer.echo(f"database: {settings.db_path}")
 
 
+instagram_app = typer.Typer(help="The experimental live Instagram lane.")
+app.add_typer(instagram_app, name="instagram")
+
+
+@instagram_app.command("login")
+def instagram_login(
+    username: Annotated[str, typer.Option("--username", help="Your Instagram handle")] = "",
+    session_file: Annotated[
+        Path, typer.Option("--session-file", help="Where to store the session")
+    ] = Path("data/instagram-session.json"),
+    env_path: Annotated[
+        Path, typer.Option("--env-path", help="Env file to write")
+    ] = Path(".env"),
+) -> None:
+    """Log in once and keep the session, so no run ever logs in again.
+
+    This is the whole safety story for the live lane, such as it is. Instagram's private
+    API tolerates a client that reuses a session and reacts badly to one that
+    re-authenticates; `docs/07` calls never re-logging-in the single biggest thing under
+    the owner's control. So the password is asked for exactly once, here, interactively —
+    it is never written to .env, never passed as an argument where a shell history would
+    keep it, and never held after the session is saved.
+
+    The lane still drives an interface Meta does not publish and its terms do not permit.
+    That trade is the owner's to make; this command only makes the safer half of it easy.
+    """
+    from backglass import envfile
+
+    try:
+        from instagrapi import Client
+    except ImportError as exc:
+        typer.secho("instagrapi is not installed.", fg=typer.colors.RED)
+        typer.echo("  uv sync --extra instagram")
+        raise typer.Exit(1) from exc
+
+    settings = get_settings()
+    username = username or settings.instagram_username or typer.prompt("Instagram username")
+    password = typer.prompt("Instagram password", hide_input=True)
+
+    client = Client()
+    # instagrapi asks for the 2FA code through this callback rather than by raising, so
+    # the prompt has to be handed in up front or a challenged login dies mid-flow.
+    client.challenge_code_handler = lambda _u, _c: typer.prompt("Verification code")
+    client.change_password_handler = lambda _u: typer.prompt(
+        "New password", hide_input=True
+    )
+    try:
+        client.login(username, password)
+    except Exception as exc:  # noqa: BLE001 — every failure here is a product state
+        typer.secho(f"login failed: {exc}", fg=typer.colors.RED)
+        raise typer.Exit(1) from exc
+    finally:
+        del password
+
+    session_file.parent.mkdir(parents=True, exist_ok=True)
+    session_file.touch(exist_ok=True)
+    envfile.restrict(session_file)  # owner-only BEFORE the session lands in it
+    client.dump_settings(session_file)
+
+    changed = envfile.set_keys(
+        env_path,
+        {"INSTAGRAM_USERNAME": username, "INSTAGRAM_SESSION_FILE": str(session_file)},
+    )
+    typer.secho(
+        f"session saved to {session_file} ({len(changed)} env change(s))",
+        fg=typer.colors.GREEN,
+    )
+    typer.echo("next: uv run backglass instagram chats   # to pick which threads to read")
+
+
+@instagram_app.command("chats")
+def instagram_chats(
+    limit: Annotated[int, typer.Option("--limit", help="How many threads to list")] = 30,
+) -> None:
+    """List thread titles, so INSTAGRAM_CHATS can be filled in from real names.
+
+    The live lane reads an allowlist, never an inbox — `docs/07`: "a personal tool reads
+    the handful of threads the owner names." Guessing those names from memory is how an
+    allowlist ends up silently matching nothing, so they are read off the account itself.
+    Nothing is stored by this command; it prints and exits.
+    """
+    try:
+        from instagrapi import Client
+    except ImportError as exc:
+        typer.secho("instagrapi is not installed.", fg=typer.colors.RED)
+        typer.echo("  uv sync --extra instagram")
+        raise typer.Exit(1) from exc
+
+    settings = get_settings()
+    if not settings.instagram_session_file or not settings.instagram_session_file.exists():
+        typer.secho(
+            "no session file — run `backglass instagram login` first", fg=typer.colors.RED
+        )
+        raise typer.Exit(1)
+
+    client = Client()
+    client.load_settings(settings.instagram_session_file)
+    try:
+        threads = client.direct_threads(amount=limit)
+    except Exception as exc:  # noqa: BLE001 — rule 5: degrade, never blow up
+        typer.secho(f"could not list threads: {exc}", fg=typer.colors.RED)
+        typer.echo("  a session can be invalidated by Instagram; re-run `instagram login`")
+        raise typer.Exit(1) from exc
+
+    typer.echo("Copy the ones worth reading into INSTAGRAM_CHATS, comma-separated:\n")
+    for thread in threads:
+        title = getattr(thread, "thread_title", "") or ", ".join(
+            getattr(user, "username", "?") for user in getattr(thread, "users", [])
+        )
+        people = len(getattr(thread, "users", []))
+        typer.echo(f"  {title}    ({people} participant{'' if people == 1 else 's'})")
+
+
 @app.command(name="google-client")
 def google_client(
     path: Annotated[Path, typer.Argument(help="The client_secret_*.json Google gave you")],

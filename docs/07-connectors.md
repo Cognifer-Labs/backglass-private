@@ -59,6 +59,25 @@ so this connector has two lanes behind one allowlist:
   `INSTAGRAM_SESSION_FILE` are set; the session file is created once so routine runs
   never perform a fresh login.
 
+### Turning the live lane on
+
+```bash
+uv sync --extra instagram          # instagrapi is an extra, never a dependency
+uv run backglass instagram login   # asks for the password once, interactively
+uv run backglass instagram chats   # lists thread titles for INSTAGRAM_CHATS
+```
+
+`login` exists to make the one controllable safety factor easy. Instagram tolerates a
+client that reuses a session and reacts badly to one that keeps re-authenticating, so the
+password is asked for exactly once, at a hidden prompt — never in `.env`, never in an
+argument a shell history would keep, never held after the session is written. The session
+file gets `.env`'s treatment: mode 0600, set *before* the session lands in it.
+
+None of that makes the lane sanctioned. It drives an interface Meta does not publish and
+its terms do not permit, and the realistic downside is a checkpointed or banned account
+rather than a broken connector. The trade is the owner's; these commands only make the
+safer half of it easy. `INSTAGRAM_CHATS` still gates everything — see below.
+
 **Allowlist, not inbox.** `INSTAGRAM_CHATS` names the only group-chat titles and people
 either lane reads — the Slack rule again: a personal tool reads the handful of threads
 the owner names. Everything else is counted (`allowlist` rule) and never stored.

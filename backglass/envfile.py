@@ -33,6 +33,16 @@ class EnvValueError(ValueError):
     """A value cannot be written as one `KEY=value` line."""
 
 
+def restrict(path: Path) -> None:
+    """Public name for the owner-only guarantee below.
+
+    The Instagram session file needs exactly the same treatment as .env — it is a
+    credential in a file, and the mode has to be set before the secret lands in it — so
+    the rule lives in one place rather than being reimplemented at the call site.
+    """
+    _restrict(path)
+
+
 def _restrict(path: Path) -> None:
     """Owner-only, applied *before* the write that puts secrets in the file.
 
