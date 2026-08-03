@@ -32,10 +32,35 @@ def event(**overrides: Any) -> dict[str, Any]:
     return base
 
 
+def fake_runner(events: list[dict[str, Any]], fail: set[str] | None = None):  # type: ignore[no-untyped-def]
+    """Answers the two scripts differently, because the connector asks two questions.
+
+    A stub that returned the same payload to both would make every test pass for the
+    wrong reason: the calendar-listing call would come back as a list of event objects,
+    each would be queried, and the cross-calendar dedup would quietly collapse the
+    duplicates back down to the expected answer.
+    """
+    fail = fail or set()
+
+    def run(script: str) -> str:
+        if "const wanted = " not in script and "calendars().map" not in script:
+            return "Calendar"  # the health probe
+        if "calendars().map" in script:
+            names = sorted({str(e.get("calendar") or "") for e in events})
+            return json.dumps(names)
+        wanted = json.loads(script.split("const wanted = ", 1)[1].split(";", 1)[0])
+        if wanted in fail:
+            raise RuntimeError("AppleEvent timed out. (-1712)")
+        return json.dumps([e for e in events if e.get("calendar") == wanted])
+
+    return run
+
+
 def connector(settings: Settings, events: list[dict[str, Any]], **kw: Any):  # type: ignore[no-untyped-def]
+    fail = kw.pop("fail", None)
     return AppleCalendarConnector(
         boundary=Boundary.from_settings(settings),
-        runner=lambda _script: json.dumps(events),
+        runner=fake_runner(events, fail),
         now=lambda: NOW,
         **kw,
     )
@@ -154,3 +179,53 @@ class TestHealth:
     def test_a_working_bridge_is_healthy(self, settings: Settings) -> None:
         health = connector(settings, []).health()
         assert health.ok is True
+
+
+class TestOneCalendarIsNotTheSource:
+    def test_a_calendar_that_times_out_costs_only_its_own_events(
+        self, settings: Settings
+    ) -> None:
+        """The failure this split exists for. Asking for every calendar at once is one
+        long Apple Event, macOS caps those at about two minutes regardless of the
+        subprocess timeout, and the owner's machine returned `-1712` and marked the whole
+        source dead — taking the day plan's real meetings with it.
+        """
+        rows = list(
+            connector(
+                settings,
+                [
+                    event(calendar="Work", uid="A"),
+                    event(calendar="Shared", uid="B", title="PSY 101"),
+                ],
+                fail={"Shared"},
+            ).fetch(None)
+        )
+
+        assert [i.external_id for i in rows] == ["A"], "the healthy calendar still lands"
+
+    def test_the_failure_is_reported_rather_than_swallowed(self, settings: Settings) -> None:
+        """A silently short day plan is worse than a loud one: nothing else on the page
+        says a calendar is missing."""
+        connector_ = connector(
+            settings, [event(calendar="Shared", uid="B")], fail={"Shared"}
+        )
+        list(connector_.fetch(None))
+
+        assert connector_.failed_calendars
+        assert "Shared" in connector_.failed_calendars[0]
+        assert "-1712" in connector_.failed_calendars[0]
+
+    def test_a_skipped_calendar_is_never_queried(self, settings: Settings) -> None:
+        """Each query is an Apple Event, and not spending one on a subscribed holiday feed
+        is most of what keeps a run inside the ceiling. A skipped calendar that still got
+        queried would also raise from `fail` here."""
+        rows = list(
+            connector(
+                settings,
+                [event(calendar="US Holidays", uid="H"), event(calendar="Work", uid="A")],
+                skip=("us holidays",),
+                fail={"US Holidays"},
+            ).fetch(None)
+        )
+
+        assert [i.external_id for i in rows] == ["A"]

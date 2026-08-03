@@ -42,14 +42,22 @@ from backglass.connectors.boundary import Boundary
 LOOKBACK_DAYS = 7
 HORIZON_DAYS = 21
 
-#: Calendar.app's own enumeration is the slow part, so the window is applied inside the
-#: script with `whose(...)` rather than by filtering a full dump in Python.
-_SCRIPT = """
+#: Two scripts, not one, and that split is the fix for a real failure. Asking for every
+#: calendar's events in a single call is one long Apple Event, and macOS enforces its own
+#: ~2-minute ceiling on those regardless of the subprocess timeout below — the owner's
+#: machine returned `AppleEvent timed out (-1712)` and marked the whole source failed.
+#: Naming the calendars first costs one cheap call and lets each query be small.
+_CALENDARS_SCRIPT = 'JSON.stringify(Application("Calendar").calendars().map(c => c.name()));'
+
+#: One calendar, one window. `%(name)s` is JSON-encoded by the caller, so a calendar
+#: called `O'Brien" family` cannot terminate the string and change the script.
+_EVENTS_SCRIPT = """
 const cal = Application("Calendar");
 const from = new Date(%(from_ms)d);
 const to = new Date(%(to_ms)d);
+const wanted = %(name)s;
 const out = [];
-for (const c of cal.calendars()) {
+for (const c of cal.calendars.whose({name: wanted})()) {
   let events;
   try {
     events = c.events.whose({_and: [{startDate: {">": from}}, {startDate: {"<": to}}]})();
@@ -94,10 +102,11 @@ def run_osascript(script: str) -> str:
         ["osascript", "-l", "JavaScript", "-e", script],
         capture_output=True,
         text=True,
-        # Generous: Calendar.app enumerates its stores on the first call of a run, which
-        # took ~18s over eleven calendars on the owner's machine. A timeout here reads as
-        # a failed source and degrades per rule 5 rather than hanging the sync.
-        timeout=180,
+        # Belt to macOS's own braces. The Apple Event ceiling (~2 min) is the one that
+        # actually fires, and it is not configurable from here — which is why the work is
+        # split per calendar above rather than made to wait longer. This timeout only
+        # catches a wedged osascript, and reads as a failed source per rule 5.
+        timeout=120,
     )
     if done.returncode != 0:
         raise RuntimeError(done.stderr.strip() or "osascript failed")
@@ -117,6 +126,9 @@ class AppleCalendarConnector:
     cursor: Cursor = None
     excluded: int = 0
     excluded_by_rule: dict[str, int] = field(default_factory=dict)
+    #: Calendars that errored this run, reported rather than swallowed. Non-empty means
+    #: the day plan is missing whatever was in them.
+    failed_calendars: list[str] = field(default_factory=list)
 
     @property
     def name(self) -> str:
@@ -140,13 +152,35 @@ class AppleCalendarConnector:
         del since  # windowed, not incremental — see the module docstring
         self.excluded = 0
         self.excluded_by_rule = {}
+        self.failed_calendars = []
 
         now = self.now()
-        script = _SCRIPT % {
+        window = {
             "from_ms": int((now - timedelta(days=LOOKBACK_DAYS)).timestamp() * 1000),
             "to_ms": int((now + timedelta(days=HORIZON_DAYS)).timestamp() * 1000),
         }
         skip = {name.casefold() for name in self.skip}
+
+        # Skipped calendars are dropped before they are ever queried. That is not only
+        # tidiness: each query is an Apple Event, and not spending one on a subscribed
+        # holiday feed is most of what keeps the run inside the OS's ceiling.
+        names = [
+            name
+            for name in json.loads(self.runner(_CALENDARS_SCRIPT) or "[]")
+            if str(name).casefold() not in skip
+        ]
+
+        events: list[dict[str, object]] = []
+        for name in names:
+            script = _EVENTS_SCRIPT % {**window, "name": json.dumps(str(name))}
+            try:
+                events.extend(json.loads(self.runner(script) or "[]"))
+            except Exception as exc:  # noqa: BLE001 — rule 5: one calendar is not the source
+                # A calendar that times out or errors costs its own events and nothing
+                # else. Losing one shared feed used to fail the whole connector and mark
+                # the credential dead, which took the day plan's real meetings with it.
+                self.excluded_by_rule[f"calendar:{name}"] = 1
+                self.failed_calendars.append(f"{name}: {exc}")
 
         # Deduplicated across calendars, which is not a nicety. On the owner's machine
         # the same class sits in both a local "Work" calendar and a local "Family" one
@@ -159,7 +193,6 @@ class AppleCalendarConnector:
         # wins on every run and the ledger does not churn between two spellings of one
         # event. `_to_item` runs after the choice, so a skipped or boundary-excluded
         # calendar cannot claim a slot and suppress its twin.
-        events = json.loads(self.runner(script) or "[]")
         kept: dict[tuple[str, str, str], dict[str, object]] = {}
         for event in sorted(
             events, key=lambda e: (str(e.get("calendar") or ""), str(e.get("uid") or ""))
