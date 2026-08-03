@@ -146,11 +146,20 @@ def parse_occurred_at(occurred_at: str) -> datetime:
     return parsed
 
 
-def resolve_due(raw: str | None, *, occurred_at: str) -> Resolution:
+def resolve_due(
+    raw: str | None, *, occurred_at: str, allow_past: bool = False
+) -> Resolution:
     """Resolve a due date against the message timestamp.
 
     `occurred_at` is keyword-only and required. There is no overload that defaults it to
     the current time, and there must never be one.
+
+    `allow_past` turns off the forward guard below. A due date cannot precede the message
+    that created it, so the default corrects an apparent slip by a year — but not every
+    date a message names is a deadline. An engagement's `replaces_start_at` names where a
+    plan ALREADY IS, and a message sent on the 18th moving "the 17th's dinner" means the
+    17th, not the 17th of next year. Rolling that forward aimed the move at nothing and
+    quietly filed a second plan.
     """
     if raw is None or not str(raw).strip():
         return Resolution(value=None)
@@ -160,6 +169,8 @@ def resolve_due(raw: str | None, *, occurred_at: str) -> Resolution:
 
     absolute = _try_absolute(text)
     if absolute is not None:
+        if allow_past:
+            return Resolution(value=absolute)
         return _guard(absolute, base, text, was_relative=False)
 
     # Everything below works on one lowercased, lead-in-stripped form of the phrase.
@@ -172,6 +183,8 @@ def resolve_due(raw: str | None, *, occurred_at: str) -> Resolution:
 
     named = _try_month_name(remainder, base)
     if named is not None:
+        if allow_past:
+            return Resolution(value=_with_time(named, clock), note=time_note)
         return _guard(_with_time(named, clock), base, text, was_relative=False, note=time_note)
 
     relative = _try_relative(remainder, base)

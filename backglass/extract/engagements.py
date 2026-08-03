@@ -78,7 +78,9 @@ def apply(
         # the old time this stays None and the move is matched like any other sighting,
         # which in practice means it becomes a new plan.
         moved_from = (
-            dates.resolve_due(candidate.replaces_start_at, occurred_at=occurred_at).value
+            dates.resolve_due(
+                candidate.replaces_start_at, occurred_at=occurred_at, allow_past=True
+            ).value
             if candidate.replaces_earlier
             else None
         )
@@ -114,6 +116,7 @@ def apply(
                 settings,
                 source_item_id=source_item_id,
                 occurred_at=occurred_at,
+                aimed=moved_from is not None,
             ):
                 report.advanced += 1
             # Recorded exactly like an insert. A row this response has already touched is
@@ -158,6 +161,7 @@ def _advance(
     *,
     source_item_id: int,
     occurred_at: str,
+    aimed: bool,
 ) -> bool:
     """Apply a later sighting to the plan it restates.
 
@@ -182,6 +186,7 @@ def _advance(
         ends_at=ends_at,
         location=candidate.location,
         may_repaint=_at_least_as_recent(occurred_at, newest),
+        aimed=aimed,
     )
 
 
@@ -267,7 +272,7 @@ def _match(
     # reschedule at its destination and repainted whichever unrelated plan happened to sit
     # nearest to it, which is the opposite of what a move means.
     target = moved_from if moved_from is not None else starts_at
-    best: tuple[int, int] | None = None
+    best: tuple[tuple[int, int, int], int] | None = None
     for row in ledger.open_engagements():
         if int(row["id"]) in fresh:
             continue
@@ -292,9 +297,29 @@ def _match(
         if str(row["status"]) == "declined" and not cited:
             continue
         stored = str(row["starts_at"]) if row["starts_at"] is not None else None
-        distance = _minutes_apart(target, stored)
-        if best is None or distance < best[0]:
-            best = (distance, int(row["id"]))
+        # Ordered by how strongly this row is the one the message is about:
+        #   0. a row this message is already cited on — it IS this message's plan, and a
+        #      move that has already been applied has left the origin, so distance from
+        #      the origin says nothing. Without this, re-extracting an applied move lost
+        #      to whatever unrelated plan had since been booked into the vacated slot,
+        #      and repainted that instead.
+        #   1. distance from the origin, which is what a move is aimed at.
+        #      In practice key 0 is the one that decides. Keys 1 and 2 rarely get to act,
+        #      because `_same_row` has already gated on the target: an aimed move only
+        #      agrees with rows on the origin's day. Mutating either of them survives the
+        #      suite, and that is left recorded rather than papered over with a contrived
+        #      test — they are a defensible ordering for the narrow case where several
+        #      rows do agree, not load-bearing logic.
+        #   2. distance from the destination, purely to break ties deterministically —
+        #      with a day-precision origin two plans on that day tie at 0, and the one
+        #      the new time points at is the better guess than the lower row id.
+        rank = (
+            0 if cited else 1,
+            _minutes_apart(target, stored),
+            _minutes_apart(starts_at, stored),
+        )
+        if best is None or rank < best[0]:
+            best = (rank, int(row["id"]))
     return best[1] if best else None
 
 

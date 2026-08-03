@@ -1138,3 +1138,183 @@ class TestReExtractionDoesNotShuffleDayPrecisionPlans:
 
         assert [(r["id"], r["starts_at"]) for r in rows(conn)] == before
         assert replay.writes == 0
+
+
+class TestTheWritePathHonoursTheMove:
+    def test_a_move_to_a_day_with_no_hour_yet_still_moves(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """"Push Friday's dinner to Saturday, I'll pin a time later."
+
+        The match succeeded and the write was then refused by the precision rule, so the
+        plan stayed on Friday — and because the match had already consumed the candidate,
+        not even a duplicate row appeared to show the loss. A message that names the plan
+        it is moving is making a statement about that plan, not mentioning it in passing.
+        """
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(
+            ledger,
+            settings,
+            first,
+            at_one,
+            engagement(starts_at="2026-07-17T19:00:00", status="confirmed"),
+        )
+
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        report = run(
+            ledger,
+            settings,
+            second,
+            at_two,
+            engagement(
+                starts_at="2026-07-18",
+                status="confirmed",
+                replaces_earlier=True,
+                replaces_start_at="2026-07-17T19:00:00",
+            ),
+        )
+
+        assert report.inserted == 0
+        (row,) = rows(conn)
+        assert str(row["starts_at"])[:10] == "2026-07-18"
+
+    def test_a_passing_vaguer_mention_still_cannot_blur_a_known_hour(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """The other half of the same rule: only an aimed move gets to lower precision."""
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(ledger, settings, first, at_one, engagement(starts_at="Friday at 7pm"))
+
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        run(ledger, settings, second, at_two, engagement(starts_at="Friday"))
+
+        (row,) = rows(conn)
+        assert str(row["starts_at"]) == "2026-07-17T19:00:00"
+
+
+class TestReExtractingAnAppliedMove:
+    def test_it_does_not_consume_a_plan_booked_into_the_vacated_slot(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """A move is applied, the old slot is later filled by a different plan, and then a
+        prompt-version bump re-reads the move. Aimed at the origin, the move scored the
+        newcomer sitting exactly there as a perfect match and the plan it had actually
+        moved as ten thousand minutes away — so it repainted the newcomer and both plans
+        double-booked the same hour. A row this message is already cited on is the row
+        this message is about, however far the plan has since travelled.
+        """
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(ledger, settings, first, at_one, engagement(starts_at="2026-07-17T19:00:00"))
+
+        move, at_move = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        moving = engagement(
+            starts_at="2026-07-24T20:00:00",
+            replaces_earlier=True,
+            replaces_start_at="2026-07-17T19:00:00",
+        )
+        run(ledger, settings, move, at_move, moving)
+
+        # Somebody else books the freed slot, on a message that arrived out of order.
+        rival, at_rival = ingest(ledger, boundary, sent="2026-07-14T12:00:00-07:00")
+        run(
+            ledger,
+            settings,
+            rival,
+            at_rival,
+            engagement(starts_at="2026-07-17T19:00:00", status="confirmed"),
+        )
+        before = sorted((str(r["starts_at"]), str(r["status"])) for r in rows(conn))
+
+        replay = Ledger(conn, settings)
+        run(replay, settings, move, at_move, moving)
+
+        assert sorted((str(r["starts_at"]), str(r["status"])) for r in rows(conn)) == before
+        assert replay.writes == 0
+
+
+class TestTheRankingIsAimedToo:
+    def test_the_ranking_uses_the_origin_not_the_destination(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """A mutation aiming only the ranking at the destination survived the suite: the
+        comparison half was pinned and the ranking half was not. Two live plans, and the
+        move's destination sits nearer the wrong one."""
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(
+            ledger,
+            settings,
+            first,
+            at_one,
+            engagement(starts_at="2026-07-17T19:00:00", status="confirmed"),
+            engagement(starts_at="2026-07-25T20:00:00"),
+        )
+
+        second, at_two = ingest(ledger, boundary, sent="2026-07-15T10:00:00-07:00")
+        run(
+            ledger,
+            settings,
+            second,
+            at_two,
+            engagement(
+                starts_at="2026-07-24T20:00:00",
+                status="confirmed",
+                replaces_earlier=True,
+                replaces_start_at="2026-07-17T19:00:00",
+            ),
+        )
+
+        moved = sorted(str(r["starts_at"])[:10] for r in rows(conn))
+        assert moved == ["2026-07-24", "2026-07-25"]
+
+    def test_a_day_precision_origin_ties_break_toward_the_destination(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """With an origin naming only the day, two plans on that day score identically.
+        The tie used to fall to the lower row id; the new time is a better guess than
+        insertion order, and pins `<` against `<=`."""
+        ledger = Ledger(conn, settings)
+        first, at_one = ingest(ledger, boundary)
+        run(
+            ledger,
+            settings,
+            first,
+            at_one,
+            engagement(what="coffee", starts_at="2026-07-17T09:00:00"),
+            engagement(what="coffee", starts_at="2026-07-17T16:00:00"),
+        )
+
+        second, at_two = ingest(ledger, boundary, sent="2026-07-18T10:00:00-07:00")
+        run(
+            ledger,
+            settings,
+            second,
+            at_two,
+            engagement(
+                what="coffee",
+                starts_at="2026-07-20T16:00:00",
+                replaces_earlier=True,
+                replaces_start_at="2026-07-17",
+            ),
+        )
+
+        settled = sorted(str(r["starts_at"]) for r in rows(conn))
+        assert settled == ["2026-07-17T09:00:00", "2026-07-20T16:00:00"], (
+            "the 16:00 coffee is the one the move points at"
+        )
+
+    def test_day_distance_is_scaled_so_a_nearer_day_wins(
+        self, conn: Any, settings: Settings, boundary: Any
+    ) -> None:
+        """Pins the `* 1440` in `_minutes_apart`: unscaled, a two-day gap scored 2 and
+        lost to any timed row more than two minutes away."""
+        from backglass.extract.engagements import _minutes_apart
+
+        assert _minutes_apart("2026-07-19", "2026-07-17") == 2880
+        assert _minutes_apart("2026-07-17T09:00:00", "2026-07-17T09:30:00") == 30
+        assert _minutes_apart("2026-07-19", "2026-07-17") > _minutes_apart(
+            "2026-07-17T09:00:00", "2026-07-17T23:00:00"
+        )

@@ -29,7 +29,7 @@ from backglass.db import now_iso, query
 USER_ID = 1  # docs/03: "user_id on every table, always 1."
 
 
-def _sharpens(new: str | None, current: str | None) -> bool:
+def _sharpens(new: str | None, current: str | None, *, aimed: bool = False) -> bool:
     """Is `new` worth writing over `current` for an engagement's time?
 
     Yes when there was nothing there, and yes when a later message moves a time that was
@@ -41,6 +41,13 @@ def _sharpens(new: str | None, current: str | None) -> bool:
     if new is None or new == current:
         return False
     if current is None:
+        return True
+    # `aimed` means the message named the plan it was moving, so its new time is a
+    # statement about that plan rather than a passing reference to it. "Push Friday's
+    # dinner to Saturday, I'll pin a time later" is day-precision on purpose, and the
+    # precision rule below would silently refuse it — leaving the plan on Friday with the
+    # match already consumed, so not even a duplicate row appears to show the loss.
+    if aimed:
         return True
     has_clock = "T" in new or " " in new
     had_clock = "T" in current or " " in current
@@ -511,6 +518,7 @@ class Ledger:
         ends_at: str | None = None,
         location: str | None = None,
         may_repaint: bool = True,
+        aimed: bool = False,
     ) -> bool:
         """Move a plan forward as later messages settle it. Returns True on a change.
 
@@ -541,7 +549,7 @@ class Ledger:
         if status != row["status"]:
             updates["status"] = status
         for column, value in (("starts_at", starts_at), ("ends_at", ends_at)):
-            if not _sharpens(value, row[column]):
+            if not _sharpens(value, row[column], aimed=aimed):
                 continue
             # Filling a hole is always safe; moving a time that is already known is only
             # safe from the newest message about the plan. Without that, re-extraction
