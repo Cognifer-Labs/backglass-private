@@ -19,6 +19,7 @@ from typing import Any
 
 from backglass.config import Settings
 from backglass.db import query
+from backglass.extract import client
 from backglass.ledger import USER_ID
 
 
@@ -35,6 +36,11 @@ class MonthCosts:
     projected_cents: int
     days_elapsed: int
     days_in_month: int
+    #: True when the configured backend reports a price rather than a charge — a
+    #: subscription. Every number above is then what the month *would have* cost on the
+    #: API, and the cap is not enforced against it. Carried here rather than looked up by
+    #: each caller so no surface can print "of cap" beside a figure nobody is billed.
+    spend_is_imputed: bool = False
 
 
 def _month_start(today: date) -> str:
@@ -99,6 +105,7 @@ def month(
         projected_cents=round(spend / days_elapsed * days_in_month),
         days_elapsed=days_elapsed,
         days_in_month=days_in_month,
+        spend_is_imputed=client.spend_is_imputed(settings),
     )
 
 

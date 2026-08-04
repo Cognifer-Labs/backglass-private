@@ -1318,3 +1318,26 @@ class TestTheRankingIsAimedToo:
         assert _minutes_apart("2026-07-19", "2026-07-17") > _minutes_apart(
             "2026-07-17T09:00:00", "2026-07-17T23:00:00"
         )
+
+    def test_an_offset_and_a_naive_time_do_not_raise(self) -> None:
+        """The crash this replaces: a stored `starts_at` may carry an offset or not —
+        Calendar.app writes `10:30-07:00` and a message about the same event writes
+        `17:30` — and subtracting one from the other is a TypeError, not a ValueError, so
+        the tolerant `except` did not catch it. It killed a 4,400-message backfill.
+
+        There is no honest instant comparison available, so the answer drops to the
+        precision both sides actually have.
+        """
+        from backglass.extract.engagements import _minutes_apart
+
+        assert _minutes_apart("2026-08-20T10:30:00-07:00", "2026-08-20T17:30:00") == 0
+        assert _minutes_apart("2026-08-20T17:30:00", "2026-08-21T10:30:00-07:00") == 1440
+
+    def test_two_offsets_are_still_compared_as_instants(self) -> None:
+        """Dropping to days only happens when the two are genuinely incomparable. Two
+        aware times are comparable even across different offsets, and 17:30Z IS
+        10:30-07:00 — the same instant, zero apart."""
+        from backglass.extract.engagements import _minutes_apart
+
+        assert _minutes_apart("2026-08-20T10:30:00-07:00", "2026-08-20T17:30:00+00:00") == 0
+        assert _minutes_apart("2026-08-20T10:30:00-07:00", "2026-08-20T18:30:00+00:00") == 60

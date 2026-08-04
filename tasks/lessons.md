@@ -429,3 +429,55 @@ deterministic given the id.
   running it revealed: two sources describing the same events collide in ways no test
   imagines — the same class in two local calendars under different UIDs, and the same
   instant written `10:30-07:00` in one source and `17:30Z` in another.
+
+- 2026-08-03 | A hard cap enforced against a number that was never a bill. `MODEL_BACKEND=
+  claude_cli` is subscription auth, and the CLI's `total_cost_usd` is the API-equivalent
+  price of a call, dominated by its own session cache_creation tokens rather than by the
+  payload. `SpendCap` summed it into `monthly_spend_cap_cents` and degraded nine
+  consecutive syncs to triage-only at 2006c of an unbilled 2000c, and the dashboard
+  asserted "extraction paused" — true of the behaviour, false about the cause. | A guard
+  must know what it is guarding. Before enforcing a threshold against a reported number,
+  ask what happens to that number when nobody is charged: a cost field on a flat-rate
+  backend is a *price*, and a price is worth recording and never worth stopping work
+  over. The same applies to `--max-budget-usd`, which was aborting real calls against
+  the same imaginary money.
+
+- 2026-08-03 | Shipped a page whose job was to let the owner choose which conversations
+  to read, and it stayed empty forever. Sightings were gathered inside the fetch loop,
+  which only sees rows above the cursor; the cursor was already at the end of a 43,000
+  message store, so no chat was ever discovered, so none could be chosen, so the empty
+  allowlist that made the page necessary was also what kept it blank. | When a feature's
+  input comes from the thing the feature disables, write the cycle down and check it
+  breaks somewhere. Discovery ("what exists to decide about") and consumption ("what have
+  I already read") are different questions and must not share a watermark. Second half of
+  the same bug: saying yes has to reach backwards — a decision made today that only
+  applies to tomorrow's messages leaves the plan already made in that group outside the
+  ledger, which is the entire reason to monitor it.
+
+- 2026-08-03 | Mail had been missing since the beginning because the Google connector
+  needed an OAuth client, and `~/Library/Mail` had 35,376 messages and 35,441 .emlx
+  bodies sitting on disk the whole time — the same discovery as Calendar.app in the
+  2026-08-02 lesson, one source later. | I recorded that lesson and did not generalize
+  it. "Check what the machine already has" is not a fact about calendars; it is the first
+  question to ask of every remote source, and the ones still unconnected (Drive, Canvas,
+  Instagram) each deserve it asked again rather than a token request sent to the owner.
+
+- 2026-08-03 | `_minutes_apart` subtracted two ISO datetimes wrapped in `except
+  ValueError`, and the failure that arrived was a `TypeError` — offset-naive minus
+  offset-aware. Calendar.app stores `2026-08-20T10:30:00-07:00`, a message about the same
+  event stores `17:30`, and the tolerant guard below the subtraction never saw it. It
+  killed a 4,400-message backfill outright. | Catch the exception the operation actually
+  raises, not the one that came to mind. Mixed-awareness arithmetic is a TypeError and
+  never a ValueError, so a `try/except ValueError` around datetime maths is a guard that
+  cannot fire on the most likely fault. And the fourth entry in this file about mixed
+  offsets: when a column is documented as carrying an offset *sometimes*, every operation
+  on it — compare, subtract, MAX, sort — needs the sometimes case written down.
+
+- 2026-08-03 | Rule 5 was implemented for sources and for model calls and not for
+  `apply()`, which re-raised. One item whose application threw ended the run and took
+  every item queued behind it, so a single malformed timestamp cost thousands of
+  already-triaged items their extraction. | "Degrades, never blocks" has a unit, and the
+  unit is whatever the loop is iterating. A rule enforced at the source level says
+  nothing about the item level; when adding a loop that processes many independent
+  things, ask what happens to items 2..N when item 1 raises, and make the answer explicit
+  rather than inherited from whichever `except` happens to be in scope.

@@ -169,6 +169,95 @@ class TestTheConnectorReportsWhatItSaw:
 
         assert connector.seen_chats["+14805551212"].kind == "dm"
 
+    def test_discovery_reaches_past_the_cursor(
+        self, tmp_path: Any, boundary: Any
+    ) -> None:
+        """The deadlock this feature shipped with, and the reason /chats stayed empty.
+
+        Sightings were gathered inside the fetch loop, which only ever sees rows above the
+        watermark. On the owner's machine the watermark was already at the end of a 43,000
+        message store, so every sync discovered nothing, so nothing could be chosen, so the
+        empty allowlist that made the page necessary was also what kept it blank.
+        """
+        from backglass.connectors.allowlist import Allowlist
+        from backglass.connectors.imessage import IMessageConnector
+        from tests.test_imessage import build_store
+
+        store = build_store(
+            tmp_path / "quiet.db",
+            [
+                {"rowid": 1, "handle": "+1555", "text": "old", "chat": "Gone quiet"},
+                {"rowid": 2, "handle": "+1999", "text": "also old", "chat": "Also quiet"},
+            ],
+        )
+        connector = IMessageConnector(
+            db_path=store, boundary=boundary, allowlist=Allowlist(())
+        )
+
+        # A cursor past every row: nothing is fetched, and everything is still offered.
+        fetched = list(connector.fetch("99999"))
+
+        assert fetched == []
+        assert set(connector.seen_chats) == {"Gone quiet", "Also quiet"}
+
+    def test_the_count_is_a_window_total_not_a_running_tally(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """A connector that rescans a fixed window reports a total.
+
+        Adding those would multiply the same messages by the number of syncs — a chat
+        that said nothing all day would appear to get louder every half hour.
+        """
+        window = [chats_mod.Sighting(key="Pih ball", display_name="Pih ball", messages=2087)]
+        chats_mod.record(conn, "imessage", window, cumulative=False)
+        chats_mod.record(conn, "imessage", window, cumulative=False)
+
+        assert chats_mod.listing(conn)[0].messages_seen == 2087
+
+
+class TestSayingYesMeansTheHistoryToo:
+    def test_monitoring_rewinds_the_source(self, conn: sqlite3.Connection) -> None:
+        """Otherwise a decision made today only applies to tomorrow's messages.
+
+        The plan already made in that group — the reason to monitor it at all — sits
+        below the watermark and would never be read.
+        """
+        from backglass.connectors import credentials
+
+        credentials.save_cursor(conn, "imessage", "43003")
+        seen(conn, "Pih ball")
+        chat = chats_mod.listing(conn)[0]
+
+        chats_mod.decide(conn, chat.id, chats_mod.MONITOR)
+
+        assert credentials.load(conn, "imessage").cursor is None
+
+    def test_ignoring_leaves_the_cursor_alone(self, conn: sqlite3.Connection) -> None:
+        """Declining a chat is not a reason to re-scan the store."""
+        from backglass.connectors import credentials
+
+        credentials.save_cursor(conn, "imessage", "43003")
+        seen(conn, "Topgolf")
+        chat = chats_mod.listing(conn)[0]
+
+        chats_mod.decide(conn, chat.id, chats_mod.IGNORE)
+
+        assert credentials.load(conn, "imessage").cursor == "43003"
+
+    def test_a_repeated_decision_does_not_rewind_again(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Idempotency: pressing Monitor twice must not re-scan a second time."""
+        from backglass.connectors import credentials
+
+        seen(conn, "SLT")
+        chat = chats_mod.listing(conn)[0]
+        chats_mod.decide(conn, chat.id, chats_mod.MONITOR)
+        credentials.save_cursor(conn, "imessage", "44000")
+
+        assert not chats_mod.decide(conn, chat.id, chats_mod.MONITOR)
+        assert credentials.load(conn, "imessage").cursor == "44000"
+
 
 class TestThePage:
     def test_a_new_conversation_is_offered_for_a_decision(

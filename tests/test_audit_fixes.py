@@ -310,3 +310,130 @@ class TestFailedWriteIsVisible:
         response = client.post("/commitments/9999/resolve")
         assert response.status_code == 422
         assert response.json()["detail"] == "no commitment 9999"
+
+
+class TestOneBadItemDoesNotEndTheRun:
+    """Rule 5, applied at the level the failure actually happens.
+
+    "A failing source degrades, never blocks" was implemented for sources and for model
+    calls, and not for `apply()`. That path re-raised, so a single item whose application
+    threw took every item queued behind it with it. On 2026-08-03 a 4,400-message mail
+    backfill died on one `starts_at` that carried a UTC offset compared against one that
+    did not — a TypeError the tolerant `except ValueError` below it never saw — leaving
+    thousands of triaged items unextracted and the run reporting a bare traceback.
+    """
+
+    def test_a_failing_apply_parks_that_item_and_keeps_going(
+        self, conn: sqlite3.Connection, settings: Settings, boundary: Any
+    ) -> None:
+        from backglass.sync import sync
+        from tests.conftest import FakeModel, gmail_message, make_connector
+
+        specs = [
+            {
+                "id": f"m{i}",
+                "from": "Dana Whitfield <dwhitfield@example.gov>",
+                "to": "alex.rivera@example.com",
+                "subject": f"Plan {i}",
+                "date": "Fri, 10 Jul 2026 09:15:00 -0700",
+                "body": f"I'll send plan {i} by Friday.",
+            }
+            for i in range(3)
+        ]
+        responses = {
+            f"Plan {i}": {
+                "commitments": [
+                    {
+                        "direction": "owed_to_me",
+                        "counterparty": "Dana Whitfield <dwhitfield@example.gov>",
+                        "what": f"plan {i}",
+                        "due_at": "2026-07-17",
+                        "due_is_explicit": True,
+                        "estimated_minutes": None,
+                        "confidence": 0.92,
+                        "evidence": f"I'll send plan {i} by Friday.",
+                        "resolves": False,
+                        "resolves_what": None,
+                    }
+                ]
+            }
+            for i in range(3)
+        }
+
+        from backglass.extract import commitments as tier2
+
+        real_apply = tier2.apply
+        calls = {"n": 0}
+
+        def exploding_apply(*args: Any, **kwargs: Any) -> Any:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise TypeError("can't subtract offset-naive and offset-aware datetimes")
+            return real_apply(*args, **kwargs)
+
+        tier2.apply = exploding_apply  # type: ignore[assignment]
+        try:
+            messages = [gmail_message(spec) for spec in specs]
+            report = sync(
+                conn, settings, [make_connector(messages, boundary)], FakeModel(responses)
+            )
+        finally:
+            tier2.apply = real_apply  # type: ignore[assignment]
+
+        assert report.parked == 1
+        assert report.extracted == 2, "the two items behind the failure still ran"
+        assert any("apply " in e for e in report.errors), "and the failure is reported"
+
+    def test_the_parked_item_is_left_for_the_next_run(
+        self, conn: sqlite3.Connection, settings: Settings, boundary: Any
+    ) -> None:
+        """Rolled back means unstamped: `extraction_version` stays NULL, so the item is
+        still pending rather than silently marked done."""
+        from backglass.extract import commitments as tier2
+        from backglass.sync import sync
+        from tests.conftest import FakeModel, gmail_message, make_connector
+
+        spec = {
+            "id": "solo",
+            "from": "Dana Whitfield <dwhitfield@example.gov>",
+            "to": "alex.rivera@example.com",
+            "subject": "Migration plan",
+            "date": "Fri, 10 Jul 2026 09:15:00 -0700",
+            "body": "I'll have the revised migration plan over to you by Friday.",
+        }
+        responses = {
+            "Migration plan": {
+                "commitments": [
+                    {
+                        "direction": "owed_to_me",
+                        "counterparty": "Dana Whitfield <dwhitfield@example.gov>",
+                        "what": "revised migration plan",
+                        "due_at": "2026-07-17",
+                        "due_is_explicit": True,
+                        "estimated_minutes": None,
+                        "confidence": 0.92,
+                        "evidence": "by Friday",
+                        "resolves": False,
+                        "resolves_what": None,
+                    }
+                ]
+            }
+        }
+
+        real_apply = tier2.apply
+        tier2.apply = lambda *a, **k: (_ for _ in ()).throw(TypeError("boom"))  # type: ignore[assignment]
+        try:
+            sync(
+                conn,
+                settings,
+                [make_connector([gmail_message(spec)], boundary)],
+                FakeModel(responses),
+            )
+        finally:
+            tier2.apply = real_apply  # type: ignore[assignment]
+
+        pending = conn.execute(
+            "SELECT COUNT(*) AS n FROM source_item"
+            " WHERE triage_verdict = 'keep' AND extraction_version IS NULL"
+        ).fetchone()
+        assert pending["n"] == 1

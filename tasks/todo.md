@@ -1,3 +1,105 @@
+# Populate the ledger — mail, messages, and the cap that was never real
+
+Started 2026-08-03. The ask: put the owner's actual information into the system, from
+every source this machine can reach. Four things stood between the ledger and that.
+
+## What the analysis found
+
+- **Mail was missing entirely** — the largest source of a person's commitments, absent
+  since the Google OAuth path was never usable here. But `~/Library/Mail/V10` holds
+  35,376 indexed messages and 35,441 `.emlx` bodies across three live accounts
+  (personal Gmail, ASU Gmail, iCloud), synced minutes ago. The same shape as the
+  Calendar.app discovery: the API for a service and the data from it are different
+  questions. The ASU account carries Canvas notifications, so mail also covers Canvas
+  without a Canvas token.
+- **iMessage read nothing.** `monitored_chat` was empty and `IMESSAGE_CHATS` unset, so
+  the allowlist was empty, so `health()` failed, so `sync` skipped the connector — and
+  the skipped connector is the only thing that records sightings. The page that exists
+  to fill the allowlist could never fill, because filling it required the connector the
+  empty allowlist had already disabled.
+- **The spend cap was phantom.** `MODEL_BACKEND=claude_cli` is subscription auth; the
+  CLI's `total_cost_usd` is an API-equivalent imputed price, not a charge. `SpendCap`
+  enforced it as one and degraded nine consecutive syncs to triage-only over money
+  nobody was billed.
+- **The data boundary was undecided** — `BOUNDARY_MODE=exclude` with an empty denylist,
+  which excludes nothing. docs/08 requires this settled before mail ingestion.
+
+## Decisions the owner made
+
+Mail: build it, all three accounts. Boundary: no client correspondence in these
+accounts (they are the student's own; the inbox docs/08 was written about is not
+connected). Chats: the three busy groups plus Family. Spend: raise to $50 — and since
+the batch lane needs an API key this machine does not have, fix the imputed-spend
+enforcement rather than route around it.
+
+## Steps
+
+- [x] 1. Spend truthfulness. `ModelClient.spend_is_imputed` — every backend answers, and
+      `SpendCap` stops work only on billed spend while still recording either. Dropped
+      `--max-budget-usd` on the subscription path; `costs` and `doctor` now say which
+      kind of number they are printing. Cap raised to 5000c.
+- [x] 2. iMessage discovery. `discover()` scans the whole window instead of the fetch
+      loop's cursor-bounded rows, which is what broke the deadlock; `record(cumulative=
+      False)` because a window total is not an increment; `decide(MONITOR)` rewinds the
+      source so saying yes reaches backwards. 47 conversations now on the page.
+- [x] 3. The four chosen conversations set to `monitor` — Pih ball, SLT, plague
+      spreaders, Family. The other 43 remain undecided and unread.
+- [x] 4. `apple-mail` connector, the full checklist: connector, config gate,
+      `.env.example`, registry, detection, docs/07 section, boundary, 23 tests. Live
+      against the real store: 226 messages in seven days, offsets intact.
+- [x] 5. Boundary decision recorded in docs/08 §The decision as made, with
+      `BOUNDARY_OUT_OF_SCOPE_ACCOUNTS` enforcing it in the connector before persistence
+      and `doctor` printing every mailbox the ledger has read.
+- [x] 6. Run it. Two syncs: the first ingested 4,417 mail items and triaged all of them
+      before dying on a `TypeError` in `_minutes_apart` — offset-aware minus
+      offset-naive, inside a `try/except ValueError` that could never catch it. Fixed
+      that, and fixed the reason one item could end a run at all (`apply()` was the only
+      path in the pipeline that re-raised). Second sync: **844 extracted, 0 parked**.
+- [x] 7. **Reloaded `com.backglass.sync`.** Unloaded for the backfill, because nothing in
+      the codebase stops two syncs running at once and the launchd job fires every 30
+      minutes: two concurrent extraction passes over the same pending items produce
+      duplicate commitments, which only the 0.85 dedup would catch and only sometimes.
+      That missing lock is a real defect and is written up below rather than fixed here.
+
+## Outcome
+
+Source items 4,067 → **8,485**. Open commitments 43 → **94**, engagements 110 → **200**,
+entities 57 → **88**. Every commitment carries evidence — zero rows without provenance,
+which is rule 1 holding under a tenfold ingest rather than in a fixture. All seven
+connectors green; the last run degraded nothing.
+
+What the backfill also produced, said plainly rather than left for the owner to find:
+
+- **32 open commitments are already past due.** A 120-day mail window reaches back to
+  April, so obligations that were met months ago arrive looking open. They are real
+  extractions of real messages; they are just answered already.
+- **Six duplicate clusters, ~13 rows.** The same plan described in mail, in a group chat
+  and in a quick-add, phrased differently enough that the 0.85 fuzzy dedup did not join
+  them. This is the known limit of similarity matching, not a new defect.
+- **57 sit below the confidence threshold** and are in the review queue rather than in
+  the brief, which is rule 2 working.
+
+## Found and not fixed
+
+**Two syncs can run at once.** There is no lock: not a file lock, not a row, not a check
+of the `run` table for an unfinished row. The launchd job fires every 30 minutes and a
+manual `backglass sync` during a backfill will overlap it, at which point both processes
+select the same `pending_extraction` rows and extract them twice. The ledger's
+immutability trigger does not catch this, because two extractions of one item are two
+legitimate-looking commitment inserts; the only thing standing between that and a
+duplicated ledger is the 0.85 fuzzy dedup, which is a similarity heuristic and not a
+guarantee. Worked around here by unloading the job. The fix is a `BEGIN IMMEDIATE`-held
+row or an advisory lock file taken for the length of a run, and it belongs in its own
+change with its own test.
+
+## Deliberately not
+
+A Canvas connector — mail already carries the notifications, and a token the owner has
+to fetch is a worse trade than a store already on disk. Instagram — the export is not on
+this machine. Reading the parent's inbox, ever.
+
+---
+
 # Monitored conversations — the owner decides what is watched
 
 Started 2026-08-03. `IMESSAGE_CHATS` and `INSTAGRAM_CHATS` are comma-separated env vars,

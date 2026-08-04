@@ -339,12 +339,24 @@ def _minutes_apart(left: str | None, right: str | None) -> int:
 
     try:
         if _has_clock(left) and _has_clock(right):
-            delta = datetime.fromisoformat(left) - datetime.fromisoformat(right)
-            return abs(int(delta.total_seconds() // 60))
-        # At least one names only a day, so compare days. Returning 0 here — which is
-        # what "no clock, no opinion" used to do — made every same-wording plan equally
-        # near, so a re-read of a message that produced a Friday plan and a Saturday plan
-        # resolved to whichever row came back first and swapped the two.
+            first = datetime.fromisoformat(left)
+            second = datetime.fromisoformat(right)
+            # Only subtract times that are actually comparable. A stored `starts_at` may
+            # or may not carry an offset — `2026-08-20T10:30:00-07:00` from Calendar.app
+            # and `2026-08-20T17:30` from a message describing the same event — and
+            # subtracting one from the other is a TypeError, which crashed a whole
+            # backfill through the one code path in the pipeline that re-raises. There is
+            # no honest way to compare them: assuming a zone for the naive side invents
+            # the very offset the value is missing. So drop to the precision both sides
+            # genuinely have, which is the day, exactly as the no-clock case does.
+            if (first.tzinfo is None) == (second.tzinfo is None):
+                delta = first - second
+                return abs(int(delta.total_seconds() // 60))
+        # At least one names only a day — or the two clocks are not comparable — so
+        # compare days. Returning 0 here, which is what "no clock, no opinion" used to
+        # do, made every same-wording plan equally near, so a re-read of a message that
+        # produced a Friday plan and a Saturday plan resolved to whichever row came back
+        # first and swapped the two.
         days = _date.fromisoformat(left[:10]) - _date.fromisoformat(right[:10])
         return abs(days.days) * 1440
     except ValueError:

@@ -52,6 +52,14 @@ class ModelResult:
 
 
 class ModelClient(Protocol):
+    #: Is `ModelResult.cost_usd` money, or a price nobody is charged?
+    #:
+    #: A subscription backend still reports a number — the CLI's `total_cost_usd` is what
+    #: the same call would have cost on the API — and reporting it is useful. Enforcing a
+    #: cap against it is not: it stops work over a bill that will never arrive. Backends
+    #: that bill per call leave this False and the cap in sync.py stays hard.
+    spend_is_imputed: bool
+
     def complete(
         self, *, system: str, user: str, schema: dict[str, Any], model: str, budget_usd: float
     ) -> ModelResult: ...
@@ -83,6 +91,10 @@ class ClaudeCLIBackend:
     #: extract-commitments.md §Failure handling: "Malformed JSON: retry once with the
     #: schema restated. On second failure, park the item."
     attempts: int = 2
+    #: Subscription auth. `total_cost_usd` is the API-equivalent price of the call, and
+    #: measurably not even proportional to the payload — a trivial prompt reported ~4c,
+    #: dominated by the CLI's own session cache_creation tokens. Recorded, never enforced.
+    spend_is_imputed: bool = True
 
     def complete(
         self, *, system: str, user: str, schema: dict[str, Any], model: str, budget_usd: float
@@ -109,6 +121,13 @@ class ClaudeCLIBackend:
         model: str,
         budget_usd: float,
     ) -> tuple[dict[str, Any], float]:
+        # `--max-budget-usd` is deliberately absent. It is a hard ceiling against the same
+        # imputed price `spend_is_imputed` describes, so on subscription auth it aborts
+        # real calls over money nobody is charged — and it is not proportional to the
+        # payload, because the CLI's own session cache_creation tokens dominate it. What
+        # actually bounds a call here is `timeout_seconds` and, upstream,
+        # `per_item_char_ceiling`. Restore this flag the moment the CLI bills per call.
+        del budget_usd
         command = [
             self.executable,
             "-p",
@@ -121,8 +140,6 @@ class ClaudeCLIBackend:
             system,
             "--json-schema",
             json.dumps(schema),
-            "--max-budget-usd",
-            str(budget_usd),
         ]
         try:
             completed = subprocess.run(
@@ -184,6 +201,8 @@ class DeepInfraBackend:
     base_url: str = "https://api.deepinfra.com/v1/openai"
     timeout_seconds: int = 120
     tool_name: str = "emit"
+    #: Billed per call. The monthly cap is real money and stays hard.
+    spend_is_imputed: bool = False
 
     def complete(
         self, *, system: str, user: str, schema: dict[str, Any], model: str, budget_usd: float
@@ -302,6 +321,8 @@ class AnthropicAPIBackend:
     max_tokens_extract: int = 4096
     tool_name: str = "emit"
     client: Any | None = None  # injected in tests, like AppleShortcutBackend.runner
+    #: Billed per call, from real usage counts. The monthly cap is real money.
+    spend_is_imputed: bool = False
 
     def _client(self) -> Any:
         if self.client is None:
@@ -454,6 +475,28 @@ def build(settings: Settings) -> ModelClient:
     return primary
 
 
+#: Which class `build` would choose, keyed by the setting. Exists so the question "does
+#: this configuration cost money" can be answered without constructing a backend — every
+#: caller that asks (costs.py, the dashboard, `doctor`) would otherwise need an API key
+#: to find out that it does not need one.
+_BACKEND_CLASSES: dict[str, type] = {
+    "deepinfra": DeepInfraBackend,
+    "anthropic": AnthropicAPIBackend,
+    "claude_cli": ClaudeCLIBackend,
+}
+
+
+def spend_is_imputed(settings: Settings) -> bool:
+    """Is the configured backend's reported cost a price rather than a charge?
+
+    Read off the same classes `build` returns, so a backend cannot report one answer
+    to the cap and another to the page describing it. An unknown name resolves the way
+    `build` resolves one — to the CLI.
+    """
+    chosen = _BACKEND_CLASSES.get(settings.model_backend, ClaudeCLIBackend)
+    return bool(getattr(chosen, "spend_is_imputed", False))
+
+
 def _restate(user: str, schema: dict[str, Any]) -> str:
     return (
         f"{user}\n\nYour previous response did not match the required schema. "
@@ -503,6 +546,10 @@ class AppleShortcutBackend:
     shortcut: str = "Backglass Triage"
     timeout_seconds: int = 120
     runner: Callable[[list[str], str], str] | None = None  # injected in tests
+    #: Apple's model on the owner's own machine. Nothing is metered and nothing is
+    #: imputed either — this backend reports 0.0 — but the honest answer to "is that a
+    #: bill" is no.
+    spend_is_imputed: bool = True
 
     def _run(self, argv: list[str], stdin: str) -> str:
         if self.runner is not None:
@@ -557,6 +604,12 @@ class TriageRouter:
     primary: ModelClient
     triage: AppleShortcutBackend
     fallback_noted: bool = False
+
+    @property
+    def spend_is_imputed(self) -> bool:
+        """The primary's answer. Triage here is free, so whether the cap means anything
+        is entirely a question about where extraction goes."""
+        return getattr(self.primary, "spend_is_imputed", False)
 
     def complete(
         self, *, system: str, user: str, schema: dict[str, Any], model: str, budget_usd: float

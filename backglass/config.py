@@ -153,9 +153,13 @@ class Settings(BaseSettings):
     apple_triage: bool = False
     apple_triage_shortcut: str = "Backglass Triage"
 
-    monthly_spend_cap_cents: int = 2000
-    # A single item may never cost more than this. Passed to the CLI as
-    # --max-budget-usd, which is a hard ceiling enforced by the CLI itself.
+    #: Enforced only against spend that is actually billed — see
+    #: extract.client.spend_is_imputed and sync.SpendCap. Raised from 2000 on 2026-08-03
+    #: at the owner's instruction, alongside the mail backfill.
+    monthly_spend_cap_cents: int = 5000
+    # A single item may never cost more than this. Passed to the billed backends as a
+    # pre-flight worst-case guard; the CLI backend no longer receives it as
+    # --max-budget-usd, because that ceiling was enforced against an imputed price.
     per_call_budget_usd: float = 0.10
     confidence_threshold: float = 0.7
     # Post-processing step 5 in extract-commitments.md says "fuzzy match" without an
@@ -268,6 +272,22 @@ class Settings(BaseSettings):
     #: Calendars to leave out, comma-separated. Subscribed holiday and birthday feeds
     #: would otherwise consume the day planner's capacity every week.
     apple_calendar_skip: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    #: Mail.app's local store, normally ~/Library/Mail. Empty disables. A path rather
+    #: than a boolean because the version directory moves with macOS (V9, V10, …) and
+    #: because an archived copy of a mail store is a legitimate thing to point at.
+    #: Needs Full Disk Access, like the Messages store — see connectors/apple_mail.py.
+    apple_mail_path: Path | None = None
+    #: Mailboxes whose mail must never enter the ledger, named by the address they are
+    #: delivered to. The other half of docs/08's 2026-08-03 decision: the denylist is
+    #: empty because the out-of-scope inbox is not connected, and this is what keeps that
+    #: true if it ever is. Enforced in the connector, before persistence (D1), so adding
+    #: the account to Mail.app cannot quietly start ingesting it.
+    boundary_out_of_scope_accounts: Annotated[list[str], NoDecode] = Field(
+        default_factory=list
+    )
+    #: How far back a first mail scan reaches. Longer than the message default: mail
+    #: carries deadlines with more notice than a group chat does.
+    apple_mail_lookback_days: int = 120
 
     # ── Spaced-repetition sources ─────────────────────────────────────────
     #: Paths to the review apps' own local SQLite stores; empty disables. Opened
@@ -321,6 +341,7 @@ class Settings(BaseSettings):
         "instagram_chats",
         "imessage_chats",
         "apple_calendar_skip",
+        "boundary_out_of_scope_accounts",
         mode="before",
     )
     @classmethod

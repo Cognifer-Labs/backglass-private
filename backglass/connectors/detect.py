@@ -70,6 +70,7 @@ def detect_all(
         _anki(settings, home),
         _avorio(settings, home),
         _imessage(settings, home),
+        _apple_mail(settings, home),
         _instagram(settings, home),
         _obsidian(settings, home),
         _apple("apple_notes", "APPLE_NOTES", settings.apple_notes),
@@ -300,6 +301,64 @@ def _imessage(settings: Settings, home: Path) -> Detection:
         env_key="IMESSAGE_DB_PATH",
         env_value=str(store),
         hint=str(store),
+    )
+
+
+def _apple_mail(settings: Settings, home: Path) -> Detection:
+    """Mail.app's store, found by its version directory.
+
+    The permission state is established by opening the Envelope Index, not by the
+    directory being visible — the same lesson `_imessage` records. Full Disk Access is
+    granted per-binary, so a `stat` can succeed while the open is refused, and reporting
+    `configured` off a path in `.env` is how a source stays green on the Sources panel
+    while every sync fails against it.
+    """
+    configured = settings.apple_mail_path
+    root = Path(configured) if configured else home / "Library/Mail"
+
+    versions = sorted(root.glob("V*"), key=lambda p: p.name, reverse=True)
+    index = next(
+        (v / "MailData" / "Envelope Index" for v in versions
+         if (v / "MailData" / "Envelope Index").exists()),
+        None,
+    )
+    if index is None:
+        return Detection(
+            "apple-mail",
+            MISSING if configured else NEEDS_SETUP,
+            env_key="APPLE_MAIL_PATH",
+            env_value=str(root),
+            hint=(
+                f"no Mail store under the configured path {root}"
+                if configured
+                else "no Mail index under ~/Library/Mail — either Mail.app is not set up "
+                "on this Mac, or Full Disk Access has not been granted to the program "
+                "running Backglass (System Settings → Privacy & Security)"
+            ),
+        )
+
+    error = unreadable(index)
+    if error is not None:
+        return Detection(
+            "apple-mail",
+            NEEDS_SETUP,
+            env_key="APPLE_MAIL_PATH",
+            env_value=str(root),
+            hint=(
+                f"the Mail index is present but will not open ({error}) — grant Full Disk "
+                "Access to the program running Backglass (System Settings → Privacy & "
+                "Security → Full Disk Access). Scheduled runs go through uv, so add the "
+                "uv binary as well as the terminal"
+            ),
+        )
+    if configured:
+        return Detection("apple-mail", CONFIGURED, hint=str(index.parent.parent))
+    return Detection(
+        "apple-mail",
+        FOUND,
+        env_key="APPLE_MAIL_PATH",
+        env_value=str(root),
+        hint=f"Mail store {index.parent.parent.name} at {root}",
     )
 
 

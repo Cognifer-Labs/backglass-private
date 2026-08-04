@@ -58,6 +58,31 @@ to fix that discovery.
 
 ## General handling
 
+## The decision as made, 2026-08-03
+
+**Option A, with an empty denylist, because the inbox this document is about is not
+connected to this system.**
+
+That reads like a contradiction and is not, so it is written down rather than left to be
+rediscovered. The client correspondence described above lives in a parent's mailbox. The
+accounts Backglass reads are the owner's own — a personal Gmail, an ASU Gmail, and an
+iCloud address — none of which is that mailbox. There is no client domain to deny,
+because there is no client mail to exclude.
+
+What holds this true is not a promise. `apple-mail` reads whatever Mail.app is signed
+into, so the boundary is the account list, and the account list is the thing that must be
+watched:
+
+- The connector still evaluates `Boundary.check` over `From`, `To`, `Cc`, `Bcc` and
+  `Reply-To` on every message, so adding a domain to `BOUNDARY_DENY_DOMAINS` starts
+  excluding immediately — no code change, and D6's purge covers what was already stored.
+- `tests/test_apple_mail_accounts.py` asserts that the excluded mailbox is not one of the
+  accounts the mail store is configured with. If that address is ever added to Mail.app,
+  the test fails and the decision above has to be made again rather than silently expiring.
+- Adding a client to the owner's own accounts — an internship at a health department, a
+  research placement handling program data — re-opens this. The trigger is *the arrival
+  of client correspondence in a connected account*, not a calendar date.
+
 Independent of which option is chosen:
 
 - Tokens never appear in logs, in the SQLite file outside the `credential` table, or in

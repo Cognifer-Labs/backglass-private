@@ -111,51 +111,54 @@ def imessage_chats(
     The allowlist is spelled in display names and handles, and neither is something
     anyone recalls exactly — a group is "Pih ball" or "pih Ball" depending on who named
     it, and a one-to-one is a raw phone number. Guessing is how an allowlist ends up
-    matching nothing at all, so the names are read off the store. Nothing is stored or
-    ingested by this command; it counts and prints.
+    matching nothing at all, so the names are read off the store. Nothing is ingested by
+    this command; it counts, records the conversations as awaiting a decision, and prints.
+
+    The scan is the connector's own `discover()` rather than a second copy of the query,
+    so what this prints and what the /chats page offers cannot disagree about which
+    conversations exist or what they are called.
     """
     import sqlite3 as _sqlite
-    from contextlib import closing as _closing
+
+    from backglass import chats as chats_mod
+    from backglass.connectors.allowlist import normalise
+    from backglass.connectors.imessage import IMessageConnector
 
     settings = get_settings()
     if not settings.imessage_db_path:
         typer.secho("IMESSAGE_DB_PATH is not set — run `backglass setup`", fg=typer.colors.RED)
         raise typer.Exit(1)
 
-    query = """
-        SELECT COALESCE(NULLIF(chat.display_name, ''), handle.id) AS name,
-               chat.display_name IS NOT NULL AND chat.display_name != '' AS is_group,
-               COUNT(*) AS n
-        FROM message
-        LEFT JOIN handle ON handle.ROWID = message.handle_id
-        LEFT JOIN chat_message_join ON chat_message_join.message_id = message.ROWID
-        LEFT JOIN chat ON chat.ROWID = chat_message_join.chat_id
-        WHERE (CASE WHEN ABS(message.date) >= 100000000000
-                    THEN message.date / 1000000000 ELSE message.date END)
-              >= (strftime('%s', 'now', ?) - strftime('%s', '2001-01-01'))
-        GROUP BY name ORDER BY n DESC
-    """
+    connector = IMessageConnector(
+        db_path=settings.imessage_db_path,
+        boundary=Boundary.from_settings(settings),
+        lookback_days=days,
+    )
     try:
-        with _closing(
-            _sqlite.connect(f"file:{settings.imessage_db_path}?mode=ro", uri=True)
-        ) as conn:
-            conn.row_factory = _sqlite.Row
-            conn.execute("PRAGMA busy_timeout = 2000")
-            rows = conn.execute(query, (f"-{days} days",)).fetchall()
+        seen = connector.discover()
     except _sqlite.Error as exc:
         typer.secho(f"cannot read the Messages store: {exc}", fg=typer.colors.RED)
         typer.echo("  grant Full Disk Access to this terminal and to the uv binary")
         raise typer.Exit(1) from exc
 
-    allowed = {c.strip().casefold() for c in settings.imessage_chats}
-    typer.echo(f"Conversations in the last {days} days — copy into IMESSAGE_CHATS:\n")
-    for row in rows:
-        name = row["name"] or "(unknown)"
-        mark = "on " if name.strip().casefold() in allowed else "   "
-        kind = "group" if row["is_group"] else "1:1  "
-        typer.echo(f"  {mark} {kind}  {row['n']:>6}  {name}")
-    if not allowed:
-        typer.echo("\nIMESSAGE_CHATS is empty, so the connector reads nothing yet.")
+    conn = _open(settings)
+    migrate(conn)
+    chats_mod.seed_from_env(conn, "imessage", settings.imessage_chats)
+    chats_mod.record(conn, "imessage", list(seen.values()), cumulative=False)
+    decisions = {c.key: c.decision for c in chats_mod.listing(conn, "imessage")}
+
+    typer.echo(f"Conversations in the last {days} days — decide at /chats:\n")
+    for sighting in sorted(seen.values(), key=lambda s: -s.messages):
+        decision = decisions.get(normalise(sighting.key))
+        mark = {"monitor": "on ", "ignore": "off"}.get(decision or "", "   ")
+        kind = "group" if sighting.kind == "group" else "1:1  "
+        typer.echo(f"  {mark} {kind}  {sighting.messages:>6}  {sighting.display_name}")
+    undecided = sum(1 for s in seen if decisions.get(normalise(s)) is None)
+    if undecided:
+        typer.echo(
+            f"\n{undecided} conversation(s) awaiting a decision. "
+            "Choose at /chats — none is read until it is chosen."
+        )
 
 
 instagram_app = typer.Typer(help="The experimental live Instagram lane.")
@@ -933,6 +936,20 @@ def _all_connectors(conn: sqlite3.Connection, settings: Settings) -> list[Connec
         built.append(
             AppleCalendarConnector(
                 boundary=boundary, skip=tuple(settings.apple_calendar_skip)
+            )
+        )
+
+    if settings.apple_mail_path:
+        from backglass.connectors.apple_mail import AppleMailConnector
+
+        built.append(
+            AppleMailConnector(
+                mail_root=settings.apple_mail_path,
+                boundary=boundary,
+                lookback_days=settings.apple_mail_lookback_days,
+                out_of_scope_accounts=frozenset(
+                    a.strip().lower() for a in settings.boundary_out_of_scope_accounts
+                ),
             )
         )
 
@@ -1871,21 +1888,37 @@ def costs_summary(ctx: typer.Context) -> None:
     migrate(conn)
 
     m = costs_mod.month(conn, settings)
-    pct = round(100 * m.spend_cents / m.cap_cents) if m.cap_cents else 0
-    over = "  ← projected to exceed the cap" if m.projected_cents > m.cap_cents else ""
-    typer.echo(
-        f"month-to-date  {m.spend_cents}c of {m.cap_cents}c cap ({pct}%)"
-        f" · projected {m.projected_cents}c by month end{over}"
-    )
+    if m.spend_is_imputed:
+        # Nothing is billed on a subscription backend, so there is no percentage of a cap
+        # to report and no overrun to warn about. The figure is still worth printing —
+        # it is what the month would have cost on the API — but it is labelled as that.
+        typer.echo(
+            f"month-to-date  {m.spend_cents}c imputed (subscription backend"
+            f" {settings.model_backend}; nothing billed, cap not enforced)"
+            f" · projected {m.projected_cents}c by month end"
+        )
+    else:
+        pct = round(100 * m.spend_cents / m.cap_cents) if m.cap_cents else 0
+        over = "  ← projected to exceed the cap" if m.projected_cents > m.cap_cents else ""
+        typer.echo(
+            f"month-to-date  {m.spend_cents}c of {m.cap_cents}c cap ({pct}%)"
+            f" · projected {m.projected_cents}c by month end{over}"
+        )
     avg = f"{m.avg_cents_per_item:.1f}c" if m.extracted else "—"
     degraded = f" ({m.degraded_runs} degraded)" if m.degraded_runs else ""
     typer.echo(
         f"runs           {m.runs}{degraded} · extraction {m.extracted} items"
         f" · ≈{avg} per extracted item"
     )
-    if m.degraded_runs:
+    if m.degraded_runs and not m.spend_is_imputed:
         typer.echo(
             "  ← spend cap was reached this month; extraction has been skipped", err=True
+        )
+    elif m.degraded_runs:
+        typer.echo(
+            f"  ← {m.degraded_runs} run(s) degraded before the backend was known to be "
+            "unbilled; re-run `backglass sync` to extract what they left pending",
+            err=True,
         )
 
     trend = costs_mod.kill_trend(conn)
@@ -2501,10 +2534,17 @@ def _boundary_verdict(
     decided = (
         Boundary.from_settings(settings).enforcing
         or settings.boundary_mode == "full_scope"
+        # docs/08 §The decision as made: a denylist of correspondents is empty when the
+        # out-of-scope mail is not in a connected account at all. That is a decision, not
+        # an omission — but only when the accounts it excludes are named, because naming
+        # them is what makes the connector enforce it and what makes a newly connected
+        # mailbox fail loudly instead of quietly ingesting.
+        or bool(settings.boundary_out_of_scope_accounts)
     )
     return decided, (
         f"{', '.join(scoped)} enabled with BOUNDARY_MODE=exclude and an empty denylist "
-        "— excluding nothing. Set BOUNDARY_DENY_DOMAINS / BOUNDARY_DENY_ADDRESSES, or "
+        "— excluding nothing. Set BOUNDARY_DENY_DOMAINS / BOUNDARY_DENY_ADDRESSES, name "
+        "the mailboxes that are out of scope in BOUNDARY_OUT_OF_SCOPE_ACCOUNTS, or set "
         "BOUNDARY_MODE=full_scope to accept docs/08 Option B's obligations"
     )
 
@@ -2536,9 +2576,22 @@ def doctor() -> None:
           "set OWNER_EMAILS in .env")
     check("brief recipient configured", bool(settings.brief_to),
           "set BRIEF_TO (and RESEND_API_KEY) for delivery")
-    check("google oauth client configured",
-          bool(settings.google_client_id and settings.google_client_secret),
-          "set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET")
+    # Google is one way to reach mail and calendar, and on a Mac that syncs both locally
+    # it is not the only one — `apple-mail` and `calendar:apple` read the same accounts
+    # with no OAuth client at all. Failing here regardless left the doctor permanently
+    # red over a credential the owner had deliberately decided not to obtain, and a check
+    # that can never go green is a check people learn to skim past.
+    google_ready = bool(settings.google_client_id and settings.google_client_secret)
+    local_equivalent = bool(settings.apple_mail_path) and settings.apple_calendar
+    if google_ready or not local_equivalent:
+        check("google oauth client configured", google_ready,
+              "set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET — or read the same accounts "
+              "locally with APPLE_MAIL_PATH and APPLE_CALENDAR=1, which need neither")
+    else:
+        typer.echo(
+            "[ -- ] google oauth not configured — mail and calendar are read locally "
+            "through Mail.app and Calendar.app instead (docs/07)"
+        )
 
     # ── batch mode (informational — never a failure; the plists are optional) ──
     from datetime import UTC as _utc
@@ -2638,6 +2691,34 @@ def doctor() -> None:
     )
     if verdict is not None:
         check("data boundary decided", *verdict)
+
+    # Which mailboxes the ledger has actually read. docs/08's decision rests on the
+    # account list, so the account list is printed rather than assumed — a mailbox added
+    # to Mail.app months from now shows up here on the next sync, which is the only way
+    # the owner finds out that the decision needs making again.
+    accounts = [
+        str(r["account"])
+        for r in conn.execute(
+            "SELECT DISTINCT json_extract(raw_json, '$.delivered_to') AS account"
+            " FROM source_item WHERE user_id = ? AND source = 'apple-mail'"
+            " AND json_extract(raw_json, '$.delivered_to') != ''"
+            " ORDER BY account",
+            (USER_ID,),
+        )
+        if r["account"]
+    ]
+    if accounts:
+        typer.echo(f"[ -- ] mail accounts read: {', '.join(accounts)}")
+        out_of_scope = {a.strip().lower() for a in settings.boundary_out_of_scope_accounts}
+        breached = sorted(set(accounts) & out_of_scope)
+        if breached:
+            check(
+                "no out-of-scope mailbox ingested",
+                False,
+                f"{', '.join(breached)} is named in BOUNDARY_OUT_OF_SCOPE_ACCOUNTS but "
+                "its mail is in the ledger — run `backglass purge-boundary` and re-read "
+                "docs/08 before the next sync",
+            )
 
     # ── scheduling ────────────────────────────────────────────────────────
     done = subprocess.run(["launchctl", "list"], capture_output=True, text=True)

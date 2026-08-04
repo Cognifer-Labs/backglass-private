@@ -76,9 +76,21 @@ class SyncReport:
 
 
 class SpendCap:
-    """docs/02 §Cost control. Hard, in code, checked before each call."""
+    """docs/02 §Cost control. Hard, in code, checked before each call.
 
-    def __init__(self, conn: sqlite3.Connection, settings: Settings):
+    Hard against *money*. A subscription backend reports what its calls would have cost
+    on the API, and enforcing a dollar ceiling against that number stops work over a bill
+    that will never arrive — which is exactly what happened on 2026-08-03, when nine
+    consecutive syncs degraded to triage-only at 2006c of an unbilled 2000c. The spend is
+    still recorded and still shown; `imputed` only decides whether it may stop anything.
+    """
+
+    def __init__(
+        self,
+        conn: sqlite3.Connection,
+        settings: Settings,
+        client: ModelClient | None = None,
+    ):
         month_start = datetime.now(UTC).replace(
             day=1, hour=0, minute=0, second=0, microsecond=0
         )
@@ -89,6 +101,9 @@ class SpendCap:
         self.already_spent_cents = int(row["spend_cents"] if row else 0)
         self.cap_cents = settings.monthly_spend_cap_cents
         self.this_run_usd = 0.0
+        # Absent a client, assume billed. A caller that does not say is a caller whose
+        # backend we do not know, and the safe direction for a money guard is on.
+        self.imputed = bool(getattr(client, "spend_is_imputed", False))
 
     @property
     def total_cents(self) -> int:
@@ -96,7 +111,7 @@ class SpendCap:
 
     @property
     def reached(self) -> bool:
-        return self.total_cents >= self.cap_cents
+        return not self.imputed and self.total_cents >= self.cap_cents
 
     def charge(self, usd: float) -> None:
         self.this_run_usd += usd
@@ -116,7 +131,7 @@ def sync(
     extraction to the Batches API instead."""
     report = SyncReport()
     ledger = Ledger(conn, settings, dry_run=dry_run)
-    cap = SpendCap(conn, settings)
+    cap = SpendCap(conn, settings, client)
     started_at = now_iso()
 
     _ingest(conn, ledger, connectors, report, dry_run=dry_run)
@@ -215,7 +230,13 @@ def _ingest(
         # lands undecided, which is what puts it on the prompt instead of dropping it.
         sightings = getattr(connector, "seen_chats", None)
         if sightings and not dry_run:
-            seen = chats_mod.record(conn, connector.name, list(sightings.values()))
+            seen = chats_mod.record(
+                conn,
+                connector.name,
+                list(sightings.values()),
+                # A connector that rescans a window reports a total, not an increment.
+                cumulative=bool(getattr(connector, "sightings_are_cumulative", True)),
+            )
             report.new_chats += seen.new
             report.new_chat_names.extend(seen.names)
 
@@ -475,9 +496,20 @@ def _extract_pass(
                 settings=settings,
             )
             ledger.record_extraction_version(item_id, prompt.stamp)
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 - rule 5: degrade, never block
+            # Rolled back, so the item is unstamped and untouched — the same parked state
+            # a failed model call produces, and the next run retries it.
+            #
+            # This used to re-raise, and it was the one path in the pipeline that could
+            # end a run: a single item whose apply() raised took every item behind it
+            # with it. A 4,400-message backfill died on one malformed timestamp with
+            # thousands of already-triaged items left unextracted, which is precisely the
+            # "a failing source degrades, never blocks" rule applied one level too high —
+            # the unit that fails here is a message, not a source.
             conn.execute("ROLLBACK")
-            raise
+            report.parked += 1
+            report.errors.append(f"apply {item_id}: {base.safe_error(exc)}")
+            continue
         conn.execute("COMMIT")
         report.extracted += 1
         report.review_queue += applied.review_queue + plans.review_queue

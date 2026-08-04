@@ -107,7 +107,11 @@ def seed_from_env(conn: sqlite3.Connection, source: str, entries: Sequence[str])
 
 
 def record(
-    conn: sqlite3.Connection, source: str, sightings: Sequence[Sighting]
+    conn: sqlite3.Connection,
+    source: str,
+    sightings: Sequence[Sighting],
+    *,
+    cumulative: bool = True,
 ) -> SightingReport:
     """Write what a connector saw. New conversations land undecided.
 
@@ -116,10 +120,19 @@ def record(
     conversation is a question, because consent to read one group says nothing about the
     next.
 
-    `messages_seen` accumulates and `last_seen_at` moves, so a chat that has gone quiet
-    sorts below one that is active and the page can say which is which.
+    `last_seen_at` moves either way, so a chat that has gone quiet sorts below one that is
+    active and the page can say which is which. `messages_seen` depends on what the
+    connector counted: an incremental sighting from a fetch loop adds to the tally
+    (`cumulative`), while a connector that rescans a fixed window each run reports a total
+    that replaces it — adding those would multiply the same messages by the number of
+    syncs and show a quiet chat growing louder every half hour.
     """
     report = SightingReport()
+    tally = (
+        "messages_seen = messages_seen + excluded.messages_seen"
+        if cumulative
+        else "messages_seen = excluded.messages_seen"
+    )
     for sighting in sightings:
         key = normalise(sighting.key)
         if not key:
@@ -130,7 +143,7 @@ def record(
             "  messages_seen, first_seen_at, last_seen_at)"
             " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
             " ON CONFLICT (user_id, source, key) DO UPDATE SET"
-            "   messages_seen = messages_seen + excluded.messages_seen,"
+            f"   {tally},"
             "   last_seen_at = excluded.last_seen_at,"
             "   display_name = COALESCE(excluded.display_name, display_name),"
             "   participants = COALESCE(excluded.participants, participants)",
@@ -162,12 +175,39 @@ def decide(conn: sqlite3.Connection, chat_id: int, decision: str) -> bool:
     """
     if decision not in (MONITOR, IGNORE):
         raise ValueError(f"unknown decision {decision!r}")
+    row = conn.execute(
+        "SELECT source FROM monitored_chat WHERE user_id = ? AND id = ?",
+        (USER_ID, chat_id),
+    ).fetchone()
     cursor = conn.execute(
         "UPDATE monitored_chat SET decision = ?, decided_at = ?"
         " WHERE user_id = ? AND id = ? AND (decision IS NOT ? OR decision IS NULL)",
         (decision, now_iso(), USER_ID, chat_id, decision),
     )
-    return cursor.rowcount == 1
+    changed = cursor.rowcount == 1
+    if changed and decision == MONITOR and row is not None:
+        rewind(conn, str(row["source"]))
+    return changed
+
+
+def rewind(conn: sqlite3.Connection, source: str) -> None:
+    """Drop the source's cursor so the next sync re-reads its whole window.
+
+    Saying yes to a conversation has to mean its recent messages, not merely its future
+    ones. The cursor is one watermark for the entire store and it sits at the end of it,
+    so without this a chat monitored today contributes nothing until someone happens to
+    text — the plan already made in that group, which is the reason to monitor it at all,
+    stays outside the ledger.
+
+    Safe to do bluntly, because re-reading is not re-writing: `content_hash` over the
+    stripped body makes an already-stored message a no-op, and rule 3 (two runs, zero
+    writes) is what guarantees the rescan costs a scan and nothing else. The messages a
+    *narrower* allowlist now rejects are handled from the other side, by `prune`.
+    """
+    conn.execute(
+        "UPDATE credential SET cursor = NULL WHERE user_id = ? AND source = ?",
+        (USER_ID, source),
+    )
 
 
 def listing(conn: sqlite3.Connection, source: str | None = None) -> list[Chat]:

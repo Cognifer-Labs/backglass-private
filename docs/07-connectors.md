@@ -122,6 +122,7 @@ audits.
 | source name | gate | cursor | boundary | how it fails |
 |---|---|---|---|---|
 | `imessage` | `IMESSAGE_DB_PATH` + `IMESSAGE_CHATS` | max `message.ROWID` | yes — handles are addresses | without Full Disk Access the file still stats — only the *open* is refused, with `unable to open database file` rather than anything that says "denied" |
+| `apple-mail` | `APPLE_MAIL_PATH` | `date_received`, not ROWID — see below | yes, and this is the source docs/08 was written about | same Full Disk Access refusal as iMessage; `health()` opens the Envelope Index rather than trusting that the directory is visible |
 | `apple-notes` | `APPLE_NOTES=1` | modification-date watermark | yes — note bodies carry addresses | Automation permission denied, reported by `health()` |
 | `calendar:apple` | `APPLE_CALENDAR=1` | none — a bounded window, re-read each run | yes — titles and locations can carry addresses | Automation permission denied, reported by `health()` |
 | `reminders` | `APPLE_REMINDERS=1` | fetch-window watermark (no mtime exists) | yes | same Automation prompt as Notes |
@@ -203,6 +204,39 @@ Two behaviours worth knowing:
 - **`APPLE_CALENDAR_SKIP`** drops calendars by name. Subscribed holiday and birthday
   feeds are the reason it exists: they are all-day events, so they are excluded from
   capacity anyway, but naming them keeps the source list honest.
+
+## Mail without Google
+
+`apple-mail` (`backglass/connectors/apple_mail.py`) is the same realisation as
+`calendar:apple`, applied to the largest source of a person's commitments. Mail.app holds
+the messages macOS already syncs — both Gmail accounts and the iCloud one, on this
+machine — so mail reaches the ledger with **no Google Cloud project, no OAuth client and
+no consent flow**. It does need Full Disk Access, because `~/Library/Mail` is
+TCC-protected the way the Messages store is.
+
+The Gmail connector above is still right for an account this Mac does not have. Running
+both against the same account produces every message twice under different ids; run one.
+
+Three things it does that are worth knowing before changing it:
+
+- **The index selects; the files carry the message.** `MailData/Envelope Index` is a
+  SQLite database of one row per message per mailbox, used only to decide which messages
+  a run has not read. Everything stored — sender, subject, body, and the `Date` offset
+  rule 4 depends on — is parsed from the `.emlx` file, so there is one source of truth
+  per message.
+- **The cursor is `date_received`, not `ROWID`.** Mail rebuilds the Envelope Index after
+  a crash or an upgrade, and a rebuild renumbers every row. A ROWID watermark would then
+  either re-read the whole store or, far worse, sit above rows now numbered beneath it
+  and skip mail permanently. The window is inclusive of the watermark, so the boundary
+  second is re-read each run and `content_hash` makes that free.
+- **`external_id` is the RFC822 `Message-ID`.** A Gmail account exposes `INBOX` and
+  `[Gmail]/All Mail` as separate folders holding the same message: two index rows, two
+  files, one commitment. Junk, Spam, Trash, Deleted Messages and Drafts are not read at
+  all — a draft is something the owner has not said yet.
+
+`APPLE_MAIL_PATH` points at `~/Library/Mail`, the parent, not at the version directory
+inside it. The connector resolves `V10` (and `V11` after the next macOS upgrade) itself,
+because a pinned version turns an OS update into a source that silently stops collecting.
 
 ## Turning on the messaging sources
 

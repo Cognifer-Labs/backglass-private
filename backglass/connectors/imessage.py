@@ -94,6 +94,26 @@ WHERE message.ROWID > ?
 ORDER BY message.ROWID
 """
 
+#: What conversations exist, and how loud each one is, over the same window `_QUERY`
+#: bounds — and deliberately *not* over the same cursor. Grouped in SQL because the
+#: answer is a list of names, not a list of messages: 43,000 rows collapse to fifty.
+#: `NULLIF` on the display name is what makes a one-to-one fall back to the handle,
+#: matching `_allowed`'s two cases exactly.
+_DISCOVER_QUERY = """
+SELECT COALESCE(NULLIF(chat.display_name, ''), handle.id)              AS name,
+       chat.display_name IS NOT NULL AND chat.display_name != ''       AS is_group,
+       COUNT(*)                                                        AS n
+FROM message
+LEFT JOIN handle ON handle.ROWID = message.handle_id
+LEFT JOIN chat_message_join ON chat_message_join.message_id = message.ROWID
+LEFT JOIN chat ON chat.ROWID = chat_message_join.chat_id
+WHERE (CASE WHEN ABS(message.date) >= 100000000000
+            THEN message.date / 1000000000 ELSE message.date END)
+      >= (strftime('%s', 'now', ?) - strftime('%s', '2001-01-01'))
+GROUP BY name
+ORDER BY n DESC
+"""
+
 
 @dataclass(kw_only=True)
 class IMessageConnector:
@@ -122,12 +142,21 @@ class IMessageConnector:
     cursor: Cursor = None
     excluded: int = 0
     excluded_by_rule: dict[str, int] = field(default_factory=dict)
-    #: Every conversation this fetch touched, allowed or not, keyed the way the allowlist
-    #: matches. Reported rather than written: a connector emits SourceItems and nothing
-    #: else, so `sync` is what records these — the same seam `excluded_by_rule` uses.
-    #: This is what lets a chat nobody has named surface as a question instead of being
-    #: dropped in silence.
+    #: Every conversation in the lookback window, allowed or not, keyed the way the
+    #: allowlist matches. Reported rather than written: a connector emits SourceItems and
+    #: nothing else, so `sync` is what records these — the same seam `excluded_by_rule`
+    #: uses. This is what lets a chat nobody has named surface as a question instead of
+    #: being dropped in silence.
+    #:
+    #: Filled by `discover()` over the whole window rather than by the fetch loop, which
+    #: only ever sees rows above the cursor. Gathering them in the loop meant a chat was
+    #: offered for a decision only if it had spoken since the last sync — so the quiet
+    #: conversations, and every conversation at all on a machine whose cursor was already
+    #: current, could never appear on the page whose entire purpose is to list them.
     seen_chats: dict[str, Sighting] = field(default_factory=dict)
+    #: The counts above are window totals, recomputed each run, not increments. `sync`
+    #: reads this to know it must overwrite rather than add.
+    sightings_are_cumulative: bool = False
 
     @property
     def name(self) -> str:
@@ -183,7 +212,7 @@ class IMessageConnector:
         """
         self.excluded = 0
         self.excluded_by_rule = {}
-        self.seen_chats = {}
+        self.seen_chats = self.discover()
 
         watermark = _parse(since)
         highest = watermark
@@ -212,7 +241,6 @@ class IMessageConnector:
         """
         chat = row["chat_name"] or None
         handle = row["handle"] or ""
-        self._note(chat, handle)
         if self.allowlist.allows(title=chat, participants=[handle] if handle else []):
             return True
         self.excluded += 1
@@ -220,22 +248,37 @@ class IMessageConnector:
         self.excluded_by_rule[rule] = self.excluded_by_rule.get(rule, 0) + 1
         return False
 
-    def _note(self, chat: str | None, handle: str) -> None:
-        """Remember that this conversation exists, whatever the allowlist says about it.
+    def discover(self) -> dict[str, Sighting]:
+        """Every conversation in the lookback window, with how much it said.
 
-        Keyed exactly the way `_allowed` matches, or the page would offer the owner a
-        button that turns on something the connector then fails to recognise.
+        Independent of the cursor, and that is the whole point. The cursor exists so a
+        run does not re-read messages it has already stored; discovery answers a
+        different question — *what conversations exist for the owner to decide about* —
+        and that answer does not change when the messages have already been read. Tying
+        it to the cursor produced a deadlock: nothing was monitored, so the page had to
+        fill itself from sightings, but sightings only came from rows above a watermark
+        that was already at the end of the store, so the page stayed empty and nothing
+        could ever be chosen.
+
+        One grouped query, no bodies read and nothing decoded — the counterparty handle
+        and the group name are all a decision needs, and they are the only two things
+        `_allowed` matches on, so a button on the page cannot turn on something the
+        connector then fails to recognise.
         """
-        key = chat or handle
-        if not key:
-            return
-        seen = self.seen_chats.get(key)
-        self.seen_chats[key] = Sighting(
-            key=key,
-            display_name=key,
-            kind="group" if chat else "dm",
-            messages=(seen.messages if seen else 0) + 1,
-        )
+        with closing(self._connect()) as conn:
+            rows = conn.execute(_DISCOVER_QUERY, (f"-{self.lookback_days} days",)).fetchall()
+        seen: dict[str, Sighting] = {}
+        for row in rows:
+            key = row["name"]
+            if not key:
+                continue
+            seen[str(key)] = Sighting(
+                key=str(key),
+                display_name=str(key),
+                kind="group" if row["is_group"] else "dm",
+                messages=int(row["n"]),
+            )
+        return seen
 
     def _connect(self) -> sqlite3.Connection:
         # mode=ro, NOT immutable=1 — chat.db is WAL and immutable skips the -wal

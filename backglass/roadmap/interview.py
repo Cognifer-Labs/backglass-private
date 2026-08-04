@@ -120,7 +120,7 @@ def run_interview(
     """
     questions_prompt = load_prompt(QUESTIONS_PROMPT)
     stamp = load_prompt(ADJUST_PROMPT).stamp
-    cap = SpendCap(conn, settings)
+    cap = SpendCap(conn, settings, client)
     spent = 0.0
 
     if cap.reached:
