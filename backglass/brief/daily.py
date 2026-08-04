@@ -222,7 +222,9 @@ def failure_section(
 
         section.lines.append(
             Line(
-                text=degraded_note(conn, today),
+                text=degraded_note(
+                    conn, today, reason=str(last["degrade_reason"] or "") or None
+                ),
                 provenance=LedgerRef(
                     "runs", str(last["id"]), f"run · {str(last['started_at'])[:10]}"
                 ),

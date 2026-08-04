@@ -469,7 +469,12 @@ def status() -> None:
         typer.echo(
             f"\nlast run  {last['started_at']}  fetched {last['items_fetched']}, "
             f"extracted {last['items_extracted']}, writes {last['writes']}, "
-            f"spend {last['spend_cents']}c" + ("  DEGRADED" if last["degraded"] else "")
+            f"spend {last['spend_cents']}c"
+            + (
+                f"  DEGRADED ({last['degrade_reason'] or 'spend_cap'})"
+                if last["degraded"]
+                else ""
+            )
         )
         if last["errors_json"]:
             for error in json.loads(str(last["errors_json"])):
@@ -990,7 +995,13 @@ def _print_report(report: Any, *, dry_run: bool) -> None:
         f"review queue {report.review_queue})"
     )
     typer.echo(f"  writes {report.writes}, spend {report.spend_cents}c")
-    if report.degraded:
+    if report.degrade_reason == "rate_limit":
+        typer.echo(
+            "  DEGRADED: model rate limit reached; the remaining items are still "
+            "pending and the next sync retries them",
+            err=True,
+        )
+    elif report.degraded:
         typer.echo("  DEGRADED: spend cap reached, extraction skipped", err=True)
     for rule, count in sorted(report.excluded_by_rule.items()):
         typer.echo(f"  boundary excluded {count} by rule {rule}")
@@ -1956,7 +1967,10 @@ def costs_runs(
         typer.echo("no runs recorded yet")
         raise typer.Exit()
     for r in rows:
-        flags = ("degraded" if r["degraded"] else "") + (" errors" if r["had_errors"] else "")
+        # NULL degrade_reason on a degraded row predates 0016, when the cap was the only
+        # thing that could pause a run.
+        degraded = f"degraded:{r['degrade_reason'] or 'spend_cap'}" if r["degraded"] else ""
+        flags = degraded + (" errors" if r["had_errors"] else "")
         typer.echo(
             f"{r['started_at'][:16]}  fetched {r['items_fetched']:>4}"
             f"  out {r['items_triaged_out']:>4}  extracted {r['items_extracted']:>3}"

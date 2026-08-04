@@ -31,7 +31,7 @@ from backglass.extract import engagements as engagement_tier2
 from backglass.extract import noise as noise_mod
 from backglass.extract import prompts, rules
 from backglass.extract import triage as tier1
-from backglass.extract.client import ModelClient
+from backglass.extract.client import ModelClient, RateLimited
 from backglass.extract.schemas import CommitmentExtraction
 from backglass.ledger import USER_ID, Ledger
 
@@ -65,6 +65,13 @@ class SyncReport:
     writes: int = 0
     spend_cents: int = 0
     degraded: bool = False
+    #: Why, when `degraded`. 'spend_cap' | 'rate_limit'. A bare boolean made every surface
+    #: assume the cap, so a rate-limited run would have asserted a month-long pause that
+    #: was not happening and a reset date that meant nothing.
+    degrade_reason: str | None = None
+    #: A model usage window closed mid-run. The items it touched are still PENDING, not
+    #: parked, and no attempt was spent on them — see extract.client.RateLimited.
+    rate_limited: bool = False
     failed_sources: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     date_notes: list[str] = field(default_factory=list)
@@ -152,7 +159,10 @@ def sync(
         ]
         noise_writes = noise_mod.promote(conn, addresses, by="auto")
 
-    if extract:
+    # Not attempted once a usage window has closed: extraction calls the same backend that
+    # just refused triage, so every item would come back RateLimited and the only product
+    # of the pass would be a longer error list.
+    if extract and not report.rate_limited:
         _extract_pass(conn, ledger, settings, client, cap, report)
 
     # Review-day tallies → checkpoints. Deterministic — the data arrives structured,
@@ -166,7 +176,17 @@ def sync(
 
     report.writes = ledger.writes + review_writes + noise_writes
     report.spend_cents = round(cap.this_run_usd * 100)
-    report.degraded = cap.reached
+    # The cap wins the label when both hold: it is the one that persists past this run.
+    if cap.reached:
+        report.degraded, report.degrade_reason = True, "spend_cap"
+    elif report.rate_limited:
+        # Appended once, here, rather than per stage: triage and extraction can both trip
+        # it and the owner does not need to be told twice. Rule 5 — surfaced, non-zero exit.
+        report.degraded, report.degrade_reason = True, "rate_limit"
+        report.errors.append(
+            "model rate limit reached; the remaining items are still pending "
+            "(not parked) and the next scheduled sync retries them"
+        )
     report.commitments_inserted = ledger.stats.commitments_inserted
     report.commitments_deduped = ledger.stats.commitments_deduped
     report.commitments_superseded = ledger.stats.commitments_superseded
@@ -310,7 +330,7 @@ def _triage_pass(
     # per-item path runs exactly as before.
     if len(pending) >= settings.triage_batch_min:
         pending = _batch_triage_pass(ledger, settings, client, cap, report, pending)
-        if not pending:
+        if not pending or report.rate_limited:
             return
 
     def work(item: dict[str, Any]) -> tuple[int, tier1.TriageOutcome | Exception]:
@@ -328,6 +348,11 @@ def _triage_pass(
     for item_id, outcome in _in_parallel(
         work, pending, settings.max_concurrency, cap, stop_on_cap=False
     ):
+        if isinstance(outcome, RateLimited):
+            # Breaking closes the generator, so the waves that were never submitted stay
+            # unsubmitted and their items keep triage_verdict NULL — pending, not failed.
+            report.rate_limited = True
+            break
         if isinstance(outcome, Exception):
             report.errors.append(f"triage {item_id}: {outcome}")
             continue
@@ -368,6 +393,13 @@ def _batch_triage_pass(
     for chunk, outcome in _in_parallel(
         work, chunks, settings.max_concurrency, cap, stop_on_cap=False
     ):
+        if isinstance(outcome, RateLimited):
+            # Deliberately not escalated. Escalation exists because a failed batch says
+            # nothing about its items and the per-item pass might still read them; a shut
+            # window says the per-item pass cannot run either, so escalating here would
+            # only re-fail every item one at a time. They keep triage_verdict NULL.
+            report.rate_limited = True
+            break
         if isinstance(outcome, Exception):
             # A failed batch proves nothing about its items: all of them re-read
             # per-item. Not an error — the fallback IS the failure handling.
@@ -459,6 +491,13 @@ def _extract_pass(
         work, pending, settings.max_concurrency, cap, stop_on_cap=True
     ):
         item_id = int(item["id"])
+        if isinstance(outcome, RateLimited):
+            # The one exception to the park rule below, and the reason dropping the dollar
+            # brake is safe: a shut usage window is not the item's fault, so it must not
+            # consume the item's two attempts. Nothing is written, so extraction_version
+            # stays unset and pending_extraction_unbatched still returns it next sync.
+            report.rate_limited = True
+            break
         if isinstance(outcome, Exception):
             # extract-commitments.md §Failure handling: an item that fails is parked with
             # extraction_version unset, so a later prompt version retries it, and it is
@@ -631,6 +670,7 @@ def record_run(
     writes: int = 0,
     spend_cents: int = 0,
     degraded: bool = False,
+    degrade_reason: str | None = None,
     errors: list[str] | None = None,
 ) -> None:
     """One run row. Shared with batch.py so `costs`, `status`, and spend_this_month
@@ -639,8 +679,9 @@ def record_run(
 
     conn.execute(
         "INSERT INTO run (user_id, started_at, finished_at, items_fetched, items_triaged_out, "
-        " items_excluded, items_extracted, writes, spend_cents, degraded, errors_json) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        " items_excluded, items_extracted, writes, spend_cents, degraded, degrade_reason, "
+        " errors_json) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             USER_ID,
             started_at,
@@ -652,6 +693,7 @@ def record_run(
             writes,
             spend_cents,
             1 if degraded else 0,
+            degrade_reason,
             json.dumps(errors) if errors else None,
         ),
     )
@@ -668,5 +710,6 @@ def _record_run(conn: sqlite3.Connection, report: SyncReport, started_at: str) -
         writes=report.writes,
         spend_cents=report.spend_cents,
         degraded=report.degraded,
+        degrade_reason=report.degrade_reason,
         errors=report.errors or None,
     )

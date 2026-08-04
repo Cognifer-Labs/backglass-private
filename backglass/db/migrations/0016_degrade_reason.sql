@@ -1,0 +1,25 @@
+-- Why a run degraded, because "degraded" alone is now ambiguous in an expensive way.
+--
+-- `run.degraded` has meant exactly one thing since 0001: the monthly spend cap was
+-- reached and extraction fell back to triage-only. Every surface reads it that way and
+-- says so — the Sources panel, the sidebar alert, the brief's failure section and
+-- `backglass sync` all render the cap's sentence, complete with the date the cap resets.
+--
+-- That was true while the dollar ceiling was the only thing that could stop a run. It is
+-- no longer. `.env` sets MODEL_BACKEND=claude_cli, so the pipeline runs on the owner's
+-- flat-rate subscription, the cap correctly stops enforcing against a price nobody is
+-- charged, and what a long run meets instead is the subscription's own rolling usage
+-- window. That pause has the opposite shape to the cap's: it clears in hours rather than
+-- on the first of the month, and it leaves its items PENDING rather than parked, because
+-- a shut window says nothing about the item and must not consume its two attempts.
+--
+-- Told through the old boolean, a lunchtime pause would hand the owner a four-week reset
+-- date and a claim that a cap was reached, for a cap that was not. One confident wrong
+-- sentence with a date on it is worse than no sentence, and this product's whole premise
+-- is that its claims can be trusted. So the run records which pause it was, and every
+-- surface picks its sentence from that.
+--
+-- NULL on a degraded row is not a third state: it is a run written before this column
+-- existed, which could only ever have been the cap, and that is how it renders.
+
+ALTER TABLE run ADD COLUMN degrade_reason TEXT;  -- spend_cap|rate_limit|NULL = pre-0016

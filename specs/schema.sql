@@ -220,7 +220,7 @@ CREATE TABLE run (
   spend_cents       INTEGER NOT NULL DEFAULT 0,
   degraded          INTEGER NOT NULL DEFAULT 0,  -- 1 when spend cap forced triage-only
   errors_json       TEXT
-, kind TEXT NOT NULL DEFAULT 'sync');
+, kind TEXT NOT NULL DEFAULT 'sync', degrade_reason TEXT);
 
 CREATE TRIGGER source_item_immutable
 BEFORE UPDATE ON source_item

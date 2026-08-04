@@ -112,13 +112,27 @@ beats leaning on the fallback.
 ## Cost control
 
 ```
-monthly_cap        configured, hard
+monthly_cap        configured, hard — against BILLED spend only
 on_cap_reached     degrade to triage-only, log loudly, surface in Sources panel
+on_rate_limit      stop the wave, leave items PENDING, retry next sync
 per_item_ceiling   skip and park anything whose input exceeds it
 ```
 
 The cap is enforced in code, not monitored. A pipeline that can silently 10x its spend is
 a pipeline you turn off.
+
+It is enforced against money, though, and not against a number that merely looks like it.
+A subscription backend bills by the month, and the per-call `total_cost_usd` its CLI
+reports is the API-equivalent price of the tokens — an estimate of a charge nobody made,
+dominated by the CLI's own session overhead rather than by what Backglass sent. Enforcing
+it stopped the ledger for nine runs over nothing.
+
+Removing that brake leaves the subscription's own rolling usage window as the real limit,
+which is why `on_rate_limit` exists. It is a different pause and it is told differently: a
+limit that parked its items would convert something that clears in hours into permanent
+data loss (rule 5, in the direction that matters), and told in the cap's words it would
+hand the owner a month-end reset date for a lunchtime wait. `run.degrade_reason`
+(migration 0016) is what every surface reads to pick the sentence.
 
 ## Scheduling
 

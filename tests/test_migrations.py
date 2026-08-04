@@ -212,6 +212,9 @@ FROZEN_CHECKSUMS = {
     "0015_monitored_chats.sql": (
         "08e897e5f38ec4a2eb46b0c6ea2ae22f83e24ae557fa7181237f394148765348"
     ),
+    "0016_degrade_reason.sql": (
+        "f3d0f3f23d2c65b44e3d9b32ca803f317cc2ef896b754a5a30a63b623949d92a"
+    ),
 }
 
 

@@ -355,27 +355,47 @@ def sources_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:
             # One sentence, built once, read by the panel and by the sidebar alert, so
             # the two surfaces cannot disagree about how bad the pause is. Only computed
             # when it holds — it costs a prompt-file read and a count.
-            "degraded_note": degraded_note(conn) if degraded else None,
+            "degraded_note": (
+                degraded_note(conn, reason=_reason_of(last)) if degraded else None
+            ),
         },
     )
 
 
-def degraded_note(conn: sqlite3.Connection, today: date | None = None) -> str:
+def _reason_of(run: sqlite3.Row | None) -> str | None:
+    return str(run["degrade_reason"]) if run and run["degrade_reason"] else None
+
+
+def degraded_note(
+    conn: sqlite3.Connection, today: date | None = None, *, reason: str | None = None
+) -> str:
     """What "extraction paused" actually means today, in items and in dates.
 
     The old line stopped at "triage only", which told the owner the cap had been reached
     and nothing about the two facts that decide what to do next: how much of the ledger
     is missing, and how long it stays missing. The cap resets on the calendar month and
     has no other release, so a pause on the 3rd is a four-week pause.
+
+    Two pauses now exist and they have opposite shapes, so `reason` (run.degrade_reason,
+    migration 0016) picks the sentence. A usage window clears on its own within hours, has
+    no reset-of-the-month date, and leaves its items pending rather than parked — telling
+    it in the cap's words would hand the owner a four-week date for a lunchtime pause, and
+    name a cap that was never reached. `None` is a pre-0016 row, where degraded could only
+    have meant the cap.
     """
     from backglass import costs
 
     stranded = costs.stranded_extractions(conn)
+    waiting = f"{stranded} item{'' if stranded == 1 else 's'} waiting"
+    if reason == "rate_limit":
+        return (
+            "Model rate limit reached — extraction paused for that run, triage only. "
+            f"{waiting}; they were left pending, and the next scheduled sync retries them."
+        )
     resets = costs.cap_resets_on(today)
     return (
         "Spend cap reached — extraction paused, triage only. "
-        f"{stranded} item{'' if stranded == 1 else 's'} waiting; "
-        f"the cap resets {resets.day} {resets:%b}."
+        f"{waiting}; the cap resets {resets.day} {resets:%b}."
     )
 
 

@@ -45,6 +45,21 @@ class ModelError(RuntimeError):
     """The model call failed, or returned something that is not the requested shape."""
 
 
+class RateLimited(ModelError):
+    """The backend refused because a usage window is exhausted, not because it failed.
+
+    The distinction is the whole point. A malformed response is the model getting the
+    item wrong, and extract-commitments.md §Failure handling says park it after two
+    attempts. A rate limit says nothing about the item at all: retrying it now meets the
+    same wall, and parking it throws away work that would have succeeded an hour later.
+    So this never consumes an attempt, never parks, and stops the wave — the items stay
+    PENDING and the next scheduled sync picks them up (CLAUDE.md rule 5, in the direction
+    that does not lose data).
+
+    Server overload (529) rides the same path for the same reason: it clears by itself.
+    """
+
+
 @dataclass(frozen=True)
 class ModelResult:
     data: dict[str, Any]
@@ -106,6 +121,11 @@ class ClaudeCLIBackend:
             try:
                 data, cost = self._run(system, prompt, schema, model, budget_usd)
                 return ModelResult(data=data, cost_usd=spent + cost)
+            except RateLimited as exc:
+                # Not an attempt. The window is shut; a second call inside the same second
+                # would only confirm it, and the caller has to stop rather than park.
+                exc.cost_usd = spent + getattr(exc, "cost_usd", 0.0)  # type: ignore[attr-defined]
+                raise
             except ModelError as exc:
                 last = exc
                 spent += getattr(exc, "cost_usd", 0.0)
@@ -156,6 +176,21 @@ class ClaudeCLIBackend:
             raise ModelError(f"model call exceeded {self.timeout_seconds}s") from exc
 
         if not completed.stdout.strip():
+            # The CLI can die before it writes an envelope, and the reason is then only on
+            # stderr — a shut usage window read as a plain failure would park the item.
+            #
+            # What this branch is allowed to match is the whole point, because the two
+            # mistakes are not symmetrical. Reading a real limit as a failure parks one
+            # item after its two attempts and lets the rest of the pass continue: bounded,
+            # and visible in the run's errors. Reading a crash as a limit breaks the whole
+            # pass and consumes no attempt, so an item that fails deterministically stalls
+            # the queue behind it on every later sync — while the panel promises a retry.
+            # Only phrases a limit actually uses may reach here; see the marker list.
+            if _looks_rate_limited(completed.stderr):
+                raise RateLimited(
+                    f"model rate limit (exit {completed.returncode}): "
+                    f"{completed.stderr.strip()[:200]}"
+                )
             raise ModelError(
                 f"empty response (exit {completed.returncode}): {completed.stderr[:300]}"
             )
@@ -166,7 +201,12 @@ class ClaudeCLIBackend:
 
         cost = float(envelope.get("total_cost_usd") or 0.0)
         if envelope.get("is_error"):
-            error = ModelError(f"model reported an error: {str(envelope.get('result'))[:300]}")
+            detail = str(envelope.get("result"))[:300]
+            error: ModelError
+            if _rate_limited_envelope(envelope):
+                error = RateLimited(f"model rate limit: {detail}")
+            else:
+                error = ModelError(f"model reported an error: {detail}")
             error.cost_usd = cost  # type: ignore[attr-defined]
             raise error
 
@@ -183,6 +223,63 @@ class ClaudeCLIBackend:
             error.cost_usd = cost  # type: ignore[attr-defined]
             raise error
         return parsed, cost
+
+
+#: Subtypes the CLI's `-p --output-format json` envelope can carry, read out of the
+#: shipped binary (2.1.221, verified 2026-08-04): success, error_during_execution,
+#: error_max_turns, error_max_budget_usd, error_max_structured_output_retries. None of
+#: them names a rate limit, so an exhausted window can only arrive as a generic error
+#: whose *text* carries the reason. These two subtypes are the model failing to produce
+#: the requested shape, which is exactly the retry-then-park case, so they are never read
+#: as transient however the text reads — a schema failure that happens to quote the words
+#: "rate limit" back at us must still park.
+_SCHEMA_FAILURE_SUBTYPES = frozenset({"error_max_turns", "error_max_structured_output_retries"})
+
+#: The vocabulary the CLI uses for a limit that clears on its own. Every phrase is present
+#: in the 2.1.221 binary's own limit and API-error strings ("usage limit reached", "rate
+#: limited", "rate_limit_error", "session limit", "weekly limit", "Server is temporarily
+#: limiting requests (not your usage limit)", "Repeated 529 Overloaded errors"). Matched
+#: as substrings rather than pinned to one sentence, because the sentence is UI copy and
+#: changes between releases while the noun does not.
+#:
+#: Phrases only, never a bare status number. `429` and `529` would match anywhere in
+#: arbitrary text — including the column offsets of a minified Node stack trace
+#: (`cli.js:1:429517`) — which turns a crashed subprocess into a "rate limit", breaks the
+#: whole pass, and consumes no attempt, so the crashing item stalls the queue behind it on
+#: every later sync while the panel promises a retry. `rate_limit_error` is Anthropic's own
+#: error type and `overloaded` is 529's own word, so neither number buys anything the
+#: phrases miss.
+#:
+#: NOT confirmed against a live rate-limited envelope — no such envelope has been captured
+#: from this machine. The cost of a false negative is the old behaviour (park after two
+#: attempts); the cost of a false positive is one stopped wave whose items retry next
+#: sync. Both are recoverable, and we only ever consult this on an error the backend
+#: already declared.
+_TRANSIENT_LIMIT_MARKERS = (
+    "usage limit",
+    "rate limit",
+    "rate_limit_error",
+    "rate limited",
+    "session limit",
+    "weekly limit",
+    "temporarily limiting requests",
+    "overloaded",
+)
+
+
+def _looks_rate_limited(text: str | None) -> bool:
+    lowered = (text or "").lower()
+    return any(marker in lowered for marker in _TRANSIENT_LIMIT_MARKERS)
+
+
+def _rate_limited_envelope(envelope: dict[str, Any]) -> bool:
+    if str(envelope.get("subtype") or "") in _SCHEMA_FAILURE_SUBTYPES:
+        return False
+    # `errors` is a list the error_during_execution variant carries alongside `result`;
+    # the reason lands in whichever of the three the CLI chose to fill.
+    return _looks_rate_limited(
+        f"{envelope.get('result')} {envelope.get('error')} {envelope.get('errors')}"
+    )
 
 
 # ────────────────────────────────────────────────────────────── DeepInfra
