@@ -65,13 +65,22 @@ class SyncReport:
     writes: int = 0
     spend_cents: int = 0
     degraded: bool = False
-    #: Why, when `degraded`. 'spend_cap' | 'rate_limit'. A bare boolean made every surface
-    #: assume the cap, so a rate-limited run would have asserted a month-long pause that
-    #: was not happening and a reset date that meant nothing.
+    #: Why, when `degraded`. 'spend_cap' | 'rate_limit:triage' | 'rate_limit:extract'. A
+    #: bare boolean made every surface assume the cap, so a rate-limited run would have
+    #: asserted a month-long pause that was not happening and a reset date that meant
+    #: nothing. Readers split on the colon: the stage refines the reason rather than
+    #: sitting in a column beside it, so the two can never disagree, and anything a reader
+    #: does not recognise — including a NULL row from before 0016 — falls through to the
+    #: cap, which is the only pause those rows could have been.
     degrade_reason: str | None = None
     #: A model usage window closed mid-run. The items it touched are still PENDING, not
     #: parked, and no attempt was spent on them — see extract.client.RateLimited.
     rate_limited: bool = False
+    #: Which stage the window closed in: 'triage' | 'extract'. The two leave completely
+    #: different populations behind — triage-stranded items have no verdict at all, so no
+    #: count over 'keep' items can see them — and only one of the two runs triage to
+    #: completion, so a single sentence for both would assert the other stage's behaviour.
+    rate_limited_stage: str | None = None
     failed_sources: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     date_notes: list[str] = field(default_factory=list)
@@ -182,10 +191,21 @@ def sync(
     elif report.rate_limited:
         # Appended once, here, rather than per stage: triage and extraction can both trip
         # it and the owner does not need to be told twice. Rule 5 — surfaced, non-zero exit.
-        report.degraded, report.degrade_reason = True, "rate_limit"
+        #
+        # The stage rides on the reason rather than in a column of its own. It is a
+        # refinement of the same fact — which pause this was — and every reader already
+        # threads exactly one string from `run.degrade_reason` to the sentence it picks. A
+        # second column would need a second migration, a second argument through
+        # record_run and three renderers, and could disagree with the first (a stage set
+        # beside 'spend_cap'); a qualified reason cannot disagree with itself. Readers
+        # split on the colon, so 'spend_cap', NULL, and any value they do not recognise
+        # keep falling through to the behaviour they already had.
+        stage = report.rate_limited_stage
+        report.degraded = True
+        report.degrade_reason = f"rate_limit:{stage}" if stage else "rate_limit"
         report.errors.append(
-            "model rate limit reached; the remaining items are still pending "
-            "(not parked) and the next scheduled sync retries them"
+            f"model rate limit reached during {stage or 'the run'}; the remaining items "
+            "are still pending (not parked) and the next scheduled sync retries them"
         )
     report.commitments_inserted = ledger.stats.commitments_inserted
     report.commitments_deduped = ledger.stats.commitments_deduped
@@ -309,6 +329,64 @@ def _rule_pass(
                 report.triaged_out += 1
 
 
+class _LimitClaim:
+    """One unit claiming a rate limit may be lying; a second one in the same pass is a wall.
+
+    Stopping the wave is the right move when the window really is shut, and it costs
+    almost nothing: the items are pending, and the next scheduled sync takes them. It
+    costs everything when the window is not shut. A stopped wave consumes no attempt, so
+    an item that fails deterministically in a way that reads like a limit stalls every
+    item behind it on every later sync — forever — while the panel promises a retry. A
+    silent permanent stall under a reassuring sentence is the failure this whole change
+    exists to remove, so it must not rest on detection being perfect.
+
+    Hence the cheapest bound that does not weaken the genuine case: a real window is shut
+    for every call, so a second claimant always arrives. A lone one is held instead, and
+    when the pass ends with nothing corroborating it, released down the ordinary failure
+    path — parked or escalated, counted in the run's errors, bounded by the item's two
+    attempts like any other failure. A per-run budget or a consecutive-degraded-run
+    counter would bound it too, but both only cap how long the stall lasts; this refuses
+    to start one, and needs no state outside the loop.
+
+    Two *anywhere in the pass*, deliberately not two adjacent. Results are yielded in
+    submission order while the calls run concurrently, so a window that closes mid-wave
+    produces refusals in whatever order the threads were dispatched — a success can land
+    between two genuine refusals. Adjacency would read that as a lone liar, park an item
+    the window never let through, and let the run walk into the wall again on the next
+    wave. Counting is indifferent to the ordering, and no weaker: a single poisoned item
+    is still a single claim however the wave is scheduled.
+    """
+
+    def __init__(
+        self,
+        report: SyncReport,
+        stage: str,
+        park: Callable[[Any, Exception], None],
+    ) -> None:
+        self._report = report
+        self._stage = stage
+        self._park = park
+        self._held: tuple[Any, Exception] | None = None
+
+    def claimed(self, key: Any, exc: Exception) -> None:
+        """A unit came back rate-limited. Confirm the wall, or hold the claim."""
+        if self._report.rate_limited:
+            return  # Already a wall. This one simply joins the items left pending.
+        if self._held is None:
+            self._held = (key, exc)
+            return
+        self._held = None  # Both claimants stay pending; neither spends an attempt.
+        self._report.rate_limited = True
+        self._report.rate_limited_stage = self._stage
+
+    def settle(self) -> None:
+        """The pass ended. A claim nothing corroborated was one unit's problem."""
+        if self._held is not None:
+            key, exc = self._held
+            self._held = None
+            self._park(key, exc)
+
+
 def _triage_pass(
     conn: sqlite3.Connection,
     ledger: Ledger,
@@ -345,22 +423,34 @@ def _triage_pass(
         except Exception as exc:  # noqa: BLE001
             return int(item["id"]), exc
 
+    def park(item_id: Any, exc: Exception) -> None:
+        report.errors.append(f"triage {item_id}: {exc}")
+
+    limit = _LimitClaim(report, "triage", park)
     for item_id, outcome in _in_parallel(
-        work, pending, settings.max_concurrency, cap, stop_on_cap=False
+        work,
+        pending,
+        settings.max_concurrency,
+        cap,
+        stop_on_cap=False,
+        stop_when=lambda: report.rate_limited,
     ):
         if isinstance(outcome, RateLimited):
-            # Breaking closes the generator, so the waves that were never submitted stay
-            # unsubmitted and their items keep triage_verdict NULL — pending, not failed.
-            report.rate_limited = True
-            break
-        if isinstance(outcome, Exception):
-            report.errors.append(f"triage {item_id}: {outcome}")
+            limit.claimed(item_id, outcome)
             continue
+        if isinstance(outcome, Exception):
+            park(item_id, outcome)
+            continue
+        # Charged and recorded even after the wall: these are siblings whose calls had
+        # already returned when the limit landed. Their verdicts are real work, paid for
+        # out of the same window, and throwing them away would both re-read them next sync
+        # and leave run.spend_cents under-reporting on exactly the runs that burned quota.
         cap.charge(outcome.cost_usd)
         ledger.record_triage(item_id, outcome.verdict, outcome.reason)
         report.model_triaged += 1
         if outcome.verdict == "drop":
             report.triaged_out += 1
+    limit.settle()  # Nothing corroborated a held claim.
 
 
 def _batch_triage_pass(
@@ -390,16 +480,29 @@ def _batch_triage_pass(
             return chunk, exc
 
     escalations: list[dict[str, Any]] = []
+
+    def park(chunk: Any, exc: Exception) -> None:
+        # A lone claimant is an ordinary failed batch, and a failed batch escalates.
+        del exc
+        escalations.extend(chunk)
+        report.escalated += len(chunk)
+
+    limit = _LimitClaim(report, "triage", park)
     for chunk, outcome in _in_parallel(
-        work, chunks, settings.max_concurrency, cap, stop_on_cap=False
+        work,
+        chunks,
+        settings.max_concurrency,
+        cap,
+        stop_on_cap=False,
+        stop_when=lambda: report.rate_limited,
     ):
         if isinstance(outcome, RateLimited):
-            # Deliberately not escalated. Escalation exists because a failed batch says
-            # nothing about its items and the per-item pass might still read them; a shut
-            # window says the per-item pass cannot run either, so escalating here would
-            # only re-fail every item one at a time. They keep triage_verdict NULL.
-            report.rate_limited = True
-            break
+            # Confirmed claims are deliberately not escalated. Escalation exists because a
+            # failed batch says nothing about its items and the per-item pass might still
+            # read them; a shut window says the per-item pass cannot run either, so
+            # escalating would only re-fail every item one at a time. Verdicts stay NULL.
+            limit.claimed(chunk, outcome)
+            continue
         if isinstance(outcome, Exception):
             # A failed batch proves nothing about its items: all of them re-read
             # per-item. Not an error — the fallback IS the failure handling.
@@ -418,6 +521,7 @@ def _batch_triage_pass(
             if item_id in by_id:
                 escalations.append(by_id[item_id])
                 report.escalated += 1
+    limit.settle()  # Nothing corroborated a held claim.
     return escalations
 
 
@@ -487,8 +591,18 @@ def _extract_pass(
         except Exception as exc:  # noqa: BLE001
             return item, exc
 
+    def park(item: Any, exc: Exception) -> None:
+        report.parked += 1
+        report.errors.append(f"extract {int(item['id'])}: {exc}")
+
+    limit = _LimitClaim(report, "extract", park)
     for item, outcome in _in_parallel(
-        work, pending, settings.max_concurrency, cap, stop_on_cap=True
+        work,
+        pending,
+        settings.max_concurrency,
+        cap,
+        stop_on_cap=True,
+        stop_when=lambda: report.rate_limited,
     ):
         item_id = int(item["id"])
         if isinstance(outcome, RateLimited):
@@ -496,14 +610,14 @@ def _extract_pass(
             # brake is safe: a shut usage window is not the item's fault, so it must not
             # consume the item's two attempts. Nothing is written, so extraction_version
             # stays unset and pending_extraction_unbatched still returns it next sync.
-            report.rate_limited = True
-            break
+            limit.claimed(item, outcome)
+            continue
         if isinstance(outcome, Exception):
             # extract-commitments.md §Failure handling: an item that fails is parked with
             # extraction_version unset, so a later prompt version retries it, and it is
-            # surfaced rather than silently skipped.
-            report.parked += 1
-            report.errors.append(f"extract {item_id}: {outcome}")
+            # surfaced rather than silently skipped. Shared with the park path a lone
+            # unconfirmed limit claim takes, because it is the same handling.
+            park(item, outcome)
             continue
         extraction, cost = outcome
         cap.charge(float(cost))
@@ -556,6 +670,7 @@ def _extract_pass(
         report.engagements_advanced += plans.advanced
         report.date_notes.extend(applied.date_notes)
         report.date_notes.extend(plans.date_notes)
+    limit.settle()  # Nothing corroborated a held claim.
 
 
 # ──────────────────────────────────────────────────────────────── helpers
@@ -603,6 +718,7 @@ def _in_parallel[T, R](
     cap: SpendCap,
     *,
     stop_on_cap: bool,
+    stop_when: Callable[[], bool] | None = None,
 ) -> Iterator[R]:
     """Run `work` over `items`, optionally stopping once the spend cap is reached.
 
@@ -631,12 +747,23 @@ def _in_parallel[T, R](
     therefore charged) before the next wave is submitted. The cost of the fix is at most
     one wave of overshoot, which is the smallest overshoot possible without giving up
     concurrency altogether.
+
+    `stop_when` is the same brake for a rate limit, and it is checked in the same place
+    for a reason the caller cannot get right on its own. A caller that broke out of this
+    loop would stop the wave it is *in*, and the rest of that wave was submitted before
+    the limit landed: those calls ran, spent quota out of the very window being backed off
+    from, and returned results that break discards — unwritten and uncharged, so the run
+    under-reports its spend and the next sync pays for the same work again. Checked here,
+    between waves, nothing new is started and everything already paid for is still yielded
+    to the caller.
     """
     width = max(1, max_workers)
     remaining = list(items)
     with ThreadPoolExecutor(max_workers=width) as pool:
         while remaining:
             if stop_on_cap and cap.reached:
+                return
+            if stop_when is not None and stop_when():
                 return
             wave, remaining = remaining[:width], remaining[width:]
             for future in [pool.submit(work, item) for item in wave]:

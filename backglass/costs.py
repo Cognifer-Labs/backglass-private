@@ -29,6 +29,11 @@ class MonthCosts:
     cap_cents: int
     runs: int
     degraded_runs: int
+    #: `degraded_runs` split by cause, because the two pauses have nothing to do with each
+    #: other and the summary has to name the right one. They sum to `degraded_runs`; a
+    #: pre-0016 row counts as the cap, which is the only thing it could have been.
+    capped_runs: int
+    rate_limited_runs: int
     extracted: int
     fetched: int
     triaged_out: int
@@ -82,6 +87,16 @@ def stranded_extractions(conn: sqlite3.Connection, now: datetime | None = None) 
     return int(row["stranded"])
 
 
+def untriaged_items(conn: sqlite3.Connection) -> int:
+    """Ingested items with no triage verdict yet — what a paused *triage* is costing.
+
+    The stranded count above cannot see these: they have no verdict, so no predicate over
+    'keep' reaches them. See untriaged_items.sql.
+    """
+    row = conn.execute(query("untriaged_items"), {"user_id": USER_ID}).fetchone()
+    return int(row["untriaged"])
+
+
 def month(
     conn: sqlite3.Connection, settings: Settings, today: date | None = None
 ) -> MonthCosts:
@@ -98,6 +113,8 @@ def month(
         cap_cents=settings.monthly_spend_cap_cents,
         runs=int(row["runs"]),
         degraded_runs=int(row["degraded_runs"]),
+        capped_runs=int(row["capped_runs"]),
+        rate_limited_runs=int(row["rate_limited_runs"]),
         extracted=extracted,
         fetched=int(row["fetched"]),
         triaged_out=int(row["triaged_out"]),

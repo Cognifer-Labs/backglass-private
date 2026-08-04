@@ -7,6 +7,14 @@ SELECT
   COALESCE(SUM(spend_cents), 0)     AS spend_cents,
   COUNT(*)                          AS runs,
   COALESCE(SUM(degraded), 0)        AS degraded_runs,
+  -- Split by cause (migration 0016), because `degraded` alone made the summary tell every
+  -- pause as the spend cap's — including a run the subscription's usage window stopped,
+  -- which has nothing to do with the cap and clears in hours rather than on the 1st.
+  -- NULL predates the column, when the cap was the only thing that could pause a run.
+  COALESCE(SUM(degraded AND COALESCE(degrade_reason, 'spend_cap') LIKE 'rate_limit%'), 0)
+                                    AS rate_limited_runs,
+  COALESCE(SUM(degraded AND COALESCE(degrade_reason, 'spend_cap') NOT LIKE 'rate_limit%'), 0)
+                                    AS capped_runs,
   COALESCE(SUM(items_extracted), 0) AS extracted,
   COALESCE(SUM(items_fetched), 0)   AS fetched,
   COALESCE(SUM(items_triaged_out), 0) AS triaged_out

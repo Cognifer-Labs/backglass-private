@@ -132,7 +132,18 @@ which is why `on_rate_limit` exists. It is a different pause and it is told diff
 limit that parked its items would convert something that clears in hours into permanent
 data loss (rule 5, in the direction that matters), and told in the cap's words it would
 hand the owner a month-end reset date for a lunchtime wait. `run.degrade_reason`
-(migration 0016) is what every surface reads to pick the sentence.
+(migration 0016) is what every surface reads to pick the sentence, and it carries which
+stage stopped — `rate_limit:triage` or `rate_limit:extract` — because those leave disjoint
+populations behind. A limit during extraction is the cap's shape (triage ran, extraction
+did not) and counts kept items with no extraction; a limit during triage is the opposite
+(triage stopped, extraction never started) and its items have no verdict at all, so no
+count over `triage_verdict = 'keep'` can see them.
+
+The wave stops, but only forward: work already submitted is charged and kept, because
+those calls have already spent the window being backed off from. And one unit claiming a
+limit is not enough to stop it — a real window refuses every call, so a second claim
+always arrives, while a lone claimant is a deterministic failure that read like a limit
+and would otherwise stall the queue behind it on every later sync forever.
 
 ## Scheduling
 

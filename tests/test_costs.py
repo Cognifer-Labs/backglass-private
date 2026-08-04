@@ -22,12 +22,13 @@ def _run_row(
     spend_cents: int,
     extracted: int = 0,
     degraded: int = 0,
+    degrade_reason: str | None = None,
 ) -> None:
     conn.execute(
         "INSERT INTO run (user_id, started_at, spend_cents, items_extracted,"
-        " items_fetched, items_triaged_out, degraded)"
-        " VALUES (1, ?, ?, ?, ?, ?, ?)",
-        (started_at, spend_cents, extracted, extracted + 5, 5, degraded),
+        " items_fetched, items_triaged_out, degraded, degrade_reason)"
+        " VALUES (1, ?, ?, ?, ?, ?, ?, ?)",
+        (started_at, spend_cents, extracted, extracted + 5, 5, degraded, degrade_reason),
     )
 
 
@@ -71,6 +72,40 @@ class TestMonth:
         # 500c over 10 days of 31 → 1550 by month end.
         assert m.projected_cents == 1550
         assert m.days_elapsed == 10 and m.days_in_month == 31
+
+    def test_degraded_runs_are_split_by_which_pause_it_was(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The summary line has to name a cause, and the two have nothing in common: the
+        cap releases on the 1st with its items parked, a usage window releases in hours
+        with its items pending. A NULL reason predates the column, when the cap was the
+        only thing that could pause a run, so it counts as the cap."""
+        _run_row(conn, "2026-08-02T05:00:00+00:00", 100, degraded=1, degrade_reason=None)
+        _run_row(
+            conn, "2026-08-03T05:00:00+00:00", 100, degraded=1, degrade_reason="spend_cap"
+        )
+        _run_row(
+            conn,
+            "2026-08-04T05:00:00+00:00",
+            100,
+            degraded=1,
+            degrade_reason="rate_limit:triage",
+        )
+        _run_row(
+            conn,
+            "2026-08-05T05:00:00+00:00",
+            100,
+            degraded=1,
+            degrade_reason="rate_limit:extract",
+        )
+        _run_row(conn, "2026-08-06T05:00:00+00:00", 100)
+
+        m = costs.month(conn, settings, today=TODAY)
+
+        assert m.degraded_runs == 4
+        assert m.capped_runs == 2
+        assert m.rate_limited_runs == 2
+        assert m.capped_runs + m.rate_limited_runs == m.degraded_runs
 
     def test_empty_month_has_no_division_by_zero(
         self, conn: sqlite3.Connection, settings: Settings
@@ -193,6 +228,31 @@ class TestWhatTheCapIsCosting:
         )
         assert costs.stranded_extractions(conn) == 0
 
+    def test_untriaged_items_counts_what_a_paused_triage_stranded(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """The count the stranded one structurally cannot take. Its predicate opens with
+        `triage_verdict = 'keep'`, and an item triage never reached has no verdict — so a
+        run stopped during triage reported zero items waiting at the moment the most of
+        the ledger was missing. The predicate here is pending_triage's, so the number is
+        what the next un-paused run would work through."""
+        for external_id, verdict in (
+            ("unread-1", None),
+            ("unread-2", None),
+            ("unclassified", "unclassified"),
+            ("kept", "keep"),
+            ("dropped", "drop"),
+        ):
+            conn.execute(
+                "INSERT INTO source_item (user_id, source, external_id, fetched_at,"
+                " occurred_at, content_hash, triage_verdict)"
+                " VALUES (1, 'gmail:t', ?, '2026-08-05T00:00:00+00:00',"
+                " '2026-08-05T00:00:00+00:00', ?, ?)",
+                (external_id, f"h:{external_id}", verdict),
+            )
+        assert costs.untriaged_items(conn) == 3
+        assert costs.stranded_extractions(conn) == 1, "disjoint populations"
+
     def test_the_reset_date_is_the_first_of_the_next_month(self) -> None:
         assert costs.cap_resets_on(TODAY) == date(2026, 9, 1)
         assert costs.cap_resets_on(date(2026, 8, 31)) == date(2026, 9, 1)
@@ -206,7 +266,7 @@ def test_every_costs_query_loads_and_executes(conn: sqlite3.Connection) -> None:
     params["extraction_version"] = "extract-commitments@1"
     params["cutoff"] = "2026-08-09T00:00:00+00:00"
     for name in ("costs_month", "costs_by_run", "costs_daily", "costs_kill_trend",
-                 "costs_top_senders", "stranded_extractions"):
+                 "costs_top_senders", "stranded_extractions", "untriaged_items"):
         sql = query(name)
         needed = {k: v for k, v in params.items() if f":{k}" in sql}
         conn.execute(sql, needed).fetchall()

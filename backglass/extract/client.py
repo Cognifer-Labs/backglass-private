@@ -266,10 +266,32 @@ _TRANSIENT_LIMIT_MARKERS = (
     "overloaded",
 )
 
+#: The wrapper the CLI actually renders its limits through, which the marker list above
+#: read too narrowly. Its label table is
+#: `{five_hour: "session limit", seven_day: "weekly limit", seven_day_opus: "Opus limit",
+#: seven_day_sonnet: "Sonnet limit", seven_day_overage_included: "Fable 5 limit",
+#: overage: "usage credit limit"}`, rendered as `You've hit your ${label}` — so four of the
+#: six carry no phrase from the list, including the two per-model weekly limits, which are
+#: the ones a pipeline that pins `model_triage` and `model_extract` is most likely to meet.
+#: ("usage credit limit" does not contain "usage limit" either.)
+#:
+#: Matched on the wrapper rather than the six labels because the labels are the part that
+#: changes: a seventh model gets a seventh label, and a marker list that has to be revised
+#: every time a model ships is a marker list that is silently wrong between releases. The
+#: leading `You've` is deliberately not matched — the apostrophe is typographic in some
+#: renderings — and the gap is bounded so this stays a phrase and not a pair of words that
+#: could meet across a paragraph.
+#:
+#: Still phrases only. This is a regex over words, never a status number; the reasoning in
+#: the marker list above about `cli.js:1:429517` is what that rule is protecting.
+_TRANSIENT_LIMIT_PATTERN = re.compile(r"hit your .{0,40}?limit")
+
 
 def _looks_rate_limited(text: str | None) -> bool:
     lowered = (text or "").lower()
-    return any(marker in lowered for marker in _TRANSIENT_LIMIT_MARKERS)
+    if any(marker in lowered for marker in _TRANSIENT_LIMIT_MARKERS):
+        return True
+    return _TRANSIENT_LIMIT_PATTERN.search(lowered) is not None
 
 
 def _rate_limited_envelope(envelope: dict[str, Any]) -> bool:

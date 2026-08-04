@@ -382,20 +382,56 @@ def degraded_note(
     it in the cap's words would hand the owner a four-week date for a lunchtime pause, and
     name a cap that was never reached. `None` is a pre-0016 row, where degraded could only
     have meant the cap.
+
+    A rate limit carries which stage it stopped ('rate_limit:triage' | 'rate_limit:extract'
+    — sync.SyncReport.rate_limited_stage), because that decides both halves of the
+    sentence. Only the extraction case is "extraction paused, triage only": that is the
+    cap's shape, and it is true there. A limit hit during triage did the opposite — triage
+    stopped and extraction never ran at all — and its items have no verdict, so the
+    stranded count, which opens with `triage_verdict = 'keep'`, is structurally zero for
+    it. Borrowing the cap's sentence there asserted a stage that did not run and printed
+    "0 items waiting" at the moment the most of the ledger was missing.
+
+    Anything the split does not recognise — 'spend_cap', NULL, a value from a future
+    version — falls through to the cap, which is the behaviour every one of them had.
     """
     from backglass import costs
 
+    kind, _, stage = (reason or "").partition(":")
+    if kind == "rate_limit":
+        return _rate_limit_note(conn, stage)
     stranded = costs.stranded_extractions(conn)
     waiting = f"{stranded} item{'' if stranded == 1 else 's'} waiting"
-    if reason == "rate_limit":
-        return (
-            "Model rate limit reached — extraction paused for that run, triage only. "
-            f"{waiting}; they were left pending, and the next scheduled sync retries them."
-        )
     resets = costs.cap_resets_on(today)
     return (
         "Spend cap reached — extraction paused, triage only. "
         f"{waiting}; the cap resets {resets.day} {resets:%b}."
+    )
+
+
+def _rate_limit_note(conn: sqlite3.Connection, stage: str) -> str:
+    """One sentence per stage, each counting the population that stage stranded."""
+    from backglass import costs
+
+    retried = "they were left pending, and the next scheduled sync retries them."
+    if stage == "triage":
+        unread = costs.untriaged_items(conn)
+        return (
+            "Model rate limit reached — the run stopped while reading its new items, "
+            f"and extraction did not run. {unread} item{'' if unread == 1 else 's'} "
+            f"unread; {retried}"
+        )
+    if stage == "extract":
+        stranded = costs.stranded_extractions(conn)
+        return (
+            "Model rate limit reached — extraction paused for that run, triage only. "
+            f"{stranded} item{'' if stranded == 1 else 's'} waiting; {retried}"
+        )
+    # A row written before the stage was recorded. Which population is missing is not
+    # knowable from it, and a count taken from the wrong one is worse than no count.
+    return (
+        "Model rate limit reached — the run stopped early, and the items it did not "
+        "reach were left pending; the next scheduled sync retries them."
     )
 
 

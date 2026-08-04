@@ -995,10 +995,12 @@ def _print_report(report: Any, *, dry_run: bool) -> None:
         f"review queue {report.review_queue})"
     )
     typer.echo(f"  writes {report.writes}, spend {report.spend_cents}c")
-    if report.degrade_reason == "rate_limit":
+    # startswith, because the reason carries which stage stopped ('rate_limit:triage').
+    if (report.degrade_reason or "").startswith("rate_limit"):
+        stage = str(report.degrade_reason).partition(":")[2]
         typer.echo(
-            "  DEGRADED: model rate limit reached; the remaining items are still "
-            "pending and the next sync retries them",
+            f"  DEGRADED: model rate limit reached{f' during {stage}' if stage else ''}; "
+            "the remaining items are still pending and the next sync retries them",
             err=True,
         )
     elif report.degraded:
@@ -1921,13 +1923,23 @@ def costs_summary(ctx: typer.Context) -> None:
         f"runs           {m.runs}{degraded} · extraction {m.extracted} items"
         f" · ≈{avg} per extracted item"
     )
-    if m.degraded_runs and not m.spend_is_imputed:
+    # Told by cause, not by the boolean. A run the usage window stopped never reached the
+    # cap — its items are pending rather than parked and clear by themselves — so folding
+    # it into the cap's line names a wall that was not hit and a month-end release that
+    # does not apply.
+    if m.rate_limited_runs:
+        typer.echo(
+            f"  ← {m.rate_limited_runs} run(s) hit a model rate limit this month; what "
+            "they left is still pending, and later syncs retry it",
+            err=True,
+        )
+    if m.capped_runs and not m.spend_is_imputed:
         typer.echo(
             "  ← spend cap was reached this month; extraction has been skipped", err=True
         )
-    elif m.degraded_runs:
+    elif m.capped_runs:
         typer.echo(
-            f"  ← {m.degraded_runs} run(s) degraded before the backend was known to be "
+            f"  ← {m.capped_runs} run(s) degraded before the backend was known to be "
             "unbilled; re-run `backglass sync` to extract what they left pending",
             err=True,
         )
