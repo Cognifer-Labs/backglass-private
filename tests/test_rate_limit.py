@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import sqlite3
 import threading
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -858,3 +859,46 @@ class TestNeitherPauseClaimsTheOthersCause:
         assert "model rate limit reached" in err
         assert "the next sync retries them" in err
         assert "spend cap" not in err
+
+
+# ── the diagnostic must survive the schema it diagnoses ───────────────────
+
+
+def test_status_reads_a_pre_0016_run_without_dying(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`status` is the one reader that deliberately does not migrate.
+
+    Every other reader of `degrade_reason` sits behind a `migrate(conn)`; `status` does
+    not, because a diagnostic must not mutate the store it is diagnosing. That makes it
+    the one command that can meet a pre-0016 `run` row — restore a backup taken before
+    this migration, or simply run it first after checkout — and it is precisely the
+    command reached for when a run has degraded. Reading the new column unguarded killed
+    it with KeyError at exactly that moment.
+    """
+    from typer.testing import CliRunner
+
+    from backglass import __main__ as cli
+    from backglass.config import Settings
+    from backglass.db import connect, migrate
+
+    db = tmp_path / "pre0016.db"
+    conn = connect(db)
+    migrate(conn)
+    # The shape of a store written before 0016 shipped: the column simply is not there.
+    conn.execute("ALTER TABLE run DROP COLUMN degrade_reason")
+    conn.execute(
+        "INSERT INTO run (user_id, started_at, items_fetched, items_extracted,"
+        " writes, spend_cents, degraded) VALUES (1, '2026-08-03T20:16:16+00:00',"
+        " 19, 0, 0, 2005, 1)"
+    )
+    conn.commit()
+    conn.close()
+
+    monkeypatch.setattr(cli, "get_settings", lambda: Settings(db_path=db))
+    result = CliRunner().invoke(cli.app, ["status"])
+
+    assert result.exit_code == 0, result.output
+    # NULL and absent both mean the same thing: before 0016, degraded could only be the
+    # cap, so the label is the cap's — the same sentence a migrated NULL row renders.
+    assert "DEGRADED (spend_cap)" in result.output

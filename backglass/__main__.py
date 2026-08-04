@@ -466,15 +466,20 @@ def status() -> None:
 
     last = conn.execute("SELECT * FROM run ORDER BY id DESC LIMIT 1").fetchone()
     if last:
+        # `status` is the one reader that deliberately does not migrate: a diagnostic must
+        # not mutate the store it is diagnosing, which is exactly what you want of the
+        # command you reach for when something is wrong. So it cannot assume a column
+        # added by 0016 exists — a restored pre-0016 backup whose last run was degraded
+        # would otherwise die of KeyError in the one command asked to explain it.
+        # dict() rather than `in last.keys()`: SIM118 would rewrite that to `in last`,
+        # and on a sqlite3.Row `in` tests VALUES, not keys — it is False for a column
+        # that exists and True for the string 'spend_cap' itself.
+        reason = dict(last).get("degrade_reason") or "spend_cap"
         typer.echo(
             f"\nlast run  {last['started_at']}  fetched {last['items_fetched']}, "
             f"extracted {last['items_extracted']}, writes {last['writes']}, "
             f"spend {last['spend_cents']}c"
-            + (
-                f"  DEGRADED ({last['degrade_reason'] or 'spend_cap'})"
-                if last["degraded"]
-                else ""
-            )
+            + (f"  DEGRADED ({reason})" if last["degraded"] else "")
         )
         if last["errors_json"]:
             for error in json.loads(str(last["errors_json"])):
