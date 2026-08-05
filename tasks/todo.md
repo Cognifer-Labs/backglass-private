@@ -151,6 +151,16 @@ guarantee. Worked around here by unloading the job. The fix is a `BEGIN IMMEDIAT
 row or an advisory lock file taken for the length of a run, and it belongs in its own
 change with its own test.
 
+**Fixed 2026-08-05** — `backglass/runlock.py`, the lock file rather than the row: the
+case that matters is a sleep or a `kill -9`, where nothing gets to clear a row and a
+stale one converts an occasional duplicate into a permanent outage. Taken inside
+`sync()` and `batch.collect()` rather than at the CLI, because there are three doors
+into the pipeline and a guard on one of them is not a guard; reentrant, because
+`batch submit` calls `sync`. A dry run is exempt. `tests/test_runlock.py`, ten
+mutations, ten red — including one that only a real second process could catch:
+weakening `LOCK_EX` to `LOCK_SH` is the entire defect and passed every same-process
+test in the file.
+
 ## Deliberately not
 
 A Canvas connector — mail already carries the notifications, and a token the owner has

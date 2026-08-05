@@ -481,3 +481,39 @@ deterministic given the id.
   nothing about the item level; when adding a loop that processes many independent
   things, ask what happens to items 2..N when item 1 raises, and make the answer explicit
   rather than inherited from whichever `except` happens to be in scope.
+
+- 2026-08-05 | A suite of 1,441 tests was green while `/schedule?date=2026-02-30` was a
+  500, a snooze of 10^15 days silently NULLed an open commitment's `due_at`, and
+  quick-add wrote the literal text "tomorrow" into the column the board sorts by. None
+  of it was subtle; none of it was reachable by any test, because every test drives a
+  value someone chose to write down. | Green means the paths you thought of work. Once
+  per surface, drive it adversarially instead: every route with a malformed, absurd and
+  oversized version of each parameter, then every write against a row that exists, with
+  the value at 0, at -1, and at 10^15. Two sweeps of an afternoon found six defects that
+  four months of tests had not, and the sweeps became `tests/test_edges.py` so the next
+  such value is caught by CI. Corollary worth stating on its own: a number that reaches
+  SQLite needs a *ceiling*, not just a floor — `date(x, '+N days')` returns NULL on
+  overflow instead of raising, and a NULL means something legitimate in most columns.
+
+- 2026-08-05 | Ten mutations against a new lock module, and four came back green. Three
+  were real gaps; the fourth was the defect itself — weakening `LOCK_EX` to `LOCK_SH`
+  (which is *exactly* "two syncs can run at once") passed every test in the file,
+  because each of them stood in for the other process with a hand-rolled `LOCK_EX`
+  probe, and an exclusive probe conflicts with a shared lock just as readily as with an
+  exclusive one. | When a test uses a stand-in for the other party, the stand-in must ask
+  the question the same way the real party would. A probe that is *stricter* than the
+  real caller cannot see the lock being loosened. For anything cross-process, pay the
+  50ms and spawn the process running the real code path — and when a mutation pass comes
+  back green, do not move on: a surviving mutation is either a missing test or a mutation
+  that was not a mutation, and both are worth the five minutes to tell apart.
+
+- 2026-08-05 | Started an audit in the shared checkout, and forty minutes in noticed five
+  files modified that I had never touched — another session was running a security pass
+  in the same tree. Before that, a test failed for reasons I could not reproduce and I
+  spent several minutes chasing my own changes. | The concurrency rule in CLAUDE.md is
+  four lessons old and I still only checked *after* something looked wrong. Check first:
+  `git status` at session start, then again the moment any result is inexplicable — a
+  file changing under you is indistinguishable from your own bug until you look. And the
+  tell is cheap to read: `ls -lT` on the surprising file against the time you last
+  touched it. Moving to a worktree mid-session cost one `git worktree add` and fifteen
+  minutes; the commit race it removed has cost more than that four times.

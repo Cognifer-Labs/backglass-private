@@ -23,6 +23,7 @@ from typing import Any
 
 from backglass import chats as chats_mod
 from backglass import contacts as contacts_mod
+from backglass import runlock
 from backglass.config import Settings
 from backglass.connectors import base, credentials
 from backglass.connectors.base import Connector
@@ -160,9 +161,39 @@ def sync(
     extract: bool = True,
     contacts_source: ContactsSource | None = None,
 ) -> SyncReport:
-    """Run the pipeline. `extract=False` stops after triage — the batch-mode submit
-    path (backglass/batch.py) reuses ingest, rules, and triage through here and hands
-    extraction to the Batches API instead."""
+    """Run the pipeline, holding the run lock. `extract=False` stops after triage — the
+    batch-mode submit path (backglass/batch.py) reuses ingest, rules, and triage through
+    here and hands extraction to the Batches API instead.
+
+    The lock is taken here rather than in the CLI command because there are three doors
+    into this pipeline (`sync`, `batch submit`, and the launchd job that calls the
+    first) and a guard on one of them is not a guard. A dry run does not take it: it
+    writes nothing, so it can neither corrupt a concurrent run nor be corrupted by one,
+    and refusing it during a long backfill would remove the one command that is safe to
+    run at any time.
+    """
+    if dry_run:
+        return _pipeline(
+            conn, settings, connectors, client,
+            dry_run=True, extract=extract, contacts_source=contacts_source,
+        )
+    with runlock.held(settings.db_path, what="sync"):
+        return _pipeline(
+            conn, settings, connectors, client,
+            dry_run=False, extract=extract, contacts_source=contacts_source,
+        )
+
+
+def _pipeline(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    connectors: list[Connector],
+    client: ModelClient,
+    *,
+    dry_run: bool,
+    extract: bool,
+    contacts_source: ContactsSource | None,
+) -> SyncReport:
     report = SyncReport()
     ledger = Ledger(conn, settings, dry_run=dry_run)
     cap = SpendCap(conn, settings, client)

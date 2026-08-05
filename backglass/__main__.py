@@ -1189,7 +1189,21 @@ def _print_report(report: Any, *, dry_run: bool) -> None:
 
 
 def main() -> None:
-    sys.exit(app())
+    """The console-script entry point.
+
+    One place turns a refused run into a sentence. `runlock.RunLocked` can come out of
+    `sync`, `batch submit` and `batch collect` today and out of anything that later
+    calls them, and a lock is not an error in the program — it is the program correctly
+    declining to be the second writer. Handled here rather than in each command so the
+    next command to take the lock inherits the sentence instead of a traceback.
+    """
+    from backglass import runlock
+
+    try:
+        sys.exit(app())
+    except runlock.RunLocked as exc:
+        typer.echo(str(exc), err=True)
+        sys.exit(1)
 
 
 # ── Phase 6: people ───────────────────────────────────────────────────────
@@ -3083,4 +3097,4 @@ def memory_export(
 
 
 if __name__ == "__main__":
-    app()
+    main()

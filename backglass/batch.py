@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from backglass import runlock
 from backglass.config import Settings
 from backglass.connectors.base import Connector
 from backglass.db import now_iso, query
@@ -181,6 +182,22 @@ def submit(
 
 
 def collect(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    anthropic_client: Any | None = None,
+) -> CollectReport:
+    """Read finished batches into the ledger, holding the run lock.
+
+    The lock is here and not only in `submit` (which takes it through `sync`) because
+    this is the half that inserts commitments: two collectors reading one finished batch
+    would write every extraction twice, which is the same duplication two overlapping
+    syncs cause and is not caught by anything downstream.
+    """
+    with runlock.held(settings.db_path, what="batch collect"):
+        return _collect(conn, settings, anthropic_client)
+
+
+def _collect(
     conn: sqlite3.Connection,
     settings: Settings,
     anthropic_client: Any | None = None,
