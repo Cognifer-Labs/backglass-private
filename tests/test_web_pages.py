@@ -1400,3 +1400,182 @@ class TestReviewQueueHoldsBothRecords:
             "SELECT status FROM engagement WHERE id = ?", (engagement_id,)
         ).fetchone()
         assert row["status"] == "declined"
+
+
+class TestRecentRunErrors:
+    """`run.errors_json` is where the pipeline records what it could not do.
+
+    Nothing in the web layer read it: `backglass status` printed the last run's array
+    and the next sync, thirty minutes later, overwrote it. On 2026-08-05 the owner's
+    scheduled syncs failed with a growing pile of expired-OAuth errors — 1 at 12:58,
+    11 by 16:58 — and every surface stayed green. It healed by accident. Had it not,
+    those items would have burned their attempts and parked permanently, in silence,
+    while CLAUDE.md rule 5 and extract-commitments.md §Failure handling both promised
+    otherwise.
+    """
+
+    OAUTH = (
+        "triage {item}: model returned an unusable response after 2 attempts: "
+        "model reported an error: Failed to authenticate: OAuth session expired "
+        "and could not be refreshed"
+    )
+
+    def _run(
+        self, conn: sqlite3.Connection, started_at: str, errors: list[str] | None = None
+    ) -> int:
+        import json
+
+        conn.execute(
+            "INSERT INTO run (user_id, started_at, finished_at, errors_json)"
+            " VALUES (1, ?, ?, ?)",
+            (started_at, started_at, json.dumps(errors) if errors else None),
+        )
+        conn.commit()
+        return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+    def _replay_the_oauth_morning(self, conn: sqlite3.Connection) -> None:
+        """The real shape of 2026-08-05: the same failure, growing, item ids all
+        different. Eleven near-identical lines is what the owner must never be shown."""
+        for hour, items in ((12, 1), (13, 3), (14, 3), (15, 11)):
+            self._run(
+                conn,
+                f"2026-08-05T{hour:02d}:58:00+00:00",
+                [self.OAUTH.format(item=8547 + n) for n in range(items)],
+            )
+
+    def test_a_clean_ledger_renders_no_error_block_at_all(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """An empty error panel is worse than no panel: it teaches the eye to skip the
+        spot the real alarm will use."""
+        self._run(conn, "2026-08-05T12:00:00+00:00")
+        panel = panel_slice(client.get("/").text, "panel-sources")
+        assert "Error" not in panel
+        assert "other error" not in panel
+
+    def test_eighteen_copies_of_one_failure_render_as_one_counted_line(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._replay_the_oauth_morning(conn)
+        panel = panel_slice(client.get("/").text, "panel-sources")
+        assert (
+            "18 × Failed to authenticate: OAuth session expired and could not be "
+            "refreshed (triage) · 4 runs" in panel
+        )
+        # The wrappers this repo puts on the error are stripped, not reproduced: the
+        # item id is what made one defect look like eighteen.
+        assert "triage 8547" not in panel
+        assert "model reported an error" not in panel
+
+    def test_the_sidebar_alerts_while_it_is_still_happening(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._replay_the_oauth_morning(conn)
+        body = client.get("/goals").text  # a page with no Sources panel on it
+        assert (
+            "Failed to authenticate: OAuth session expired and could not be refreshed"
+            " — in 4 of the last 20 syncs" in body
+        )
+
+    def test_a_clean_run_afterwards_stands_the_sidebar_down(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """What actually happened at 17:29. The panel keeps the history; the alert is
+        about now, and an alert that outlives its cause is one the owner learns to
+        ignore."""
+        self._replay_the_oauth_morning(conn)
+        self._run(conn, "2026-08-05T17:29:00+00:00")
+        assert "OAuth session expired" not in client.get("/goals").text
+        assert "OAuth session expired" in panel_slice(client.get("/").text, "panel-sources")
+
+    def test_a_single_flare_is_shown_but_does_not_raise_the_sidebar(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """Recent AND repeating. One bad run is news for the panel, not an alarm."""
+        self._run(conn, "2026-08-05T12:00:00+00:00", [self.OAUTH.format(item=8547)])
+        panel = panel_slice(client.get("/").text, "panel-sources")
+        assert "OAuth session expired and could not be refreshed (triage) · 1 run" in panel
+        assert "1 ×" not in panel  # a count of one is noise, not information
+        assert "OAuth session expired" not in client.get("/goals").text
+
+    def test_a_source_error_keeps_the_name_of_the_source_that_failed(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """sync.py frames connector failures as `<source>: <detail>` with no item id,
+        so there is nothing to strip and the source must survive intact — including
+        `calendar:apple`, whose own name contains the separator."""
+        for hour in (12, 13):
+            self._run(
+                conn,
+                f"2026-08-05T{hour:02d}:00:00+00:00",
+                [
+                    "imessage: OperationalError: unable to open database file",
+                    "calendar:apple: RuntimeError: execution error: Error: Error: "
+                    "AppleEvent timed out. (-1712)",
+                ],
+            )
+        panel = panel_slice(client.get("/").text, "panel-sources")
+        assert "2 × imessage: OperationalError: unable to open database file · 2 runs" in panel
+        assert "2 × calendar:apple: RuntimeError:" in panel
+
+    def test_a_counter_that_moves_does_not_split_one_failure_into_many(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """The spend-cap line carries three numbers that change every run. Grouping on
+        the raw string produced five rows for one condition in the owner's ledger."""
+        for hour, cents, left in ((12, 2004, 94), (13, 2005, 95), (14, 2006, 562)):
+            self._run(
+                conn,
+                f"2026-08-05T{hour:02d}:00:00+00:00",
+                [
+                    f"spend cap reached ({cents}c of 2000c); degraded to triage-only, "
+                    f"{left} items left unextracted"
+                ],
+            )
+        panel = panel_slice(client.get("/").text, "panel-sources")
+        assert "3 × spend cap reached (2006c of 2000c)" in panel  # the newest wording
+        assert "2004c" not in panel
+        assert "2005c" not in panel
+
+    def test_overflow_is_counted_not_dropped(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        from backglass.web.panels import ERROR_ROWS
+
+        self._run(
+            conn,
+            "2026-08-05T12:00:00+00:00",
+            # Distinct names, not `connector-1..N`: the group key drops digit runs, so
+            # sources that differ only by a number are one failure by design.
+            [f"connector-{c}: RuntimeError: went wrong" for c in "abcde"[: ERROR_ROWS + 2]],
+        )
+        panel = panel_slice(client.get("/").text, "panel-sources")
+        assert "2 other errors in the last 20 syncs" in panel
+
+    def test_the_window_does_not_reach_past_the_last_twenty_syncs(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        from backglass.web.panels import ERROR_WINDOW_RUNS
+
+        self._run(conn, "2026-08-01T12:00:00+00:00", ["anki: RuntimeError: ancient news"])
+        for n in range(ERROR_WINDOW_RUNS):
+            self._run(conn, f"2026-08-05T{n // 4:02d}:{(n % 4) * 15:02d}:00+00:00")
+        assert "ancient news" not in panel_slice(client.get("/").text, "panel-sources")
+
+    def test_an_interview_run_is_not_a_sync(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """heartbeat.py's rule, for heartbeat.py's reason: the panel speaks about
+        syncing, so a roadmap interview must not reset or crowd the window."""
+        import json
+
+        conn.execute(
+            "INSERT INTO run (user_id, started_at, finished_at, errors_json, kind)"
+            " VALUES (1, '2026-08-05T12:00:00+00:00', '2026-08-05T12:00:00+00:00', ?,"
+            " 'interview')",
+            (json.dumps(["interview 3: RuntimeError: transcript unreadable"]),),
+        )
+        conn.commit()
+        assert "transcript unreadable" not in panel_slice(
+            client.get("/").text, "panel-sources"
+        )

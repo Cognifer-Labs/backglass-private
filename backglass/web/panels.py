@@ -23,6 +23,16 @@ from backglass.ledger import USER_ID
 #: How far back the plan review queue looks; see `_review_floor`.
 REVIEW_FLOOR_DAYS = 60
 
+#: How many recent sync runs the error summary reads. At the scheduled half-hourly
+#: cadence this is roughly the working day, which is the span the dashboard is opened
+#: over. A run count rather than a wall-clock window on purpose: when the scheduler dies,
+#: "the last 24 hours" empties out exactly when the ledger is most wrong, taking the
+#: errors that explain the silence with it. See recent_run_errors.sql.
+ERROR_WINDOW_RUNS = 20
+
+#: How many grouped error lines the Sources panel prints before it says "N more".
+ERROR_ROWS = 3
+
 
 @dataclass
 class Panel:
@@ -310,6 +320,41 @@ def auth_hint(source: str) -> str | None:
     return None
 
 
+def error_line(row: dict[str, Any], now: datetime | None = None) -> str:
+    """One grouped pipeline failure as a sentence, for the Sources panel.
+
+    The count leads because the count is the news: forty identical "OAuth session
+    expired" lines and one are the same defect at very different sizes. The stage rides
+    in parentheses rather than as a prefix — `triage 8547:` is where the error was
+    caught, not what went wrong, and the item id it carried is why forty of these looked
+    like forty problems. Occurrences and runs are both shown because they answer
+    different questions: how much of the ledger this cost, and how long it has been
+    happening.
+    """
+    count = int(row["occurrences"])
+    runs = int(row["run_count"])
+    head = f"{count} × {row['message']}" if count > 1 else str(row["message"])
+    stage = f" ({row['stage']})" if row["stage"] else ""
+    return (
+        f"{head}{stage} · {runs} run{'' if runs == 1 else 's'} · "
+        f"{relative(row['last_at'], now)}"
+    )
+
+
+def error_alert(row: dict[str, Any]) -> str:
+    """The same failure as a sidebar line.
+
+    Shorter than the panel's: the alert is a pointer to the panel that carries the
+    counts, so it spends its words on the two things that decide whether the owner acts
+    now — what broke, and that it is not a one-off. It still names its subject in full,
+    because an alarm that does not is a mystery rather than a cue.
+    """
+    return (
+        f"{row['message']} — in {int(row['run_count'])} of the "
+        f"last {ERROR_WINDOW_RUNS} syncs"
+    )
+
+
 def sources_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:
     from backglass.connectors import detect
 
@@ -332,6 +377,13 @@ def sources_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:
     ]
 
     degraded = bool(last and last["degraded"])
+
+    # What the pipeline recorded as gone wrong lately. CLAUDE.md rule 5 says a failing
+    # source degrades and is surfaced in the Sources panel; until this existed the second
+    # half of that sentence was not true anywhere in the web layer, and
+    # specs/extraction-prompts/extract-commitments.md §Failure handling was promising a
+    # dashboard surface that did not exist.
+    errors = _rows(conn, "recent_run_errors", {"user_id": USER_ID, "runs": ERROR_WINDOW_RUNS})
 
     return Panel(
         title="Sources",
@@ -358,6 +410,20 @@ def sources_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:
             "degraded_note": (
                 degraded_note(conn, reason=_reason_of(last)) if degraded else None
             ),
+            # Capped like the sidebar's alerts, and counted rather than dropped. A run
+            # with nothing wrong yields an empty list and the template prints nothing at
+            # all: an empty error block is worse than no block, because it trains the eye
+            # to skip the place the real alarm will appear.
+            "errors": [dict(row, line=error_line(row)) for row in errors[:ERROR_ROWS]],
+            "more_errors": max(0, len(errors) - ERROR_ROWS),
+            "error_window": ERROR_WINDOW_RUNS,
+            # Recent AND repeating: still present in the newest run, and seen in more
+            # than one. A single flare is shown in the panel but does not raise the
+            # sidebar — the alert exists for the failure that is not going to fix itself,
+            # and one that cries wolf on every transient is one the owner learns to skip.
+            "errors_now": [
+                row for row in errors if row["in_latest_run"] and int(row["run_count"]) > 1
+            ],
         },
     )
 
@@ -536,6 +602,14 @@ def sidebar(
                 {"level": "verm", "text": f"{s['source']} is failing — views are incomplete",
                  "href": "/#panel-sources"}
             )
+    # Louder than the spend-cap note below it and placed above it deliberately: a pause
+    # the owner configured is a known cost, and a run that keeps failing is not. This is
+    # the alert that was missing on 2026-08-05, when eight consecutive syncs died on an
+    # expired OAuth session and every surface stayed green.
+    for row in sources.meta["errors_now"]:
+        alerts.append(
+            {"level": "verm", "text": error_alert(row), "href": "/#panel-sources"}
+        )
     if sources.meta["degraded"]:
         alerts.append(
             {"level": "gold", "text": sources.meta["degraded_note"],

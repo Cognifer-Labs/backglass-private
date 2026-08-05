@@ -37,6 +37,28 @@
       {% endfor %}
     {% endif %}
 
+    {# What the pipeline recorded as gone wrong across the last N syncs, grouped so one
+       failure reads as one line whatever its multiplicity. CLAUDE.md rule 5: a failing
+       source degrades, is logged, and is surfaced *here* — this is the "here".
+       Rendered only when there is something to say; an empty error block trains the eye
+       to skip the spot the real alarm will use. #}
+    {% if d.sources.meta.errors %}
+      {% for e in d.sources.meta.errors %}
+        {# The same shape a failing source's `last_error` uses just above — a note
+           paragraph, because these are sentences and the .src row is a fixed three-part
+           rhythm that long prose breaks. §8 rule 3: the vermilion fill carries a glyph
+           and a label, never colour alone. #}
+        <p class="note"><span class="chip k-verm"><span aria-hidden="true">▲</span>Error</span>
+          {{ e['line'] }}</p>
+      {% endfor %}
+      {% if d.sources.meta.more_errors %}
+        {# Capped, not dropped: the count keeps the overflow honest, the same way the
+           sidebar's "N more" does. #}
+        <p class="note">{{ d.sources.meta.more_errors }} other error{{ '' if d.sources.meta.more_errors == 1 else 's' }} in the last {{ d.sources.meta.error_window }} syncs —
+          run <span class="kbd">backglass status</span> for the full list.</p>
+      {% endif %}
+    {% endif %}
+
     {# Phase A2: stores detected on this machine that one command would hook up.
        Quiet informational rows — nothing is failing, so no alarm ink. #}
     {% if d.sources.meta.found %}
