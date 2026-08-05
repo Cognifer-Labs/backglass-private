@@ -415,6 +415,17 @@ small write surface, which is a design call rather than a fix.
   are evenings, and the day view is where someone would look. Fixing it means deciding
   what the schedule page is: the working window, or the day. That is a design call, not
   a bug fix, so it is written down rather than guessed at.
+
+  **Fixed 2026-08-05, and the design call turned out to be already made.** The cause was
+  only half of what is written above: the Schedule page never read engagements *at all*
+  — `day_view` called `capacity.fixed_events` (calendar only), so a confirmed 14:00
+  coffee was just as invisible as a 19:00 dinner until the planner had run and left a
+  plan_block behind. And the page had already answered the question: its ruler "always
+  spans at least the default working window, widened to fit anything scheduled outside
+  it" (`_window`), which is the day, not the window. So there was nothing to decide —
+  one reader, `capacity.day_events`, now answers "what is immovable on this day" for
+  both callers, and `compute` keeps the window filter, because *its* question really is
+  how much work fits between nine and six.
 - **Nothing yet exercises this against real messages.** Every test drives canned model
   responses. Whether the model reliably tells a commitment from an engagement is an eval
   question, and `evals/` is where it belongs — it never gates CI (docs/10).

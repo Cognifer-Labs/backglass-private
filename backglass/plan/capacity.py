@@ -221,6 +221,30 @@ def engagement_events(
     return sorted(events, key=lambda e: e.starts_at)
 
 
+def day_events(
+    conn: sqlite3.Connection, settings: Settings, day: date, tz: str
+) -> list[FixedEvent]:
+    """Everything immovable on `day`: calendar events and confirmed plans, deduped.
+
+    One reader, because there were two and they disagreed. `compute` combined both
+    sources; the Schedule page called `fixed_events` alone, so a confirmed 19:00 dinner
+    — extracted, high confidence, sitting in the ledger — rendered as an empty day. The
+    plan blocks the page also draws come from the planner, and the planner drops
+    anything outside the working window, so nothing else was going to carry it either.
+
+    No window filter here. That belongs to `compute`, whose question is "how much work
+    fits between nine and six"; the Schedule page's question is "what is my day", and
+    its ruler already widens to fit whatever falls outside the working hours.
+
+    `min_confidence` is the same gate the brief applies (rule 2): a plan the model is
+    unsure of is a question for the review queue, not a block on a schedule.
+    """
+    return _distinct(
+        fixed_events(conn, day, tz)
+        + engagement_events(conn, day, tz, min_confidence=settings.confidence_threshold)
+    )
+
+
 def _distinct(events: list[FixedEvent]) -> list[FixedEvent]:
     """One meeting counts once, however many sources described it.
 
@@ -308,13 +332,11 @@ def compute(
     # do this, and so does any what-if); it is not extended from the ledger, or a caller
     # asking "what would the day look like with these three meetings" would silently get
     # a fourth.
-    if events is not None:
-        fixed = list(events)
-    else:
-        fixed = _distinct(
-            fixed_events(conn, day, tz)
-            + engagement_events(conn, day, tz, min_confidence=settings.confidence_threshold)
-        )
+    fixed = list(events) if events is not None else day_events(conn, settings, day, tz)
+    # The window filter belongs to this function and not to `day_events`: capacity is
+    # "how much work fits between nine and six", so an evening dinner is correctly not
+    # subtracted from it. The Schedule page asks a different question and calls the
+    # reader without this line.
     fixed = [e for e in fixed if e.ends_at > window_start and e.starts_at < window_end]
     fixed.sort(key=lambda e: e.starts_at)
 

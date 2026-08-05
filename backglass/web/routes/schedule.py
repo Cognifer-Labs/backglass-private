@@ -49,7 +49,9 @@ def day_view(conn: sqlite3.Connection, settings: Settings, day: date) -> DayView
             {"user_id": USER_ID, "local_date": day.isoformat()},
         )
     ]
-    return DayView(day=day, tz=tz, blocks=blocks, fixed=capacity.fixed_events(conn, day, tz))
+    return DayView(
+        day=day, tz=tz, blocks=blocks, fixed=capacity.day_events(conn, settings, day, tz)
+    )
 
 
 def week_of(day: date) -> date:
@@ -118,8 +120,21 @@ class Timeline:
     now_top: int | None
 
 
-def _minutes(hhmm: str) -> int:
-    return int(hhmm[:2]) * 60 + int(hhmm[3:5])
+def _minutes(hhmm: str) -> int | None:
+    """`HH:MM` as a minute of the day, or None if that is not what this is.
+
+    Callers slice it out of a stored timestamp by position (`starts_at[11:16]`), which
+    is right for every stamp the planner writes and is not a guarantee: `plan_block.
+    starts_at` is TEXT with no CHECK behind it, and one row that is not a full ISO
+    timestamp used to raise `ValueError: invalid literal for int()` out of the template
+    call — taking down the whole day page and, because the week grid builds from the
+    same reader, all seven days with it. Rule 5's unit here is the block: one row the
+    page cannot place is one row missing from the ruler, not a blank screen.
+    """
+    try:
+        return int(hhmm[:2]) * 60 + int(hhmm[3:5])
+    except ValueError:
+        return None
 
 
 def _clock(minute_of_day: int) -> str:
@@ -193,8 +208,16 @@ def _raw_entries(view: DayView) -> list[RawEntry]:
             )
         )
     for b in view.blocks:
-        start = _minutes(b["starts_at"][11:16])
-        end = _minutes(b["ends_at"][11:16])
+        start = _minutes(str(b["starts_at"])[11:16])
+        end = _minutes(str(b["ends_at"])[11:16])
+        if start is None or end is None:
+            # Dropped, not placed. The page draws nothing but this timeline, so a row
+            # skipped here is invisible — which is the right trade against the two
+            # alternatives: raising takes the whole day (and the week's other six days)
+            # down, and defaulting to midnight draws a block at a time nothing says it
+            # happens. A schedule that asserts a wrong hour is worse than one missing a
+            # row it could not read.
+            continue
         raw.append(
             (start, max(end - start, 1), str(b["title"]), str(b["kind"]),
              str(b["outcome"]), False)

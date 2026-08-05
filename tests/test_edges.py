@@ -325,3 +325,167 @@ class TestNumbersThatAreNotNumbers:
         assert client.post(f"/commitments/{cid}/estimate/45").status_code == 200
         assert actions.MAX_ESTIMATE_MINUTES > 60 * 24
         assert actions.MAX_SNOOZE_DAYS > 365
+
+
+class TestTheDayViewShowsTheDay:
+    """A confirmed 19:00 dinner rendered as an empty day.
+
+    Two readers answered "what is fixed on this day" and disagreed: `capacity.compute`
+    combined calendar events with confirmed plans, while the Schedule page called
+    `fixed_events` alone. The plan blocks the page also draws come from the planner,
+    which drops anything outside the working window — so nothing was going to carry an
+    evening plan onto any schedule surface.
+    """
+
+    def _plan(
+        self,
+        conn: sqlite3.Connection,
+        *,
+        starts: str,
+        ends: str,
+        what: str = "Dinner with Sam",
+        confidence: float = 0.95,
+        status: str = "confirmed",
+    ) -> None:
+        conn.execute(
+            "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at,"
+            " when_is_explicit, status, confidence, source_item_id, created_at)"
+            " VALUES (?, 'social', ?, ?, ?, 1, ?, ?, ?, ?)",
+            (USER_ID, what, starts, ends, status, confidence, _source_item(conn), now_iso()),
+        )
+        conn.commit()
+
+    def test_an_evening_plan_is_on_the_day(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._plan(
+            conn,
+            starts="2026-08-10T19:00:00-07:00",
+            ends="2026-08-10T21:00:00-07:00",
+        )
+        page = client.get("/schedule?date=2026-08-10")
+        assert page.status_code == 200
+        assert "Dinner with Sam" in page.text
+
+    def test_a_plan_inside_working_hours_is_too(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """Not only the evening case: before the planner has run, an in-window plan was
+        just as invisible — there was no plan_block for it yet and no reader for it."""
+        self._plan(
+            conn,
+            starts="2026-08-10T14:00:00-07:00",
+            ends="2026-08-10T15:00:00-07:00",
+            what="Coffee with Dana",
+        )
+        assert "Coffee with Dana" in client.get("/schedule?date=2026-08-10").text
+
+    def test_the_week_grid_shows_it_too(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._plan(
+            conn,
+            starts="2026-08-13T19:00:00-07:00",
+            ends="2026-08-13T21:00:00-07:00",
+        )
+        assert "Dinner with Sam" in client.get("/schedule/week?start=2026-08-10").text
+
+    def test_a_low_confidence_plan_is_not_asserted_as_a_block(
+        self, client: TestClient, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """Rule 2. A plan the model is unsure of is a question for the review queue, not
+        a thing on the schedule — the same gate the brief and the planner apply."""
+        self._plan(
+            conn,
+            starts="2026-08-10T19:00:00-07:00",
+            ends="2026-08-10T21:00:00-07:00",
+            what="Maybe drinks",
+            confidence=max(0.0, settings.confidence_threshold - 0.2),
+        )
+        assert "Maybe drinks" not in client.get("/schedule?date=2026-08-10").text
+
+    def test_a_declined_plan_is_not_on_the_day(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._plan(
+            conn,
+            starts="2026-08-10T19:00:00-07:00",
+            ends="2026-08-10T21:00:00-07:00",
+            what="Cancelled thing",
+            status="declined",
+        )
+        assert "Cancelled thing" not in client.get("/schedule?date=2026-08-10").text
+
+    def test_it_still_does_not_eat_the_working_day(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The window filter has to stay in `compute`, not move into the shared reader:
+        an evening dinner is on the day and is not two hours off the work capacity."""
+        from backglass.plan import capacity
+
+        self._plan(
+            conn,
+            starts="2026-08-10T19:00:00-07:00",
+            ends="2026-08-10T21:00:00-07:00",
+        )
+        with_plan = capacity.compute(conn, settings, date(2026, 8, 10))
+        conn.execute("DELETE FROM engagement")
+        conn.commit()
+        without = capacity.compute(conn, settings, date(2026, 8, 10))
+        # Compared against the same day without the plan rather than to zero: the
+        # clamping inside `compute` already makes an out-of-window event contribute no
+        # fixed minutes, so `== 0` passes with the window filter deleted. The buffer it
+        # would still reserve is the part that moves, and capacity is what the owner
+        # reads.
+        assert with_plan.capacity_minutes == without.capacity_minutes
+        assert with_plan.fixed_minutes == without.fixed_minutes == 0
+
+
+class TestOneUnreadableRowIsNotABlankPage:
+    """`plan_block.starts_at` is TEXT with no CHECK behind it, and the page slices the
+    clock out of it by position. One row that is not a full ISO timestamp raised
+    `ValueError: invalid literal for int()` through the template — taking the day page
+    down, and the week grid's other six days with it."""
+
+    def _block(self, conn: sqlite3.Connection, starts: str, ends: str, title: str) -> None:
+        row = conn.execute(
+            "SELECT id FROM day_plan WHERE local_date = ?", ("2026-08-10",)
+        ).fetchone()
+        if row is None:
+            conn.execute(
+                "INSERT INTO day_plan (user_id, local_date, tz, capacity_minutes,"
+                " generated_at) VALUES (?, '2026-08-10', 'America/Phoenix', 480, ?)",
+                (USER_ID, now_iso()),
+            )
+            row = conn.execute(
+                "SELECT id FROM day_plan WHERE local_date = ?", ("2026-08-10",)
+            ).fetchone()
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title, user_id)"
+            " VALUES (?, ?, ?, 'work', ?, ?)",
+            (row["id"], starts, ends, title, USER_ID),
+        )
+        conn.commit()
+
+    @pytest.mark.parametrize("stamp", ["09:00", "not-a-timestamp", "", "2026-08-10"])
+    def test_the_page_still_renders(
+        self, client: TestClient, conn: sqlite3.Connection, stamp: str
+    ) -> None:
+        self._block(conn, stamp, stamp, "unreadable")
+        self._block(
+            conn, "2026-08-10T14:00:00-07:00", "2026-08-10T15:00:00-07:00", "readable one"
+        )
+        page = client.get("/schedule?date=2026-08-10")
+        assert page.status_code == 200
+        assert "readable one" in page.text, "the good row must survive the bad one"
+        assert client.get("/schedule/week?start=2026-08-10").status_code == 200
+
+    @pytest.mark.parametrize("stamp", ["09:00", "not-a-timestamp"])
+    def test_it_is_dropped_rather_than_placed_at_midnight(
+        self, client: TestClient, conn: sqlite3.Connection, stamp: str
+    ) -> None:
+        """The tempting fallback is 00:00, and it is worse than dropping the row: a
+        schedule that asserts an hour nothing says is worse than one missing a row it
+        could not read."""
+        self._block(conn, stamp, stamp, "unreadable")
+        assert "unreadable" not in client.get("/schedule?date=2026-08-10").text
