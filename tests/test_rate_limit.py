@@ -506,7 +506,14 @@ class TestTheItemsSurvive:
         model = _LimitedOnce("extract", open_at=2, extract=EXTRACTIONS)
 
         first = sync(conn, parallel, [make_connector(many, boundary)], model)
-        assert first.rate_limited and first.extracted == 3
+        # Partial, not a pinned count. `_in_parallel` opens a pass with a single call
+        # before fanning out (see its comment on the OAuth refresh race), so which items
+        # share a wave with the refusals — and therefore how many siblings finish before
+        # the wall is confirmed — is wave arithmetic, not the property this test is
+        # about. What has to hold is that the stopped wave kept the work it had already
+        # paid for and did not silently finish the rest.
+        assert first.rate_limited
+        assert 0 < first.extracted < len(many)
         sync(conn, parallel, [make_connector(many, boundary)], model)
         assert sync(conn, parallel, [make_connector(many, boundary)], model).writes == 0
 
@@ -642,20 +649,25 @@ class TestWorkAlreadyPaidForIsKept:
         report = sync(conn, parallel, [make_connector(many, boundary)], model)
 
         # `calls` records only the calls that returned; `refusals` counts the rest.
+        #
+        # Six units, not five: `_in_parallel` opens a pass with a single call before
+        # fanning out, so the pass is the lead call plus one wave of five. The number
+        # that matters is that it is not eight — nothing was submitted after the wall
+        # was seen, which is the brake this test exists to hold.
         extract_calls = [c for c in model.calls if c[0] == "extract"]
         assert report.rate_limited
-        assert len(extract_calls) + model.refusals == 5, (
-            "one wave of five ran, and no wave was submitted after it"
+        assert len(extract_calls) + model.refusals == 6, (
+            "the lead call plus one wave of five ran, and nothing was submitted after it"
         )
-        assert report.extracted == 3, "the three that returned before the wall are kept"
-        # 8 triage calls plus the 3 extractions that landed, at 2c each. The refused calls
+        assert report.extracted == 4, "the four that returned before the wall are kept"
+        # 8 triage calls plus the 4 extractions that landed, at 2c each. The refused calls
         # cost nothing here; what must not happen is the successes costing nothing either.
-        assert report.spend_cents == 22
-        assert _pending_extractions(conn) == 5
+        assert report.spend_cents == 24
+        assert _pending_extractions(conn) == 4
 
         run = conn.execute("SELECT * FROM run ORDER BY id DESC LIMIT 1").fetchone()
-        assert int(run["spend_cents"]) == 22
-        assert int(run["items_extracted"]) == 3
+        assert int(run["spend_cents"]) == 24
+        assert int(run["items_extracted"]) == 4
 
     def test_a_single_batch_claiming_a_limit_escalates_rather_than_stopping_triage(
         self,

@@ -21,10 +21,11 @@ import json
 import re
 import subprocess
 import sys
+import threading
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -58,6 +59,59 @@ class RateLimited(ModelError):
 
     Server overload (529) rides the same path for the same reason: it clears by itself.
     """
+
+
+class ModelAuthError(ModelError):
+    """The backend rejected our credentials.
+
+    Split out from `ModelError` because the two failures need opposite handling and,
+    until 2026-08-05, were indistinguishable in `run.errors_json`. A malformed response
+    is about *this item* — restating the schema and asking again is the documented cure
+    (extract-commitments.md §Failure handling). A rejected credential is about the
+    *backend*: it is identical for every item, no retry can fix it, and every extra
+    attempt is another subprocess spent proving the same thing.
+
+    The distinction is load-bearing for triage of the failure itself. A run whose model
+    returned junk means the prompt or the model is wrong. A run whose model could not
+    authenticate means nothing was read at all — the items are parked, not judged — and
+    the owner has to go re-authenticate something. One is a quality problem, the other
+    is an outage, and reading them off the same sentence cost six hours on 2026-08-05.
+    """
+
+
+#: Substrings that identify an authentication failure in a backend's own words. The CLI
+#: backend hands back the model's error as prose, so this is pattern matching and is
+#: kept deliberately narrow: every phrase here names a credential being rejected, not a
+#: request being refused for some other reason. A miss degrades to the old behaviour
+#: (retry, then park); a false positive would stop a run early, so nothing vague like
+#: "denied" or "forbidden" belongs in this list.
+#:
+#: Consulted *before* `_looks_rate_limited`, and the order is a decision rather than an
+#: accident. The two vocabularies look disjoint — nothing here names a window and nothing
+#: there names a credential — but if a sentence ever satisfies both, auth has to win. The
+#: two mistakes are not symmetrical: a wrong rate-limit verdict stops the wave and spends
+#: no attempt, which is the shape that stalls a queue indefinitely (see `_LimitClaim`),
+#: while a wrong auth verdict degrades to an ordinary park after this item's attempts.
+#: Ties resolve toward the bounded failure.
+_AUTH_SIGNATURES = (
+    "oauth session expired",
+    "oauth token has expired",
+    "failed to authenticate",
+    "authentication_failed",
+    "authentication failed",
+    "invalid api key",
+    "invalid_api_key",
+    "invalid bearer token",
+    "please run /login",
+    "oauth_org_not_allowed",
+    "api key authentication is disabled",
+    "could not be refreshed",
+)
+
+
+def _is_auth_failure(text: str) -> bool:
+    lowered = text.lower()
+    return any(signature in lowered for signature in _AUTH_SIGNATURES)
 
 
 @dataclass(frozen=True)
@@ -121,6 +175,17 @@ class ClaudeCLIBackend:
             try:
                 data, cost = self._run(system, prompt, schema, model, budget_usd)
                 return ModelResult(data=data, cost_usd=spent + cost)
+            except ModelAuthError:
+                # Not a schema failure, so `_restate` has nothing to fix. The second
+                # attempt would spawn a second CLI process against the same rejected
+                # session — on 2026-08-05 that doubled a six-hour outage into 44 wasted
+                # subprocesses. Surface it immediately and let the caller stop.
+                #
+                # A sibling of RateLimited below, not a subclass: both skip the retry,
+                # but for opposite reasons and to opposite ends. A shut window leaves the
+                # item pending for the next sync; a rejected credential parks it and says
+                # so. Neither may be read as the other.
+                raise
             except RateLimited as exc:
                 # Not an attempt. The window is shut; a second call inside the same second
                 # would only confirm it, and the caller has to stop rather than park.
@@ -177,7 +242,8 @@ class ClaudeCLIBackend:
 
         if not completed.stdout.strip():
             # The CLI can die before it writes an envelope, and the reason is then only on
-            # stderr — a shut usage window read as a plain failure would park the item.
+            # stderr — a shut usage window read as a plain failure would park the item,
+            # and a rejected session read as one would retry into the same refusal.
             #
             # What this branch is allowed to match is the whole point, because the two
             # mistakes are not symmetrical. Reading a real limit as a failure parks one
@@ -186,14 +252,16 @@ class ClaudeCLIBackend:
             # pass and consumes no attempt, so an item that fails deterministically stalls
             # the queue behind it on every later sync — while the panel promises a retry.
             # Only phrases a limit actually uses may reach here; see the marker list.
+            # Auth is asked first — see `_AUTH_SIGNATURES` on why ties go that way.
+            detail = completed.stderr[:300]
+            if _is_auth_failure(detail):
+                raise ModelAuthError(f"authentication failed: {detail.strip()}")
             if _looks_rate_limited(completed.stderr):
                 raise RateLimited(
                     f"model rate limit (exit {completed.returncode}): "
                     f"{completed.stderr.strip()[:200]}"
                 )
-            raise ModelError(
-                f"empty response (exit {completed.returncode}): {completed.stderr[:300]}"
-            )
+            raise ModelError(f"empty response (exit {completed.returncode}): {detail}")
         try:
             envelope = json.loads(completed.stdout)
         except ValueError as exc:
@@ -202,6 +270,12 @@ class ClaudeCLIBackend:
         cost = float(envelope.get("total_cost_usd") or 0.0)
         if envelope.get("is_error"):
             detail = str(envelope.get("result"))[:300]
+            if _is_auth_failure(detail):
+                # `is_error` is how the CLI reports "your subscription session was
+                # rejected" as well as "the model misbehaved" and "the window is shut".
+                # Only the prose tells them apart, so it is read here rather than guessed
+                # at upstream — auth first, per `_AUTH_SIGNATURES`.
+                raise ModelAuthError(f"authentication failed: {detail}")
             error: ModelError
             if _rate_limited_envelope(envelope):
                 error = RateLimited(f"model rate limit: {detail}")
@@ -360,6 +434,10 @@ class DeepInfraBackend:
             with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
                 envelope = json.loads(response.read())
         except urllib.error.HTTPError as exc:
+            if exc.code in (401, 403):
+                raise ModelAuthError(
+                    f"authentication failed: deepinfra returned HTTP {exc.code}"
+                ) from exc
             raise ModelError(f"deepinfra returned HTTP {exc.code}") from exc
         except (urllib.error.URLError, TimeoutError, ValueError) as exc:
             raise ModelError(f"deepinfra call failed: {type(exc).__name__}") from exc
@@ -488,6 +566,8 @@ class AnthropicAPIBackend:
             try:
                 data, cost = self._run(system, prompt, schema, model_id, max_tokens)
                 return ModelResult(data=data, cost_usd=spent + cost)
+            except ModelAuthError:
+                raise  # a rejected key is not a schema failure; see ClaudeCLIBackend
             except ModelError as exc:
                 last = exc
                 spent += getattr(exc, "cost_usd", 0.0)
@@ -518,6 +598,15 @@ class AnthropicAPIBackend:
         except ModelError:
             raise
         except Exception as exc:  # noqa: BLE001 - anthropic.APIError et al → degrade path
+            # anthropic.AuthenticationError/PermissionDeniedError carry status_code;
+            # the name check keeps this working against the injected test doubles,
+            # which are not the real SDK classes.
+            if getattr(exc, "status_code", None) in (401, 403) or _is_auth_failure(
+                f"{type(exc).__name__} {exc}"
+            ):
+                raise ModelAuthError(
+                    f"authentication failed: {type(exc).__name__}: {exc}"
+                ) from exc
             raise ModelError(f"anthropic call failed: {type(exc).__name__}: {exc}") from exc
 
         cost = pricing.cost_usd(model_id, getattr(response, "usage", None))
@@ -587,11 +676,15 @@ def build(settings: Settings) -> ModelClient:
     else:
         primary = ClaudeCLIBackend(executable=_find_claude())
     if settings.apple_triage:
-        return TriageRouter(
-            primary=primary,
-            triage=AppleShortcutBackend(shortcut=settings.apple_triage_shortcut),
+        return AuthCircuit(
+            TriageRouter(
+                primary=primary,
+                triage=AppleShortcutBackend(shortcut=settings.apple_triage_shortcut),
+            )
         )
-    return primary
+    # Outermost, so every caller — sync, batch, brief, the roadmap interview — gets the
+    # same one-strike behaviour without knowing the wrapper exists.
+    return AuthCircuit(primary)
 
 
 #: Which class `build` would choose, keyed by the setting. Exists so the question "does
@@ -750,3 +843,66 @@ class TriageRouter:
         return self.primary.complete(
             system=system, user=user, schema=schema, model=model, budget_usd=budget_usd
         )
+
+
+# ─────────────────────────────────────────────────── authentication circuit
+
+
+@dataclass
+class AuthCircuit:
+    """Stops calling a backend that has already said our credentials are no good.
+
+    An authentication failure is a property of the process, not of the item being read,
+    so the first one has already told us the answer for every item still queued. Without
+    this, 2026-08-05 run 118 sent eleven items at a session the CLI had already rejected
+    ten times, and — before the retry fix above — did it twice each.
+
+    What this deliberately does *not* do is swallow the failure. Every queued item still
+    raises, so every one of them still lands in `run.errors_json` and stays untriaged and
+    visible. What changes is that only the first attempt costs a subprocess; the rest are
+    answered from memory. Parked loudly and immediately beats parked slowly and silently.
+
+    Scope is one process, which is one run — `build()` is called per invocation, so the
+    next scheduled sync starts with the circuit closed and re-tests the session. A run
+    that trips at 06:00 does not suppress the 06:30 run's chance to recover.
+
+    Only `ModelAuthError` trips it, and `RateLimited` deliberately passes straight
+    through unwrapped. They are siblings, not parent and child, so this is true by
+    construction rather than by care — but it is load-bearing enough to be tested: a shut
+    usage window must still reach `_LimitClaim` as itself, leave its items PENDING for the
+    next sync, and never be re-told as an outage the owner has to go fix by hand.
+    """
+
+    inner: Any
+    #: Mirrors the wrapped backend rather than deciding anything, so the spend cap sees
+    #: through the wrapper. A plain field, not a property: `ModelClient` declares this a
+    #: settable attribute, and a read-only property here would not satisfy it.
+    spend_is_imputed: bool = False
+    _tripped: ModelAuthError | None = field(default=None, repr=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def __post_init__(self) -> None:
+        self.spend_is_imputed = bool(getattr(self.inner, "spend_is_imputed", False))
+
+    def complete(
+        self, *, system: str, user: str, schema: dict[str, Any], model: str, budget_usd: float
+    ) -> ModelResult:
+        # Read under the lock: triage and extraction fan out to `max_concurrency`
+        # threads, so this is genuinely concurrent.
+        with self._lock:
+            tripped = self._tripped
+        if tripped is not None:
+            raise ModelAuthError(
+                "authentication failed earlier in this run; no further model calls "
+                f"attempted ({tripped})"
+            )
+        try:
+            result: ModelResult = self.inner.complete(
+                system=system, user=user, schema=schema, model=model, budget_usd=budget_usd
+            )
+            return result
+        except ModelAuthError as exc:
+            with self._lock:
+                if self._tripped is None:
+                    self._tripped = exc
+            raise

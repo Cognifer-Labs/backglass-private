@@ -31,7 +31,7 @@ from backglass.extract import engagements as engagement_tier2
 from backglass.extract import noise as noise_mod
 from backglass.extract import prompts, rules
 from backglass.extract import triage as tier1
-from backglass.extract.client import ModelClient, RateLimited
+from backglass.extract.client import ModelAuthError, ModelClient, RateLimited
 from backglass.extract.schemas import CommitmentExtraction
 from backglass.ledger import USER_ID, Ledger
 
@@ -81,6 +81,18 @@ class SyncReport:
     #: count over 'keep' items can see them — and only one of the two runs triage to
     #: completion, so a single sentence for both would assert the other stage's behaviour.
     rate_limited_stage: str | None = None
+    #: The model backend rejected our credentials at least once this run. Distinct from
+    #: `degraded` (the spend cap) and from a plain entry in `errors`: it means the items
+    #: listed there were never read, so nothing about them was judged and there is
+    #: nothing to review — the owner has to go re-authenticate the backend.
+    #:
+    #: Deliberately *not* a third value of `degrade_reason`, and not a setter of
+    #: `rate_limited`. Those two describe a pause that ends on its own — the cap on the
+    #: first of the month, a usage window in hours — and both leave the run honestly
+    #: waiting. An outage ends when a human re-authenticates, and until then every later
+    #: run fails the same way. Filed under the self-healing pauses it would inherit their
+    #: sentence, and the owner would be told to wait for something that is not coming.
+    model_auth_failed: bool = False
     failed_sources: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     date_notes: list[str] = field(default_factory=list)
@@ -439,6 +451,12 @@ def _triage_pass(
             limit.claimed(item_id, outcome)
             continue
         if isinstance(outcome, Exception):
+            # An auth failure is an ordinary park — it spends the item's attempts and
+            # says so — and pointedly not a limit claim: `_LimitClaim` exists to stop the
+            # wave and leave items pending for a window that reopens by itself, which is
+            # the wrong promise entirely for a credential nobody has fixed yet.
+            if isinstance(outcome, ModelAuthError):
+                report.model_auth_failed = True
             park(item_id, outcome)
             continue
         # Charged and recorded even after the wall: these are siblings whose calls had
@@ -506,6 +524,8 @@ def _batch_triage_pass(
         if isinstance(outcome, Exception):
             # A failed batch proves nothing about its items: all of them re-read
             # per-item. Not an error — the fallback IS the failure handling.
+            if isinstance(outcome, ModelAuthError):
+                report.model_auth_failed = True
             escalations.extend(chunk)
             report.escalated += len(chunk)
             continue
@@ -616,7 +636,10 @@ def _extract_pass(
             # extract-commitments.md §Failure handling: an item that fails is parked with
             # extraction_version unset, so a later prompt version retries it, and it is
             # surfaced rather than silently skipped. Shared with the park path a lone
-            # unconfirmed limit claim takes, because it is the same handling.
+            # unconfirmed limit claim takes, because it is the same handling — and an
+            # auth failure takes it too, marked but never counted as a limit claim.
+            if isinstance(outcome, ModelAuthError):
+                report.model_auth_failed = True
             park(item, outcome)
             continue
         extraction, cost = outcome
@@ -760,12 +783,31 @@ def _in_parallel[T, R](
     width = max(1, max_workers)
     remaining = list(items)
     with ThreadPoolExecutor(max_workers=width) as pool:
+        lead = True
         while remaining:
             if stop_on_cap and cap.reached:
                 return
             if stop_when is not None and stop_when():
                 return
-            wave, remaining = remaining[:width], remaining[width:]
+            # The first call of a pass goes alone. The Claude CLI backend authenticates
+            # off a subscription token that it refreshes lazily, on first use, and
+            # writes back to the login keychain — so a pass that opens by forking six
+            # processes into an expired token has six of them attempting the same
+            # refresh at once. Letting one go first means at most one process ever
+            # performs the refresh and the rest start from the stored, fresh result.
+            #
+            # The same shape pays off against `stop_when` above, which is why the two
+            # belong together rather than merely coexisting: a shut usage window is also
+            # discovered by the first call that meets it, so opening with one means the
+            # wall is found before five more calls are spent hitting it. Both brakes want
+            # the cheapest possible probe of a condition that is identical for every unit.
+            #
+            # Traded: about one model call of wall clock per pass (~5s), and only when
+            # there is more than one item. Not traded: steady-state concurrency, which
+            # is what a lower `max_concurrency` would have cost instead.
+            wave_width = 1 if lead else width
+            lead = False
+            wave, remaining = remaining[:wave_width], remaining[wave_width:]
             for future in [pool.submit(work, item) for item in wave]:
                 yield future.result()
 

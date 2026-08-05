@@ -1052,6 +1052,15 @@ def _print_report(report: Any, *, dry_run: bool) -> None:
         )
     elif report.degraded:
         typer.echo("  DEGRADED: spend cap reached, extraction skipped", err=True)
+    if getattr(report, "model_auth_failed", False):
+        # Deliberately not folded into the error list below: those read as "this item
+        # went wrong", and the whole point is that these items never went anywhere.
+        typer.echo(
+            "  MODEL AUTH FAILED: the backend rejected our credentials — the items "
+            "below were not read, not judged. Re-authenticate the model backend "
+            "(claude_cli: run `claude` once interactively to refresh the session).",
+            err=True,
+        )
     for rule, count in sorted(report.excluded_by_rule.items()):
         typer.echo(f"  boundary excluded {count} by rule {rule}")
     for note in report.date_notes:

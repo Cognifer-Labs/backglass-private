@@ -100,7 +100,11 @@ class TestTriageRouter:
         base = Settings(owner_emails=["x@y.z"], model_backend="claude_cli")
         wrapped = Settings(owner_emails=["x@y.z"], model_backend="claude_cli",
                            apple_triage=True, apple_triage_shortcut="My Screen")
-        assert not isinstance(client_mod.build(base), TriageRouter)
-        router = client_mod.build(wrapped)
+        # `.inner`: build() now returns every backend inside an AuthCircuit, so that one
+        # rejected credential stops a run instead of being re-asked once per item (see
+        # tests/test_model_auth.py). The routing question this test asks is unchanged —
+        # it is just one wrapper further in.
+        assert not isinstance(client_mod.build(base).inner, TriageRouter)
+        router = client_mod.build(wrapped).inner
         assert isinstance(router, TriageRouter)
         assert router.triage.shortcut == "My Screen"
