@@ -55,6 +55,63 @@ Six defects, in severity order. Two of them lose data.
       the sweeps kept as `tests/test_edges.py` so the next value nobody types is caught
       by CI rather than by a sweep.
 
+## Outcome
+
+Four sweeps, three commits, on branch `polish/edge-states` in a worktree — another
+session was editing the shared checkout mid-audit, which is written up in
+`tasks/lessons.md`. Suite 1,441 → 1,498. Twenty-seven mutations, twenty-seven red, in
+three passes: the first pass of each left survivors, and one of those survivors was a
+defect rather than a missing test.
+
+1. **Six defects in the values a URL and a form can carry** (commit 1). Two lost data:
+   a snooze large enough to overflow SQLite's date arithmetic erased an open
+   commitment's deadline and reported success, and quick-add wrote its due field into
+   the ledger as typed, so `tomorrow` and `2026-02-30` became due dates in the column
+   the board sorts by. The rest: a malformed date was a traceback in six places, twenty
+   routes 500'd on a large id, ticking a vanished checklist item was a 500, and nothing
+   bounded an estimate, a weekly count, or a commitment's length.
+2. **Two syncs can no longer run at once** (commit 2) — the defect this file left open,
+   closed with an advisory `flock` rather than a row, because the case that matters is
+   the one where nothing gets to clear the row.
+3. **A confirmed dinner is on the day, and one unreadable row is not a blank page**
+   (commit 3). The Schedule page never read engagements at all; and a `plan_block`
+   timestamp that is not full ISO took down the day view and the week grid's other six
+   days with it.
+
+## Swept and found sound
+
+Recorded because a negative result is a result, and re-sweeping these is wasted effort:
+
+- **Every temporal edge on the schedule surface** — an event that ends before it starts,
+  a zero-length one, one spanning midnight, a 25-hour one, one written in the other
+  timezone, one with no offset at all, a date with no time, an empty title, 5,000
+  characters of title, markup in a title (escaped correctly), two events at the same
+  minute. All render.
+- **Goals and roadmaps against the shapes progress arithmetic divides by** — a goal with
+  no targets, a NULL weekly count, a weekly count of zero, NULL minutes-each, a
+  milestone with a total of zero, a total already exceeded, checkpoints at ±the bound, a
+  roadmap with no steps, one with every step done, one whose goal is dropped, two
+  targets differing only by case, a step with no planned date. No 500s, no unescaped
+  markup, no division by zero.
+- **The first run a stranger gets.** `init` then `doctor` on an empty database: five
+  failing checks, every one naming the environment variable or command that fixes it.
+  `plan`, `brief`, `status`, `costs`, `people`, `memory export` all render an empty
+  ledger without complaint.
+
+## Left alone, deliberately
+
+- **`engagement.done` is still unreachable** — migration 0014 advertises the state,
+  nothing can reach it. It needs a write surface (a "went" button and its route), which
+  is a feature and a product decision about where that button lives, not a polish fix.
+  Still worth doing.
+- **The brief, the connectors and the security middleware.** A second session was
+  auditing exactly those files in the shared checkout while this ran; touching them
+  would have raced it.
+- **`tests/test_dashboard.py::test_the_tracking_pixel_records_the_first_open_only` is
+  red at HEAD** — `mark_brief_opened` requires `sent_at IS NOT NULL` and the committed
+  test never sets it. Not fixed here because the other session's uncommitted tree
+  already fixes it, and two fixes would conflict.
+
 ---
 
 # Populate the ledger — mail, messages, and the cap that was never real
