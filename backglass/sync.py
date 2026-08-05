@@ -14,11 +14,15 @@ Three properties this file exists to guarantee, all of them load-bearing:
 
 from __future__ import annotations
 
+import fcntl
+import os
 import sqlite3
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from backglass import chats as chats_mod
@@ -150,6 +154,60 @@ class SpendCap:
         self.this_run_usd += usd
 
 
+class SyncLocked(RuntimeError):
+    """Another run holds the sync lock; the message says which pid and since when."""
+
+
+#: Reentrancy depth for `run_lock`, so batch submit can hold the lock around the
+#: `sync(extract=False)` it calls without deadlocking on itself. Written only from
+#: the main thread of a run — the pool in `_in_parallel` never touches the lock.
+_LOCK_DEPTH = 0
+
+
+@contextmanager
+def run_lock(settings: Settings) -> Iterator[None]:
+    """One writing run at a time, held for the run's whole duration.
+
+    launchd fires sync every 30 minutes, and nothing else stops a manual sync (or a
+    batch submit/collect) from overlapping it. Two concurrent passes select the same
+    pending items and extract them twice, and the only thing between that and a
+    duplicated ledger is the 0.85 fuzzy dedup — a similarity heuristic, not a
+    guarantee. flock releases on process death, so a crashed run cannot strand the
+    lock; a held lock always means a live process.
+    """
+    global _LOCK_DEPTH
+    if _LOCK_DEPTH:
+        _LOCK_DEPTH += 1
+        try:
+            yield
+        finally:
+            _LOCK_DEPTH -= 1
+        return
+    db = Path(settings.db_path).expanduser()
+    db.parent.mkdir(parents=True, exist_ok=True)
+    # Opened append, never "w": truncating before a failed acquire would erase the
+    # holder's pid line while it is still running.
+    fh = (db.parent / f"{db.name}.sync-lock").open("a+")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        fh.seek(0)
+        holder = fh.read().strip() or "unknown pid"
+        fh.close()
+        raise SyncLocked(f"another sync is already running ({holder})") from None
+    fh.seek(0)
+    fh.truncate()
+    fh.write(f"pid {os.getpid()} since {now_iso()}")
+    fh.flush()
+    _LOCK_DEPTH += 1
+    try:
+        yield
+    finally:
+        _LOCK_DEPTH -= 1
+        fcntl.flock(fh, fcntl.LOCK_UN)
+        fh.close()
+
+
 def sync(
     conn: sqlite3.Connection,
     settings: Settings,
@@ -162,7 +220,32 @@ def sync(
 ) -> SyncReport:
     """Run the pipeline. `extract=False` stops after triage — the batch-mode submit
     path (backglass/batch.py) reuses ingest, rules, and triage through here and hands
-    extraction to the Batches API instead."""
+    extraction to the Batches API instead.
+
+    Raises `SyncLocked` instead of running when another run already holds the lock.
+    """
+    with run_lock(settings):
+        return _sync(
+            conn,
+            settings,
+            connectors,
+            client,
+            dry_run=dry_run,
+            extract=extract,
+            contacts_source=contacts_source,
+        )
+
+
+def _sync(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    connectors: list[Connector],
+    client: ModelClient,
+    *,
+    dry_run: bool = False,
+    extract: bool = True,
+    contacts_source: ContactsSource | None = None,
+) -> SyncReport:
     report = SyncReport()
     ledger = Ledger(conn, settings, dry_run=dry_run)
     cap = SpendCap(conn, settings, client)

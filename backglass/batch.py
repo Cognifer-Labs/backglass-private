@@ -34,7 +34,7 @@ from backglass.extract import pricing, prompts
 from backglass.extract.client import ModelClient, anthropic_api_key, build_request
 from backglass.extract.schemas import CommitmentExtraction, json_schema
 from backglass.ledger import USER_ID, Ledger
-from backglass.sync import EXTRACT_PROMPT, SpendCap, record_run, sync
+from backglass.sync import EXTRACT_PROMPT, SpendCap, record_run, run_lock, sync
 
 #: Batches complete "usually within 1 hour, max 24" — past this window a batch is
 #: presumed dead and its items fall back to the synchronous path automatically.
@@ -86,6 +86,19 @@ def _real_client(settings: Settings) -> Any:
 
 
 def submit(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    connectors: list[Connector],
+    client: ModelClient,
+    anthropic_client: Any | None = None,
+) -> SubmitReport:
+    # Held around the whole submit, not just the sync() inside: the batch rows written
+    # after triage select the same pending items a concurrent sync would extract.
+    with run_lock(settings):
+        return _submit(conn, settings, connectors, client, anthropic_client)
+
+
+def _submit(
     conn: sqlite3.Connection,
     settings: Settings,
     connectors: list[Connector],
@@ -181,6 +194,17 @@ def submit(
 
 
 def collect(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    anthropic_client: Any | None = None,
+) -> CollectReport:
+    # Collect applies extractions through the same ledger paths sync uses; overlapping
+    # a live sync double-writes the same items exactly like two syncs would.
+    with run_lock(settings):
+        return _collect(conn, settings, anthropic_client)
+
+
+def _collect(
     conn: sqlite3.Connection,
     settings: Settings,
     anthropic_client: Any | None = None,

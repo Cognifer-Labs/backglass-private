@@ -28,7 +28,7 @@ from backglass.extract import client as model_client
 from backglass.extract import prompts
 from backglass.goals import activities as activities_mod
 from backglass.ledger import USER_ID
-from backglass.sync import EXTRACT_PROMPT, sync
+from backglass.sync import EXTRACT_PROMPT, SyncLocked, sync
 
 app = typer.Typer(
     add_completion=False,
@@ -405,14 +405,20 @@ def sync_command(
         typer.echo("no sources configured; run `backglass auth <label>` first", err=True)
         raise typer.Exit(2)
 
-    report = sync(
-        conn,
-        settings,
-        connectors,
-        _build_model_client(settings),
-        dry_run=dry_run,
-        contacts_source=_contacts_source(conn, settings),
-    )
+    try:
+        report = sync(
+            conn,
+            settings,
+            connectors,
+            _build_model_client(settings),
+            dry_run=dry_run,
+            contacts_source=_contacts_source(conn, settings),
+        )
+    except SyncLocked as locked:
+        # Expected under launchd: a 30-minute timer will sometimes fire mid-backfill.
+        # The other run is doing the work, so this is a clean skip, not a failure.
+        typer.echo(f"{locked}; skipped")
+        raise typer.Exit(0) from None
     _print_report(report, dry_run=dry_run)
     raise typer.Exit(report.exit_code)
 
@@ -2305,9 +2311,13 @@ def batch_submit() -> None:
     conn = _open(settings)
     migrate(conn)
     connectors = _all_connectors(conn, settings)
-    report = batch_mod.submit(
-        conn, settings, connectors, model_client.build(settings)
-    )
+    try:
+        report = batch_mod.submit(
+            conn, settings, connectors, model_client.build(settings)
+        )
+    except SyncLocked as locked:
+        typer.echo(f"{locked}; skipped")
+        raise typer.Exit(0) from None
     typer.echo(
         f"fetched {report.fetched} · triaged {report.triaged} · "
         f"batched {report.batched}"
@@ -2332,7 +2342,11 @@ def batch_collect() -> None:
     _require_anthropic_key(settings)
     conn = _open(settings)
     migrate(conn)
-    report = batch_mod.collect(conn, settings)
+    try:
+        report = batch_mod.collect(conn, settings)
+    except SyncLocked as locked:
+        typer.echo(f"{locked}; skipped")
+        raise typer.Exit(0) from None
     if not report.batches and not report.still_processing and not report.errors:
         typer.echo("no outstanding batches")
         raise typer.Exit()
