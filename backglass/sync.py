@@ -256,8 +256,14 @@ def _contacts_pass(
     Wrapped exactly like a connector fetch — rule 5: a denied Automation prompt records
     itself against the source and the run continues, because a nameless number is worse
     than yesterday's names but very much better than no sync.
+
+    The pause switch is honoured here as well as at construction, and deliberately so:
+    `_all_connectors` can filter the list it builds because everything in that list came
+    from it, but `sync` accepts a `contacts_source` from any caller. The check that
+    matters is the one on the path that reads the address book, not the one on the path
+    that happens to build it.
     """
-    if source is None:
+    if source is None or source.name in credentials.disabled_sources(conn):
         return 0
     try:
         report_ = contacts_mod.import_contacts(

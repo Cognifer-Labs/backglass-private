@@ -52,11 +52,14 @@ class PurgeReport:
 
     source_items: int = 0
     commitments: int = 0
+    #: Addresses stripped out of `entity.aliases_json`. Counted separately because they
+    #: are not an item being deleted — the person stays, the address does not.
+    entity_identifiers: int = 0
     matched_rules: dict[str, int] = field(default_factory=dict)
 
     @property
     def total(self) -> int:
-        return self.source_items + self.commitments
+        return self.source_items + self.commitments + self.entity_identifiers
 
 
 def addresses_in(headers: dict[str, str]) -> list[str]:
@@ -138,10 +141,20 @@ def purge(
     that discovery. Deletion is genuine deletion, not a tombstone, because docs/08 also
     says excluded content is not retained in any form "including hashes computed over it".
     That is the one place the retain-forever rule in docs/03 does not apply.
+
+    `entity.aliases_json` is swept too, and it is the half this file forgot. Addresses
+    have been landing there since Phase 1 — `Ledger.resolve_entity` files a counterparty
+    under their email — and Phase 13's address-book import widened that to every phone
+    number and Apple ID on a contact card. None of it was reachable from here, so a
+    denylist added after the fact left the client's address sitting in the people table
+    while docs/08 promised it was "not retained in any form". Adding a domain now removes
+    it from there as well.
     """
     report = PurgeReport()
     if not boundary.enforcing:
         return report
+
+    _purge_entity_identifiers(conn, boundary, report, dry_run=dry_run)
 
     doomed: list[int] = []
     for row in conn.execute("SELECT id, author, raw_json FROM source_item"):
@@ -186,6 +199,45 @@ def purge(
         conn.execute("ROLLBACK")
         raise
     return report
+
+
+def _purge_entity_identifiers(
+    conn: sqlite3.Connection,
+    boundary: Boundary,
+    report: PurgeReport,
+    *,
+    dry_run: bool,
+) -> None:
+    """Strip denylisted addresses out of `entity.aliases_json`.
+
+    The alias goes; the row stays. Deleting the person as well would take out whatever
+    commitments still point at them — `commitment.counterparty_entity_id` has no cascade
+    — and their name is not the excluded content: it came from extraction or from the
+    owner's own typing, not from the client's message. What docs/08 forbids retaining is
+    the address, and the address is what this removes. A row left with no aliases at all
+    is left alone for the same reason; an unnamed dangling person is the owner's to merge
+    or delete on the People page, not something a denylist edit should do silently.
+    """
+    edits: list[tuple[str, int]] = []
+    for row in conn.execute("SELECT id, aliases_json FROM entity"):
+        try:
+            aliases = json.loads(str(row["aliases_json"] or "[]"))
+        except (ValueError, TypeError):
+            continue
+        kept: list[str] = []
+        for alias in aliases:
+            matched = boundary.match(str(alias))
+            if matched is None:
+                kept.append(str(alias))
+                continue
+            report.entity_identifiers += 1
+            report.matched_rules[matched] = report.matched_rules.get(matched, 0) + 1
+        if len(kept) != len(aliases):
+            edits.append((json.dumps(kept), int(row["id"])))
+
+    if dry_run or not edits:
+        return
+    conn.executemany("UPDATE entity SET aliases_json = ? WHERE id = ?", edits)
 
 
 def _headers_from_raw(raw_json: object) -> dict[str, str]:

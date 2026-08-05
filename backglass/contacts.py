@@ -42,17 +42,22 @@ from backglass.ledger import USER_ID
 
 _NON_DIGIT = re.compile(r"\D")
 
-#: The country code assumed for a phone number written without one. Every bare number in
-#: the owner's address book is North American (area codes 480/602/623/…); the handful of
-#: Indian numbers are stored with their `+91`, which is why a default this crude is safe
-#: here. It is only ever a *comparison* form: guessing wrong makes a contact fail to
-#: resolve — the conversation keeps showing its raw number — rather than attaching
-#: somebody else's name to it.
+#: The country code read into a bare ten-digit number. This is an assumption, not a
+#: deduction, and it is worth stating exactly what it costs.
+#:
+#: Nothing on a card says which country it is from — the owner's `Kozhipannai Thatha`
+#: holds `94430 14744` and nothing else: no second number, no `+`, no address, no
+#: country field. It is Indian, and this code reads it as `+19443014744`. So a bare
+#: non-NANP number does not resolve, and the conversation keeps showing its raw digits.
+#: That is the failure this is willing to accept, because the alternative — dropping the
+#: assumption — un-resolves every US card written `(480) 241-1748`, which is most of them
+#: and is where the real answers came from.
+#:
+#: The residual risk is a mismatch, not just a miss: if those same ten digits are a live
+#: North American number in the owner's chats, this attaches the wrong person's name to
+#: it. That is the reason the raw identifier stays on the page next to the name, and the
+#: reason nothing below invents a country code it was not given.
 _DEFAULT_CALLING_CODE = "1"
-
-#: Below this, digits are not a phone number: a short code (66960), a year in a group
-#: name, a house number. They resolve to nothing rather than to a bad key.
-_MIN_PHONE_DIGITS = 7
 
 
 def canonical(identifier: str | None) -> str | None:
@@ -70,14 +75,18 @@ def canonical(identifier: str | None) -> str | None:
     if not digits:
         return None
     if raw.startswith("+"):
+        # Written with a country code, so there is nothing to guess.
         return f"+{digits}"
     if len(digits) == 10:
         return f"+{_DEFAULT_CALLING_CODE}{digits}"
     if len(digits) == 11 and digits.startswith(_DEFAULT_CALLING_CODE):
         return f"+{digits}"
-    if len(digits) < _MIN_PHONE_DIGITS:
-        return None
-    return f"+{digits}"
+    # Any other bare length is not a shape this can read: a short code (66960), a
+    # six-digit sender id, an eight-digit string like `11112000`. Earlier this returned
+    # `+{digits}` for anything over seven, which fabricated an E.164 number out of digits
+    # nobody said were one — a made-up key that can collide with a real number. Refusing
+    # is the same choice as everywhere else here: no answer beats a wrong one.
+    return None
 
 
 @dataclass(frozen=True)
@@ -140,8 +149,16 @@ def import_contacts(
     display name is a guess, so the fact goes first. A card whose identifiers are all
     ambiguous is skipped entirely; writing it would mean choosing which of two people a
     number belongs to, which is the one thing this module must not do.
+
+    `dry_run` keeps its own ledger of the rows it would have written (`pending`), because
+    a preview that only queries the database cannot see them: the owner's book holds both
+    `Saritha Kesavan` and `saritha kesavan`, and a run that inserts the first folds the
+    second into it while a preview that inserts nothing counted them as two people. A
+    preview whose numbers differ from the run it previews is a small lie in the same
+    family as every other bug this module exists to avoid.
     """
     report = ImportReport(read=len(contacts))
+    pending = _Pending()
 
     claims: dict[str, set[str]] = {}
     for contact in contacts:
@@ -169,9 +186,13 @@ def import_contacts(
 
         entity_id = matches[0] if matches else _entity_by_name(conn, contact.name)
         if entity_id is None:
+            entity_id = pending.by_name.get(contact.name.strip().casefold())
+        if entity_id is None:
             report.entities_created += 1
             report.aliases_added += len(keys)
-            if not dry_run:
+            if dry_run:
+                pending.add(contact.name, keys)
+            else:
                 conn.execute(
                     "INSERT INTO entity (user_id, kind, canonical_name, aliases_json,"
                     " updated_at) VALUES (?, ?, ?, ?, ?)",
@@ -185,11 +206,7 @@ def import_contacts(
                 )
             continue
 
-        row = conn.execute(
-            "SELECT aliases_json FROM entity WHERE id = ? AND user_id = ?",
-            (entity_id, USER_ID),
-        ).fetchone()
-        existing = list(json.loads(row["aliases_json"] or "[]"))
+        existing = pending.aliases_of(conn, entity_id)
         lowered = {str(alias).casefold() for alias in existing}
         fresh = [key for key in keys if key.casefold() not in lowered]
         if not fresh:
@@ -197,7 +214,9 @@ def import_contacts(
             continue
         report.entities_updated += 1
         report.aliases_added += len(fresh)
-        if not dry_run:
+        if dry_run:
+            pending.extend(entity_id, fresh)
+        else:
             # aliases_json only. canonical_name, role, org, notes and tags are the
             # owner's, and a nightly sync does not get to overwrite what they typed.
             conn.execute(
@@ -205,6 +224,45 @@ def import_contacts(
                 (json.dumps([*existing, *fresh]), now_iso(), entity_id),
             )
     return report
+
+
+@dataclass
+class _Pending:
+    """The rows a dry run would have written, indexed the way the database is queried.
+
+    Ids are negative so they can never be confused with a real `entity.id`, and so a
+    later card in the same pass folds into a pending row exactly as it would fold into a
+    committed one. Empty during a real run — the database is already the ledger then, and
+    every lookup below falls straight through.
+
+    Indexed by name only, and that is not an omission. A pending row cannot be reached by
+    identifier, because two cards under *different* names sharing one identifier are
+    contested and dropped before this is consulted, and two cards under the *same* name
+    are found by name first — the identifier index would be a branch no input can reach.
+    """
+
+    by_name: dict[str, int] = field(default_factory=dict)
+    aliases: dict[int, list[str]] = field(default_factory=dict)
+
+    def add(self, name: str, keys: Sequence[str]) -> int:
+        entity_id = -(len(self.aliases) + 1)
+        self.by_name[name.strip().casefold()] = entity_id
+        self.aliases[entity_id] = list(keys)
+        return entity_id
+
+    def extend(self, entity_id: int, keys: Sequence[str]) -> None:
+        self.aliases.setdefault(entity_id, []).extend(keys)
+
+    def aliases_of(self, conn: sqlite3.Connection, entity_id: int) -> list[str]:
+        """Every alias the row carries right now, pending writes included."""
+        stored: list[str] = []
+        if entity_id > 0:
+            row = conn.execute(
+                "SELECT aliases_json FROM entity WHERE id = ? AND user_id = ?",
+                (entity_id, USER_ID),
+            ).fetchone()
+            stored = list(json.loads(row["aliases_json"] or "[]"))
+        return [*stored, *self.aliases.get(entity_id, [])]
 
 
 def resolve(

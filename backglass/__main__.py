@@ -411,7 +411,7 @@ def sync_command(
         connectors,
         _build_model_client(settings),
         dry_run=dry_run,
-        contacts_source=_contacts_source(settings),
+        contacts_source=_contacts_source(conn, settings),
     )
     _print_report(report, dry_run=dry_run)
     raise typer.Exit(report.exit_code)
@@ -429,9 +429,20 @@ def contacts_command(
     settings = get_settings()
     conn = _open(settings)
     migrate(conn)
-    source = _contacts_source(settings)
+    source = _contacts_source(conn, settings)
     if source is None:
-        typer.secho("APPLE_CONTACTS is not set — add it to .env", fg=typer.colors.RED)
+        # Two ways to be off, and they need different instructions — a pause the owner
+        # chose must not be reported as missing configuration they then go and re-add.
+        from backglass.connectors.contacts import SOURCE as CONTACTS_SOURCE
+
+        if CONTACTS_SOURCE in credentials.disabled_sources(conn):
+            typer.secho(
+                f"{CONTACTS_SOURCE} is paused — `backglass sources enable "
+                f"{CONTACTS_SOURCE}` to read the address book again",
+                fg=typer.colors.YELLOW,
+            )
+        else:
+            typer.secho("APPLE_CONTACTS is not set — add it to .env", fg=typer.colors.RED)
         raise typer.Exit(2)
     health = source.health()
     if not health.ok:
@@ -644,7 +655,8 @@ def purge_boundary(
     report = purge(conn, boundary, dry_run=dry_run)
     verb = "would remove" if dry_run else "removed"
     typer.echo(
-        f"{verb} {report.source_items} source item(s), {report.commitments} commitment(s)"
+        f"{verb} {report.source_items} source item(s), {report.commitments} commitment(s),"
+        f" {report.entity_identifiers} stored identifier(s)"
     )
     for rule, count in sorted(report.matched_rules.items()):
         typer.echo(f"  {rule}: {count}")
@@ -906,18 +918,28 @@ def _google_service(
     return build(api, version, credentials=creds, cache_discovery=False)
 
 
-def _contacts_source(settings: Settings) -> Any:
+def _contacts_source(conn: sqlite3.Connection, settings: Settings) -> Any:
     """The address book, or None. Kept out of `_all_connectors` on purpose.
 
     It is not a `Connector`: no cursor, no `SourceItem`, nothing written to the ledger's
     capture table. Putting it in the connector list would have it fetched, cursored and
     counted as ingest, all of which are wrong for reference data — see
     backglass/contacts.py.
+
+    It takes `conn` for the same reason `_all_connectors` does, and this is the important
+    half: config says what CAN run, the credential row says what DOES. Being outside the
+    connector list is not a reason to be outside the pause switch — it is the reason this
+    line has to exist separately, and skipping it made `sources disable apple-contacts`
+    print a confirmation, set `enabled = 0`, render a paused square with a Resume button,
+    and then read the owner's entire address book on the next sync anyway. An inert
+    privacy control that reports success is worse than no control.
     """
+    from backglass.connectors.contacts import SOURCE, ContactsSource
+
     if not settings.apple_contacts:
         return None
-    from backglass.connectors.contacts import ContactsSource
-
+    if SOURCE in credentials.disabled_sources(conn):
+        return None
     return ContactsSource(boundary=Boundary.from_settings(settings))
 
 
@@ -2806,7 +2828,7 @@ def doctor() -> None:
         check(f"credential {row['source']} healthy", row["status"] == "ok",
               str(row["status"]))
 
-    contacts_source = _contacts_source(settings)
+    contacts_source = _contacts_source(conn, settings)
     for connector in [*_all_connectors(conn, settings), *filter(None, [contacts_source])]:
         health = connector.health()
         check(f"connector {connector.name}", health.ok, health.detail or "")
