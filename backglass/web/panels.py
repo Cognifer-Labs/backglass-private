@@ -31,7 +31,11 @@ REVIEW_FLOOR_DAYS = 60
 ERROR_WINDOW_RUNS = 20
 
 #: How many grouped error lines the Sources panel prints before it says "N more".
-ERROR_ROWS = 3
+#: Grouping is doing the compression work — the owner's whole 119-run history collapses
+#: to four distinct causes — so this is a guard against a pathological run, not the
+#: normal case. A tighter cap would hide a real cause behind an overflow count on a
+#: perfectly ordinary morning. `backglass errors` prints the window uncapped.
+ERROR_ROWS = 8
 
 
 @dataclass
@@ -320,39 +324,67 @@ def auth_hint(source: str) -> str | None:
     return None
 
 
+def _damage(row: dict[str, Any]) -> str:
+    """How much of the ledger this failure cost, in the unit that is actually true.
+
+    Items, not error records. sync.py re-attempts a parked item on every run, so a small
+    persistent fault writes the same failure again every half hour: the owner's expired
+    OAuth session produced forty error records for eleven items over four hours. Reading
+    the record count as damage inflates it 3.6x here, and the inflation grows with how
+    long the fault runs — the longer a small bug lasts, the larger the crisis the panel
+    invents. A connector or spend-cap error has no item behind it at all, so it counts
+    the only thing it has.
+    """
+    items = int(row["items"])
+    if not items:
+        count = int(row["occurrences"])
+        return f"{count} time{'' if count == 1 else 's'}"
+    return f"{items} item{'' if items == 1 else 's'}"
+
+
 def error_line(row: dict[str, Any], now: datetime | None = None) -> str:
     """One grouped pipeline failure as a sentence, for the Sources panel.
 
-    The count leads because the count is the news: forty identical "OAuth session
-    expired" lines and one are the same defect at very different sizes. The stage rides
-    in parentheses rather than as a prefix — `triage 8547:` is where the error was
-    caught, not what went wrong, and the item id it carried is why forty of these looked
-    like forty problems. Occurrences and runs are both shown because they answer
-    different questions: how much of the ledger this cost, and how long it has been
-    happening.
+    The damage leads, then the cause, then the reach. The stage is a verb here rather
+    than a parenthetical because `triage 8547:` is where the error was caught, not what
+    went wrong — and the item id it carried is exactly why forty records looked like
+    forty problems. Retry volume trails as context and only when it differs from the
+    damage, because "11 items · 40 attempts" is worth a reader's attention and
+    "2 items · 2 attempts" is noise.
     """
-    count = int(row["occurrences"])
     runs = int(row["run_count"])
-    head = f"{count} × {row['message']}" if count > 1 else str(row["message"])
-    stage = f" ({row['stage']})" if row["stage"] else ""
+    window = int(row["window_runs"])
+    items, occurrences = int(row["items"]), int(row["occurrences"])
+    if row["stage"]:
+        subject = f"{_damage(row)} failed {row['stage']} · {row['message']}"
+        # Retries are the same failure seen again, so they only earn a word when the
+        # ledger cost and the record count actually diverge.
+        extra = f", {occurrences} attempts" if occurrences != items else ""
+    else:
+        subject = str(row["message"])
+        extra = f", {occurrences} times" if occurrences != runs else ""
     return (
-        f"{head}{stage} · {runs} run{'' if runs == 1 else 's'} · "
-        f"{relative(row['last_at'], now)}"
+        f"{subject} · {runs} of the last {window} sync{'' if window == 1 else 's'}"
+        f"{extra} · {relative(row['last_at'], now)}"
     )
 
 
 def error_alert(row: dict[str, Any]) -> str:
     """The same failure as a sidebar line.
 
-    Shorter than the panel's: the alert is a pointer to the panel that carries the
-    counts, so it spends its words on the two things that decide whether the owner acts
-    now — what broke, and that it is not a one-off. It still names its subject in full,
-    because an alarm that does not is a mystery rather than a cue.
+    Shorter than the panel's: the alert is a pointer to the panel that carries the rest,
+    so it spends its words on what broke, how much it cost, and that it is not a one-off.
+    It still names its subject in full, because an alarm that does not is a mystery
+    rather than a cue. The window is the one that was read, never the constant — on a
+    four-run ledger with three bad runs, "3 of the last 20" renders a near-total outage
+    as a 15% blip.
     """
-    return (
-        f"{row['message']} — in {int(row['run_count'])} of the "
-        f"last {ERROR_WINDOW_RUNS} syncs"
-    )
+    runs = int(row["run_count"])
+    reach = f"in {runs} of the last {int(row['window_runs'])} syncs"
+    if not int(row["items"]) and int(row["occurrences"]) == runs:
+        # A connector that failed once per run has no second number worth printing.
+        return f"{row['message']} — {reach}"
+    return f"{row['message']} — {_damage(row)}, {reach}"
 
 
 def sources_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:
@@ -416,7 +448,8 @@ def sources_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:
             # to skip the place the real alarm will appear.
             "errors": [dict(row, line=error_line(row)) for row in errors[:ERROR_ROWS]],
             "more_errors": max(0, len(errors) - ERROR_ROWS),
-            "error_window": ERROR_WINDOW_RUNS,
+            # The window that was actually read, not the constant that asked for it.
+            "error_window": int(errors[0]["window_runs"]) if errors else 0,
             # Recent AND repeating: still present in the newest run, and seen in more
             # than one. A single flare is shown in the panel but does not raise the
             # sidebar — the alert exists for the failure that is not going to fix itself,

@@ -19,6 +19,16 @@ def client(conn: sqlite3.Connection, settings: Settings) -> TestClient:
     return TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
 
 
+@pytest.fixture
+def cli(settings: Settings, monkeypatch: pytest.MonkeyPatch) -> pytest.MonkeyPatch:
+    """`backglass <command>` pointed at the test ledger. A CLI run from the checkout
+    must never be able to reach the owner's real database."""
+    from backglass import __main__ as cli_mod
+
+    monkeypatch.setattr(cli_mod, "get_settings", lambda: settings)
+    return monkeypatch
+
+
 @pytest.fixture(autouse=True)
 def sync_is_alive(conn: sqlite3.Connection) -> None:
     """A migrated-but-never-synced ledger raises its own vermilion alert (heartbeat.py).
@@ -1412,6 +1422,10 @@ class TestRecentRunErrors:
     those items would have burned their attempts and parked permanently, in silence,
     while CLAUDE.md rule 5 and extract-commitments.md §Failure handling both promised
     otherwise.
+
+    Every number this panel prints is a claim about the ledger, so each one is pinned
+    here: the window is the window that was read, the damage is items and not retry
+    records, and the command the overflow names can produce what the overflow hid.
     """
 
     OAUTH = (
@@ -1433,15 +1447,23 @@ class TestRecentRunErrors:
         conn.commit()
         return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
 
+    def _pad(self, conn: sqlite3.Connection, count: int) -> None:
+        """Clean sync runs, so a test about the window is not also a test about a
+        ledger that happens to be four runs old."""
+        for n in range(count):
+            self._run(conn, f"2026-08-04T{n // 4:02d}:{(n % 4) * 15:02d}:00+00:00")
+
     def _replay_the_oauth_morning(self, conn: sqlite3.Connection) -> None:
-        """The real shape of 2026-08-05: the same failure, growing, item ids all
-        different. Eleven near-identical lines is what the owner must never be shown."""
+        """The real shape of 2026-08-05: one failure, growing, the SAME items retried
+        every half hour. Four runs, eighteen error records — and six items."""
         for hour, items in ((12, 1), (13, 3), (14, 3), (15, 11)):
             self._run(
                 conn,
                 f"2026-08-05T{hour:02d}:58:00+00:00",
                 [self.OAUTH.format(item=8547 + n) for n in range(items)],
             )
+
+    # ── the empty case ────────────────────────────────────────────────────
 
     def test_a_clean_ledger_renders_no_error_block_at_all(
         self, client: TestClient, conn: sqlite3.Connection
@@ -1453,50 +1475,18 @@ class TestRecentRunErrors:
         assert "Error" not in panel
         assert "other error" not in panel
 
-    def test_eighteen_copies_of_one_failure_render_as_one_counted_line(
+    # ── grouping ──────────────────────────────────────────────────────────
+
+    def test_many_copies_of_one_failure_render_as_one_line(
         self, client: TestClient, conn: sqlite3.Connection
     ) -> None:
         self._replay_the_oauth_morning(conn)
         panel = panel_slice(client.get("/").text, "panel-sources")
-        assert (
-            "18 × Failed to authenticate: OAuth session expired and could not be "
-            "refreshed (triage) · 4 runs" in panel
-        )
+        assert "11 items failed triage · Failed to authenticate: OAuth session " in panel
         # The wrappers this repo puts on the error are stripped, not reproduced: the
         # item id is what made one defect look like eighteen.
         assert "triage 8547" not in panel
         assert "model reported an error" not in panel
-
-    def test_the_sidebar_alerts_while_it_is_still_happening(
-        self, client: TestClient, conn: sqlite3.Connection
-    ) -> None:
-        self._replay_the_oauth_morning(conn)
-        body = client.get("/goals").text  # a page with no Sources panel on it
-        assert (
-            "Failed to authenticate: OAuth session expired and could not be refreshed"
-            " — in 4 of the last 20 syncs" in body
-        )
-
-    def test_a_clean_run_afterwards_stands_the_sidebar_down(
-        self, client: TestClient, conn: sqlite3.Connection
-    ) -> None:
-        """What actually happened at 17:29. The panel keeps the history; the alert is
-        about now, and an alert that outlives its cause is one the owner learns to
-        ignore."""
-        self._replay_the_oauth_morning(conn)
-        self._run(conn, "2026-08-05T17:29:00+00:00")
-        assert "OAuth session expired" not in client.get("/goals").text
-        assert "OAuth session expired" in panel_slice(client.get("/").text, "panel-sources")
-
-    def test_a_single_flare_is_shown_but_does_not_raise_the_sidebar(
-        self, client: TestClient, conn: sqlite3.Connection
-    ) -> None:
-        """Recent AND repeating. One bad run is news for the panel, not an alarm."""
-        self._run(conn, "2026-08-05T12:00:00+00:00", [self.OAUTH.format(item=8547)])
-        panel = panel_slice(client.get("/").text, "panel-sources")
-        assert "OAuth session expired and could not be refreshed (triage) · 1 run" in panel
-        assert "1 ×" not in panel  # a count of one is noise, not information
-        assert "OAuth session expired" not in client.get("/goals").text
 
     def test_a_source_error_keeps_the_name_of_the_source_that_failed(
         self, client: TestClient, conn: sqlite3.Connection
@@ -1515,8 +1505,10 @@ class TestRecentRunErrors:
                 ],
             )
         panel = panel_slice(client.get("/").text, "panel-sources")
-        assert "2 × imessage: OperationalError: unable to open database file · 2 runs" in panel
-        assert "2 × calendar:apple: RuntimeError:" in panel
+        assert "imessage: OperationalError: unable to open database file · 2 of" in panel
+        assert "calendar:apple: RuntimeError:" in panel
+        # No source_item behind a connector failure, so no invented item count.
+        assert "items failed" not in panel
 
     def test_a_counter_that_moves_does_not_split_one_failure_into_many(
         self, client: TestClient, conn: sqlite3.Connection
@@ -1533,33 +1525,106 @@ class TestRecentRunErrors:
                 ],
             )
         panel = panel_slice(client.get("/").text, "panel-sources")
-        assert "3 × spend cap reached (2006c of 2000c)" in panel  # the newest wording
+        assert "spend cap reached (2006c of 2000c)" in panel  # the newest wording
         assert "2004c" not in panel
         assert "2005c" not in panel
 
-    def test_overflow_is_counted_not_dropped(
+    # ── R3: the headline number is damage, not retry volume ───────────────
+
+    def test_the_count_is_items_lost_not_error_records_written(
         self, client: TestClient, conn: sqlite3.Connection
     ) -> None:
-        from backglass.web.panels import ERROR_ROWS
-
-        self._run(
-            conn,
-            "2026-08-05T12:00:00+00:00",
-            # Distinct names, not `connector-1..N`: the group key drops digit runs, so
-            # sources that differ only by a number are one failure by design.
-            [f"connector-{c}: RuntimeError: went wrong" for c in "abcde"[: ERROR_ROWS + 2]],
-        )
+        """sync.py re-attempts a parked item every run, so one small persistent fault
+        writes the same failure again every half hour. The owner's ledger held 40
+        records for 11 items — reporting 40 inflates the damage 3.6x, and the inflation
+        GROWS with how long the fault runs: the longer a small bug lasts, the larger the
+        crisis the panel invents."""
+        for _ in range(6):  # six runs, the same three items each time
+            self._run(
+                conn,
+                "2026-08-05T12:00:00+00:00",
+                [self.OAUTH.format(item=8547 + n) for n in range(3)],
+            )
         panel = panel_slice(client.get("/").text, "panel-sources")
-        assert "2 other errors in the last 20 syncs" in panel
+        assert "3 items failed triage" in panel
+        assert "18 attempts" in panel  # retry volume is context, not the headline
+        assert "18 items" not in panel
+        assert "18 × " not in panel
 
-    def test_the_window_does_not_reach_past_the_last_twenty_syncs(
+    def test_a_single_item_is_not_pluralised_and_carries_no_retry_clause(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._run(conn, "2026-08-05T12:00:00+00:00", [self.OAUTH.format(item=8547)])
+        panel = panel_slice(client.get("/").text, "panel-sources")
+        assert "1 item failed triage" in panel
+        assert "attempts" not in panel
+
+    def test_the_cli_reports_the_same_item_count_as_the_panel(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """One builder, two surfaces: `backglass errors` renders through the same
+        error_line the panel does, so the CLI cannot quietly disagree with the
+        dashboard about how much a failure cost."""
+        from backglass.db import query
+        from backglass.web.panels import ERROR_WINDOW_RUNS, error_line
+
+        self._replay_the_oauth_morning(conn)
+        rows = list(
+            conn.execute(
+                query("recent_run_errors"), {"user_id": 1, "runs": ERROR_WINDOW_RUNS}
+            )
+        )
+        assert [int(r["items"]) for r in rows] == [11]
+        assert "11 items failed triage" in error_line(rows[0])
+
+    # ── R1: the window is the window that was read ────────────────────────
+
+    def test_a_young_ledger_reports_the_runs_it_actually_has(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """Printing the ERROR_WINDOW_RUNS constant turns three bad runs out of four
+        into "3 of the last 20 syncs" — 15% rendered for what is 75%, severity inverted
+        on exactly the young-ledger and dead-scheduler cases the run-count window exists
+        to protect."""
+        for hour in (12, 13, 14):
+            self._run(
+                conn, f"2026-08-05T{hour:02d}:00:00+00:00", [self.OAUTH.format(item=8547)]
+            )
+        panel = panel_slice(client.get("/").text, "panel-sources")
+        # 4 sync runs: the autouse healthy_run fixture, plus these three.
+        assert "3 of the last 4 syncs" in panel
+        assert "of the last 20" not in panel
+
+    def test_the_sidebar_reports_the_runs_it_actually_has_too(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        for hour in (12, 13, 14):
+            self._run(
+                conn, f"2026-08-05T{hour:02d}:00:00+00:00", [self.OAUTH.format(item=8547)]
+            )
+        body = client.get("/goals").text  # a page with no Sources panel on it
+        assert "in 3 of the last 4 syncs" in body
+        assert "of the last 20 syncs" not in body
+
+    def test_a_full_ledger_reports_the_configured_window(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """The other half of the same claim: once there are more runs than the window,
+        the number stops growing at the window size."""
+        from backglass.web.panels import ERROR_WINDOW_RUNS
+
+        self._pad(conn, ERROR_WINDOW_RUNS * 2)
+        self._run(conn, "2026-08-05T12:00:00+00:00", [self.OAUTH.format(item=8547)])
+        panel = panel_slice(client.get("/").text, "panel-sources")
+        assert f"1 of the last {ERROR_WINDOW_RUNS} syncs" in panel
+
+    def test_the_window_does_not_reach_past_the_configured_run_count(
         self, client: TestClient, conn: sqlite3.Connection
     ) -> None:
         from backglass.web.panels import ERROR_WINDOW_RUNS
 
         self._run(conn, "2026-08-01T12:00:00+00:00", ["anki: RuntimeError: ancient news"])
-        for n in range(ERROR_WINDOW_RUNS):
-            self._run(conn, f"2026-08-05T{n // 4:02d}:{(n % 4) * 15:02d}:00+00:00")
+        self._pad(conn, ERROR_WINDOW_RUNS)
         assert "ancient news" not in panel_slice(client.get("/").text, "panel-sources")
 
     def test_an_interview_run_is_not_a_sync(
@@ -1579,3 +1644,101 @@ class TestRecentRunErrors:
         assert "transcript unreadable" not in panel_slice(
             client.get("/").text, "panel-sources"
         )
+
+    # ── the sidebar gate ──────────────────────────────────────────────────
+
+    def test_the_sidebar_alerts_while_it_is_still_happening(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._replay_the_oauth_morning(conn)
+        body = client.get("/goals").text
+        assert (
+            "Failed to authenticate: OAuth session expired and could not be refreshed"
+            " — 11 items, in 4 of the last 5 syncs" in body
+        )
+
+    def test_a_clean_run_afterwards_stands_the_sidebar_down(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """What actually happened at 17:29. The panel keeps the history; the alert is
+        about now, and an alert that outlives its cause is one the owner learns to
+        ignore."""
+        self._replay_the_oauth_morning(conn)
+        self._run(conn, "2026-08-05T17:29:00+00:00")
+        assert "OAuth session expired" not in client.get("/goals").text
+        assert "OAuth session expired" in panel_slice(client.get("/").text, "panel-sources")
+
+    def test_a_single_flare_is_shown_but_does_not_raise_the_sidebar(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """Recent AND repeating. One bad run is news for the panel, not an alarm."""
+        self._run(conn, "2026-08-05T12:00:00+00:00", [self.OAUTH.format(item=8547)])
+        assert "1 item failed triage" in panel_slice(client.get("/").text, "panel-sources")
+        assert "OAuth session expired" not in client.get("/goals").text
+
+    # ── R2: the overflow points at a command that can deliver ─────────────
+
+    def test_overflow_is_counted_and_the_named_command_can_produce_it(
+        self,
+        client: TestClient,
+        conn: sqlite3.Connection,
+        cli: pytest.MonkeyPatch,
+    ) -> None:
+        """`backglass status` reads ONE run, so it prints nothing whenever the newest
+        sync happened to be clean — which is exactly the state the owner's ledger was
+        in while the panel showed 40 OAuth failures. A note that sends the owner to a
+        command returning an empty list is worse than no note."""
+        from typer.testing import CliRunner
+
+        from backglass.__main__ import app
+        from backglass.web.panels import ERROR_ROWS
+
+        causes = [f"connector-{c}: RuntimeError: went wrong" for c in "abcdefghijklm"]
+        assert len(causes) > ERROR_ROWS
+        self._run(conn, "2026-08-05T12:00:00+00:00", causes)
+        self._run(conn, "2026-08-05T12:30:00+00:00")  # newest run clean, like 17:29
+
+        panel = panel_slice(client.get("/").text, "panel-sources")
+        hidden = len(causes) - ERROR_ROWS
+        assert f"{hidden} other errors in the last 3 syncs" in panel
+        assert "backglass errors" in panel
+        assert "backglass status" not in panel
+
+        result = CliRunner().invoke(app, ["errors"])
+        assert result.exit_code == 0, result.output
+        # Every group, including the ones the panel had to cap.
+        for cause in causes:
+            assert cause in result.output
+        assert "errors in the last 3 sync run(s)" in result.output
+
+    def test_the_cli_says_so_when_the_window_is_clean(
+        self, conn: sqlite3.Connection, cli: pytest.MonkeyPatch
+    ) -> None:
+        from typer.testing import CliRunner
+
+        from backglass.__main__ import app
+
+        self._run(conn, "2026-08-05T12:00:00+00:00")
+        result = CliRunner().invoke(app, ["errors"])
+        assert result.exit_code == 0, result.output
+        assert "no errors in the last 2 sync run(s)" in result.output
+
+    # ── the defensive guard ───────────────────────────────────────────────
+
+    def test_a_malformed_errors_json_does_not_take_the_dashboard_down(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """sync.py only ever writes json.dumps(list), so this is unreachable today.
+        json_each RAISES on a bad value though, and that exception is inside the Sources
+        panel: the whole dashboard would go dark over one bad row in the one column
+        whose job is to report that something went wrong."""
+        for bad in ("not json at all", '{"not": "an array"}', ""):
+            conn.execute(
+                "INSERT INTO run (user_id, started_at, finished_at, errors_json)"
+                " VALUES (1, '2026-08-05T12:00:00+00:00', '2026-08-05T12:00:00+00:00', ?)",
+                (bad,),
+            )
+        self._run(conn, "2026-08-05T13:00:00+00:00", [self.OAUTH.format(item=8547)])
+        page = client.get("/")
+        assert page.status_code == 200
+        assert "1 item failed triage" in panel_slice(page.text, "panel-sources")

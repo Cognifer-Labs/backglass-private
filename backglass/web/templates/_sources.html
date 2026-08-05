@@ -52,10 +52,12 @@
           {{ e['line'] }}</p>
       {% endfor %}
       {% if d.sources.meta.more_errors %}
-        {# Capped, not dropped: the count keeps the overflow honest, the same way the
-           sidebar's "N more" does. #}
+        {# Capped, not dropped — and the command named here can actually produce what
+           was capped. `backglass status` cannot: it reads one run, so it prints nothing
+           at all whenever the newest sync happened to be clean. A note that sends the
+           owner to a command that returns an empty list is worse than no note. #}
         <p class="note">{{ d.sources.meta.more_errors }} other error{{ '' if d.sources.meta.more_errors == 1 else 's' }} in the last {{ d.sources.meta.error_window }} syncs —
-          run <span class="kbd">backglass status</span> for the full list.</p>
+          run <span class="kbd">backglass errors</span> for the full list.</p>
       {% endif %}
     {% endif %}
 

@@ -434,6 +434,48 @@ def commitments(
 
 
 @app.command()
+def errors(
+    runs: Annotated[
+        int, typer.Option("--runs", help="How many recent sync runs to read")
+    ] = 0,
+) -> None:
+    """Everything the pipeline logged as gone wrong across the recent sync runs.
+
+    `status` shows the last run's errors and only those; the next sync, thirty minutes
+    later, replaces them. This reads the same window the Sources panel does, grouped the
+    same way, so the panel's "N other errors" has somewhere to point. It is the full
+    list, uncapped — the panel is a glance surface and has to stop somewhere, this does
+    not.
+    """
+    from backglass.web.panels import ERROR_WINDOW_RUNS, error_line
+
+    settings = get_settings()
+    conn = _open(settings)
+    rows = list(
+        conn.execute(
+            query("recent_run_errors"),
+            {"user_id": USER_ID, "runs": runs or ERROR_WINDOW_RUNS},
+        )
+    )
+    if not rows:
+        window = min(runs or ERROR_WINDOW_RUNS, _sync_run_count(conn))
+        typer.echo(f"no errors in the last {window} sync run(s)")
+        return
+    typer.echo(f"errors in the last {rows[0]['window_runs']} sync run(s)")
+    for row in rows:
+        typer.echo(f"  {error_line(row)}")
+
+
+def _sync_run_count(conn: sqlite3.Connection) -> int:
+    """How many sync runs exist at all, so the no-errors line can be as honest about its
+    window as the grouped rows are about theirs."""
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM run WHERE user_id = ? AND kind = 'sync'", (USER_ID,)
+    ).fetchone()
+    return int(row["n"]) if row else 0
+
+
+@app.command()
 def status() -> None:
     """Connector health, triage kill rate, spend, last run. The Sources panel, in text."""
     settings = get_settings()

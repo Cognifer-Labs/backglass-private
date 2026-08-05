@@ -15,6 +15,12 @@
 -- only, for heartbeat.py's reason: `run` records other kinds (roadmap interviews), the
 -- panel speaks about syncing, so the query has to mean it.
 --
+-- `window_runs` is the size of the window that was ACTUALLY read, which is `min(:runs,
+-- runs in the ledger)` and not :runs. A surface that prints the constant says "in 3 of
+-- the last 20 syncs" about a four-run ledger where three of four failed: 15% rendered
+-- for 75%, severity inverted on precisely the young-ledger and dead-scheduler cases this
+-- window shape exists to protect. The count is returned so no caller has to guess.
+--
 -- Grouping: errors are wrapped as they propagate — sync.py prepends `triage <item_id>: `,
 -- extract/client.py prepends `model returned an unusable response after N attempts:
 -- model reported an error: `. Those two frames are ours, and stripping them leaves the
@@ -22,6 +28,13 @@
 -- because the digits are precisely what varies while the failure stays the same: item
 -- ids, cent counters, AppleEvent error codes. The row rendered is the newest real message
 -- in the group, never the digit-stripped key — the key is for counting, not for reading.
+--
+-- `items` counts DISTINCT source_items, `occurrences` counts error records. They are not
+-- the same number and the difference is the whole point: the owner's 40 OAuth records
+-- were 11 items re-attempted every half hour for four hours. Reporting 40 inflates the
+-- damage 3.6x, and the inflation GROWS with how long a small fault runs — the longer a
+-- persistent bug lasts, the larger the crisis the panel invents. The id is parsed out of
+-- the prefix before it is stripped for grouping, because after stripping it is gone.
 --
 -- Params: :user_id, :runs
 WITH recent AS (
@@ -31,7 +44,7 @@ WITH recent AS (
   ORDER BY id DESC
   LIMIT :runs
 ),
-newest AS (SELECT MAX(id) AS id FROM recent),
+window_size AS (SELECT COUNT(*) AS runs, MAX(id) AS newest_id FROM recent),
 raw AS (
   SELECT
     r.id AS run_id,
@@ -45,14 +58,24 @@ raw AS (
       ELSE ''
     END AS stage,
     j.value AS full_message
-  FROM recent r, json_each(r.errors_json) j
-  WHERE r.errors_json IS NOT NULL
+  -- sync.py only ever writes json.dumps(list), so the guard is unreachable today. It is
+  -- here because json_each RAISES on a malformed value, and an exception inside the
+  -- Sources panel takes down all seven panels: the dashboard would go dark over one bad
+  -- row in a column whose entire job is to report that something went wrong.
+  FROM recent r,
+       json_each(CASE WHEN json_valid(r.errors_json)
+                       AND json_type(r.errors_json) = 'array'
+                      THEN r.errors_json ELSE '[]' END) j
 ),
 unwrapped AS (
   SELECT
     run_id,
     started_at,
     stage,
+    -- The source_item this error is about, kept before the prefix is thrown away.
+    CASE WHEN stage = '' OR instr(full_message, ': ') = 0 THEN NULL
+         ELSE substr(full_message, length(stage) + 2,
+                     instr(full_message, ': ') - length(stage) - 2) END AS item_id,
     CASE WHEN stage = '' THEN full_message
          ELSE substr(full_message, instr(full_message, ': ') + 2) END AS body
   FROM raw
@@ -62,6 +85,7 @@ cause AS (
     run_id,
     started_at,
     stage,
+    item_id,
     -- 25 = length('model reported an error: ').
     CASE WHEN instr(body, 'model reported an error: ') > 0
          THEN substr(body, instr(body, 'model reported an error: ') + 25)
@@ -75,9 +99,11 @@ SELECT
   started_at AS last_at,
   stage,
   message,
+  COUNT(DISTINCT item_id) AS items,
   COUNT(*) AS occurrences,
   COUNT(DISTINCT run_id) AS run_count,
-  MAX(run_id) = (SELECT id FROM newest) AS in_latest_run
+  (SELECT runs FROM window_size) AS window_runs,
+  MAX(run_id) = (SELECT newest_id FROM window_size) AS in_latest_run
 FROM cause
 GROUP BY
   stage,
