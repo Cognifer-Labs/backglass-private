@@ -14,9 +14,10 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
+from annotated_types import Ge, Le
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -53,6 +54,21 @@ def day_view(conn: sqlite3.Connection, settings: Settings, day: date) -> DayView
 
 def week_of(day: date) -> date:
     return day - timedelta(days=day.weekday())
+
+
+#: The window these two pages will render. `date.min`/`date.max` are representable and
+#: are not days in anyone's life: `?date=9999-12-31` parsed fine, reached the handler,
+#: and then raised OverflowError inside `timezones.day_bounds` — which adds a day to
+#: find the day's end — while the page was building its own "next" link. Bounding the
+#: parameter is one guard at the door rather than clamped arithmetic at each of the
+#: three places that does date maths downstream.
+EARLIEST_DAY = date(1900, 1, 1)
+LATEST_DAY = date(2200, 1, 1)
+
+#: The bound travels with the type rather than being spelled out at each of the two
+#: routes. `Query(ge=…)` takes numbers, so the constraint is expressed the way pydantic
+#: expresses one over any ordered type.
+DayParam = Annotated[date, Ge(EARLIEST_DAY), Le(LATEST_DAY)]
 
 
 # ── the day timeline ──────────────────────────────────────────────────────
@@ -415,10 +431,14 @@ def build_router(
     @router.get("/schedule", response_class=HTMLResponse)
     def schedule(
         request: Request,
-        date_: str | None = Query(None, alias="date"),
+        date_: DayParam | None = Query(None, alias="date"),
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:
-        day = date.fromisoformat(date_) if date_ else today()
+        # Typed `date`, not `str` parsed in the body: a hand-edited URL, a stale
+        # bookmark or a typo used to reach `date.fromisoformat` unguarded and 500 the
+        # page. FastAPI answers the same input with a 422 naming the parameter, which
+        # is what /brief/{on_date} has always done by virtue of typing its parameter.
+        day = date_ or today()
         view = day_view(conn, settings, day)
         return templates.TemplateResponse(
             request,
@@ -440,10 +460,10 @@ def build_router(
     @router.get("/schedule/week", response_class=HTMLResponse)
     def week(
         request: Request,
-        start: str | None = None,
+        start: DayParam | None = Query(None),
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:
-        first = week_of(date.fromisoformat(start) if start else today())
+        first = week_of(start or today())
         days = [day_view(conn, settings, first + timedelta(days=i)) for i in range(7)]
         return templates.TemplateResponse(
             request,

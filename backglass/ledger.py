@@ -29,6 +29,28 @@ from backglass.db import now_iso, query
 USER_ID = 1  # docs/03: "user_id on every table, always 1."
 
 
+class LedgerError(ValueError):
+    """A write the ledger refuses. One type, so a caller catching it catches all of it."""
+
+
+def _check_due_at(due_at: str | None) -> None:
+    """A due date is a date, in the one format the rest of the system reads.
+
+    `YYYY-MM-DD` or a full ISO timestamp — the two shapes `extract/dates.resolve_due`
+    produces, and the two the board's queries can order by. NULL stays legal: a
+    commitment with no deadline is an ordinary thing.
+    """
+    if due_at is None:
+        return
+    text = str(due_at)
+    try:
+        datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        raise LedgerError(
+            f"{text[:60]!r} is not a due date; use YYYY-MM-DD or a full timestamp"
+        ) from None
+
+
 def _sharpens(new: str | None, current: str | None, *, aimed: bool = False) -> bool:
     """Is `new` worth writing over `current` for an engagement's time?
 
@@ -265,7 +287,16 @@ class Ledger:
         It is written here, next to the row it justifies, rather than by the caller:
         there are two doors into this table — extraction and the dashboard's quick-add —
         and a citation written at one of them is not a citation rule, it is a coincidence.
+
+        `due_at` is checked here for exactly that reason. Extraction resolves its dates
+        through `extract/dates.resolve_due`, which cannot return a string this rejects;
+        quick-add put the form field straight into the column, so `tomorrow`,
+        `2026-02-30`, `9999-99-99` and three hundred characters of `x` all became due
+        dates in a column that every board query sorts and compares by. The door that
+        was wrong is fixed too, but the guard belongs at the INSERT — the next door has
+        not been written yet.
         """
+        _check_due_at(due_at)
         self.stats.commitments_inserted += 1
         self.writes += 1
         if self.dry_run:

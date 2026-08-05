@@ -1,3 +1,62 @@
+# Polish pass — the states nobody drives, and the values nobody types
+
+Started 2026-08-05. The ask: audit the whole app, check every state, check the edge
+cases. Method: two adversarial sweeps rather than a reading of the code — one over every
+route against an empty ledger with hostile path/query params, one over every write
+against a ledger seeded with one of everything. 67 GETs + 205 POSTs, then 60 more writes
+with out-of-range values. The suite was green (1425) before and says nothing about any
+of this, because every test drives a value someone chose to write down.
+
+## What the sweeps found
+
+Six defects, in severity order. Two of them lose data.
+
+1. **A malformed date is a traceback, in six places.** `date.fromisoformat` is called on
+   user input at `web/routes/schedule.py:419` (`?date=`), `:444` (`?start=`) and at four
+   CLI `--date` options — and exactly one caller in the tree (`log --on`) explains
+   itself. `/schedule?date=2026-02-30` is a 500. So is a stale bookmark, a hand-edited
+   URL, or a typo in `backglass plan --date`. `/brief/{on_date}` gets this right by
+   accident of typing its parameter `date`, which is the fix the others want.
+2. **Snooze erases the deadline.** `date(base, '+N days')` returns NULL when SQLite's
+   date arithmetic overflows, and `snooze()` bounds `days` below (`>= 1`) and not above.
+   `POST /commitments/1/snooze/1000000000000000` sets `due_at = NULL` and reports
+   "snoozed". The commitment stays open with no date, on a board that sorts by date.
+3. **Quick-add writes an unvalidated due date.** The form field goes to the ledger raw:
+   `tomorrow`, `2026-02-30`, `9999-99-99` and 300 characters of `x` all land in
+   `commitment.due_at`, a column every board query orders and compares by. The
+   extraction door already resolves through `dates.resolve_due`; the owner's own door
+   does not.
+4. **Twenty routes 500 on a large id.** FastAPI's `int` is unbounded, SQLite's is 64-bit,
+   so `/people/999999999999999999999999999999` is an OverflowError rather than a 404.
+5. **Ticking a checklist item that is gone is a 500**, not the 422 every other stale-row
+   write returns — `tick`/`untick` are the only two actions that write without checking
+   the row exists, so the FK failure escapes as an IntegrityError.
+6. **No upper bound on an estimate, a weekly count, or quick-add's text.** A
+   4.6-quintillion-minute estimate is stored and then fed to the planner's capacity
+   arithmetic; 20,000 characters render as a board row.
+
+## Steps
+
+- [x] 1. One way to read a day from user input. `parse_day()` in `backglass/dates_cli.py`
+      (or the nearest existing home) raising one error type with the message `log --on`
+      already gives; every CLI `--date` uses it. Web routes annotate the parameter `date`
+      so FastAPI answers 422, and the prev/next arithmetic clamps at `date.min`/`date.max`
+      so `9999-12-31` is a page and not an OverflowError.
+- [x] 2. `snooze` bounds `days` above as well as below, and the bound is a real one
+      (a snooze is a working-life gesture, not a century).
+- [x] 3. Quick-add routes `due_at` through `dates.resolve_due` against the owner's local
+      now — so "friday" works, and unresolvable text is a 422 rather than a silent
+      corruption. `Ledger.insert_commitment` refuses a non-ISO `due_at` regardless of
+      door, because that is where the data is written.
+- [x] 4. One bounded id type for every integer path parameter.
+- [x] 5. `tick`/`untick` check the item the way every other action checks its row.
+- [x] 6. Upper bounds on estimate minutes, weekly count, and quick-add text length.
+- [x] 7. A test per defect that has been watched to fail against the current code, and
+      the sweeps kept as `tests/test_edges.py` so the next value nobody types is caught
+      by CI rather than by a sweep.
+
+---
+
 # Populate the ledger — mail, messages, and the cap that was never real
 
 Started 2026-08-03. The ask: put the owner's actual information into the system, from

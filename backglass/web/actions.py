@@ -40,6 +40,22 @@ REJECT_REASONS = {
 #: explain itself.
 CHECKLIST_CAP = 7
 
+#: Upper bounds on the four numbers a URL can put into the ledger. Same convention as
+#: `goals/activities.MAX_HOURS_PER_ENTRY` and `goals/checkpoints.MAX_DELTA`: far above
+#: any real entry, so a bound can only ever catch a mistake, and small enough that no
+#: arithmetic downstream can overflow.
+#:
+#: The snooze bound is the one that was actually losing data rather than merely storing
+#: nonsense. SQLite's `date(x, '+N days')` returns NULL when N overflows its own day
+#: arithmetic, and a NULL `due_at` is not an error anywhere in this codebase — it means
+#: "no deadline". So `snooze/1000000000000000` erased the deadline of an open
+#: commitment, reported "snoozed", and left a row the board sorts by date with no date.
+MAX_SNOOZE_DAYS = 3_650
+MAX_ESTIMATE_MINUTES = 100_000
+MAX_WEEKLY_COUNT = 1_000
+#: A commitment is a line on a board, not a document. 20,000 characters rendered as one.
+MAX_COMMITMENT_CHARS = 1_000
+
 
 class ActionError(RuntimeError):
     pass
@@ -57,6 +73,12 @@ def _require_open(conn: sqlite3.Connection, commitment_id: int) -> dict[str, Any
     ).fetchone()
     if row is None:
         raise ActionError(f"no commitment {commitment_id}")
+    # Enforced here, not by each caller's `WHERE status = 'open'`: that clause made a
+    # write on a closed row match zero rows and still report ok — a stale page's
+    # snooze answered "snoozed 1d" having snoozed nothing. Refusing turns it into a
+    # 422 the failed-write strip can show.
+    if str(row["status"]) != "open":
+        raise ActionError(f"commitment {commitment_id} is already {row['status']}")
     return row
 
 
@@ -99,6 +121,11 @@ def snooze(conn: sqlite3.Connection, commitment_id: int, days: int = 1) -> Resul
     row = _require_open(conn, commitment_id)
     if days < 1:
         raise ActionError("snooze must be at least one day")
+    if days > MAX_SNOOZE_DAYS:
+        raise ActionError(
+            f"a snooze of {days} days is not a snooze (limit {MAX_SNOOZE_DAYS:,}); "
+            "drop it instead"
+        )
     base = str(row["due_at"] or now_iso())[:10]
     conn.execute(
         "UPDATE commitment SET due_at = date(?, ?), rollover_count = rollover_count + 1 "
@@ -187,8 +214,25 @@ def reject_plan(conn: sqlite3.Connection, engagement_id: int) -> Result:
 # ── 3. tick / untick a checklist item ─────────────────────────────────────
 
 
+def _require_checklist_item(conn: sqlite3.Connection, item_id: int) -> None:
+    """The row check every other action in this module does before it writes.
+
+    `tick` and `untick` were the two that did not, and they failed in opposite
+    directions: an insert against a deleted item escaped as a raw `IntegrityError:
+    FOREIGN KEY constraint failed` — a 500, not the 422 the failed-write strip knows how
+    to show — while the delete matched nothing and cheerfully reported "unticked". Both
+    are the same stale open tab, and it should get the same sentence either way.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM checklist_item WHERE id = ? AND user_id = ?", (item_id, USER_ID)
+    ).fetchone()
+    if row is None:
+        raise ActionError(f"no checklist item {item_id}")
+
+
 def tick(conn: sqlite3.Connection, item_id: int, local_date: str) -> Result:
     """Binary, idempotent, and unique per (item, day) at the schema level."""
+    _require_checklist_item(conn, item_id)
     conn.execute(
         "INSERT INTO checklist_tick (checklist_item_id, local_date, ticked_at) "
         "VALUES (?, ?, ?) ON CONFLICT (checklist_item_id, local_date) DO NOTHING",
@@ -198,6 +242,7 @@ def tick(conn: sqlite3.Connection, item_id: int, local_date: str) -> Result:
 
 
 def untick(conn: sqlite3.Connection, item_id: int, local_date: str) -> Result:
+    _require_checklist_item(conn, item_id)
     conn.execute(
         "DELETE FROM checklist_tick WHERE checklist_item_id = ? AND local_date = ?",
         (item_id, local_date),
@@ -263,6 +308,11 @@ def set_estimate(conn: sqlite3.Connection, commitment_id: int, minutes: int) -> 
     """
     if minutes < 0:
         raise ActionError("an estimate cannot be negative")
+    if minutes > MAX_ESTIMATE_MINUTES:
+        raise ActionError(
+            f"{minutes} minutes is not an estimate (limit {MAX_ESTIMATE_MINUTES:,}); "
+            "split it into commitments the planner can place"
+        )
     _require_open(conn, commitment_id)
     conn.execute(
         "UPDATE commitment SET estimated_minutes = ?, estimate_source = 'manual' WHERE id = ?",
@@ -278,6 +328,10 @@ def set_weekly_count(conn: sqlite3.Connection, target_id: int, weekly_count: int
     """docs/06: "Adjust a weekly target."."""
     if weekly_count < 0:
         raise ActionError("a weekly count cannot be negative")
+    if weekly_count > MAX_WEEKLY_COUNT:
+        raise ActionError(
+            f"{weekly_count} times a week is not a cadence (limit {MAX_WEEKLY_COUNT:,})"
+        )
     updated = conn.execute(
         "UPDATE target SET weekly_count = ? WHERE id = ?", (weekly_count, target_id)
     )
@@ -290,9 +344,15 @@ def mark_brief_opened(conn: sqlite3.Connection, brief_id: int) -> None:
     """docs/05 B7. Set once — the first open is the signal, not the last.
 
     "A brief nobody opens is the signal that matters most."
+
+    Only a brief that was sent can be opened. The pixel route is an unauthenticated GET
+    by design (a mail client fetches it), so `sent_at IS NOT NULL` is what keeps the
+    signal honest: without it any GET marks any brief read, including one that was never
+    delivered — and "nobody opened it" is the one reading this metric exists to give.
     """
     conn.execute(
-        "UPDATE brief SET opened_at = ? WHERE id = ? AND opened_at IS NULL",
+        "UPDATE brief SET opened_at = ? "
+        "WHERE id = ? AND opened_at IS NULL AND sent_at IS NOT NULL",
         (now_iso(), brief_id),
     )
 
@@ -383,17 +443,44 @@ def quick_add(
     source item first — provenance for a hand-entered claim is the claim itself, with a
     timestamp. `occurred_at` is now: unlike an old email, "by Friday" typed today means
     this Friday. The 0002 immutability trigger applies to it like any other item.
+
+    Which is exactly why the typed due date goes through `dates.resolve_due` against
+    that same local now, rather than into the column as typed. It had been going in raw,
+    so `tomorrow` was stored as the five letters "tomorrow" in a column the board sorts
+    by. Sharing the resolver with extraction means the owner may now type what they
+    would have said — "friday", "next tuesday", "end of month" — and that a phrase
+    neither door can resolve is refused here rather than kept as a date-shaped string.
+
+    Everything is validated before the first INSERT: a refusal after the source item is
+    written would leave the owner's words in the ledger with no commitment on them.
     """
     import uuid
     from hashlib import sha256
 
-    from backglass.ledger import Ledger
+    from backglass.extract import dates
+    from backglass.ledger import Ledger, LedgerError
 
     what = what.strip()
     if not what:
         raise ActionError("a commitment needs words")
+    if len(what) > MAX_COMMITMENT_CHARS:
+        raise ActionError(
+            f"that is {len(what):,} characters (limit {MAX_COMMITMENT_CHARS:,}); "
+            "a commitment is a line, not a document"
+        )
     if direction not in ("i_owe", "owed_to_me"):
         raise ActionError(f"unknown direction {direction!r}")
+
+    typed_now = timezones.local_now_iso(settings)
+    resolved_due: str | None = None
+    if due_at and due_at.strip():
+        resolution = dates.resolve_due(due_at, occurred_at=typed_now)
+        if resolution.value is None:
+            raise ActionError(
+                f"could not read {due_at.strip()[:60]!r} as a date; "
+                "try YYYY-MM-DD, or a phrase like 'friday'"
+            )
+        resolved_due = resolution.value
 
     body = what if not counterparty else f"{what} — {counterparty}"
     cur = conn.execute(
@@ -402,7 +489,7 @@ def quick_add(
         " VALUES (?, 'manual', ?, ?, ?, ?, 'Manual entry', ?, ?, 'keep', 'manual')",
         # fetched_at is telemetry (UTC); occurred_at is the owner's claim and carries
         # their local date — typed tonight in Phoenix must not read as tomorrow.
-        (USER_ID, uuid.uuid4().hex, now_iso(), timezones.local_now_iso(settings),
+        (USER_ID, uuid.uuid4().hex, now_iso(), typed_now,
          (settings.owner_emails[0] if settings.owner_emails else settings.owner_name),
          body, sha256(body.encode()).hexdigest()),
     )
@@ -410,18 +497,23 @@ def quick_add(
 
     ledger = Ledger(conn, settings)
     entity_id = ledger.resolve_entity(counterparty) if counterparty else None
-    return ledger.insert_commitment(
-        direction=direction,
-        entity_id=entity_id,
-        what=what,
-        due_at=due_at or None,
-        estimated_minutes=minutes,
-        estimate_source="manual" if minutes else None,
-        confidence=1.0,
-        source_item_id=source_item_id,
-        # The owner's own sentence is the evidence for a hand-entered claim. Citing it
-        # keeps the read path uniform — every commitment on every surface has a quote,
-        # and a manual row does not render as the one with nothing behind it.
-        evidence=body,
-        evidence_kind="manual",
-    )
+    try:
+        return ledger.insert_commitment(
+            direction=direction,
+            entity_id=entity_id,
+            what=what,
+            due_at=resolved_due,
+            estimated_minutes=minutes,
+            estimate_source="manual" if minutes else None,
+            confidence=1.0,
+            source_item_id=source_item_id,
+            # The owner's own sentence is the evidence for a hand-entered claim. Citing
+            # it keeps the read path uniform — every commitment on every surface has a
+            # quote, and a manual row does not render as the one with nothing behind it.
+            evidence=body,
+            evidence_kind="manual",
+        )
+    except LedgerError as exc:
+        # Unreachable while the resolver above holds; here so that if it ever stops
+        # holding, the owner gets the sentence rather than a 500.
+        raise ActionError(str(exc)) from exc

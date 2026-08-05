@@ -126,8 +126,12 @@ def body_text(message: EmailMessage) -> str:
     try:
         content = part.get_content()
     except (LookupError, ValueError):
-        # An unknown charset or a broken encoding. Bytes are still better than nothing.
-        payload = part.get_payload(decode=True) or b""
+        # An unknown charset or a broken encoding. Bytes are still better than nothing —
+        # but `get_payload(decode=True)` returns bytes only for a leaf part; on a
+        # multipart it hands back the list of sub-messages, which has no `.decode`.
+        payload = part.get_payload(decode=True)
+        if not isinstance(payload, bytes):
+            return ""
         content = payload.decode("utf-8", errors="replace")
     if not isinstance(content, str):
         return ""
@@ -159,7 +163,10 @@ def occurred_at_of(message: EmailMessage, date_received: int) -> str:
 
 
 def mailbox_name(url: str) -> str:
-    """The folder, as a person would name it: `imap://UUID/%5BGmail%5D/All%20Mail` → `All Mail`."""
+    """The folder, as a person would name it.
+
+    `imap://UUID/%5BGmail%5D/All%20Mail` → `All Mail`.
+    """
     return unquote(url).rstrip("/").rpartition("/")[2]
 
 

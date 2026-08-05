@@ -20,6 +20,7 @@ from backglass.config import Settings
 from backglass.people import merge as merge_mod
 from backglass.people import profiles, touch
 from backglass.web import actions
+from backglass.web.params import RowId
 
 
 def build_router(
@@ -72,7 +73,7 @@ def build_router(
 
     @router.get("/people/{entity_id}", response_class=HTMLResponse)
     def person(
-        entity_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+        entity_id: RowId, request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ) -> Any:
         record = profiles.profile(conn, entity_id)
         if record is None:
@@ -115,7 +116,7 @@ def build_router(
 
     @router.post("/people/{entity_id}/edit", response_class=HTMLResponse)
     def edit(
-        entity_id: int,
+        entity_id: RowId,
         role: str = Form(""),
         org: str = Form(""),
         tags: str = Form(""),
@@ -134,8 +135,8 @@ def build_router(
 
     @router.post("/people/{winner_id}/merge/{loser_id}", response_class=HTMLResponse)
     def do_merge(
-        winner_id: int,
-        loser_id: int,
+        winner_id: RowId,
+        loser_id: RowId,
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:
         try:
