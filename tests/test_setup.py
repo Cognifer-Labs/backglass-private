@@ -305,6 +305,7 @@ class TestSetupCommand:
                 "apple_notes": True,
                 "apple_reminders": True,
                 "apple_calendar": True,
+                "apple_contacts": True,
                 "imessage_db_path": tmp_path / "chat.db",
             }
         )

@@ -145,15 +145,22 @@ def imessage_chats(
     migrate(conn)
     chats_mod.seed_from_env(conn, "imessage", settings.imessage_chats)
     chats_mod.record(conn, "imessage", list(seen.values()), cumulative=False)
-    decisions = {c.key: c.decision for c in chats_mod.listing(conn, "imessage")}
+    # The stored rows rather than the raw sightings, because those carry the address
+    # book's answer to "who is +14802411748" — the thing this list exists to tell you.
+    stored = {c.key: c for c in chats_mod.listing(conn, "imessage")}
 
     typer.echo(f"Conversations in the last {days} days — decide at /chats:\n")
     for sighting in sorted(seen.values(), key=lambda s: -s.messages):
-        decision = decisions.get(normalise(sighting.key))
-        mark = {"monitor": "on ", "ignore": "off"}.get(decision or "", "   ")
+        row = stored.get(normalise(sighting.key))
+        decision = (row.decision if row else None) or ""
+        mark = {"monitor": "on ", "ignore": "off"}.get(decision, "   ")
         kind = "group" if sighting.kind == "group" else "1:1  "
-        typer.echo(f"  {mark} {kind}  {sighting.messages:>6}  {sighting.display_name}")
-    undecided = sum(1 for s in seen if decisions.get(normalise(s)) is None)
+        label = row.label if row else sighting.display_name
+        handle = f"  ({row.identifier})" if row and row.identifier else ""
+        typer.echo(f"  {mark} {kind}  {sighting.messages:>6}  {label}{handle}")
+    undecided = sum(
+        1 for s in seen if (stored.get(normalise(s)) is None or stored[normalise(s)].undecided)
+    )
     if undecided:
         typer.echo(
             f"\n{undecided} conversation(s) awaiting a decision. "
@@ -398,9 +405,61 @@ def sync_command(
         typer.echo("no sources configured; run `backglass auth <label>` first", err=True)
         raise typer.Exit(2)
 
-    report = sync(conn, settings, connectors, _build_model_client(settings), dry_run=dry_run)
+    report = sync(
+        conn,
+        settings,
+        connectors,
+        _build_model_client(settings),
+        dry_run=dry_run,
+        contacts_source=_contacts_source(settings),
+    )
     _print_report(report, dry_run=dry_run)
     raise typer.Exit(report.exit_code)
+
+
+@app.command("contacts")
+def contacts_command(
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Print what would link, write nothing")
+    ] = False,
+) -> None:
+    """Name the numbers: fold Contacts.app into the people the ledger already knows."""
+    from backglass import contacts as contacts_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    source = _contacts_source(settings)
+    if source is None:
+        typer.secho("APPLE_CONTACTS is not set — add it to .env", fg=typer.colors.RED)
+        raise typer.Exit(2)
+    health = source.health()
+    if not health.ok:
+        typer.secho(health.detail or "contacts unavailable", fg=typer.colors.RED)
+        raise typer.Exit(1)
+
+    report = contacts_mod.import_contacts(conn, source.read(), dry_run=dry_run)
+    conn.commit()
+    typer.echo(
+        f"read {report.read} contacts — {report.entities_created} new people, "
+        f"{report.entities_updated} updated, {report.aliases_added} identifiers linked"
+    )
+    if report.excluded:
+        typer.echo(f"  boundary excluded {report.excluded}")
+    for name in report.ambiguous:
+        # Named rather than resolved: two cards claiming one number is a question for
+        # the owner, and a wrong name is worse than a bare number.
+        typer.echo(f"  ambiguous, left unlinked: {name}")
+
+    from backglass import chats as chats_mod
+
+    chats = chats_mod.listing(conn)
+    resolved = contacts_mod.resolve(conn, [chat.key for chat in chats])
+    named = sum(1 for r in resolved.values() if r.name)
+    typer.echo(
+        f"conversations: {len(chats)} known, {named} now named, "
+        f"{len(resolved) - named} still a bare identifier"
+    )
 
 
 @app.command()
@@ -847,6 +906,21 @@ def _google_service(
     return build(api, version, credentials=creds, cache_discovery=False)
 
 
+def _contacts_source(settings: Settings) -> Any:
+    """The address book, or None. Kept out of `_all_connectors` on purpose.
+
+    It is not a `Connector`: no cursor, no `SourceItem`, nothing written to the ledger's
+    capture table. Putting it in the connector list would have it fetched, cursored and
+    counted as ingest, all of which are wrong for reference data — see
+    backglass/contacts.py.
+    """
+    if not settings.apple_contacts:
+        return None
+    from backglass.connectors.contacts import ContactsSource
+
+    return ContactsSource(boundary=Boundary.from_settings(settings))
+
+
 def _all_connectors(conn: sqlite3.Connection, settings: Settings) -> list[Connector]:
     """Every configured source. docs/02 §Failure policy: one failing source does not stop
     the others, so an unauthorised connector is skipped rather than fatal."""
@@ -1041,6 +1115,8 @@ def _print_report(report: Any, *, dry_run: bool) -> None:
         f"(deduped {report.commitments_deduped}, superseded {report.commitments_superseded}, "
         f"review queue {report.review_queue})"
     )
+    if getattr(report, "contacts_linked", 0):
+        typer.echo(f"  contacts linked {report.contacts_linked} identifier(s) to people")
     typer.echo(f"  writes {report.writes}, spend {report.spend_cents}c")
     # startswith, because the reason carries which stage stopped ('rate_limit:triage').
     if (report.degrade_reason or "").startswith("rate_limit"):
@@ -2730,7 +2806,8 @@ def doctor() -> None:
         check(f"credential {row['source']} healthy", row["status"] == "ok",
               str(row["status"]))
 
-    for connector in _all_connectors(conn, settings):
+    contacts_source = _contacts_source(settings)
+    for connector in [*_all_connectors(conn, settings), *filter(None, [contacts_source])]:
         health = connector.health()
         check(f"connector {connector.name}", health.ok, health.detail or "")
 

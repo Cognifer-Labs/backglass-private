@@ -265,6 +265,10 @@ class Settings(BaseSettings):
     #: System Settings → Automation, not in an env var.
     apple_notes: bool = False
     apple_reminders: bool = False
+    #: Read Contacts.app through the same bridge, to answer "who is +14802411748". Not
+    #: an ingest source: it writes identifiers onto `entity` rows and no source_item —
+    #: see backglass/contacts.py.
+    apple_contacts: bool = False
     #: Read Calendar.app through the automation bridge. Reaches whatever accounts macOS
     #: already syncs, so it needs no Google OAuth client and no Full Disk Access — see
     #: connectors/apple_calendar.py for why that is the point.
@@ -359,7 +363,12 @@ class Settings(BaseSettings):
     # shipped blank in the template; every other int/float field in .env.example carries
     # a real numeric default, so this is not needed there.
     @field_validator(
-        "apple_triage", "apple_notes", "apple_reminders", "apple_calendar", mode="before"
+        "apple_triage",
+        "apple_notes",
+        "apple_reminders",
+        "apple_calendar",
+        "apple_contacts",
+        mode="before",
     )
     @classmethod
     def _blank_bool_is_false(cls, value: object) -> object:

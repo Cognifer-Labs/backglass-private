@@ -75,6 +75,7 @@ def detect_all(
         _obsidian(settings, home),
         _apple("apple_notes", "APPLE_NOTES", settings.apple_notes),
         _apple("apple_reminders", "APPLE_REMINDERS", settings.apple_reminders),
+        _apple("apple_contacts", "APPLE_CONTACTS", settings.apple_contacts),
         _apple("apple_calendar", "APPLE_CALENDAR", settings.apple_calendar),
         *_credentialed(settings, authed or set()),
     ]

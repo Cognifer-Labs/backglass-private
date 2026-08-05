@@ -20,9 +20,14 @@
            here has been read yet, so nothing here gets an ink. #}
         <div class="rev">
           <p class="b1 hang">{{ m.chip('needs_review') }}<span>
-            {{ c.display_name }}</span>
+            {{ c.label }}</span>
           </p>
+          {# The raw handle stays on the page under the name. The owner cannot decide
+             whether to read a conversation without knowing who it is with — and cannot
+             check the answer without seeing what was matched (rule 1). #}
           <p class="conf">{{ c.source }} · {{ 'group' if c.kind == 'group' else 'direct message' }}
+            {% if c.identifier %} · {{ c.identifier }}{% endif %}
+            {%- if c.ambiguous %} · more than one contact uses this number{% endif %}
             · {{ c.messages_seen }} message{{ '' if c.messages_seen == 1 else 's' }} seen
             · last {{ c.last_seen_at[:10] }}</p>
           {# Equal weight, same as the review queue. Monitoring someone's conversation is
@@ -52,8 +57,9 @@
       {% for c in monitored %}
         <div class="row">
           <div class="grow">
-            <p class="b1">{{ c.display_name }}</p>
-            <p class="b2">{{ c.source }} · {{ c.messages_seen }} seen
+            <p class="b1">{{ c.label }}</p>
+            <p class="b2">{{ c.source }}{% if c.identifier %} · {{ c.identifier }}{% endif %}
+              · {{ c.messages_seen }} seen
               · last {{ c.last_seen_at[:10] }}</p>
           </div>
           <form method="post" action="/chats/{{ c.id }}/ignore" style="margin:0">
@@ -76,8 +82,9 @@
       {% for c in ignored %}
         <div class="row">
           <div class="grow">
-            <p class="b1">{{ c.display_name }}</p>
-            <p class="b2">{{ c.source }} · never read</p>
+            <p class="b1">{{ c.label }}</p>
+            <p class="b2">{{ c.source }}{% if c.identifier %} · {{ c.identifier }}{% endif %}
+              · never read</p>
           </div>
           <form method="post" action="/chats/{{ c.id }}/monitor" style="margin:0">
             <button class="btn accept" type="submit">Monitor</button>

@@ -22,9 +22,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from backglass import chats as chats_mod
+from backglass import contacts as contacts_mod
 from backglass.config import Settings
 from backglass.connectors import base, credentials
 from backglass.connectors.base import Connector
+from backglass.connectors.contacts import ContactsSource
 from backglass.db import now_iso, query
 from backglass.extract import commitments as tier2
 from backglass.extract import engagements as engagement_tier2
@@ -61,6 +63,9 @@ class SyncReport:
     #: CLI can say a new chat is waiting rather than leaving it only on the dashboard.
     new_chats: int = 0
     new_chat_names: list[str] = field(default_factory=list)
+    #: Identifiers the address book attached to people this run, so a conversation the
+    #: page could only call `+14802411748` now has a name on it.
+    contacts_linked: int = 0
     review_queue: int = 0
     writes: int = 0
     spend_cents: int = 0
@@ -153,6 +158,7 @@ def sync(
     *,
     dry_run: bool = False,
     extract: bool = True,
+    contacts_source: ContactsSource | None = None,
 ) -> SyncReport:
     """Run the pipeline. `extract=False` stops after triage — the batch-mode submit
     path (backglass/batch.py) reuses ingest, rules, and triage through here and hands
@@ -161,6 +167,11 @@ def sync(
     ledger = Ledger(conn, settings, dry_run=dry_run)
     cap = SpendCap(conn, settings, client)
     started_at = now_iso()
+
+    # Before ingest, because a message ingested this run resolves its counterparty
+    # against `entity`, and the address book is the only thing that knows a phone number
+    # is a person. Its own writes are counted separately: it touches no source_item.
+    contacts_writes = _contacts_pass(conn, contacts_source, report, dry_run=dry_run)
 
     _ingest(conn, ledger, connectors, report, dry_run=dry_run)
     _rule_pass(conn, ledger, settings, report)
@@ -195,7 +206,7 @@ def sync(
 
         review_writes = reviews_mod.sync_checkpoints(conn, settings)
 
-    report.writes = ledger.writes + review_writes + noise_writes
+    report.writes = ledger.writes + review_writes + noise_writes + contacts_writes
     report.spend_cents = round(cap.this_run_usd * 100)
     # The cap wins the label when both hold: it is the one that persists past this run.
     if cap.reached:
@@ -228,6 +239,44 @@ def sync(
     if not dry_run:
         _record_run(conn, report, started_at)
     return report
+
+
+# ──────────────────────────────────────────────────────────── stage 0: who
+
+
+def _contacts_pass(
+    conn: sqlite3.Connection,
+    source: ContactsSource | None,
+    report: SyncReport,
+    *,
+    dry_run: bool,
+) -> int:
+    """Fold the address book into `entity`. Returns writes.
+
+    Wrapped exactly like a connector fetch — rule 5: a denied Automation prompt records
+    itself against the source and the run continues, because a nameless number is worse
+    than yesterday's names but very much better than no sync.
+    """
+    if source is None:
+        return 0
+    try:
+        report_ = contacts_mod.import_contacts(
+            conn, source.read(), dry_run=dry_run
+        )
+    except Exception as exc:  # noqa: BLE001 - rule 5: degrade, never block
+        detail = base.safe_error(exc)
+        report.failed_sources.append(source.name)
+        report.errors.append(f"{source.name}: {detail}")
+        if not dry_run:
+            credentials.mark_failed(conn, source.name, detail)
+        return 0
+    if not dry_run:
+        credentials.mark_ok(conn, source.name)
+    report.contacts_linked = report_.aliases_added
+    report.excluded += source.excluded
+    for rule, count in source.excluded_by_rule.items():
+        report.excluded_by_rule[rule] = report.excluded_by_rule.get(rule, 0) + count
+    return report_.writes
 
 
 # ──────────────────────────────────────────────────────────────── stage 1

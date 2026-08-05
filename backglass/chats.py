@@ -18,6 +18,7 @@ import sqlite3
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from backglass import contacts
 from backglass.connectors.allowlist import Allowlist, normalise
 from backglass.db import now_iso
 from backglass.ledger import USER_ID
@@ -50,10 +51,27 @@ class Chat:
     participants: int | None
     messages_seen: int
     last_seen_at: str
+    #: Who the address book says `key` belongs to, when it says so unambiguously. The
+    #: key stays visible next to it — the owner may need the number to disambiguate, and
+    #: a displayed claim has to be checkable (rule 1).
+    resolved_name: str | None = None
+    #: The key matched more than one person. Deliberately not resolved: the owner can
+    #: read a phone number, and cannot un-read a confident wrong name.
+    ambiguous: bool = False
 
     @property
     def undecided(self) -> bool:
         return self.decision is None
+
+    @property
+    def label(self) -> str:
+        """What to call this conversation. A resolved name beats a raw handle."""
+        return self.resolved_name or self.display_name
+
+    @property
+    def identifier(self) -> str | None:
+        """The raw key, shown whenever a name has been put in front of it."""
+        return self.key if self.resolved_name else None
 
 
 @dataclass
@@ -221,7 +239,7 @@ def listing(conn: sqlite3.Connection, source: str | None = None) -> list[Chat]:
         sql += " AND source = ?"
         params.append(source)
     sql += " ORDER BY (decision IS NOT NULL), messages_seen DESC, last_seen_at DESC"
-    return [
+    rows = [
         Chat(
             id=int(row["id"]),
             source=str(row["source"]),
@@ -235,6 +253,15 @@ def listing(conn: sqlite3.Connection, source: str | None = None) -> list[Chat]:
         )
         for row in conn.execute(sql, params)
     ]
+    # One batched lookup for the whole page. A conversation named `+14802411748` is a
+    # question nobody can answer, and every consent decision below depends on this.
+    resolved = contacts.resolve(conn, [row.key for row in rows])
+    for row in rows:
+        hit = resolved.get(row.key)
+        if hit is not None:
+            row.resolved_name = hit.name
+            row.ambiguous = hit.ambiguous
+    return rows
 
 
 def undecided(conn: sqlite3.Connection) -> list[Chat]:

@@ -126,10 +126,22 @@ audits.
 | `apple-notes` | `APPLE_NOTES=1` | modification-date watermark | yes — note bodies carry addresses | Automation permission denied, reported by `health()` |
 | `calendar:apple` | `APPLE_CALENDAR=1` | none — a bounded window, re-read each run | yes — titles and locations can carry addresses | Automation permission denied, reported by `health()` |
 | `reminders` | `APPLE_REMINDERS=1` | fetch-window watermark (no mtime exists) | yes | same Automation prompt as Notes |
+| `apple-contacts` | `APPLE_CONTACTS=1` | none — reference data, re-read each run | yes — a card is a name and an address | same Automation prompt as Notes |
 | `files` | `INBOX_FOLDER_PATH` | mtime watermark | yes | unsupported file types are counted and reported, never silently skipped |
 | `github` | `GITHUB_TOKEN` | two watermarks in one string: search time + notifications `Last-Modified` | yes | 401 on a revoked token; the search quota is per-minute, so requests stay serialized |
 | `anki` | `ANKI_DB_PATH` | revlog row range | none — tallies carry no addresses and no card text | Anki holding the write lock past the busy timeout degrades the source for one cycle |
 | `avorio` | `AVORIO_DB_PATH` | `MAX(reviews.reviewed_at)` | none, same reason | schema drift; `health()` verifies every required table and column, not just the file |
+
+`apple-contacts` is the one row in this table that is **not** a `Connector`. It has no
+cursor, yields no `SourceItem`, and never writes to `source_item` — a contact is not an
+event and carries no commitment, so it is reference data, and it lands in `entity` as
+identifiers on people the ledger already knows (`backglass/contacts.py`). It is listed
+here anyway because it reads the owner's data behind the same Automation permission,
+which is exactly the thing this file exists to make auditable: it is boundary-checked
+before anything is persisted, health-checked by `doctor`, and it runs from `sync` under
+the same rule 5 wrapper as every connector. What it buys is the Conversations page: the
+consent prompt used to ask whether to read `+14802411748`, which is not a question
+anybody can answer.
 
 Two rules those local stores exist to teach:
 
