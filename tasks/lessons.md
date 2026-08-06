@@ -577,3 +577,30 @@ deterministic given the id.
   Dev"` in build-sidecar.sh — the grant survives rebuilds. Until that exists, every
   reinstall costs the owner one Allow click, and a sidecar with ~0 CPU stuck pre-bind
   is that click waiting to happen.
+
+- 2026-08-06 | A stray top-level `}` had been silently deleting the entire base `.panel`
+  rule from dashboard.css since commit 8ea8ba9 — no panel seams, no closing padding, and
+  the documented `min-width:0` overflow fix inert on every page. It hid because the file
+  also never closed its last `@media`, so the two errors cancelled and the brace count
+  balanced at 514/514. I read the file top to bottom during the rounding pass, saw the
+  lone `}` on its own line, and read past it. | A balanced brace COUNT is not a balanced
+  file. Compensating errors are the normal case, not the exotic one, because an editor
+  that drops a `}` in one place often drops an opener elsewhere. The check that catches it
+  is depth, not count: walk the file and assert the running depth never goes negative and
+  ends at zero. Corollary, and the more expensive half: when a whole-file read surfaces
+  something structurally odd that is not what you came for, spend the thirty seconds then
+  — parse it, or grep for its effect. "Not my change" is a reason to flag it, never a
+  reason to not look. It took a fan-out of verification agents to find what was already on
+  my screen.
+
+- 2026-08-06 | Wrote the concentric-radius rule as "inner = outer − padding" and shipped
+  the reel as the canonical worked example at 4px over 2px windows. Wrong: `border-radius`
+  is measured on the BORDER box, so the arc a flush child actually meets is the declared
+  radius minus the border width. The 4px plate had a 2px inner arc — identical to the
+  window it was supposed to sit a step outside of — so the two curves ran flat, which is
+  the precise failure the rule exists to prevent. | When writing a geometry rule, state
+  which box model edge it is measured from, and verify the example arithmetic against that
+  edge rather than against the mental picture. A worked example in a spec is the thing
+  everyone copies; getting it wrong propagates further than getting a single rule wrong.
+  Here the inset is padding + border, and any rule phrased as "minus the inset" has to say
+  so or it will be read as padding alone.
