@@ -228,9 +228,15 @@ and gradients are **not** re-opened by this ruling; only rounding moved.
 inside another takes the outer radius minus the inset between them, so the two curves stay
 parallel instead of running unrelated arcs. Where the child sits on the parent's edge, the
 parent clips (`overflow:hidden`) and the arithmetic is structural rather than a copied
-number — this is how `.gcard`, `.sws`, `.wk7`, `.tl` and `.track` are built. The reel is
-the principle at its simplest: 2px windows, 2px of housing padding, so the black plate
-takes exactly 4px.
+number — this is how `.gcard`, `.sws`, `.wk7`, `.tl` and `.track` are built.
+
+**The inset includes the border, not just the padding.** A radius is measured on the
+border box, so the padding-box arc a child actually meets is the declared radius minus the
+border width. The reel is the case worked all the way through: 2px windows inside 2px of
+padding inside a 2px keyline, so the housing is 2+2+2 = **6px**. Stopping at the padding
+and calling it 4px looks right on paper and is wrong on screen — a 4px plate has a 2px
+inner arc, identical to the window it is supposed to sit a step outside of, and the two
+curves run flat against each other instead of parallel.
 
 **What stays square**, and the reason in each case — this is the list "all elements" is
 measured against, not a set of oversights:
@@ -242,8 +248,16 @@ measured against, not a set of oversights:
 3. **The fixed failed-write strip.** Pinned to three edges of the viewport.
 4. **Ledger inputs.** `border:0` plus one bottom hairline is a line, not a box; a radius
    puts a curl on each end of it.
-5. **Left-keyline rows** (kind stripes, failing sources, quotes). One border, no box.
-6. **The wordmark.** It has its own spec below, which this ruling does not touch.
+5. **Left-keyline rows** — kind stripes, failing sources, quotes, the roadmap's next-step
+   rail. One border, no box. The test is the keyline, not the class name: a protected
+   block wears a kind class too, but its hatch closes all four sides, so it is a box and
+   it rounds.
+6. **Band fills** — a background spanning a whole row, column or cell that meets its
+   neighbours on every side: the active nav row, a hovered or selected ledger row, the
+   habit table's today column, a chart's knockout label. The fill is bounded by hairlines
+   it shares with its neighbours, so rounding it leaves paper wedges in a seam meant to be
+   continuous — and on a ledger row it curls the ends of the hairline that draws the row.
+7. **The wordmark.** It has its own spec below, which this ruling does not touch.
 
 Two marks are deliberately rounded *less* than their size suggests. A column in the
 monthly chart rounds its top corners only — it stands on the axis it is read against, and

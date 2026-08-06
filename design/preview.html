@@ -77,7 +77,7 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
 .k-green{background:var(--green)}
 .k-dash{border-style:dashed;background:transparent;color:var(--ink-muted)}
 .reel{display:inline-flex;background:#000;border:2px solid #000;
-  border-radius:calc(var(--radius-reel) + 2px);padding:2px;gap:1px}
+  border-radius:calc(var(--radius-reel) + 4px);padding:2px;gap:1px}
 :root[data-theme="dark"] .reel{border-color:#FCF8EC}
 @media(prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .reel{border-color:#FCF8EC}}
 .reel span{background:#FCF8EC;color:#000;font:700 20px/24px ui-monospace,"SF Mono",Menlo,monospace;
@@ -95,7 +95,8 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
 .bar{display:flex;align-items:center;gap:12px;font-size:13px}
 .bar .lbl{flex:0 0 96px;font-weight:700;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
   color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bar .b{height:16px;background:var(--ink);border:1px solid var(--rule);border-radius:var(--radius-1)}
+.bar .b{height:16px;background:var(--ink);border:1px solid var(--rule);
+  border-radius:0 var(--radius-1) var(--radius-1) 0}
 .bar .v{font-weight:700}
 .note{font-size:12px;line-height:17px;color:var(--ink-muted);margin:16px 0 0}
 .rev{border:2px dashed var(--rule);border-radius:var(--radius-3);padding:16px;margin:12px 0}

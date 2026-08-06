@@ -27,13 +27,25 @@
  * (overflow:hidden) so the arithmetic is structural rather than copied into a number.
  *
  * What stays square, and why — the list any audit of "all elements" is measured against:
- *   1. full-bleed black section bars (.banner) — they run to the panel's edge, and a
- *      radius leaves four cream nicks against the seam;
+ *   1. full-bleed black section bars (.banner, and the details/summary rules that restyle
+ *      it) — they run to the panel's edge, and a radius leaves four cream nicks against
+ *      the seam;
  *   2. panel cells and page seams (.panel, .mast, .side, .sec) — rules between sections,
  *      not boxes; rounding one breaks the continuous seam the row-locked grid exists for;
  *   3. the fixed failed-write strip (.oops) — pinned to the viewport edge;
  *   4. ledger inputs — border:0 plus one bottom hairline is a line, not a box;
- *   5. left-keyline rows (.row.k-*, .src.fail, .quote, .atl .nextstep) — one border, no box.
+ *   5. left-keyline rows — one border and no box. The membership test is the keyline, not
+ *      the class name: .row.k-work/.k-small/.k-fixed/.k-routine, .src.fail, .quote and
+ *      .atl .nextstep qualify; .row.sched.k-protected does NOT, because the hatch makes it
+ *      a full four-sided box, and it takes --radius-2 like any other;
+ *   6. band fills — a background that spans a whole row, column or cell and meets its
+ *      neighbours on every side: .snav a.on/:hover, .card:hover and [data-selected],
+ *      .row.sched:hover, .wkg .today, .mpace's knockout label. A ledger row's fill is
+ *      bounded by hairlines it shares with the rows above and below, so rounding it leaves
+ *      paper wedges in a seam that is supposed to be continuous — and on .card and .row it
+ *      would curl the ends of the very hairline that draws the ledger;
+ *   7. the wordmark (design/wordmark.svg) — it carries its own spec, which this does not
+ *      touch. No rule in this sheet styles it; it is listed so the list is complete.
  */
 
 /* Oswald Bold — vendored display face (see static/VENDOR.md). One weight; declared
@@ -146,8 +158,6 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
  * which then wraps or scrolls on its own terms. */
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0}
 @media(max-width:840px){.grid{grid-template-columns:minmax(0,1fr)}}
-
-}
 .panel{min-width:0;border-bottom:2px solid var(--rule);border-right:2px solid var(--rule);padding:0 0 var(--sp-5)}
 .panel:nth-child(2n){border-right:0}
 @media(max-width:840px){.panel{border-right:0}}
@@ -218,10 +228,14 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
  * warning nor a guess (a fresh staleness count). The bare .chip default's #000 text
  * assumes a filled background and goes invisible on dark paper. */
 .k-plain{background:transparent;color:var(--ink)}
-/* The housing is the concentric case stated in its simplest form: 2px of padding around
- * 2px windows, so the black plate takes exactly 4px and the two curves stay parallel. */
+/* The housing is the concentric case worked all the way through, and the inset is 4px,
+ * not 2px: border-radius is measured on the BORDER box, so a window sitting inside 2px of
+ * padding is also inside 2px of border. Housing = window + padding + border = 2+2+2 = 6px.
+ * Taking the padding alone would leave the plate at 4px, whose padding-box arc is 2px —
+ * the same radius as the window it is supposed to be a step outside of, so the two curves
+ * would run flat against each other instead of parallel. */
 .reel{display:inline-flex;background:#000;border:2px solid #000;
-  border-radius:calc(var(--radius-reel) + 2px);padding:2px;gap:1px}
+  border-radius:calc(var(--radius-reel) + 4px);padding:2px;gap:1px}
 :root[data-theme="dark"] .reel{border-color:#FCF8EC}
 @media(prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .reel{border-color:#FCF8EC}}
 .reel span{background:#FCF8EC;color:#000;font:700 22px/22px ui-monospace,"SF Mono",Menlo,monospace;
@@ -245,8 +259,12 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
 .bar{display:flex;align-items:center;gap:var(--sp-3);font-size:13px}
 .bar .lbl{flex:0 0 96px;font-weight:700;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
   color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Far end only, for the reason the chart columns round their tops only: the left edge is
+ * where every bar in the stack starts, so it is the zero the row is read against. It also
+ * keeps the bar consistent with .fill, whose left end is already squared by .track's 0px
+ * inner corner — one bar idiom, not two. */
 .bar .b{height:16px;background:var(--ink);border:1px solid var(--rule);
-  border-radius:var(--radius-1)}
+  border-radius:0 var(--radius-1) var(--radius-1) 0}
 .bar .v{font-weight:700}
 .note{font-size:12px;line-height:17px;color:var(--ink-muted);margin:var(--sp-4) 0 0}
 /* An error note belongs to the failing row above it, not the row below. */
@@ -377,6 +395,10 @@ button.box::before{content:"";position:absolute;inset:-6px}
 .whd .dn{display:block;font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase}
 .whd .dn b{font-variant-numeric:tabular-nums}
 .whd:hover .dn{text-decoration:underline;text-underline-offset:2px}
+/* The day headers are links sitting flush on .wk7's padding-box edge, and .wk7 now clips
+ * so its corners can round — which would eat the global focus ring's 2px outset on the
+ * top row. The ring turns inward here so keyboard focus stays visible inside the clip. */
+.wk7 .whd:focus-visible{outline-offset:-3px}
 .whd.now,.wcol.now{outline:2px solid var(--rule);outline-offset:-2px}
 /* Format audit: the capacity band merged into the grid header — one set of day
  * cells carries day, free hours, and overflow. The standalone .wband renders only
@@ -1231,3 +1253,4 @@ details.panel:not([open]){padding-bottom:0}
   .gcard .gtgt .hd .nm{flex:1 1 100%}
   .goalrow .gr-n,.goalrow .gr-l{white-space:normal}
   .src .ts.clip{max-width:none}
+}

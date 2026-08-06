@@ -89,12 +89,17 @@
    *
    * Nesting is concentric: a box sitting flush inside another takes the parent's radius
    * minus the inset between them, so two curves never run unrelated arcs against each
-   * other. Where the child is flush to the parent's edge, the parent clips instead
-   * (overflow:hidden) and the arithmetic takes care of itself. */
+   * other. The inset is padding PLUS border — a radius is measured on the border box, so
+   * the arc a child actually meets is the declared radius minus the border width. Where
+   * the child is flush to the parent's edge, the parent clips instead (overflow:hidden)
+   * and the arithmetic takes care of itself.
+   *
+   * Three steps and no fourth. A `--radius` alias for "the default" was written and then
+   * removed: a second name for 4px is the first step toward a nine-step scale, and every
+   * box in the sheet already says which of the three it is. */
   --radius-1:    2px;   /* marks under ~20px, data fills, inline windows */
   --radius-2:    4px;   /* controls — buttons, inputs, chips, alerts, badges */
   --radius-3:    6px;   /* containers — cards, grids, timelines, washed rows */
-  --radius:      var(--radius-2);   /* the default: an unqualified box is a control */
   --radius-reel: var(--radius-1);
   --border:      2px;
   --hair:        1px;

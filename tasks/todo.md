@@ -90,6 +90,47 @@ A Workflow-tool run after implementation, small and adversarial:
    assertion catches.
 3. **Suite** — `uv run pytest` green, compared against the 1598-passed baseline.
 
+## What the verification workflow found (25 agents, 4 lenses, adversarial refutation)
+
+Every finding below was attacked by a fresh skeptic told to refute it; most were refuted.
+These survived, and all are fixed except the last:
+
+1. **HIGH, and not mine.** A stray top-level `}` at `dashboard.css:150` was swallowed into
+   the next rule's selector prelude, making it `} .panel` — invalid — so the entire base
+   `.panel` rule was silently dropped from the stylesheet. The dashboard had no panel
+   bottom seam, no right seam, no closing padding, and the `min-width:0` grid-overflow fix
+   (whose own comment documents a 390px viewport measuring 642px wide) was inert. Two
+   agents proved it independently in WebKit with an A/B harness on the served bytes.
+   Introduced by commit 8ea8ba9, an ancestor of this work. It survived because the file
+   also never closes its final `@media(max-width:420px)` — the two errors cancel, so the
+   brace count balances at 514/514 and no lint would ever flag it. Both fixed; the seam is
+   visibly back.
+2. **The reel's arithmetic — the ruling's own worked example — was wrong.** A radius is
+   measured on the border box, so the window is inset by padding *and* border: 2+2+2 = 6px,
+   not 4px. At 4px the plate's inner arc was 2px, identical to the window it was supposed
+   to sit a step outside of, so the two curves ran flat instead of parallel. Fixed in CSS,
+   preview.html, tokens.css and §7 — the principle is stated with the border included now.
+3. **`.wk7`'s new `overflow:hidden` clipped the day-header focus ring.** The headers are
+   links flush on the container's edge and the global ring is outset 2px. Turned inward.
+4. **`.bar .b` rounded its zero end.** Same axis argument as the chart columns, and it now
+   matches `.fill`, whose left end is already squared by the track's 0px inner corner.
+5. **The exemption list was imprecise in three places** — `.row.k-*` over-claimed
+   (`.row.sched.k-protected` is a full box and does round), the wordmark was missing from
+   the CSS copy, and neither list named the band fills (nav row, hovered ledger row, today
+   column, chart knockout). Rewritten with the membership test spelled out.
+6. **`tasks/plan.md:321` still stated the retired rule** — the only surviving false copy of
+   it in the repo. Amended.
+7. **Three holes in my own new tests**, each proved by mutation: the token-scale test
+   scanned only the `border-radius` shorthand (per-corner longhands sailed past), accepted
+   any value merely *containing* `var(--radius`, and the square test matched only exact
+   selector text, so a radius on `details.panel > summary.banner` would have passed. All
+   three closed and re-proved red by mutation.
+8. **NOT FIXED — flagged for the owner.** `design/tokens.json:4` declares paper as
+   `#FAF3DF`; every other surface says `#FCF8EC`. Pre-existing, unrelated to rounding, and
+   nothing in the repo reads `tokens.json` — so the drift is silent and permanent. It is a
+   palette value, not a corner, and the right call (correct it, or delete a mirror file
+   nothing consumes) is the owner's.
+
 ## Definition of done
 
 1. `uv run pytest` green, ≥1598 passed.

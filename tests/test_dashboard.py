@@ -595,21 +595,38 @@ def test_every_radius_comes_from_the_token_scale(client: TestClient) -> None:
     because each individual number looks reasonable. Every declaration therefore resolves
     through --radius-*, and the only literal permitted is the 0 that opts the ledger
     inputs out (exemption 4 — border:0 plus a bottom hairline is a line, not a box)."""
-    css = client.get("/static/dashboard.css").text
-    stripped = _strip_css_comments(css)
+    stripped = _strip_css_comments(client.get("/static/dashboard.css").text)
 
-    declarations = re.findall(r"border-radius\s*:\s*([^;}]+)", stripped)
+    # Every spelling of the property, not just the shorthand: the per-corner longhands
+    # (border-top-left-radius, and the logical border-start-start-radius family) round the
+    # same corners and would slip past a scan anchored on "border-radius" alone.
+    pattern = r"border-(?:[a-z]+-){0,2}radius\s*:\s*([^;}]+)"
+    declarations = re.findall(pattern, stripped)
     assert declarations, "the sheet should declare radii"
+    allowed = {"var(--radius-1)", "var(--radius-2)", "var(--radius-3)", "var(--radius-reel)"}
     for value in declarations:
-        flat = value.strip()
+        flat = " ".join(value.split())
         if flat == "0":
             continue
-        assert "var(--radius" in flat, f"raw radius outside the token scale: {flat!r}"
+        # A value is one or more terms: each is either a scale token, a literal 0 for a
+        # corner that stays square, or a calc() over a scale token. Checking that
+        # "var(--radius" appears SOMEWHERE would pass "calc(var(--radius-1) + 7px)" and
+        # every mixed value with a raw literal in it, which is the regression this guards.
+        # calc() nests one level here — calc(var(--radius-reel) + 4px) — so the inner
+        # paren has to be consumed or the term splits across the var()'s closing bracket.
+        terms = re.findall(r"calc\((?:[^()]|\([^()]*\))*\)|\S+", flat)
+        for term in terms:
+            if term == "0" or term in allowed:
+                continue
+            calc = re.fullmatch(r"calc\(\s*(var\(--radius-[a-z0-9]+\))\s*[-+]\s*\d+px\s*\)", term)
+            assert calc and calc.group(1) in allowed, (
+                f"radius term outside the token scale: {term!r} in {flat!r}"
+            )
 
     zeroed = [
         block
         for block in stripped.split("}")
-        if re.search(r"border-radius\s*:\s*0\s*(;|$)", block)
+        if re.search(r"border-(?:[a-z]+-){0,2}radius\s*:\s*0\s*(;|$)", block)
     ]
     for block in zeroed:
         assert "input" in block, f"only the ledger inputs opt out of rounding: {block!r}"
@@ -669,15 +686,18 @@ def test_the_full_bleed_surfaces_stay_square(client: TestClient) -> None:
     pinned to three edges of the viewport — rounding either is a regression in the
     opposite direction from the one this suite used to guard."""
     css = _strip_css_comments(client.get("/static/dashboard.css").text)
-    for selector in (".banner", ".panel", ".oops", ".mast"):
+    for selector in (".banner", ".panel", ".oops", ".mast", ".side", ".sec"):
+        # Every rule that TOUCHES the element, not only the one whose selector text equals
+        # it. `details.panel > summary.banner` restyles the same bar, and an exact-match
+        # check would wave a radius through there while claiming the bar stays square.
         found = [
             block
             for block in css.split("}")
-            if "{" in block and block.split("{")[0].replace("\n", " ").strip() == selector
+            if "{" in block and re.search(rf"{re.escape(selector)}(?![\w-])", block.split("{")[0])
         ]
         assert found, f"no rule for {selector!r}"
         for block in found:
-            assert "border-radius" not in block, f"{selector} should stay square"
+            assert "radius" not in block, f"{selector} should stay square: {block!r}"
 
 
 def test_tokens_are_served_from_the_validated_source(client: TestClient) -> None:
