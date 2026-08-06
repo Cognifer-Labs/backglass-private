@@ -428,8 +428,16 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .card[data-selected="true"]{background:var(--fill-mild-2)}
 .card .b1{flex:1 1 auto;min-width:0}
 .card .b2{flex:0 1 auto;margin:0}
+/* Hover-reveal keeps the board a list of obligations rather than a control panel:
+ * three buttons on every row is the thing the eye lands on instead of the work.
+ * It is a pointer affordance though, and it was the ONLY way to reach Resolve,
+ * Snooze and Drop — so on a phone the board was read-only, which is precisely the
+ * failure docs/06 opens by naming ("if the dashboard is read-only it becomes
+ * decoration within a week"). Where there is no hover to give, the actions are
+ * simply present, the way the Today rows' Done/Roll/Pin always are. */
 .card .acts{display:none;flex-basis:100%}
 .card:hover .acts,.card:focus-within .acts,.card[data-selected="true"] .acts{display:flex}
+@media(hover:none){.card .acts{display:flex}}
 .lane + .card{border-top:0}
 .lane{margin:0 0 var(--sp-2);font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;
   text-transform:uppercase;color:var(--ink-muted);padding-top:var(--sp-3);

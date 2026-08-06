@@ -533,6 +533,17 @@ class TestNothingIsWiderThanThePhone:
             "without min-width:0 a single wide row re-widens every panel on the page"
         )
 
+    def test_the_board_can_be_acted_on_without_a_pointer(self) -> None:
+        """Resolve, Snooze and Drop are revealed by hover, and hover is a thing a
+        phone does not have — so the board, which docs/06 opens by insisting must not
+        be read-only, was exactly that on a touch device. Verified in a real touch
+        context: the actions resolve to display:flex and a tap posts /resolve."""
+        css = (
+            Path(__file__).resolve().parents[1]
+            / "backglass" / "web" / "static" / "dashboard.css"
+        ).read_text()
+        assert "@media(hover:none){.card .acts{display:flex}}" in css
+
     def test_the_week_grids_day_boxes_are_tappable(self) -> None:
         """WCAG 2.5.8 asks for 24px. The day box is a 16px mark on purpose — seven
         columns plus a streak column is already the widest thing on the page — so the
