@@ -1,3 +1,54 @@
+# Hours the bars count and the registry cannot
+
+Started 2026-08-06. Follows the log-zone rework. The table built there put two figures
+on one page that disagree: five bars totalling 54 hours, and an activity registry
+reading "0 of 15 slots · 0 h". Both are right. The hours are real and they name no
+activity, so `amcas-export` cannot see any of them — the page whose whole purpose is
+assembling Work & Activities from evidence had none to assemble, and said nothing.
+
+Confirmed on the live ledger before building: 54 logged hours, 54 of them unattributed,
+0 activities.
+
+## Why it kept happening
+
+The log form's activity select opens on "no activity" and the field is optional, so the
+line a person skips is exactly the one that makes the entry usable later. Nothing
+downstream complained, because nothing downstream was looking.
+
+## Steps
+
+- [x] 1. `unattributed(totals)` — summed from the same entry rows the bars and the chart
+      sum, not from a new `activity_id IS NULL` aggregate. That keeps it scoped to this
+      goal (a second live goal's "Investor conversations" total counts calls, and a
+      global sum would fold them into a figure this page calls hours), keeps it clear of
+      every timestamp rule, and makes it impossible for the three numbers to disagree.
+- [x] 2. `preselect_activity(conn, acts, goal_id)` — `{target_id: activity_id}` for every
+      total exactly one activity can feed, so the form already holds the answer where
+      there is only one. Two claimants on a total means no default, and the tombstone
+      survives a third: ambiguity is not resolved by row order. `goal_id` is passed
+      because `total_target_for` without it scans every active goal and picks by id.
+- [x] 3. The gap stated where it is discovered — in the registry, muted, only when the
+      figure is real, and with no repair button, because the web log form has no date
+      field and unlog-and-relog would move July's entries to today. `backglass log --on`
+      is the path that keeps the dates, so that is the path named.
+- [x] 4. Six tests. Three mutation-proven red: the global aggregate (folds the other
+      goal's calls in), the ambiguity tombstone (last activity wins), and both preselect
+      cases.
+
+## Verification
+
+1,601 green, ruff and mypy clean. Rendered against the seeded copy in both themes: five
+totals each opening on their one activity, "16 unfiled" in the rollup, and the line
+under it naming the consequence and the dated repair.
+
+## Deliberately not
+
+Per-entry re-attribution. Fixing the owner's 54 real hours means choosing an activity
+per entry while keeping July's dates, which is a new write route with a date field — a
+feature, not a UI pass, and the CLI already does it correctly today.
+
+---
+
 # The schedule is the day, not the shift — 12-hour clock and routines
 
 Started 2026-08-06. Two asks, verbatim: times in "am pm system, not army time", and

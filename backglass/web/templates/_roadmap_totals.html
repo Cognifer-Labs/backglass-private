@@ -73,11 +73,17 @@
                   hx-target="#roadmap-totals" hx-swap="outerHTML">
               <input type="number" name="amount" min="1" step="1" value="1" required
                      aria-label="Amount for {{ t['title'] }}">
+              {# The select opens on the activity this total can only mean, when there
+                 is exactly one — see preselect_activity for why the default is chosen
+                 by consequence. "No activity" stays first and stays reachable: some
+                 hours genuinely belong to no extracurricular. #}
               {% if activities %}
+                {% set chosen = preselect.get(t['id']) %}
                 <select name="activity_id" aria-label="Activity for {{ t['title'] }}">
-                  <option value="0">no activity</option>
+                  <option value="0"{% if not chosen %} selected{% endif %}>no activity</option>
                   {% for a in activities %}
-                    <option value="{{ a['id'] }}">{{ a['title'] }}</option>
+                    <option value="{{ a['id'] }}"
+                            {%- if chosen == a['id'] %} selected{% endif %}>{{ a['title'] }}</option>
                   {% endfor %}
                 </select>
               {% endif %}
@@ -118,8 +124,23 @@
     <details class="addform">
       <summary class="lbl">Activities
         <span class="tnum">· {{ activities|length }} of {{ amcas_slots }} slots
-          · {{ act_hours }} h · {{ act_meaningful }} of {{ amcas_meaningful }} most meaningful</span></summary>
+          · {{ act_hours }} h · {{ act_meaningful }} of {{ amcas_meaningful }} most meaningful
+          {%- if unattributed.hours %} · {{ unattributed.hours }} unfiled{% endif %}</span></summary>
       <div style="margin-top:var(--sp-3)">
+        {# The gap this table made visible: hours the bars above count and the registry
+           cannot, because they name no activity. Stated plainly and only when it is
+           real — a "0 unfiled" line is noise, and this is a gap rather than a failure,
+           so it carries no alarm ink. No repair control: the log form has no date
+           field, so unlog-and-relog here would move every one of these entries to
+           today. `backglass log --on <date>` is the path that keeps the dates. #}
+        {% if unattributed.hours %}
+          <p class="b2 unfiled">
+            <span class="tnum">{{ unattributed.hours }}</span> logged across
+            {{ unattributed.entries }} entr{{ 'y' if unattributed.entries == 1 else 'ies' }}
+            name no activity, so they cannot appear in Work &amp; Activities. Add the
+            activity below, then log against it — or re-file the existing entries with
+            <code>backglass log --on &lt;date&gt;</code>, which keeps their dates.</p>
+        {% endif %}
         <table class="wkg atbl">
           <thead>
             <tr>
