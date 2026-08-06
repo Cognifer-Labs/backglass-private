@@ -577,17 +577,22 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
   background:var(--fill-mild);padding:3px var(--sp-2);overflow:hidden;
   display:flex;flex-direction:column;gap:1px}
 .tl .ev.lane1{left:calc(50% + 32px)}
+/* From the wash pair, not the plain muted step. tokens.css states the contract —
+ * "containers styled with the wash tokens set color from these, never inherit" —
+ * and these two never did: neutral 500 measures 3.3 on the cobalt wash a work
+ * block wears and 3.74 on the fixed one, so the hour beside every event on the
+ * day timeline sat under the AA floor. */
 .tl .ev .et{font:700 11px/14px ui-monospace,monospace;letter-spacing:.04em;
-  color:var(--ink-muted);font-variant-numeric:tabular-nums;white-space:nowrap}
+  color:var(--wash-fg-2);font-variant-numeric:tabular-nums;white-space:nowrap}
 .tl .ev .en{font-size:13px;line-height:17px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .tl .ev .ek{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;
-  text-transform:uppercase;color:var(--ink-muted)}
+  text-transform:uppercase;color:var(--wash-fg-2)}
 .tl .ev.slim{flex-direction:row;align-items:center;gap:var(--sp-2);padding:0 var(--sp-2)}
 .tl .ev.k-fixed{border-color:var(--ink-line);border-left-width:4px;background:var(--ink-wash)}
 .tl .ev.k-work{border-color:var(--cobalt-line);border-left-width:4px;background:var(--cobalt-wash)}
 .tl .ev.k-small{border-color:var(--turq-line);border-left-width:4px;background:var(--turq-wash)}
 .tl .ev.k-buffer{border-style:dashed;border-left-width:2px}
-.tl .ev.k-buffer .en{color:var(--ink-muted)}
+.tl .ev.k-buffer .en{color:var(--wash-fg-2)}
 .tl .ev.k-protected{background:repeating-linear-gradient(45deg,transparent,transparent 5px,var(--rule-hair) 5px,var(--rule-hair) 6px) var(--paper)}
 .tl .ev.k-protected .en{font-size:14px}
 .tl .now{position:absolute;left:0;right:0;border-top:2px solid var(--ink);z-index:2}
@@ -963,6 +968,26 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
     .src.cold,.src.warn,.rmrow.overdue,.rmrow.duetoday)
   :is(.b2,.b2 a,.time,.ts,.rmst,.due){color:var(--wash-fg-2)}
 #panel-awaiting .row :is(.b2,.b2 a,.time){color:var(--wash-fg-2)}
+
+/* Muted text steps up one rung of the ramp wherever it sits on a fill.
+ *
+ * design-system.md §2 quotes the neutral ramp's ratios against PAPER, and says
+ * "500 for muted" on that basis. Every surface here is darker than paper, so 500
+ * arrives under the AA floor: neutral 500 on fill-mild measures 4.34, and on the
+ * due-today wash 3.74 — the sidebar's ALERTS/GOALS/ROADMAPS headings, its counts,
+ * the Quick add summary, and every metadata line on a washed card, on every page.
+ *
+ * Redefining the token inside the scope rather than restating a colour on each
+ * selector is what makes it one rule: `--wash-fg-2` is declared as
+ * `var(--ink-muted)` and resolves at use, so the washed rows inherit the step
+ * without knowing about it. No new ink, no token file touched, and dark mode is
+ * untouched because its `--wash-fg-2` is already a literal black against the full
+ * inks it was validated with. */
+:is(.side,.addform,.card:hover,.card[data-selected="true"],
+    .card[data-state="overdue"],.card[data-state="due_today"],
+    .card[data-state="slipping"],.card[data-state="awaiting"],
+    .src.cold,.src.warn,.rmrow.overdue,.rmrow.duetoday,
+    #panel-awaiting .row){--ink-muted:var(--ink-2)}
 
 /* Goal cards (.gcard) stay neutral by rule: NEEDS ATTENTION membership is
  * stale OR at-risk OR behind-on-cadence, read independently (G11) — a card

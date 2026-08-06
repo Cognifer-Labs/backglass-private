@@ -47,7 +47,13 @@
      in dark they resolve to the full inks, whose validated pairing is black —
      containers styled with the wash tokens set color from these, never inherit. */
   --wash-fg:      var(--ink);
-  --wash-fg-2:    var(--ink-muted);
+  /* Neutral 700, not the 500 §2 calls "muted". That figure is quoted against
+     PAPER; a wash is darker than paper, and 500 on the due-today wash measures
+     3.74 — under the AA floor for the metadata line under every washed card.
+     One rung up clears it without adding an ink. Dark overrides this to black
+     below, because there the washes resolve to the full inks and black is the
+     pairing the palette validator checks. */
+  --wash-fg-2:    var(--ink-2);
 
   /* neutral ramp, hue 91 */
   --n-50:  #f5eedb;

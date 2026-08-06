@@ -493,6 +493,44 @@ class TestOneUnreadableRowIsNotABlankPage:
         assert "unreadable" not in client.get("/schedule?date=2026-08-10").text
 
 
+class TestTheAccessibilityTree:
+    """An axe-core pass over all twelve routes in both themes found four violation
+    classes; these pin the three that were fixed. The audit needs a browser and stays
+    out of CI — what is checkable here is that the specific decisions hold.
+    """
+
+    ROOT = Path(__file__).resolve().parents[1]
+
+    def test_every_page_has_a_main_landmark(self) -> None:
+        """Without it, every panel on every page sits outside a landmark and a screen
+        reader has no structure to move by — one element fixed two axe violations
+        across all twenty-four page/theme combinations."""
+        base = (self.ROOT / "backglass" / "web" / "templates" / "base.html").read_text()
+        assert "<main" in base and "</main>" in base
+        assert base.index("<main") < base.index("{% block content %}")
+
+    def test_muted_text_on_a_wash_steps_up_the_ramp(self) -> None:
+        """design-system.md §2 quotes the ramp against paper and calls 500 "muted".
+        A wash is darker than paper: 500 measures 3.74 on the due-today wash and 3.3
+        on the cobalt one, both under the AA floor. The wash pair carries 700."""
+        tokens = (self.ROOT / "design" / "tokens.css").read_text()
+        assert re.search(r"--wash-fg-2:\s*var\(--ink-2\)", tokens), (
+            "the wash text pair is back on the muted step, which fails AA on every "
+            "washed surface in light mode"
+        )
+
+    def test_wash_containers_read_from_the_wash_pair(self) -> None:
+        """tokens.css states the contract — "containers styled with the wash tokens
+        set color from these, never inherit" — and the day timeline's event blocks
+        were the ones that never did."""
+        css = (self.ROOT / "backglass" / "web" / "static" / "dashboard.css").read_text()
+        block = css[css.index(".tl .ev{") : css.index(".tl .ev.slim")]
+        assert "var(--ink-muted)" not in block, (
+            "an event block wears an ink wash; its metadata cannot use the paper-rated "
+            "muted step"
+        )
+
+
 class TestTheKeyboardLegendMatchesTheKeyboard:
     """A legend is a claim about the program, and this one had drifted: base.html
     binds 1-8 to the eight sidebar destinations, the dashboard advertised 1-6, and
