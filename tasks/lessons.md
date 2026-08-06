@@ -557,3 +557,15 @@ deterministic given the id.
   mutate-and-prove-red pass on uncommitted work, save the exact pre-mutation bytes first
   (`cp file file.bak` in the scratchpad, or `git diff > patch`) and restore from that copy
   — never from git — and purge __pycache__ on both edges as before.
+
+- 2026-08-06 | Rebuilt and replaced /Applications/Backglass.app; the app-spawned sidecar
+  then hung forever before binding — blocked in a raw `open()` with zero fds, while the
+  identical binary served fine from any terminal. The terminal has Full Disk Access; the
+  app's TCC grant for ~/Downloads (where the repo, .env and db live) is keyed to its
+  code signature, and the fresh ad-hoc signature invalidated it, so macOS parked the
+  open on a consent prompt nobody had answered. | A rebuilt bundle is a new principal:
+  after replacing the installed app, expect a one-time "access files in Downloads"
+  prompt and treat a sidecar stuck pre-bind with ~0 CPU as a permissions hang, not a
+  code bug — `sample <pid>` bottoming out in `_io_FileIO___init__ → open` is the
+  signature. Diagnose by running the same binary from the same cwd in a terminal:
+  if it serves there, the code is fine and the sandbox is the variable.
