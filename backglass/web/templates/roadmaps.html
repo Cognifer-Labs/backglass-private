@@ -75,8 +75,13 @@
                  twice. Restarting means dropping the existing one first. #}
               <a class="lnk started" href="/roadmaps/{{ started[p.id] }}">started →</a>
             {% else %}
+              {# A real navigation, not a swap: /roadmaps/start redirects to the new
+                 roadmap's page. So this stays a plain POST form with the static confirm
+                 roadmap.html's Drop uses. The title is NOT interpolated — Jinja escapes
+                 for HTML, not for a JS string literal, so a preset title carrying an
+                 apostrophe ends the string and the rest of it is script. #}
               <form method="post" action="/roadmaps/start/{{ p.id }}"
-                    onsubmit="return confirm('Start {{ p.title }}? This creates a goal and its weekly cadences.')">
+                    onsubmit="return confirm('Start this path? This creates a goal and its weekly cadences.')">
                 <button class="btn ok" type="submit">Start</button>
               </form>
             {% endif %}

@@ -64,6 +64,17 @@
     const button = list[index].querySelector(selector);
     if (button) button.click();
   }
+  /* docs/06: "Every commitment card is a click target in full." WebKit never gives a
+     tabindex div focus on mouse click, so the CSS :focus-within reveal only ever fired
+     from the keyboard — a mouse click on a card did nothing. Clicking now selects the
+     card through the same path as j/k, which reveals its action row. Clicks on the
+     controls inside a card keep their own behavior. */
+  document.addEventListener('click', (event) => {
+    if (event.target.closest('button, a, input, select, textarea, summary, label')) return;
+    const card = event.target.closest('.card');
+    if (!card) return;
+    select(cards().indexOf(card));
+  });
   document.addEventListener('keydown', (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const tag = (event.target.tagName || '').toLowerCase();

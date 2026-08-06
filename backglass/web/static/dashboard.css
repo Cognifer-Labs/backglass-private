@@ -130,9 +130,22 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
 .b2{margin:var(--sp-1) 0 0;font-size:13px;line-height:18px;color:var(--ink-muted)}
 .b2 a{color:var(--ink-muted);text-underline-offset:2px}
 .time{font-size:12px;font-weight:700;letter-spacing:.04em;color:var(--ink-muted);flex:0 0 88px;padding-top:4px}
-.prot{border:2px solid var(--rule);padding:var(--sp-3);margin:var(--sp-3) 0;
+/* Today timetable (owner ruling 2026-08-05): the two-line block card compacted to a
+ * schedule line — time and title at rest, kind carried by the keyline colour plus the
+ * shared legend, outcome buttons revealed only on the row under the cursor or holding
+ * focus (the board register's reveal). */
+.row.sched{align-items:baseline;flex-wrap:wrap;column-gap:var(--sp-3);
+  padding-top:var(--sp-2);padding-bottom:var(--sp-2)}
+.row.sched .time{padding-top:0}
+.row.sched .b1{flex:1 1 auto;min-width:0}
+.row.sched .b2i{font-size:12px;color:var(--ink-muted)}
+.row.sched:hover{background:var(--fill-mild)}
+.row.sched .acts{display:none;flex-basis:100%}
+.row.sched:hover .acts,.row.sched:focus-within .acts{display:flex}
+/* design-system.md §4: protected keeps its 2px keyline and 45° hatch, one row tall. */
+.row.sched.k-protected{border:2px solid var(--rule);padding:var(--sp-2) var(--sp-3);
+  margin:var(--sp-2) 0;align-items:center;
   background:repeating-linear-gradient(45deg,transparent,transparent 5px,var(--rule-hair) 5px,var(--rule-hair) 6px)}
-.prot .hd{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-3)}
 /* Base chip is theme-aware: ink on paper in both modes. The old #000-on-paper pair
  * went invisible in dark mode for any chip without a colored fill (the PROTECTED
  * chip). Fills declare their own #000 text — the five inks keep black text on
@@ -156,9 +169,9 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
  * assumes a filled background and goes invisible on dark paper. */
 .k-plain{background:transparent;color:var(--ink)}
 .reel{display:inline-flex;background:#000;border:2px solid #000;padding:2px;gap:1px}
-:root[data-theme="dark"] .reel{border-color:#FAF3DF}
-@media(prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .reel{border-color:#FAF3DF}}
-.reel span{background:#FAF3DF;color:#000;font:700 22px/22px ui-monospace,"SF Mono",Menlo,monospace;
+:root[data-theme="dark"] .reel{border-color:#FCF8EC}
+@media(prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .reel{border-color:#FCF8EC}}
+.reel span{background:#FCF8EC;color:#000;font:700 22px/22px ui-monospace,"SF Mono",Menlo,monospace;
   padding:1px 5px;border-radius:2px;font-variant-numeric:tabular-nums}
 .goal{padding:var(--sp-4) 0;border-top:1px solid var(--rule-hair)}
 .goal:first-of-type{border-top:0}
@@ -397,6 +410,10 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .card .b2{flex:0 1 auto;margin:0}
 .card .acts{display:none;flex-basis:100%}
 .card:hover .acts,.card:focus-within .acts,.card[data-selected="true"] .acts{display:flex}
+/* Direction as an inline arrow (owner ruling 2026-08-05: lanes went to urgency, so
+ * the row carries direction): → going out, ← coming in. Bold so the glyph reads at
+ * body size; title/aria-label on the span carry the words. */
+.card .dir{flex:0 0 auto;font-weight:700}
 .lane + .card{border-top:0}
 .lane{margin:0 0 var(--sp-2);font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;
   text-transform:uppercase;color:var(--ink-muted);padding-top:var(--sp-3);
@@ -810,6 +827,88 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .logform.quiet input[type=number]{width:64px;border:0;border-bottom:1px solid var(--rule-hair);
   padding:2px 0;background:none}
 
+/* Utilities the log zone needed and the sheet did not have. `tnum` was already
+ * written on four spans that had no rule behind it — a figure meant to line up
+ * under the one above it, silently proportional. */
+.tnum{font-variant-numeric:tabular-nums}
+.vh{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;
+  clip-path:inset(50%);white-space:nowrap}
+
+/* ── Logged by month ───────────────────────────────────────────────────────
+ * The log zone's time dimension: the bars above say how far each accumulator
+ * is, and none of them can say whether logging is still happening. Twelve
+ * columns of one series — black, per §5 (a single-series chart uses black, not
+ * cobalt), and no status ink anywhere, because "behind" is already said once by
+ * the slipping chip and a chart uses one palette or the other, never both.
+ *
+ * Geometry: .mplot is the only element whose height means anything, so the
+ * percentages the server computes are honest; .maxis repeats the same flex
+ * layout underneath, which keeps a label under its own column without either
+ * row knowing the column count. The per-month figure is printed, so nothing
+ * here is carried by shape alone. */
+.mchart{margin:var(--sp-3) 0 var(--sp-5)}
+.mplot{position:relative;display:flex;align-items:flex-end;gap:2px;height:88px;
+  margin-top:var(--sp-3);border-bottom:2px solid var(--rule)}
+.mcol{flex:1 1 0;display:flex;align-items:flex-end;height:100%;min-width:0}
+.mcol > i{display:block;width:100%;background:var(--ink)}
+/* The pace line is structure, not a series: a dashed hairline across the plot at
+ * the height the remaining work divided by the months left would need. It sits
+ * ABOVE the columns — a reference line occluded by the bars it is a reference for
+ * is a line drawn in the two months that happen to be empty — and its label rides
+ * on paper so it survives crossing one. */
+.mpace{position:absolute;left:0;right:0;z-index:1;border-top:1px dashed var(--rule);
+  pointer-events:none}
+.mpace span{position:absolute;right:0;top:-15px;background:var(--paper);padding:0 3px;
+  font:700 10px/13px ui-monospace,"SF Mono",Menlo,monospace;color:var(--ink-muted)}
+.maxis{display:flex;gap:2px;margin-top:var(--sp-1)}
+.maxis span{flex:1 1 0;min-width:0;text-align:center;overflow:hidden;
+  font:700 10px/14px system-ui,sans-serif;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--ink-muted)}
+.maxis b{display:block;font:700 12px/16px ui-monospace,"SF Mono",Menlo,monospace;
+  color:var(--ink);font-variant-numeric:tabular-nums}
+/* A month with nothing in it prints a middle dot, not a zero — twelve zeroes down
+ * the axis read as data. It drops to the muted ramp so the months that do carry
+ * hours are the ones carrying ink. */
+.maxis b.nil{color:var(--ink-muted);font-weight:400}
+/* The current month is incomplete, and that belongs on the axis rather than in the
+ * plot: a ground fill behind the column read as a second, lighter bar at full
+ * height — the one thing a column chart must never draw. The label takes the ink
+ * and a rule under it instead, the same "this one is now" idiom .wkg uses. */
+.maxis .now{color:var(--ink);border-bottom:2px solid var(--rule);padding-bottom:1px}
+
+/* Activity registry as a database view: the columns compare down, the footer is
+ * the rollup. Borrows .wkg wholesale — the app has one table idiom and this is
+ * it — and only overrides what a left-reading register needs. */
+.atbl{table-layout:auto}
+/* .wkg zeroes padding-left on every .nm cell, which is right for a table whose
+ * name column is the first one and wrong here, where four columns read left: it
+ * ran ENTRIES straight into SPAN. The gutter comes back for every cell and only
+ * the table's two outer edges give it up. The first-child rule must stay last —
+ * it ties on specificity with the one above and wins on source order. */
+.atbl td.nm,.atbl th.nm{padding-left:var(--sp-2)}
+.atbl th:first-child,.atbl td:first-child{padding-left:0}
+.atbl th:last-child,.atbl td:last-child{padding-right:0}
+.atbl td.nm{font:600 14px/20px system-ui,sans-serif}
+.atbl td.sub{font:400 12px/17px system-ui,sans-serif;color:var(--ink-muted)}
+.atbl td.span{white-space:nowrap}
+.atbl td.stk,.atbl th.stk{white-space:nowrap}
+.atbl td.stk{font:700 13px/18px ui-monospace,"SF Mono",Menlo,monospace;
+  font-variant-numeric:tabular-nums;color:var(--ink)}
+.atbl .chip{vertical-align:baseline}
+/* The rollup reads as a total, so it gets the 2px rule the header carries and
+ * loses the hairline the rows share. */
+.atbl tfoot td{border-top:2px solid var(--rule);border-bottom:0;padding-top:var(--sp-2)}
+.atbl tfoot td.nm{font-weight:700}
+/* The per-row action is a control in a data column: it stays at label weight and
+ * only inks up under the cursor, so a column of "Mark meaningful" does not
+ * outweigh the hours beside it. */
+.atbl td.stk .lnk{color:var(--ink-muted);font-weight:400}
+.atbl tr:hover td.stk .lnk,.atbl td.stk .lnk:focus-visible{color:var(--ink)}
+@media(max-width:840px){
+  .atbl th.nm:nth-child(3),.atbl td.nm:nth-child(3),
+  .atbl th.nm:nth-child(6),.atbl td.nm:nth-child(6){display:none}
+}
+
 /* Roadmaps list: two lines per live path, 16px of vertical air, hairline rules. */
 .rmrow{padding:16px 0;border-top:1px solid var(--rule-hair)}
 .rmrow:first-of-type{border-top:0}
@@ -839,29 +938,13 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
  * This block covers: commitment cards, awaiting rows, people touch rows,
  * roadmap list rows. Other surfaces register their own pairs. */
 
-/* Commitment cards by state. "open" keeps the base fill-mild + hairline;
- * needs_review never reaches the board (it lives in the review queue), and a
- * guess keeps its dashed black keyline and no fill regardless. due_today is
- * black-as-colour: ink line, mild ink wash — never a full ink fill. */
-/* Register geometry for a washed row: the fill still carries its keyline (§8
- * rule 2), so a stated row gets the full 1px line back, plus the awaiting-row
- * negative-margin idiom so the wash bleeds into the gutter while the text stays
- * on the column grid. */
-.card[data-state="overdue"],.card[data-state="due_today"],
-.card[data-state="slipping"],.card[data-state="awaiting"]{
-  padding:var(--sp-2) var(--sp-3);margin:0 -13px var(--sp-1);border-width:1px;border-style:solid}
-.card[data-state="overdue"]{background:var(--verm-wash);border-color:var(--verm-line)}
-.card[data-state="due_today"]{background:var(--ink-wash);border-color:var(--ink-line)}
-.card[data-state="slipping"]{background:var(--gold-wash);border-color:var(--gold-line)}
-.card[data-state="awaiting"]{background:var(--turq-wash);border-color:var(--turq-line)}
-/* Selection on a washed card: the base .card[data-selected] fill-mild-2 cue
- * loses to the washes above (equal specificity, later source), so selection
- * moves to the inset-keyline idiom (.whd.now/.wbc.now). Open cards keep the
- * fill-mild-2 cue unchanged. */
-.card[data-state="overdue"][data-selected="true"],
-.card[data-state="due_today"][data-selected="true"],
-.card[data-state="slipping"][data-selected="true"],
-.card[data-state="awaiting"][data-selected="true"]{outline:2px solid var(--rule);outline-offset:-4px}
+/* Commitment rows carry no state wash (owner ruling 2026-08-05): the urgency
+ * register groups the board under Overdue / Today / This week / Later headings,
+ * so a per-row wash restated its own section heading — eight overdue rows made
+ * a wall of vermilion boxes. The state ink moved into the heading (a chip: fill
+ * plus glyph plus label, §8 rules 2–3); rows stay quiet ledger lines, and the
+ * base .card selection/hover cues apply unchanged. Slipping keeps a row chip —
+ * it is the one state the headings cannot say. */
 
 /* Awaiting rows: every row in this panel carries exactly one state, so the
  * row is the carrier — turquoise pair, card geometry. The ID selector
@@ -893,13 +976,9 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
  * (invisible on the due_today ink wash) and muted lines fell to ~1.2:1. The
  * negative margins above refund each wash's padding+border so washed rows stay
  * on their siblings' column grid and the wash bleeds into the gutter. */
-:is(.card[data-state="overdue"],.card[data-state="due_today"],
-    .card[data-state="slipping"],.card[data-state="awaiting"],
-    .src.cold,.src.warn,.rmrow.overdue,.rmrow.duetoday){color:var(--wash-fg)}
+:is(.src.cold,.src.warn,.rmrow.overdue,.rmrow.duetoday){color:var(--wash-fg)}
 #panel-awaiting .row{color:var(--wash-fg)}
-:is(.card[data-state="overdue"],.card[data-state="due_today"],
-    .card[data-state="slipping"],.card[data-state="awaiting"],
-    .src.cold,.src.warn,.rmrow.overdue,.rmrow.duetoday)
+:is(.src.cold,.src.warn,.rmrow.overdue,.rmrow.duetoday)
   :is(.b2,.b2 a,.time,.ts,.rmst,.due){color:var(--wash-fg-2)}
 #panel-awaiting .row :is(.b2,.b2 a,.time){color:var(--wash-fg-2)}
 

@@ -242,7 +242,7 @@ def test_the_detail_names_every_live_scoped_source_once() -> None:
 
 
 def test_ingested_data_with_no_credential_still_demands_a_boundary_decision() -> None:
-    """The one that was live: 200 calendar:asu items, no credential row, check silent.
+    """The one that was live: 200 calendar:work items, no credential row, check silent.
 
     Deriving "is a scoped source live" from the credential table alone missed an entire
     class — data imported or left behind by a removed connector — which is exactly the
@@ -251,7 +251,7 @@ def test_ingested_data_with_no_credential_still_demands_a_boundary_decision() ->
     """
     settings = _cfg(boundary_mode="exclude")
     creds = [("apple-notes", True), ("reminders", True)]
-    verdict = _boundary_verdict(settings, creds, ingested=["calendar:asu", "apple-notes"])
+    verdict = _boundary_verdict(settings, creds, ingested=["calendar:work", "apple-notes"])
     assert verdict is not None
     ok, detail = verdict
     assert not ok
@@ -424,10 +424,10 @@ def test_a_hand_imports_own_spelling_still_demands_a_boundary_decision() -> None
     """
     settings = _cfg(boundary_mode="exclude")
     for spelling in (
-        "Calendar:ASU",
-        "CALENDAR:asu",
-        "  calendar:asu ",
-        "gcal:asu",
+        "Calendar:WORK",
+        "CALENDAR:work",
+        "  calendar:work ",
+        "gcal:work",
         "google-calendar",
     ):
         verdict = _boundary_verdict(settings, [], ingested=[spelling])

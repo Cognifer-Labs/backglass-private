@@ -17,7 +17,7 @@ from datetime import date, datetime, timedelta
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
@@ -418,7 +418,10 @@ def build_router(
         date_: str | None = Query(None, alias="date"),
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:
-        day = date.fromisoformat(date_) if date_ else today()
+        try:
+            day = date.fromisoformat(date_) if date_ else today()
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"not a date: {date_!r}") from exc
         view = day_view(conn, settings, day)
         return templates.TemplateResponse(
             request,
@@ -443,7 +446,10 @@ def build_router(
         start: str | None = None,
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:
-        first = week_of(date.fromisoformat(start) if start else today())
+        try:
+            first = week_of(date.fromisoformat(start) if start else today())
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"not a date: {start!r}") from exc
         days = [day_view(conn, settings, first + timedelta(days=i)) for i in range(7)]
         return templates.TemplateResponse(
             request,

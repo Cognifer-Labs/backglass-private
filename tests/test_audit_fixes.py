@@ -251,6 +251,28 @@ class TestErrorRedaction:
         assert "SECRETVALUE" not in base.safe_error(RuntimeError(message))
         assert "redacted" in base.safe_error(RuntimeError(message))
 
+    @pytest.mark.parametrize(
+        "message",
+        [
+            # No `token=` to match on: the shape is the only tell, and these are the
+            # messages that actually leak — a provider quoting back what it rejected.
+            "invalid_auth for xoxb-4827361902-SECRETVALUEabcdefghij",
+            "403 for xoxp-4827361902-SECRETVALUEabcdefghij",
+            "bad credentials: ghp_SECRETVALUEabcdefghijklmnopqrstuv",
+            "bad credentials: github_pat_SECRETVALUEabcdefghijklmnopqrstuv",
+            "401 {'error': 'authentication_error'} sk-ant-api03-SECRETVALUEabcdefgh",
+            "GET /api/v1/courses 401 (7392~SECRETVALUEabcdefghijklmnopqrstuvwxyz01234567)",
+        ],
+    )
+    def test_a_bare_provider_token_is_redacted_on_shape_alone(self, message: str) -> None:
+        assert "SECRETVALUE" not in base.safe_error(RuntimeError(message))
+        assert "redacted" in base.safe_error(RuntimeError(message))
+
+    def test_shape_matching_does_not_eat_ordinary_words(self) -> None:
+        """A redactor that fires on anything hyphenated would blank every error."""
+        text = base.safe_error(RuntimeError("course 7392 not found; check-in failed"))
+        assert "7392" in text and "check-in" in text and "redacted" not in text
+
     def test_the_error_is_still_useful_after_redaction(self) -> None:
         """A redactor that ate the whole message would just move the failure elsewhere:
         the Sources panel exists to say what broke."""

@@ -19,11 +19,13 @@ uv run backglass schedule install    # optional: launchd jobs for automatic sync
 
 A few of those steps need one more thing from you before they'll do anything useful:
 
-- **A model backend.** `.env.example` defaults to `MODEL_BACKEND=anthropic` (bring your
-  own key: set `ANTHROPIC_API_KEY` or `MODEL_API_KEY`). If you already have a Claude
-  subscription and would rather spend nothing per run, set `MODEL_BACKEND=claude_cli`
-  instead and make sure the Claude Code CLI is installed. See `docs/10-tech-stack.md`
-  §Model backends for the full tradeoff.
+- **A model backend.** If you already have a Claude subscription, the cheapest path is
+  `MODEL_BACKEND=claude_cli` with the Claude Code CLI installed — extraction then costs
+  nothing per run and no API key ever goes in a file. Otherwise `.env.example`'s default
+  `MODEL_BACKEND=anthropic` brings your own key (`ANTHROPIC_API_KEY` or `MODEL_API_KEY`)
+  and bills per item; the monthly spend cap in `.env` is enforced in code and degrades to
+  triage-only rather than overspending. `docs/10-tech-stack.md` §Model backends has the
+  full tradeoff.
 - **`backglass setup`** only finds *local* sources it can detect on disk (Apple Notes,
   Reminders, Messages, Anki, Avorio, Obsidian) — it writes their `.env` lines for you
   and tells you what's still missing. It cannot detect Gmail/Calendar/Drive on its own,
@@ -45,7 +47,30 @@ Run `uv run backglass doctor` at any point — it reports exactly what's missing
 OAuth client, unauthorized accounts, launchd jobs) with a clear message and a non-zero
 exit, never a stack trace.
 
-## 2. Try a roadmap preset
+## 2. Optional: build the Mac app
+
+Everything above is the CLI plus a local web page, which is the whole product. If you'd
+rather have it in the Dock, `desktop/` is a Tauri shell over the same dashboard:
+
+```bash
+cd desktop && npm install && ./build-sidecar.sh
+# → desktop/src-tauri/target/release/bundle/macos/Backglass.app
+```
+
+The build freezes the Python backend with PyInstaller and bundles it inside the `.app`,
+so the result runs with this repo deleted. Its data lives in
+`~/Library/Application Support/Backglass` — a fresh, empty ledger, not the one you were
+using from the checkout. Point `DB_PATH` at your existing database if you want both to
+read the same one.
+
+**The app is unsigned.** Nobody here is paying Apple's developer program, so macOS
+Gatekeeper will refuse it on first launch — including for you. Right-click the app and
+choose *Open*, then confirm; macOS remembers the decision. If you send the `.app` to
+someone else it arrives quarantined, and they need the same right-click → *Open* (or
+`xattr -dr com.apple.quarantine /Applications/Backglass.app`). Anyone uncomfortable with
+that should build it themselves from source, which is the point of this repo being open.
+
+## 3. Try a roadmap preset
 
 The goal engine ships with seven fictional starting-point roadmaps so you can see the
 day planner and goal tracking work before wiring up anything real:
@@ -60,7 +85,7 @@ uv run backglass roadmap start founder          # short interview, then instanti
 Each preset is entirely made up — no real dates, no real people — and exists to
 demonstrate the roadmap → target → checkpoint → risk pipeline end to end.
 
-## 3. What each command actually does
+## 4. What each command actually does
 
 | command | what it does |
 |---|---|

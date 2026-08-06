@@ -131,6 +131,28 @@ def test_step_referencing_unknown_cadence_is_rejected(tmp_path: Path) -> None:
         presets.load("t", base)
 
 
+def test_a_path_id_cannot_escape_the_presets_directory(tmp_path: Path) -> None:
+    """`path_id` is a URL segment (/roadmaps/start/{path_id}), so the join is a traversal
+    primitive: the parser reads the file and then quotes it back in its own errors."""
+    base = tmp_path / "presets"
+    base.mkdir()
+    (base.parent / "secret.md").write_text("---\nid: secret\n---\n")
+
+    for hostile in ("../secret", "../../etc/passwd", "sub/../../secret"):
+        with pytest.raises(presets.PresetError) as caught:
+            presets.load(hostile, base)
+        assert str(base) not in str(caught.value), "the message maps the filesystem"
+
+
+def test_a_missing_preset_is_named_by_id_not_by_absolute_path(tmp_path: Path) -> None:
+    """A 422 body reaches the browser. It says what the caller asked for and nothing
+    about where this machine keeps its files."""
+    with pytest.raises(presets.PresetError) as caught:
+        presets.load("nope", tmp_path)
+    assert "'nope'" in str(caught.value)
+    assert str(tmp_path) not in str(caught.value)
+
+
 # ══ instantiation ═════════════════════════════════════════════════════════
 
 

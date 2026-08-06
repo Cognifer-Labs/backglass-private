@@ -1,14 +1,14 @@
 /* Backglass design tokens
-   Paper #FAF3DF / black. One ink set, both modes.
+   Paper #FCF8EC / black. One ink set, both modes.
    Validate changes with scripts/validate-palette.mjs */
 
 :root {
   color-scheme: light;
 
   /* surfaces */
-  --paper:        #FAF3DF;
+  --paper:        #FCF8EC;
   --ink:          #000000;
-  --on-ink:       #FAF3DF;
+  --on-ink:       #FCF8EC;
 
   /* text */
   --ink-2:        #3d3c37;   /* neutral 700 ·  9.97:1 */
@@ -94,11 +94,11 @@
   :root:where(:not([data-theme="light"])) {
     color-scheme: dark;
     --paper:      #000000;
-    --ink:        #FAF3DF;
+    --ink:        #FCF8EC;
     --on-ink:     #000000;
     --ink-2:      #c9c4b5;   /* neutral 200 · 12.05:1 */
     --ink-muted:  #aca79b;   /* neutral 300 ·  8.75:1 */
-    --rule:       #FAF3DF;
+    --rule:       #FCF8EC;
     --rule-hair:  #3d3c37;   /* neutral 700 */
     --fill-mild:  #0e0d0b;   /* neutral 900 on black */
     --fill-mild-2:#252421;   /* neutral 800 on black */
@@ -126,11 +126,11 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --paper:      #000000;
-  --ink:        #FAF3DF;
+  --ink:        #FCF8EC;
   --on-ink:     #000000;
   --ink-2:      #c9c4b5;
   --ink-muted:  #aca79b;
-  --rule:       #FAF3DF;
+  --rule:       #FCF8EC;
   --rule-hair:  #3d3c37;
   --fill-mild:  #0e0d0b;
   --fill-mild-2:#252421;

@@ -90,6 +90,22 @@ def content_hash(
     return hashlib.sha256("\x1f".join(parts).encode("utf-8")).hexdigest()
 
 
+#: Tokens whose *shape* is the giveaway, matched with no `key=` in front of them.
+#: The name-prefixed pass below only fires on `token=…` and friends, and the messages
+#: that actually leak a secret here are the ones that never name it: a Slack
+#: `invalid_auth` echoing the token it rejected, a Canvas 401 quoting the URL path
+#: segment, a JSON body reflected verbatim into the exception string. Every prefix is
+#: the provider's own registered format, so a false positive is a string that was
+#: already shaped exactly like a credential.
+_BARE_SECRET = re.compile(
+    r"xox[bp]-[A-Za-z0-9-]{8,}"  # Slack bot / user
+    r"|ghp_[A-Za-z0-9]{20,}"  # GitHub personal access
+    r"|github_pat_[A-Za-z0-9_]{20,}"  # GitHub fine-grained
+    r"|sk-ant-[A-Za-z0-9_-]{8,}"  # Anthropic
+    r"|\d{4,5}~[A-Za-z0-9]{40,}"  # Canvas
+)
+
+
 def safe_error(exc: Exception, *, limit: int = 300) -> str:
     """An exception rendered for storage and display, with credentials stripped.
 
@@ -108,4 +124,5 @@ def safe_error(exc: Exception, *, limit: int = 300) -> str:
                   r"\s*[=:]\s*[^&\s,)\"']+", r"\1=[redacted]", text)
     # Bearer headers and bare JWT-ish blobs, which carry no key= to match on.
     text = re.sub(r"(?i)\bBearer\s+[\w\-.~+/]+=*", "Bearer [redacted]", text)
+    text = _BARE_SECRET.sub("[redacted]", text)
     return text[:limit]

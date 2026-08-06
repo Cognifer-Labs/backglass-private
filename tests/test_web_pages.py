@@ -159,6 +159,15 @@ class TestSidebar:
         assert "Finish deck" in page.text
         assert client.get("/schedule?date=2026-07-31").text.count("Finish deck") == 0
 
+    def test_an_unparseable_date_is_a_422_not_a_500(self, client: TestClient) -> None:
+        """A hand-edited URL, a stale bookmark or a typo reached `date.fromisoformat`
+        unguarded and 500'd the page. Both parameters are typed now, so FastAPI answers
+        with a 422 naming the parameter — the same thing /brief/{on_date} has always
+        done — and the traceback stays off the wire."""
+        for url in ("/schedule?date=notadate", "/schedule?date=2026-13-01",
+                    "/schedule/week?start=notadate", "/schedule/week?start=2026-02-30"):
+            assert client.get(url).status_code == 422, url
+
     def test_week_grid_shows_seven_days_and_links_each(self, client: TestClient) -> None:
         page = client.get("/schedule/week?start=2026-07-27")
         assert page.status_code == 200
@@ -482,6 +491,19 @@ class TestRoadmapReplan:
         # Dropping releases the path — restart is possible, but only after that.
         client.post(f"/roadmaps/{rid}/drop", follow_redirects=True)
         assert "/roadmaps/start/medical" in client.get("/roadmaps").text
+
+    def test_no_confirm_dialog_interpolates_preset_text(self, client: TestClient) -> None:
+        """Jinja escapes for HTML, not for a JS string literal, so a preset title with an
+        apostrophe closed the string and the rest of the title became script. The confirm
+        text is static; the title is already on the row above the button."""
+        from backglass.roadmap import presets
+
+        page = client.get("/roadmaps").text
+        titles = [p.title for p in presets.list_paths()]
+        assert titles, "no presets to check"
+        for attr in re.findall(r'onsubmit="([^"]*)"', page):
+            for title in titles:
+                assert title not in attr, attr
 
     def test_cadences_are_read_only_with_a_live_weekly_count(
         self, client: TestClient, conn: sqlite3.Connection

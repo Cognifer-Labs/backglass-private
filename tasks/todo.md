@@ -1,3 +1,79 @@
+# The hour log reads like a spreadsheet, not a record
+
+Started 2026-08-06. The owner asked for the roadmap page to take after two things: a
+Notion database view, and the hour-logging charts a pre-med keeps for AMCAS.
+
+## What the page is missing
+
+The log zone has five progress bars and a list of activities as stacked prose blocks.
+Both say *how far*; neither says **whether logging is still happening**. A research
+total sitting at 60/200 renders identically whether the last entry was yesterday or
+last spring — and on a four-year accumulator that is the question the page exists to
+answer. There is no time dimension anywhere on the page.
+
+The activity registry has the same problem in the other direction: it holds exactly the
+columns a database view is made of (category, org, role, hours, entry count, date span,
+most-meaningful flag) and renders them as sentences, so nothing is comparable down a
+column and there is no rollup.
+
+## Steps
+
+- [x] 1. `backglass/goals/hours.py` — bucket every total's checkpoints by the month its
+      own timestamp names, in the offset that timestamp carries. Never converted, never
+      compared: each stamp is parsed once and reduced to (year, month), which keeps the
+      module clear of the mixed-offset trap four lessons already describe.
+- [x] 2. Logged-by-month chart in the log zone (`_hours_chart.html`). One series, black
+      columns (§5: a single-series chart uses black, not cobalt). The hours-a-month
+      needed to reach the goal's target date is a dashed hairline reference — structure,
+      not a second series, so the three-series rule and the status/series split both hold.
+- [x] 3. Activity registry → a table with column headers and a rollup footer, using the
+      existing `.wkg` table idiom rather than a new one. The fold's summary carries the
+      rollup so the counts read without opening it.
+- [x] 4. Context through `progress_context` only — `#roadmap-totals` is swapped whole by
+      six POST handlers, and a chart that renders on GET and vanishes on the first logged
+      hour is the obvious way to ship this broken.
+- [x] 5. Tests: bucketing across the owner's two zones, the empty case, the pace line's
+      arithmetic, and the chart surviving a log POST's fragment render. 20 new, and the
+      two that carry the argument were mutation-proven red (convert-to-UTC before
+      bucketing; drop the minimum-bar floor).
+
+## Outcome
+
+1,483 green, ruff and mypy clean on the changed files. Verified in Safari against a
+seeded copy of the demo db — never `data/backglass.db` — chart and table each rendered
+in both themes: 220 hours over ten months, a 63-hour July peak, and the 8/mo pace line
+reading across the plot. The axis-lift case was rendered too, not just asserted: with
+the goal's target pulled to October the pace becomes 170/mo, the axis lifts to it, and
+the line sits at the top of the plot with every column correctly dwarfed beneath it.
+
+Three things the render caught that the markup did not:
+
+- The current month drawn as a mild ground behind its column read as a second, lighter
+  bar at full height — the one thing a column chart must never draw. It moved to the
+  axis, where "this one is now" is a rule under the label.
+- The pace line was occluded by every bar it is a reference for, so it appeared only in
+  the two months that happened to be empty. It now sits above the columns.
+- `.wkg` zeroes `padding-left` on every `.nm` cell, which is right for a table whose
+  name column is first and wrong for one with four columns reading left: ENTRIES ran
+  into SPAN with no gutter at all.
+
+## Follow-up, found and not fixed
+
+`activities.list_with_hours` takes `MIN(occurred_at)`/`MAX(occurred_at)` over the
+mixed-offset column to compute each activity's span — the aggregate-is-a-comparison
+shape `tasks/lessons.md` names on 2026-08-02. The consequence is bounded (a span
+endpoint can name the adjacent day when two entries straddle midnight across the
+owner's two zones) and the fix means fetching entries rather than aggregating in SQL,
+so it is written down rather than folded into a UI change.
+
+## Deliberately not
+
+A second chart. The per-total bars already answer "by category, versus target", which is
+the other chart a pre-med keeps — restating it in a second shape would be more ink for
+the same fact, against a week of owner rulings that all moved toward less.
+
+---
+
 # Populate the ledger — mail, messages, and the cap that was never real
 
 Started 2026-08-03. The ask: put the owner's actual information into the system, from

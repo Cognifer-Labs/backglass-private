@@ -17,7 +17,7 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from backglass.config import Settings
-from backglass.goals import activities, checkpoints, health
+from backglass.goals import activities, checkpoints, health, hours
 from backglass.goals.targets import count_between, week_start_of
 from backglass.ledger import USER_ID
 from backglass.plan import timezones
@@ -144,9 +144,16 @@ def progress_context(
         (r for r in health.risk(conn, settings, day) if r.goal_id == goal_id), None
     )
     detail["totals"] = totals_for(conn, goal_id)
+    # The log zone's time dimension. Built here, in the one context builder both the
+    # page and every #roadmap-totals fragment go through, so a logged hour re-renders
+    # the chart instead of swapping it away.
+    detail["hours"] = hours.monthly(
+        detail["totals"], today=day, target_date=detail["r"].get("target_date")
+    )
     detail["activities"] = activities.list_with_hours(conn)
     detail["categories"] = activities.CATEGORIES
     detail["amcas_slots"] = activities.AMCAS_SLOTS
+    detail["amcas_meaningful"] = activities.AMCAS_MOST_MEANINGFUL
     detail["today"] = day
     # Year headings only earn their rule when the timetable actually spans years —
     # a lone "2026" over every row of a quarterly path is wallpaper.

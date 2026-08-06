@@ -29,19 +29,28 @@ SOURCE = "apple-contacts"
 #: One JSON array of {id, name, org, isCompany, phones, emails}. Deliberately narrow:
 #: addresses, birthdays and notes are none of the ledger's business, and a card the
 #: owner never asked to be indexed should leave as little behind as it can.
+#: Bulk-array fetch, not a per-person loop. `app.people.id()` returns every id in ONE
+#: Apple Event, and `app.people.phones.value()` one array-of-arrays; the loop form sent
+#: six-plus events per card, which on a real address book blew the runner's 120s
+#: timeout every sync — this source had never completed one. Same data either way.
 _SCRIPT = """
 const app = Application('Contacts');
+const ppl = app.people;
+const ids = ppl.id();
+const names = ppl.name();
+const orgs = ppl.organization();
+const companies = ppl.company();
+const phones = ppl.phones.value();
+const emails = ppl.emails.value();
 const out = [];
-const people = app.people();
-for (let i = 0; i < people.length; i++) {
-  const p = people[i];
+for (let i = 0; i < ids.length; i++) {
   out.push({
-    id: p.id(),
-    name: p.name(),
-    org: p.organization() || '',
-    isCompany: p.company() === true,
-    phones: p.phones().map(function (x) { return x.value(); }),
-    emails: p.emails().map(function (x) { return x.value(); }),
+    id: ids[i],
+    name: names[i],
+    org: orgs[i] || '',
+    isCompany: companies[i] === true,
+    phones: phones[i] || [],
+    emails: emails[i] || [],
   });
 }
 JSON.stringify(out);

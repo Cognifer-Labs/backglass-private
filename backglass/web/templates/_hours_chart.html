@@ -1,0 +1,35 @@
+{# The time dimension. Five bars say how far along each accumulator is and none of
+   them can say whether logging is still happening — a research total at 60/200
+   reads the same after a year of silence, which on a four-year record is the whole
+   question. One series, black columns (§5: a single-series chart uses black, not
+   cobalt); the pace line is a dashed hairline reference, not a second series, so
+   the three-series rule and the status/series split both hold. The per-month figure
+   is printed under its column, so the chart is not information carried in shape
+   alone. Nothing renders until something has been logged — an empty axis is a
+   claim about nothing. #}
+{% if hours.has_data %}
+  <div class="mchart">
+    <p class="lbl">Logged by month
+      <span class="tnum">· {{ hours.logged }} in {{ hours.months|length }} months · peak {{ hours.peak }}
+        {%- if hours.remaining %} · {{ hours.remaining }} to go{% endif %}</span></p>
+    <div class="mplot">
+      {% if hours.pace %}
+        <div class="mpace" style="bottom:{{ hours.pace_pct|round(1) }}%">
+          <span class="tnum">{{ hours.pace }}/mo to target</span>
+        </div>
+      {% endif %}
+      {% for mth in hours.months %}
+        <div class="mcol{% if mth.is_current %} now{% endif %}"
+             title="{{ mth.full }} · {{ mth.hours }}">
+          <i style="height:{{ mth.pct|round(1) }}%"></i>
+        </div>
+      {% endfor %}
+    </div>
+    <div class="maxis">
+      {% for mth in hours.months %}
+        <span{% if mth.is_current %} class="now"{% endif %}>
+          <b class="tnum{% if not mth.hours %} nil{% endif %}">{{ mth.hours or '·' }}</b>{{ mth.label }}</span>
+      {% endfor %}
+    </div>
+  </div>
+{% endif %}

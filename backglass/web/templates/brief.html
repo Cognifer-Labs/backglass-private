@@ -38,8 +38,17 @@
               <p class="b1 hang">{{ m.chip(line.status) }}<span>{{ line.text }}</span></p>
               {# CLAUDE.md rule 1. The link the brief was generated with, re-based onto
                  the running dashboard by render.StoredRef — provenance survives the trip
-                 through storage or the claim does not belong on the page. #}
-              <p class="b2"><a href="{{ line.provenance.url(base) }}" rel="noreferrer">{{ line.provenance.label }}</a></p>
+                 through storage or the claim does not belong on the page. StoredRef
+                 returns nothing for an href it will not vouch for, and then the source is
+                 named without a link: a dead link is worse than no link. #}
+              {%- set href = line.provenance.url(base) %}
+              <p class="b2">
+                {%- if href -%}
+                  <a href="{{ href }}" rel="noreferrer">{{ line.provenance.label }}</a>
+                {%- else -%}
+                  <span>{{ line.provenance.label }}</span>
+                {%- endif -%}
+              </p>
             </div>
           </div>
         {% endfor %}
