@@ -885,6 +885,19 @@ def brief(
         typer.echo(f"\n[{built.word_count()} words, limit {model.WORD_LIMIT}; not sent]")
         return
 
+    if not settings.brief_to.strip():
+        # Email never configured is a choice, not a failure: the brief above is already
+        # persisted and readable at /brief, and doctor's "brief recipient configured"
+        # check is where the absence is surfaced. Exiting 1 here made the scheduled job
+        # log the same non-error every morning forever. A *partial* delivery config
+        # (BRIEF_TO set, key or sender missing) still falls through to DeliveryError —
+        # someone who named a recipient wants the mail to arrive.
+        typer.echo(
+            "not emailed: BRIEF_TO is not set — the brief is saved and readable at "
+            f"{base}/brief"
+        )
+        return
+
     try:
         result = deliver.Sender(settings).send(
             subject=deliver.subject_for(built.generated_for_date, degraded=degraded),
