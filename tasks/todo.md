@@ -103,16 +103,33 @@ recorded so the next session does not repeat it.
 - **A brief against a populated ledger** — the degraded-source warning at the top
   (rule 5), a provenance link on every line (rule 1), capacity, and awaiting-others.
 
-## Left for the palette's owner
+## The three open calls, decided
 
-Both are decisions, not defects, and both sit in the file another session is editing:
+Left open for the owner in the first pass; taken here on 2026-08-06 when asked.
 
-- Black on vermilion measures 4.40 in dark mode — on chips, alert text and card
-  titles. §3's own table records 4.40 and ships it, but §3 also calls gold "the only
-  such exception in the system", and this is a second one under the 4.5 floor.
-- The week grid's event links are 22px tall with no gap to their neighbours. Height is
-  duration there, so the size is arguably essential and exempt — but the neighbours
-  part is real, and the fix is spacing the grid, not padding the link.
+**The duplicate run lock — theirs stays.** Both sessions built one, independently, to
+nearly the same design. Theirs reached main first and covers the same three doors, so
+`backglass/runlock.py` and `tests/test_runlock.py` are deleted rather than a committed,
+integrated, passing feature being replaced by its twin. Two things came across, because
+they are where the implementations actually differed: a real second process in the
+tests (their four stand-ins all pass against `LOCK_EX` weakened to `LOCK_SH`, which is
+the entire defect), and a reentrancy depth keyed by database rather than counted once
+for the process. See the merge commit.
+
+**Black on vermilion at 4.40 — the ink stays, the claim changes.** Reaching 4.5 means
+darkening the alarm ink, and a desaturated overdue mark is a quieter alarm: a worse
+outcome than a 2% shortfall on text that already carries a keyline, a glyph and a word.
+The all-pairs CVD separation was validated at these exact values, so moving a series
+slot would have to be re-argued against deuteranopia and not just against WCAG. What
+was actually wrong was §3's sentence claiming gold was the only exception;
+`design/design-system.md` now documents both, and says precisely where the second one
+bites — normal text on full-strength vermilion, dark mode only.
+
+**The week grid's 22px links — exempt, and written down as exempt.** Height is duration
+there; padding the link would make the timeline lie. §7 now carries the rule the 26px
+day box already follows (targets grow *under* the mark, never around it) together with
+the two exemptions that apply here, so the next reader does not re-open it. If the
+touching neighbours ever want fixing, the fix is a gap in the grid.
 
 ## Outcome — part one, the ledger
 
