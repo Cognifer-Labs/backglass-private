@@ -124,9 +124,16 @@ def export_markdown(conn: sqlite3.Connection) -> str:
 
     This is what an assistant loads instead of searching mail: every line carries its
     date and source so a stale claim is visibly stale rather than silently trusted.
+    Standing decisions ride along — "Sallie Mae: not doing it" is exactly the durable
+    owner fact this export exists to save someone from re-deriving, and an assistant
+    that knows the memory but not the decisions will cheerfully suggest the thing the
+    owner already declined.
     """
+    from backglass import decisions as decisions_mod
+
     facts = recall(conn)
-    if not facts:
+    standing = decisions_mod.active(conn)
+    if not facts and not standing:
         return "# Owner memory\n\n(empty)\n"
     lines = ["# Owner memory", ""]
     current = None
@@ -141,5 +148,15 @@ def export_markdown(conn: sqlite3.Connection) -> str:
             line += f" — {f.note}"
         line += f" _({f.source} · {f.created_at[:10]})_"
         lines.append(line)
+    if standing:
+        if facts:
+            lines.append("")
+        lines += ["## standing decisions", ""]
+        for d in standing:
+            line = f"- **{d.title}**: {d.choice}"
+            if d.reasoning:
+                line += f" — {d.reasoning}"
+            line += f" _(decided {d.decided_at[:10]})_"
+            lines.append(line)
     lines.append("")
     return "\n".join(lines)

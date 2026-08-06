@@ -66,6 +66,41 @@ class TestEngine:
         assert "stale claim" not in doc
         assert "(manual ·" in doc  # every line says where it came from
 
+    def test_export_carries_standing_decisions_and_only_standing_ones(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """An assistant that knows the memory but not the decisions will cheerfully
+        suggest the thing the owner already declined."""
+        from backglass import decisions
+
+        facts.remember(conn, settings, "identity", "name", "Alex Rivera")
+        decisions.record(conn, settings, "Sallie Mae application", "not doing it",
+                         reasoning="federal loans cover the year")
+        first, _ = decisions.record(conn, settings, "Early Start", "declined")
+        superseded, _ = decisions.record(conn, settings, "Early Start", "attending after all")
+        revisited, _ = decisions.record(conn, settings, "Dorm swap", "requesting")
+        decisions.revisit(conn, revisited)
+        conn.commit()
+
+        doc = facts.export_markdown(conn)
+        assert "## standing decisions" in doc
+        assert "**Sallie Mae application**: not doing it — federal loans cover the year" in doc
+        assert "**Early Start**: attending after all" in doc
+        assert "declined" not in doc  # the superseded claim does not export
+        assert "Dorm swap" not in doc  # retraction withdraws it from the memory
+        assert "_(decided " in doc
+
+    def test_decisions_alone_are_still_a_memory(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        from backglass import decisions
+
+        decisions.record(conn, settings, "Sallie Mae application", "not doing it")
+        conn.commit()
+        doc = facts.export_markdown(conn)
+        assert "(empty)" not in doc
+        assert "## standing decisions" in doc
+
     def test_rejects_blank_and_unknown_source(
         self, conn: sqlite3.Connection, settings: Settings
     ) -> None:
