@@ -785,18 +785,20 @@ def plan(
         f"travel {cap.travel_minutes}m, reserve {cap.reserve_minutes}m)"
     )
     for block in proposal.blocks:
-        mark = {"protected": " [protected]", "fixed": " [fixed]", "small": " [small]"}.get(
-            str(block["kind"]), ""
-        )
-        start = str(block["starts_at"])[11:16]
-        end = str(block["ends_at"])[11:16]
+        mark = {
+            "protected": " [protected]",
+            "fixed": " [fixed]",
+            "small": " [small]",
+            "routine": " [routine]",
+        }.get(str(block["kind"]), "")
+        start = timezones.t12(block["starts_at"])
+        end = timezones.t12(block["ends_at"])
         typer.echo(f"  {start}–{end}  {block['title']}{mark}")
     for note in proposal.notes:
         typer.echo(f"  · {note}")
     if proposal.overflow:
         for item in proposal.overflow:
             typer.echo(f"  · did not fit: {item.what} ({item.minutes}m)", err=True)
-    del timezones
 
 
 @app.command()

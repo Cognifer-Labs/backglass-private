@@ -23,6 +23,7 @@ from backglass.brief.model import Brief, LedgerRef, Line, Note, Section, SourceR
 from backglass.config import Settings
 from backglass.db import query
 from backglass.ledger import USER_ID
+from backglass.plan import timezones
 
 #: docs/05 §4. Two days, in the sense of calendar days, because the reader thinks in days.
 SLIPPING_HORIZON_DAYS = 2
@@ -277,7 +278,7 @@ def plan_section(conn: sqlite3.Connection, today: date) -> Section:
     ).fetchall()
     for row in rows:
         mark = " (protected)" if row["kind"] == "protected" else ""
-        start, end = str(row["starts_at"])[11:16], str(row["ends_at"])[11:16]
+        start, end = timezones.t12(row["starts_at"]), timezones.t12(row["ends_at"])
         section.lines.append(
             Line(
                 text=f"{start}–{end} {row['title']}{mark}",

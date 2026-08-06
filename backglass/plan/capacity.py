@@ -30,7 +30,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
-from backglass.config import Settings
+from backglass.config import Settings, parse_routines
 from backglass.ledger import USER_ID
 from backglass.plan import timezones
 
@@ -58,6 +58,10 @@ class FixedEvent:
     ends_at: datetime
     title: str = ""
     travel: bool = False
+    #: `fixed` for calendar events and confirmed plans; `routine` for the configured
+    #: daily anchors (breakfast, gym). The distinction matters twice: routines get no
+    #: meeting buffer, and the schedule draws them in their own quiet register.
+    kind: str = "fixed"
 
     @property
     def minutes(self) -> int:
@@ -221,6 +225,48 @@ def engagement_events(
     return sorted(events, key=lambda e: e.starts_at)
 
 
+def routine_events(settings: Settings, day: date, tz: str) -> list[FixedEvent]:
+    """The configured daily anchors — breakfast, lunch, gym — as fixed events on `day`.
+
+    Life happens every day, so these carry no weekday gate: a Saturday breakfast is
+    still breakfast. They come from config rather than the ledger because they are
+    the owner's own template for a day, not something a source said.
+    """
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo(tz)
+    midnight = datetime.combine(day, datetime.min.time(), tzinfo=zone)
+    return [
+        FixedEvent(
+            starts_at=midnight + timedelta(minutes=r.start_minute),
+            ends_at=midnight + timedelta(minutes=r.start_minute + r.minutes),
+            title=r.name.capitalize(),
+            kind="routine",
+        )
+        for r in parse_routines(settings.routines)
+    ]
+
+
+def day_events(conn: sqlite3.Connection, settings: Settings, day: date) -> list[FixedEvent]:
+    """The whole day's fixed picture: calendar + confirmed plans + routines, once each.
+
+    This is the one builder for "what is already true about this day". `compute` clips
+    it to the working window before doing capacity arithmetic; the planner persists it
+    unclipped so a 7:15pm dinner is on the plan; the schedule page draws the same list
+    live for days no planner has visited. Three consumers, one list — they cannot
+    disagree about what the day holds.
+    """
+    tz = timezones.active_tz(settings, day)
+    return sorted(
+        _distinct(
+            fixed_events(conn, day, tz)
+            + engagement_events(conn, day, tz, min_confidence=settings.confidence_threshold)
+            + routine_events(settings, day, tz)
+        ),
+        key=lambda e: e.starts_at,
+    )
+
+
 def _distinct(events: list[FixedEvent]) -> list[FixedEvent]:
     """One meeting counts once, however many sources described it.
 
@@ -270,7 +316,13 @@ def _aware(value: str, tz: str) -> datetime:
 
 
 def buffer_for(event: FixedEvent, settings: Settings) -> int:
-    """docs/04 §1.2: 10 min after any meeting >= 30 min, 5 min otherwise."""
+    """docs/04 §1.2: 10 min after any meeting >= 30 min, 5 min otherwise.
+
+    Routines get none: the buffer models the context-switch tax after a meeting, and
+    lunch is not a meeting — charging ten minutes after it would quietly shrink every
+    afternoon."""
+    if event.kind == "routine":
+        return 0
     if event.minutes >= settings.buffer_long_threshold_minutes:
         return settings.buffer_long_minutes
     return settings.buffer_short_minutes
@@ -308,13 +360,7 @@ def compute(
     # do this, and so does any what-if); it is not extended from the ledger, or a caller
     # asking "what would the day look like with these three meetings" would silently get
     # a fourth.
-    if events is not None:
-        fixed = list(events)
-    else:
-        fixed = _distinct(
-            fixed_events(conn, day, tz)
-            + engagement_events(conn, day, tz, min_confidence=settings.confidence_threshold)
-        )
+    fixed = list(events) if events is not None else day_events(conn, settings, day)
     fixed = [e for e in fixed if e.ends_at > window_start and e.starts_at < window_end]
     fixed.sort(key=lambda e: e.starts_at)
 

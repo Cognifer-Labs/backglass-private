@@ -62,10 +62,14 @@
       <p class="empty">Nothing planned and no fixed events. The day planner runs at 05:45,
         or run <span class="kbd">backglass plan --date {{ view.day.isoformat() }}</span>.</p>
     {% else %}
+      {% if view.unplanned %}
+        <p class="note">No plan for this day yet. The day planner runs at 05:45, or run
+          <span class="kbd">backglass plan --date {{ view.day.isoformat() }}</span>.</p>
+      {% endif %}
       <div class="tl" style="height:{{ tl.height }}px">
         {% for h in tl.hours %}
           <div class="hr" style="top:{{ loop.index0 * 60 }}px">
-            <span class="hlbl">{{ '%02d:00' % h }}</span>
+            <span class="hlbl">{{ h|h12 }}</span>
           </div>
         {% endfor %}
 

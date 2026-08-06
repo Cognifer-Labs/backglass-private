@@ -270,10 +270,12 @@ button.box::before{content:"";position:absolute;inset:-6px}
  * turquoise, fixed (calendar) black. Protected already has the hatch. The stripe
  * spans the whole component, not just the time gutter, so each block reads as its
  * own colored object at a glance — same semantic inks, louder carrier. */
-.row.k-work,.row.k-small,.row.k-fixed{padding-left:var(--sp-3)}
+.row.k-work,.row.k-small,.row.k-fixed,.row.k-routine{padding-left:var(--sp-3)}
 .row.k-work{border-left:3px solid var(--cobalt)}
 .row.k-small{border-left:3px solid var(--turquoise)}
 .row.k-fixed{border-left:3px solid var(--ink)}
+/* Routines are life, not work: they hold their place without spending an ink. */
+.row.k-routine{border-left:3px dashed var(--rule)}
 
 /* Schedule pages. */
 .pager{display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-2) var(--sp-3);background:var(--fill-mild);border:1px solid var(--rule-hair)}
@@ -315,6 +317,7 @@ button.box::before{content:"";position:absolute;inset:-6px}
 .wev.k-work{border-color:var(--cobalt-line);border-left-width:3px;background:var(--cobalt-wash)}
 .wev.k-small{border-color:var(--turq-line);border-left-width:3px;background:var(--turq-wash)}
 .wev.k-buffer{border-style:dashed}
+.wev.k-routine{border-style:dashed;border-color:var(--rule);background:var(--paper)}
 .wev.k-protected{background:repeating-linear-gradient(45deg,transparent,transparent 5px,var(--rule-hair) 5px,var(--rule-hair) 6px) var(--paper)}
 .wnow{position:absolute;left:0;right:0;border-top:2px solid var(--ink);z-index:2}
 
@@ -532,6 +535,7 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .tl .ev.k-work{border-color:var(--cobalt-line);border-left-width:4px;background:var(--cobalt-wash)}
 .tl .ev.k-small{border-color:var(--turq-line);border-left-width:4px;background:var(--turq-wash)}
 .tl .ev.k-buffer{border-style:dashed;border-left-width:2px}
+.tl .ev.k-routine{border-style:dashed;border-color:var(--rule);background:var(--paper)}
 .tl .ev.k-buffer .en{color:var(--ink-muted)}
 .tl .ev.k-protected{background:repeating-linear-gradient(45deg,transparent,transparent 5px,var(--rule-hair) 5px,var(--rule-hair) 6px) var(--paper)}
 .tl .ev.k-protected .en{font-size:14px}

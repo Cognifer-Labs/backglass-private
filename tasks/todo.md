@@ -1,3 +1,58 @@
+# The schedule is the day, not the shift — 12-hour clock and routines
+
+Started 2026-08-06. Two asks, verbatim: times in "am pm system, not army time", and
+"the schedule should be longer and more detailed, fitting in time for breakfast lunch
+dinner shower, gym among all the other things in life." The second ask settles the
+design call the engagement work left open ("what is the schedule page: the working
+window, or the day") — it is the day.
+
+## The shape
+
+- **12-hour clock, one formatter.** `panels.clock12/hour12/t12`, a Jinja filter, and
+  schedule.py's `_clock` all route through one function — times render "7:30am",
+  rulers "8am". Sites: day timeline, week grid, Today panel, gaps, NOW/NEXT strip.
+- **Routines are configured fixed events.** `ROUTINES` env
+  (`name@HH:MM+MINUTES,...`), defaults covering breakfast, lunch, gym, shower,
+  dinner. `capacity.routine_events` renders them as `FixedEvent(kind="routine")`;
+  parse and validation share one function, one error type.
+- **`capacity.day_events`** = calendar + confirmed engagements + routines,
+  deduplicated — the whole day's fixed picture. `compute` clips it to the working
+  window for capacity (lunch spends capacity, breakfast does not); the planner
+  persists the UNCLIPPED list, so evening plans and morning routines land in the
+  plan; the schedule page live-merges the same list for days no planner has visited.
+  Routines get no meeting buffer.
+- **Ruler already widens** (`_window`) — with a 7:30am breakfast and a 7:15pm dinner
+  the day view spans the actual day. `k-routine` renders quiet: dashed rule-colored
+  border, paper background — life is ambient, it spends no reserved ink.
+
+## Steps
+
+- [x] 1. `config.routines` + `config.parse_routines` (one parser, one error type;
+      lives in config so the field validator avoids a circular import).
+- [x] 2. `capacity`: `FixedEvent.kind`, `routine_events`, `day_events`, `compute`
+      over it, zero buffer for routines.
+- [x] 3. `planner.propose` persists the unclipped day picture with each event's kind.
+- [x] 4. Schedule route: `day_view` reads `day_events` (evening engagements appear —
+      closes the documented gap); 12-hour labels; `unplanned` note so the planner
+      hint survives a day routines keep non-empty; week grid needs a non-routine
+      entry to earn its ink. The 12-hour clock lives in `plan/timezones` so the CLI
+      plan printout and the brief's plan lines use the same one.
+- [x] 5. Templates + CSS: rulers, Today panel filter, `k-routine` styles, legend.
+- [x] 6. Tests: `tests/test_routines.py` (parser, capacity arithmetic, 12am/12pm
+      boundaries, page + week + evening engagement); 24h assertions updated in
+      test_web_pages/test_schedule/test_planner to the new expected shapes.
+- [ ] 7. Full suite (1483 passed), ruff, mypy — green minus the three pre-existing
+      defects at bb32d2d; fresh verifier pass pending.
+
+## Deliberately not
+
+Per-weekday routine schedules and a routines UI — the env default is a template the
+owner edits once; a table and page would be a settings shrine for five rows. No
+capacity charge for routines outside the working window: the window is still what
+bounds work, routines outside it are life, not spend.
+
+---
+
 # Major decisions — the choices the owner has settled
 
 Started 2026-08-06. The ask, verbatim: "there needs to be a major decisions list as

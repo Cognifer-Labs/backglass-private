@@ -267,10 +267,10 @@ class TestTheTimelineDrawsEachEventOnce:
         entries = schedule_page.timeline(self._real_shaped_day(), today=DAY).entries
 
         assert [(e.start_label, e.title) for e in entries] == [
-            ("10:30", "HON 171"),
-            ("12:00", "PSY 101"),
-            ("13:25", "Loan application"),
-            ("19:00", "Dinner — Postino"),
+            ("10:30am", "HON 171"),
+            ("12:00pm", "PSY 101"),
+            ("1:25pm", "Loan application"),
+            ("7:00pm", "Dinner — Postino"),
         ]
         # Nothing was pushed into the overflow lane, because nothing overlaps any more.
         assert {e.lane for e in entries} == {0}

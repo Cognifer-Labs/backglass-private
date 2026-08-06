@@ -339,3 +339,29 @@ def both_zones(moment: datetime, primary: str, counterpart: str) -> str:
 
 def _short(zone: str) -> str:
     return zone.rsplit("/", 1)[-1].replace("_", " ")
+
+
+# ── the 12-hour clock ─────────────────────────────────────────────────────
+# Owner ruling 2026-08-06: every surface that prints a time of day prints it the way
+# a person reads a clock — "7:30am", never "19:30". One implementation, used by the
+# web filters, the schedule canvas, the CLI plan printout and the brief, so noon is
+# "12:00pm" everywhere or nowhere.
+
+
+def clock12(minute_of_day: int) -> str:
+    """Minutes past local midnight → '7:30am'."""
+    hour, minute = divmod(minute_of_day % (24 * 60), 60)
+    return f"{(hour + 11) % 12 + 1}:{minute:02d}{'am' if hour < 12 else 'pm'}"
+
+
+def hour12(hour: int) -> str:
+    """Ruler labels: '8am', '12pm'. No minutes — a ruler is a scale, not a stamp."""
+    hour %= 24
+    return f"{(hour + 11) % 12 + 1}{'am' if hour < 12 else 'pm'}"
+
+
+def t12(value: object) -> str:
+    """'HH:MM' or a local ISO timestamp → the 12-hour clock."""
+    text = str(value)
+    hhmm = text[11:16] if len(text) >= 16 and text[10] in "T " else text[:5]
+    return clock12(int(hhmm[:2]) * 60 + int(hhmm[3:5]))

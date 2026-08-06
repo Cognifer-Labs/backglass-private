@@ -24,6 +24,7 @@ from fastapi.templating import Jinja2Templates
 
 from backglass.config import REPO_ROOT, Settings, get_settings
 from backglass.db import connect, migrate
+from backglass.plan import timezones
 from backglass.web import actions, panels, security
 
 HERE = Path(__file__).parent
@@ -33,6 +34,8 @@ templates = Jinja2Templates(directory=str(HERE / "templates"))
 templates.env.filters["relative"] = panels.relative
 templates.env.filters["due"] = panels.due_label
 templates.env.filters["when"] = panels.when_label
+templates.env.filters["t12"] = timezones.t12
+templates.env.filters["h12"] = timezones.hour12
 
 #: A 1x1 transparent GIF, for docs/05 B7. Inlined rather than shipped as a file because
 #: a 43-byte asset with its own path is a thing that can go missing in a deploy.

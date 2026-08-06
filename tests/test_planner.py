@@ -960,7 +960,7 @@ class TestEngagementsOnTheDay:
 
         busy_start, busy_end = at(THURSDAY, "12:00"), at(THURSDAY, "13:00")
         for block in proposal.blocks:
-            if block["kind"] == "fixed":
+            if block["kind"] in ("fixed", "routine"):
                 continue
             start = datetime.fromisoformat(str(block["starts_at"]))
             end = datetime.fromisoformat(str(block["ends_at"]))
@@ -1000,7 +1000,8 @@ class TestEngagementsOnTheDay:
         after = capacity_mod.compute(conn, sett, THURSDAY)
 
         assert after.capacity_minutes == before
-        assert [e.title for e in after.fixed] == []
+        # Routines are always on the day; the dubious plan is what must not be.
+        assert [e.title for e in after.fixed if e.kind != "routine"] == []
 
     def test_one_meeting_counts_once_however_many_sources_described_it(  # type: ignore[no-untyped-def]
         self, conn, sett: Settings
@@ -1034,8 +1035,10 @@ class TestEngagementsOnTheDay:
 
         capacity = capacity_mod.compute(conn, sett, THURSDAY)
 
-        assert len(capacity.fixed) == 1, [e.title for e in capacity.fixed]
-        assert capacity.fixed_minutes == 75
+        events = [e for e in capacity.fixed if e.kind != "routine"]
+        assert len(events) == 1, [e.title for e in capacity.fixed]
+        # 75 for the class; lunch and the in-window slice of gym add their own.
+        assert capacity.fixed_minutes == 75 + 45 + 30
 
     def test_a_utc_stored_event_is_placed_in_the_owners_own_hours(  # type: ignore[no-untyped-def]
         self, conn, sett: Settings

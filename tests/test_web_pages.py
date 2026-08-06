@@ -594,10 +594,11 @@ class TestScheduleTimeline:
         )
         conn.commit()
         page = client.get("/schedule?date=2026-07-28").text
-        # Ruler starts at 08:00; a 09:00 block sits 60 minutes = 60px down, 90 tall.
-        assert "top:60px;height:90px" in page
-        assert "09:00–10:30" in page
-        assert "08:00" in page  # the hour ruler
+        # Ruler starts at 7am (the 7:30 breakfast routine widens it); a 9:00 block
+        # sits 120 minutes = 120px down, 90 tall.
+        assert "top:120px;height:90px" in page
+        assert "9:00am–10:30am" in page
+        assert "8am" in page  # the hour ruler
         assert 'class="tl"' in page
 
     def test_capacity_line_reads_as_one_sentence(
@@ -662,7 +663,7 @@ class TestScheduleTimeline:
         page = client.get("/schedule?date=2026-07-28").text
         assert "height:20px" in page
         assert "tiny" in page
-        assert 'title="09:00–09:20 Inbox sweep"' in page
+        assert 'title="9:00am–9:20am Inbox sweep"' in page
         # The title is not drawn on the canvas: only the attributes carry it.
         assert ">Inbox sweep<" not in page
 
@@ -709,11 +710,13 @@ class TestScheduleTimeline:
         )
         conn.commit()
         page = client.get("/schedule?date=2026-07-28").text
-        # 08:00–09:00, 10:15–11:30 and 12:00–19:00 are free; the ruler bounds the ends.
-        assert "Gaps · 3 free intervals" in page
-        assert "08:00–09:00 · 1h 00m free" in page
-        assert "10:15–11:30 · 1h 15m free" in page
-        assert "12:00–19:00 · 7h 00m free" in page
+        # The routines carve the day: 7:00–7:30, 8:00–9:00, 10:15–11:30, 12:00–12:30,
+        # 1:15–5:30 and 7:00–7:15pm are free; the ruler bounds the ends and the
+        # 5-minute seam between gym and shower is under the 15-minute floor.
+        assert "Gaps · 6 free intervals" in page
+        assert "8:00am–9:00am · 1h 00m free" in page
+        assert "10:15am–11:30am · 1h 15m free" in page
+        assert "1:15pm–5:30pm · 4h 15m free" in page
 
     def test_fragmented_day_says_so_in_words(
         self, client: TestClient, conn: sqlite3.Connection
@@ -1129,13 +1132,14 @@ class TestWeekAgenda:
         )
         conn.commit()
         page = client.get("/schedule/week?start=2026-07-27").text
-        # Shared ruler starts at 08:00; 09:00 at 0.5px/min sits 30px down, 45px tall.
-        assert "top:30px;height:45px" in page
+        # Shared ruler starts at 7am (breakfast widens it); 9:00 at 0.5px/min sits
+        # 60px down, 45px tall.
+        assert "top:60px;height:45px" in page
         assert 'class="wk7"' in page
         # The block names its event to the pointer and to a screen reader, and to
         # nothing else: a 9px ellipsized title on a 96px column is not information.
-        assert 'title="09:00–10:30 Finish deck"' in page
-        assert 'aria-label="09:00–10:30 Finish deck"' in page
+        assert 'title="9:00am–10:30am Finish deck"' in page
+        assert 'aria-label="9:00am–10:30am Finish deck"' in page
         assert ">Finish deck<" not in page
 
     def test_week_blocks_carry_no_visible_text(

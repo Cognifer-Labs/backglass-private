@@ -38,6 +38,12 @@ class DayView:
     def empty(self) -> bool:
         return not self.blocks and not self.fixed
 
+    @property
+    def unplanned(self) -> bool:
+        """No planner has visited this day. Routines keep the canvas alive, so this —
+        not `empty` — is what decides whether to name the planner command."""
+        return not self.blocks
+
 
 def day_view(conn: sqlite3.Connection, settings: Settings, day: date) -> DayView:
     tz = timezones.active_tz(settings, day)
@@ -48,7 +54,13 @@ def day_view(conn: sqlite3.Connection, settings: Settings, day: date) -> DayView
             {"user_id": USER_ID, "local_date": day.isoformat()},
         )
     ]
-    return DayView(day=day, tz=tz, blocks=blocks, fixed=capacity.fixed_events(conn, day, tz))
+    # The whole day's fixed picture — calendar, confirmed plans, routines — not just
+    # the calendar reader. This is what puts a 7:15pm dinner and a 7:30am breakfast on
+    # the canvas for a day no planner has visited; `_collapse` merges the copies for a
+    # day one has.
+    return DayView(
+        day=day, tz=tz, blocks=blocks, fixed=capacity.day_events(conn, settings, day)
+    )
 
 
 def week_of(day: date) -> date:
@@ -107,7 +119,7 @@ def _minutes(hhmm: str) -> int:
 
 
 def _clock(minute_of_day: int) -> str:
-    return f"{minute_of_day // 60:02d}:{minute_of_day % 60:02d}"
+    return timezones.clock12(minute_of_day)
 
 
 #: (start_minute, duration, title, kind, outcome, travel)
@@ -171,7 +183,7 @@ def _raw_entries(view: DayView) -> list[RawEntry]:
                 e.starts_at.hour * 60 + e.starts_at.minute,
                 max(e.minutes, 1),
                 e.title or "Busy",
-                "fixed",
+                e.kind,
                 "",
                 e.travel,
             )
@@ -346,6 +358,13 @@ class WeekCol:
     entries: list[Entry]
     now_top: int | None
     cap: dict[str, Any] | None
+
+    @property
+    def busy(self) -> bool:
+        """Something beyond the routine template is on this day. Routines repeat on
+        all seven columns by construction, so they alone cannot earn the grid its
+        ink — an empty week stays a sentence, not a framed void of breakfasts."""
+        return any(e.kind != "routine" for e in self.entries)
 
     @property
     def free_minutes(self) -> int | None:

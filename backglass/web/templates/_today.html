@@ -26,11 +26,11 @@
               <span class="cond">{{ b['title'] }}</span>
               {{ m.chip('protected') }}
             </div>
-            <p class="b2">{{ b['starts_at'][11:16] }}–{{ b['ends_at'][11:16] }}</p>
+            <p class="b2">{{ b['starts_at']|t12 }}–{{ b['ends_at']|t12 }}</p>
           </div>
         {% else %}
           <div class="row k-{{ b['kind'] }}">
-            <span class="time">{{ b['starts_at'][11:16] }}–{{ b['ends_at'][11:16] }}</span>
+            <span class="time">{{ b['starts_at']|t12 }}–{{ b['ends_at']|t12 }}</span>
             <div class="grow">
               <p class="b1">{{ b['title'] }}{% if b['pinned'] %} <span class="kbd">pinned</span>{% endif %}</p>
               <p class="b2">{{ b['kind'] }}{% if b['rollover_count'] %} · rolled {{ b['rollover_count'] }}x{% endif %}</p>

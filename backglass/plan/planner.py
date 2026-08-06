@@ -238,13 +238,19 @@ def propose(
         # P15. The brief leads with this; the plan records it so the brief can.
         proposal.notes.append(f"Timezone changed {change[0]} → {change[1]}.")
 
-    # Fixed events sit where they sit (docs/04 §1.5 rule 1).
-    for event in cap.fixed:
+    # Fixed events sit where they sit (docs/04 §1.5 rule 1). The whole day's picture,
+    # not the window-clipped list capacity computed with: a 7:15pm dinner and a 7:30am
+    # breakfast belong on the plan even though neither spends working capacity. An
+    # explicit `events` list stays the whole picture, same contract as `compute`.
+    whole_day = (
+        list(events) if events is not None else capacity_mod.day_events(conn, settings, day)
+    )
+    for event in whole_day:
         proposal.blocks.append(
             {
                 "starts_at": event.starts_at.isoformat(),
                 "ends_at": event.ends_at.isoformat(),
-                "kind": "fixed",
+                "kind": event.kind,
                 "title": event.title,
                 "minutes": event.minutes,
                 "commitment_id": None,

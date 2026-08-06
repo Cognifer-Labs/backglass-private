@@ -6,6 +6,8 @@ table, per docs/07 §Credentials.
 
 from __future__ import annotations
 
+import re
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
@@ -42,6 +44,55 @@ def _csv(value: str | list[str] | None) -> list[str]:
     return [item.strip().lower() for item in items if item.strip()]
 
 
+# ── routines ──────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Routine:
+    """One recurring daily anchor: breakfast, gym, shower — life, as a fixed span."""
+
+    name: str
+    start_minute: int  # minute of the local day
+    minutes: int
+
+
+class RoutineError(ValueError):
+    pass
+
+
+_ROUTINE_RE = re.compile(r"^(?P<name>[^@,]+)@(?P<hh>\d{2}):(?P<mm>\d{2})\+(?P<dur>\d+)$")
+
+
+def parse_routines(raw: str) -> list[Routine]:
+    """`name@HH:MM+MINUTES,...` → routines sorted by start.
+
+    One exception type for every malformed shape — the regex admits only digits, so
+    the int() calls below cannot raise their own. Lives here rather than in
+    plan/capacity so the field validator can call it without a circular import.
+    """
+    out: list[Routine] = []
+    for part in (p.strip() for p in raw.split(",") if p.strip()):
+        match = _ROUTINE_RE.match(part)
+        if match is None:
+            raise RoutineError(
+                f"malformed routine {part!r}; expected name@HH:MM+MINUTES"
+            )
+        hour, minute = int(match["hh"]), int(match["mm"])
+        duration = int(match["dur"])
+        if hour > 23 or minute > 59:
+            raise RoutineError(f"routine {part!r} has no such time of day")
+        if not 0 < duration <= 24 * 60:
+            raise RoutineError(f"routine {part!r} needs a duration of 1..1440 minutes")
+        out.append(
+            Routine(
+                name=match["name"].strip(),
+                start_minute=hour * 60 + minute,
+                minutes=duration,
+            )
+        )
+    return sorted(out, key=lambda r: r.start_minute)
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
@@ -68,6 +119,15 @@ class Settings(BaseSettings):
     #: plan nobody asked for.
     working_days: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["mon", "tue", "wed", "thu", "fri"]
+    )
+    #: The other things in life, as fixed events on every day: `name@HH:MM+MINUTES`,
+    #: comma-separated. They render on the schedule and the planner plans around
+    #: them; only the ones inside the working window spend capacity (lunch does,
+    #: breakfast does not). Empty string means none. Parsed and validated by
+    #: `parse_routines` above — the same function capacity consumes it through, so a
+    #: malformed entry fails at startup, not at 05:45.
+    routines: str = (
+        "breakfast@07:30+30,lunch@12:30+45,gym@17:30+60,shower@18:35+25,dinner@19:15+45"
     )
 
     # ── planner (docs/04 §1) ──────────────────────────────────────────────
@@ -353,6 +413,12 @@ class Settings(BaseSettings):
         if isinstance(value, str | list) or value is None:
             return _csv(value)
         raise TypeError(f"expected a comma-separated string or list, got {type(value)}")
+
+    @field_validator("routines")
+    @classmethod
+    def _check_routines(cls, value: str) -> str:
+        parse_routines(value)  # fail at startup, not at 05:45
+        return value
 
     # .env.example ships these four blank ("APPLE_TRIAGE=", "REVIEWS_TARGET_ID=") so a
     # fresh `cp .env.example .env` cloner sees the exact key to fill in. Pydantic

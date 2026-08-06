@@ -24,7 +24,7 @@
        the grid header — day, free hours, overflow in the same clickable cell. And
        an empty week is a sentence plus the header strip, never a 12-hour framed
        void: the grid earns its ink only when something is on it. #}
-    {% set busy = wtl.cols|selectattr('entries')|list %}
+    {% set busy = wtl.cols|selectattr('busy')|list %}
     {% if not busy %}
       <div class="wband">
         {% for c in wtl.cols %}
@@ -67,7 +67,7 @@
         <div class="wkhrs" style="height:{{ wtl.height }}px">
           {% for h in wtl.hours %}
             {# Every second hour: at 30px an hour, a label on each one collided. #}
-            {% if loop.index0 % 2 == 0 %}<span style="top:{{ loop.index0 * wtl.hour_px }}px">{{ '%02d' % h }}</span>{% endif %}
+            {% if loop.index0 % 2 == 0 %}<span style="top:{{ loop.index0 * wtl.hour_px }}px">{{ h|h12 }}</span>{% endif %}
           {% endfor %}
         </div>
         {% for c in wtl.cols %}
