@@ -159,7 +159,8 @@ def occurred_at_of(message: EmailMessage, date_received: int) -> str:
 
 
 def mailbox_name(url: str) -> str:
-    """The folder, as a person would name it: `imap://UUID/%5BGmail%5D/All%20Mail` → `All Mail`."""
+    """The folder, as a person would name it:
+    `imap://UUID/%5BGmail%5D/All%20Mail` → `All Mail`."""
     return unquote(url).rstrip("/").rpartition("/")[2]
 
 

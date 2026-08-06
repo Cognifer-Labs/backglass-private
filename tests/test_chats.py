@@ -232,6 +232,26 @@ class TestSayingYesMeansTheHistoryToo:
 
         assert credentials.load(conn, "imessage").cursor is None
 
+    def test_monitoring_an_instagram_chat_rewinds_both_lanes(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """The decision lives under `instagram`; the conversation can arrive through
+        `instagram` (export) or `instagram:live`. Saying yes must reach backwards on
+        whichever lane carries it — and must not touch an unrelated source."""
+        from backglass.connectors import credentials
+
+        credentials.save_cursor(conn, "instagram", "1783695845000")
+        credentials.save_cursor(conn, "instagram:live", "2026-07-10T15:04:05+00:00")
+        credentials.save_cursor(conn, "imessage", "43003")
+        seen(conn, "Goa trip", source="instagram")
+        chat = chats_mod.listing(conn, "instagram")[0]
+
+        chats_mod.decide(conn, chat.id, chats_mod.MONITOR)
+
+        assert credentials.load(conn, "instagram").cursor is None
+        assert credentials.load(conn, "instagram:live").cursor is None
+        assert credentials.load(conn, "imessage").cursor == "43003"
+
     def test_ignoring_leaves_the_cursor_alone(self, conn: sqlite3.Connection) -> None:
         """Declining a chat is not a reason to re-scan the store."""
         from backglass.connectors import credentials

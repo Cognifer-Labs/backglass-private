@@ -142,9 +142,13 @@ be typed, it is a decision to be made.
 Run against the owner's real store: **47 conversations discovered**, every one awaiting a
 decision — three busy group chats, the rest one-to-one. None is read until it is chosen.
 
-Instagram still reads its env allowlist; the table is wired for it (`source` is already
-per-service) but the connector does not yet report sightings. That is the obvious next
-step and is deliberately not claimed here.
+Instagram joined 2026-08-05: both lanes report sightings under the shared source
+`instagram` (export lane discovers the whole export cursor-free; the live lane sights
+every thread it lists without fetching unallowed ones — the ban-risk budget pays for
+nothing nobody said yes to). The allowlist now comes from the table with
+`INSTAGRAM_CHATS` seeded on first run, an empty allowlist no longer disables the
+connectors, and Monitor rewinds both lanes' cursors so a decision reaches backwards on
+whichever lane carries the conversation.
 
 ## Deliberately not
 

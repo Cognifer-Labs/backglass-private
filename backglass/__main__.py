@@ -242,7 +242,7 @@ def instagram_login(
 def instagram_chats(
     limit: Annotated[int, typer.Option("--limit", help="How many threads to list")] = 30,
 ) -> None:
-    """List thread titles, so INSTAGRAM_CHATS can be filled in from real names.
+    """List thread titles — the same names a sync discovers onto the /chats page.
 
     The live lane reads an allowlist, never an inbox — `docs/07`: "a personal tool reads
     the handful of threads the owner names." Guessing those names from memory is how an
@@ -272,7 +272,10 @@ def instagram_chats(
         typer.echo("  a session can be invalidated by Instagram; re-run `instagram login`")
         raise typer.Exit(1) from exc
 
-    typer.echo("Copy the ones worth reading into INSTAGRAM_CHATS, comma-separated:\n")
+    typer.echo(
+        "Choose the ones worth reading on the /chats page — a sync discovers these "
+        "same threads and lists them there for a Monitor/Ignore decision:\n"
+    )
     for thread in threads:
         title = getattr(thread, "thread_title", "") or ", ".join(
             getattr(user, "username", "?") for user in getattr(thread, "users", [])
@@ -1038,17 +1041,19 @@ def _all_connectors(conn: sqlite3.Connection, settings: Settings) -> list[Connec
             )
         )
 
-    if settings.instagram_chats and (
-        settings.instagram_export_path
-        or (settings.instagram_username and settings.instagram_session_file)
+    if settings.instagram_export_path or (
+        settings.instagram_username and settings.instagram_session_file
     ):
-        from backglass.connectors.allowlist import Allowlist
         from backglass.connectors.instagram import (
             InstagramExportConnector,
             InstagramLiveConnector,
         )
 
-        allowlist = Allowlist(settings.instagram_chats)
+        # Same shape as iMessage above: `.env` seeds the table once, the table decides
+        # from then on — and an empty allowlist no longer disables the connectors,
+        # because a run with nothing chosen is what discovers the chats to choose from.
+        chats_mod.seed_from_env(conn, "instagram", settings.instagram_chats)
+        allowlist = chats_mod.allowlist_for(conn, "instagram", settings.instagram_chats)
         if settings.instagram_export_path:
             built.append(
                 InstagramExportConnector(

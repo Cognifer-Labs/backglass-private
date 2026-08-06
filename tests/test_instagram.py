@@ -247,7 +247,7 @@ def test_health_names_the_exact_next_step(tmp_path: Path, boundary: Boundary) ->
 
     no_chats = make_export_connector(build_export(tmp_path, []), boundary, [])
     assert not no_chats.health().ok
-    assert "INSTAGRAM_CHATS" in (no_chats.health().detail or "")
+    assert "/chats" in (no_chats.health().detail or "")
 
     html_export = tmp_path / "html"
     html_export.mkdir()
@@ -467,8 +467,124 @@ def test_live_lane_health_requires_an_allowlist_even_with_a_client(
 ) -> None:
     connector = make_live_connector([], boundary, [])
     assert not connector.health().ok
-    assert "INSTAGRAM_CHATS" in (connector.health().detail or "")
+    assert "/chats" in (connector.health().detail or "")
     assert make_live_connector([], boundary, ["Goa trip"]).health().ok
+
+
+# ── sightings: the /chats page fills itself in, docs/07 §Monitored conversations ──
+
+
+def test_export_lane_sights_every_thread_even_with_nothing_chosen(
+    tmp_path: Path, boundary: Boundary
+) -> None:
+    root = build_export(
+        tmp_path,
+        [
+            {
+                "key": "goatrip_123",
+                "title": "Goa trip",
+                "participants": ["Priya", "Arjun", "K"],
+                "messages": [("Priya", TS_2026_07_10, "beach house saturday?")],
+            },
+            {
+                "key": "priya_456",
+                "title": "Priya",
+                "participants": ["Priya", "K"],
+                "messages": [
+                    ("Priya", TS_2026_07_10 + 1000, "dinner tomorrow?"),
+                    ("K", TS_2026_07_10 + 2000, "yes"),
+                ],
+            },
+        ],
+    )
+    connector = make_export_connector(root, boundary, [])
+    assert list(connector.fetch(None)) == []  # nothing chosen, nothing read
+    assert set(connector.seen_chats) == {"Goa trip", "Priya"}
+    group = connector.seen_chats["Goa trip"]
+    assert (group.kind, group.participants, group.messages) == ("group", 3, 1)
+    dm = connector.seen_chats["Priya"]
+    assert (dm.kind, dm.messages) == ("dm", 2)
+    # A sighting's key must be something the allowlist can later match, or the Monitor
+    # button on the page turns on a chat the connector then fails to recognise.
+    assert Allowlist([group.key]).allows(
+        title="Goa trip", participants=["Priya", "Arjun", "K"]
+    )
+
+
+def test_export_sighting_key_falls_back_to_a_participant_for_untitled_threads(
+    tmp_path: Path, boundary: Boundary
+) -> None:
+    root = build_export(
+        tmp_path,
+        [
+            {
+                "key": "untitled_789",
+                "participants": ["Priya", "K"],
+                "messages": [("Priya", TS_2026_07_10, "hey")],
+            }
+        ],
+    )
+    connector = make_export_connector(root, boundary, [])
+    list(connector.fetch(None))
+    (sighting,) = connector.seen_chats.values()
+    assert sighting.key == "Priya"
+    assert Allowlist([sighting.key]).allows(title=None, participants=["Priya", "K"])
+
+
+def test_live_lane_sights_unallowed_threads_without_reading_their_messages(
+    boundary: Boundary,
+) -> None:
+    when = datetime(2026, 7, 10, 15, 4, 5, tzinfo=UTC)
+    threads = [
+        a_thread(
+            "t1",
+            "Goa trip",
+            [(1, "priya.s"), (2, "arjun_k")],
+            [("m1", 1, "beach house saturday?", when)],
+        ),
+        a_thread("t2", None, [(3, "rohan.m")], [("m2", 3, "not read", when)]),
+    ]
+    connector = make_live_connector(threads, boundary, ["Goa trip"])
+    items = list(connector.fetch(None))
+    assert [i.title for i in items] == ["Goa trip"]
+    assert set(connector.seen_chats) == {"Goa trip", "rohan.m"}
+    assert connector.seen_chats["Goa trip"].messages == 1
+    # Listed, sighted, never fetched — the ban-risk budget does not pay for a thread
+    # nobody has said yes to, but the thread still lands on the page as a question.
+    unread = connector.seen_chats["rohan.m"]
+    assert (unread.kind, unread.messages) == ("dm", 0)
+
+
+def test_both_lanes_report_sightings_under_one_source() -> None:
+    assert InstagramExportConnector.chats_source == "instagram"
+    assert InstagramLiveConnector.chats_source == "instagram"
+
+
+def test_sync_records_live_lane_sightings_under_the_shared_source(
+    conn: Any, settings: Settings, boundary: Boundary
+) -> None:
+    """The real door: a sync over the live lane lands the sighting under `instagram`,
+    so the page's Monitor button governs both lanes with one row."""
+    from backglass import chats as chats_mod
+    from backglass.sync import sync
+    from tests.conftest import FakeModel
+
+    when = datetime(2026, 7, 10, 15, 4, 5, tzinfo=UTC)
+    threads = [
+        a_thread(
+            "t1",
+            "Goa trip",
+            [(1, "priya.s"), (2, "arjun_k")],
+            [("m1", 1, "beach house saturday?", when)],
+        )
+    ]
+    connector = make_live_connector(threads, boundary, [])
+    report = sync(conn, settings, [connector], FakeModel())
+
+    (chat,) = chats_mod.listing(conn, "instagram")
+    assert chat.undecided
+    assert report.new_chats == 1
+    assert chats_mod.listing(conn, "instagram:live") == []
 
 
 # ── the owner's rule: friend plans ride low unless it's a special event ───

@@ -48,6 +48,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from backglass.chats import Sighting
 from backglass.connectors.allowlist import Allowlist, normalise
 from backglass.connectors.base import Cursor, Health, SourceItem, content_hash
 from backglass.connectors.boundary import Boundary
@@ -94,6 +95,18 @@ class InstagramExportConnector:
     cursor: Cursor = None
     excluded: int = 0
     excluded_by_rule: dict[str, int] = field(default_factory=dict)
+    #: Every thread in the export, allowed or not — filled by `discover()` at the top of
+    #: `fetch()`, independent of the cursor, for the same reason iMessage's is: the page
+    #: that fills the allowlist is fed from these, so tying them to the watermark would
+    #: mean nothing can ever be chosen once the cursor is current.
+    seen_chats: dict[str, Sighting] = field(default_factory=dict)
+    #: Discovery rescans the whole export, so these are totals, not increments.
+    sightings_are_cumulative: bool = False
+
+    #: Both lanes read the same conversations, so their sightings and decisions live
+    #: under one source in `monitored_chat` — a chat monitored on the page must be
+    #: monitored however it arrives.
+    chats_source = "instagram"
 
     @property
     def name(self) -> str:
@@ -115,7 +128,11 @@ class InstagramExportConnector:
             return Health(
                 name=self.name,
                 ok=False,
-                detail="INSTAGRAM_CHATS is empty — name the group chats and people to read",
+                detail=(
+                    "no conversations are monitored yet — open /chats to choose. The "
+                    "sync still discovers conversations while none are chosen, so the "
+                    "list fills itself in."
+                ),
             )
         if self._inbox_dir() is None:
             return Health(
@@ -136,6 +153,7 @@ class InstagramExportConnector:
         """
         self.excluded = 0
         self.excluded_by_rule = {}
+        self.seen_chats = self.discover()
         watermark = _parse(since)
         highest = watermark
 
@@ -164,6 +182,35 @@ class InstagramExportConnector:
                     yield item
 
         self.cursor = str(highest)
+
+    def discover(self) -> dict[str, Sighting]:
+        """Every thread in the export, with how much it said — cursor be damned.
+
+        The key is what the allowlist can match later: the thread title (Meta writes the
+        counterparty's name there for a one-to-one), falling back to the first
+        participant. A key `Allowlist` cannot match would let the page turn on a chat
+        the connector then fails to recognise.
+        """
+        inbox = self._inbox_dir()
+        if inbox is None:
+            return {}
+        seen: dict[str, Sighting] = {}
+        for thread_dir in sorted(p for p in inbox.iterdir() if p.is_dir()):
+            thread = _read_thread(thread_dir)
+            if thread is None:
+                continue
+            key = thread.title or next(iter(thread.participants), None)
+            if not key:
+                continue
+            seen[key] = Sighting(
+                key=key,
+                display_name=key,
+                # Meta lists the owner among the participants, so two names is a DM.
+                kind="group" if len(thread.participants) > 2 else "dm",
+                participants=len(thread.participants) or None,
+                messages=len(thread.messages),
+            )
+        return seen
 
     def _inbox_dir(self) -> Path | None:
         for root in _INBOX_ROOTS:
@@ -301,6 +348,13 @@ class InstagramLiveConnector:
     #: Threads whose backlog was still deeper than `max_messages_amount` this run. Non-zero
     #: means the watermark deliberately did not move — see fetch().
     truncated_threads: int = 0
+    #: The threads `direct_threads` listed this run, allowed or not. A window of the
+    #: newest N, so each run's counts are increments over what earlier runs saw.
+    seen_chats: dict[str, Sighting] = field(default_factory=dict)
+    sightings_are_cumulative: bool = True
+
+    #: Shared with the export lane — see InstagramExportConnector.chats_source.
+    chats_source = "instagram"
 
     @property
     def name(self) -> str:
@@ -311,7 +365,11 @@ class InstagramLiveConnector:
             return Health(
                 name=self.name,
                 ok=False,
-                detail="INSTAGRAM_CHATS is empty — name the group chats and people to read",
+                detail=(
+                    "no conversations are monitored yet — open /chats to choose. The "
+                    "sync still discovers conversations while none are chosen, so the "
+                    "list fills itself in."
+                ),
             )
         if self.client_factory is not None:
             return Health(name=self.name, ok=True)
@@ -367,6 +425,7 @@ class InstagramLiveConnector:
         self.excluded = 0
         self.excluded_by_rule = {}
         self.truncated_threads = 0
+        self.seen_chats = {}
         watermark = _parse_iso(since)
         highest = watermark
 
@@ -377,12 +436,33 @@ class InstagramLiveConnector:
                 str(u.pk): str(getattr(u, "username", "") or u.pk)
                 for u in getattr(thread, "users", []) or []
             }
+            # Sighted before the allowlist, like every other messaging lane: a thread
+            # nobody has named must surface as a question, not vanish. The key falls
+            # back to a single username because the allowlist matches participants
+            # individually — a joined string would make the Monitor button a no-op.
+            key = title or next(iter(sorted(users.values())), None)
+            if key:
+                self.seen_chats[key] = Sighting(
+                    key=key,
+                    display_name=key,
+                    kind="group" if len(users) > 1 else "dm",
+                    participants=len(users) or None,
+                    messages=0,
+                )
             if not self.allowlist.allows(
                 title=title, participants=list(users.values())
             ):
                 self._exclude(_ALLOWLIST_RULE)
                 continue
             fresh, reached = self._messages_since(client, thread.id, watermark)
+            if key:
+                self.seen_chats[key] = Sighting(
+                    key=key,
+                    display_name=key,
+                    kind="group" if len(users) > 1 else "dm",
+                    participants=len(users) or None,
+                    messages=len(fresh),
+                )
             if not reached:
                 self.truncated_threads += 1
             for moment, message in fresh:

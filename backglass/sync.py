@@ -422,7 +422,9 @@ def _ingest(
         if sightings and not dry_run:
             seen = chats_mod.record(
                 conn,
-                connector.name,
+                # Lanes of one service (instagram, instagram:live) share their decision
+                # rows: a conversation is monitored or not, however it arrives.
+                str(getattr(connector, "chats_source", connector.name)),
                 list(sightings.values()),
                 # A connector that rescans a window reports a total, not an increment.
                 cumulative=bool(getattr(connector, "sightings_are_cumulative", True)),

@@ -222,9 +222,14 @@ def rewind(conn: sqlite3.Connection, source: str) -> None:
     writes) is what guarantees the rescan costs a scan and nothing else. The messages a
     *narrower* allowlist now rejects are handled from the other side, by `prune`.
     """
+    # `source` here is the decision table's source, and lanes of one service share it:
+    # instagram's sightings come from both `instagram` (export) and `instagram:live`,
+    # so saying yes must rewind every lane that can carry the conversation, or the
+    # decision reaches backwards on one lane and silently not the other.
     conn.execute(
-        "UPDATE credential SET cursor = NULL WHERE user_id = ? AND source = ?",
-        (USER_ID, source),
+        "UPDATE credential SET cursor = NULL WHERE user_id = ?"
+        " AND (source = ? OR source LIKE ? || ':%')",
+        (USER_ID, source, source),
     )
 
 
