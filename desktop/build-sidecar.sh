@@ -55,7 +55,20 @@ echo "── tauri build"
 cd desktop && npx tauri build
 
 APP="$ROOT/desktop/src-tauri/target/release/bundle/macos/Backglass.app"
-echo "── ad-hoc signing"
-codesign --force --deep -s - "$APP"
+# A stable identity, because macOS keys the app's file-access grant (Downloads, where
+# the repo and db live) to the code signature. Ad-hoc (-s -) mints a fresh identity
+# every build, so every reinstall stalled the sidecar on a consent prompt — a process
+# stuck pre-bind at ~0 CPU (tasks/lessons.md 2026-08-06). Preference order: an explicit
+# BACKGLASS_SIGN_IDENTITY, else the first Apple Development identity in the keychain,
+# else ad-hoc so a clean clone still builds.
+IDENTITY="${BACKGLASS_SIGN_IDENTITY:-$(security find-identity -v -p codesigning 2>/dev/null \
+  | grep -o '"Apple Development: [^"]*"' | head -1 | tr -d '"')}"
+if [ -n "$IDENTITY" ]; then
+  echo "── signing as: $IDENTITY"
+  codesign --force --deep -s "$IDENTITY" "$APP"
+else
+  echo "── ad-hoc signing (no stable identity found; expect a permission prompt per rebuild)"
+  codesign --force --deep -s - "$APP"
+fi
 echo "built: $APP"
 du -sh "$APP"
