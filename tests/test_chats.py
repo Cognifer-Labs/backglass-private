@@ -318,6 +318,31 @@ class TestThePage:
 
         assert client.post(f"/chats/{chat.id}/delete-everything").status_code == 422
 
+    def test_a_vanished_chat_refuses_instead_of_redirecting_as_if_it_worked(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """Found by the unresponsiveness sweep: deciding about a chat that does not
+        exist redirected 303 like a success. Same acted-on-nothing rule as
+        `_require_open` — refuse, so the page shows the truth."""
+        client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
+
+        assert client.post("/chats/999999/monitor").status_code == 422
+
+    def test_a_repeated_decision_still_lands_quietly(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """A double-click is not an error: the second press of the same button on a
+        real chat redirects like the first, it just changes nothing."""
+        seen(conn, "Pih ball")
+        conn.commit()
+        (chat,) = chats_mod.listing(conn)
+        client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
+
+        first = client.post(f"/chats/{chat.id}/monitor", follow_redirects=False)
+        second = client.post(f"/chats/{chat.id}/monitor", follow_redirects=False)
+        assert first.status_code == 303
+        assert second.status_code == 303
+
     def test_the_dashboard_raises_the_question(
         self, conn: sqlite3.Connection, settings: Settings
     ) -> None:

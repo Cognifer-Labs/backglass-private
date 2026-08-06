@@ -21,6 +21,14 @@ close that, and they are deliberately the smallest thing that does:
    test client, a script), and a non-browser was never subject to CSRF in the first
    place — refusing it would buy nothing and break the CLI.
 
+Both guards assume the bind is loopback. Guard 2 deliberately fails open when neither
+Sec-Fetch-Site nor Origin is present ("a non-browser was never subject to CSRF") —
+that reasoning is only true while non-browsers can already reach the socket some
+other way, i.e. while the bind is 127.0.0.1. Under `--host 0.0.0.0
+--expose-unauthenticated` a remote curl with a forged loopback Host header passes
+both guards by design of that flag; nothing in this module defends a non-loopback
+bind, and nothing should be added here that pretends to.
+
 Deliberately NOT here: a CSRF token. Tokens are for apps with sessions and multiple
 users; this app has neither, and a token would add a rendering dependency to every
 one of ~35 forms to defend a threat the header check already covers.

@@ -57,6 +57,12 @@ def _require_open(conn: sqlite3.Connection, commitment_id: int) -> dict[str, Any
     ).fetchone()
     if row is None:
         raise ActionError(f"no commitment {commitment_id}")
+    # Enforced here, not by each caller's `WHERE status = 'open'`: that clause made a
+    # write on a closed row match zero rows and still report ok — a stale page's
+    # snooze answered "snoozed 1d" having snoozed nothing. Refusing turns it into a
+    # 422 the failed-write strip can show.
+    if str(row["status"]) != "open":
+        raise ActionError(f"commitment {commitment_id} is already {row['status']}")
     return row
 
 
@@ -187,8 +193,25 @@ def reject_plan(conn: sqlite3.Connection, engagement_id: int) -> Result:
 # ── 3. tick / untick a checklist item ─────────────────────────────────────
 
 
+def _require_checklist_item(conn: sqlite3.Connection, item_id: int) -> None:
+    """Same shape as `_require_open`: a stale page's tick must refuse, not lie.
+
+    Without this, ticking a vanished id was the one 500 in the whole route table
+    (the FK on checklist_tick raised IntegrityError past the ActionError catch),
+    and unticking one deleted nothing and still said "unticked"."""
+    row = conn.execute(
+        "SELECT active FROM checklist_item WHERE id = ? AND user_id = ?",
+        (item_id, USER_ID),
+    ).fetchone()
+    if row is None:
+        raise ActionError(f"no checklist item {item_id}")
+    if not row["active"]:
+        raise ActionError(f"checklist item {item_id} is no longer on the checklist")
+
+
 def tick(conn: sqlite3.Connection, item_id: int, local_date: str) -> Result:
     """Binary, idempotent, and unique per (item, day) at the schema level."""
+    _require_checklist_item(conn, item_id)
     conn.execute(
         "INSERT INTO checklist_tick (checklist_item_id, local_date, ticked_at) "
         "VALUES (?, ?, ?) ON CONFLICT (checklist_item_id, local_date) DO NOTHING",
@@ -198,6 +221,7 @@ def tick(conn: sqlite3.Connection, item_id: int, local_date: str) -> Result:
 
 
 def untick(conn: sqlite3.Connection, item_id: int, local_date: str) -> Result:
+    _require_checklist_item(conn, item_id)
     conn.execute(
         "DELETE FROM checklist_tick WHERE checklist_item_id = ? AND local_date = ?",
         (item_id, local_date),
@@ -291,8 +315,12 @@ def mark_brief_opened(conn: sqlite3.Connection, brief_id: int) -> None:
 
     "A brief nobody opens is the signal that matters most."
     """
+    # `sent_at IS NOT NULL`: the pixel only means something for a brief that was
+    # actually emailed. Without it, one hostile page with <img src="/b/1.gif">…/b/N.gif
+    # marks the whole opened/not-opened history read, irreversibly.
     conn.execute(
-        "UPDATE brief SET opened_at = ? WHERE id = ? AND opened_at IS NULL",
+        "UPDATE brief SET opened_at = ? WHERE id = ? AND opened_at IS NULL "
+        "AND sent_at IS NOT NULL",
         (now_iso(), brief_id),
     )
 

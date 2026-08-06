@@ -197,6 +197,11 @@ def decide(conn: sqlite3.Connection, chat_id: int, decision: str) -> bool:
         "SELECT source FROM monitored_chat WHERE user_id = ? AND id = ?",
         (USER_ID, chat_id),
     ).fetchone()
+    # A vanished id refuses rather than redirecting as if it worked — the same
+    # acted-on-nothing rule as actions._require_open. A *repeated* decision on a real
+    # chat still returns False quietly: a double-click is not an error.
+    if row is None:
+        raise ValueError(f"no conversation {chat_id}")
     cursor = conn.execute(
         "UPDATE monitored_chat SET decision = ?, decided_at = ?"
         " WHERE user_id = ? AND id = ? AND (decision IS NOT ? OR decision IS NULL)",

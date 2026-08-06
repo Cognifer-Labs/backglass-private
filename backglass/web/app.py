@@ -192,6 +192,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         if action not in ("enable", "disable"):
             raise HTTPException(status_code=422, detail=f"unknown action {action!r}")
+        # Only sources that already have a credential row — set_enabled is an UPSERT,
+        # and an unknown name would mint a green row in the Sources panel that no
+        # connector backs and no route can remove.
+        known = conn.execute(
+            "SELECT 1 FROM credential WHERE user_id = ? AND source = ?", (1, source)
+        ).fetchone()
+        if known is None:
+            raise HTTPException(status_code=422, detail=f"unknown source {source!r}")
         credentials.set_enabled(conn, source, action == "enable")
         return sources_fragment(request, conn)
 
