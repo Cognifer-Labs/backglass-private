@@ -218,6 +218,9 @@ FROZEN_CHECKSUMS = {
     "0017_decisions.sql": (
         "d5e479fc3580e23fe24412c39253da1c8777f9f685f8af3be524b0e04d75e973"
     ),
+    "0018_commitment_distinct.sql": (
+        "7055c77780a880dec1b5cbdb7d1cc8803901d65200f95618808427affbe40f94"
+    ),
 }
 
 

@@ -88,6 +88,30 @@
         {% endif %}
         {{ commitment_card(c) }}
       {% endfor %}
+      {% if d.board.meta.suspects %}
+        {# Pairs the auto-dedup could not settle: same promise from mail, a chat and a
+           quick-add, phrased apart. A question the owner answers once — Same folds
+           the newer into the older with its citations; Different is remembered so
+           the pair is never asked about again. #}
+        <details class="addform">
+          <summary class="lbl">Looks the same ({{ d.board.meta.suspects|length }})</summary>
+          {% for s in d.board.meta.suspects %}
+            <div class="row">
+              <div class="grow">
+                <p class="b1">{{ s['a_what'] }}</p>
+                <p class="b1">{{ s['b_what'] }}</p>
+                <p class="b2">{{ '%.0f'|format(s['score'] * 100) }}% alike</p>
+              </div>
+              <div class="acts" style="display:flex">
+                <button class="btn ok" hx-post="/commitments/{{ s['a_id'] }}/same/{{ s['b_id'] }}"
+                        hx-target="#panel-board" hx-swap="outerHTML">Same thing</button>
+                <button class="btn defer" hx-post="/commitments/{{ s['a_id'] }}/distinct/{{ s['b_id'] }}"
+                        hx-target="#panel-board" hx-swap="outerHTML">Different</button>
+              </div>
+            </div>
+          {% endfor %}
+        </details>
+      {% endif %}
       {% if d.board.meta.stale %}
         {# Months-old obligations a backfill delivered looking open. Folded, never
            hidden: they are real decisions, they are just not this morning's — and

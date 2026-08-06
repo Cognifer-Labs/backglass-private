@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from backglass import dedup
 from backglass.config import Settings
 from backglass.db import query
 from backglass.ledger import USER_ID
@@ -225,7 +226,11 @@ def board_panel(conn: sqlite3.Connection, settings: Settings, today: date) -> Pa
         # The threshold rides in meta because the board also renders as an HTMX
         # fragment whose context has no `settings` — a template that reaches for it
         # there raises at the first swap, not at review time.
-        meta={"stale": stale, "stale_after_days": settings.stale_after_days},
+        meta={
+            "stale": stale,
+            "stale_after_days": settings.stale_after_days,
+            "suspects": dedup.suspects(conn),
+        },
     )
 
 

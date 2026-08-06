@@ -135,6 +135,85 @@ def snooze(conn: sqlite3.Connection, commitment_id: int, days: int = 1) -> Resul
     return Result(ok=True, detail=f"snoozed {days}d")
 
 
+def same_thing(conn: sqlite3.Connection, a_id: int, b_id: int) -> Result:
+    """The owner says two open rows are one promise: keep the older, fold the newer.
+
+    The older row wins because its citations reach further back — it is the row the
+    promise was first extracted onto, and every later restatement should have landed
+    on it. The loser is superseded (never dropped: it was real, it just was not
+    second), its evidence moves across as `restated` sightings, and the earlier of
+    the two due dates survives — the same obligation with two deadlines is one
+    obligation with the safer one. One transaction; connections are autocommit and a
+    half-merged pair (loser closed, citations stranded) is worse than either whole.
+    """
+    if a_id == b_id:
+        raise ActionError("that is one commitment, not a pair")
+    winner_id, loser_id = sorted((a_id, b_id))
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        rows = {
+            int(r["id"]): r
+            for r in conn.execute(
+                "SELECT id, status, due_at FROM commitment"
+                " WHERE user_id = ? AND id IN (?, ?)",
+                (USER_ID, winner_id, loser_id),
+            )
+        }
+        for cid in (winner_id, loser_id):
+            row = rows.get(cid)
+            if row is None:
+                raise ActionError(f"no commitment {cid}")
+            if str(row["status"]) != "open":
+                raise ActionError(f"commitment {cid} is already {row['status']}")
+        conn.execute(
+            "UPDATE commitment SET status = 'superseded', superseded_by = ?,"
+            " resolved_at = ?, resolution_note = 'merged: same as the older row'"
+            " WHERE id = ?",
+            (winner_id, now_iso(), loser_id),
+        )
+        conn.execute(
+            "INSERT INTO commitment_evidence"
+            " (user_id, commitment_id, source_item_id, quote, kind, seen_at)"
+            " SELECT user_id, ?, source_item_id, quote, 'restated', seen_at"
+            " FROM commitment_evidence WHERE user_id = ? AND commitment_id = ?"
+            " ON CONFLICT DO NOTHING",
+            (winner_id, USER_ID, loser_id),
+        )
+        loser_due, winner_due = rows[loser_id]["due_at"], rows[winner_id]["due_at"]
+        if loser_due and (not winner_due or str(loser_due) < str(winner_due)):
+            conn.execute(
+                "UPDATE commitment SET due_at = ? WHERE id = ?", (loser_due, winner_id)
+            )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    return Result(ok=True, detail="merged")
+
+
+def different(conn: sqlite3.Connection, a_id: int, b_id: int) -> Result:
+    """The owner says two look-alike rows are genuinely two promises. Remembered in
+    `commitment_distinct` (pair normalized low<high) so the question is never asked
+    twice — an unremembered "no" re-surfaces every morning forever, which is the
+    monitored_chat lesson wearing the board's clothes."""
+    if a_id == b_id:
+        raise ActionError("that is one commitment, not a pair")
+    low, high = sorted((a_id, b_id))
+    for cid in (low, high):
+        if conn.execute(
+            "SELECT 1 FROM commitment WHERE user_id = ? AND id = ?", (USER_ID, cid)
+        ).fetchone() is None:
+            raise ActionError(f"no commitment {cid}")
+    cur = conn.execute(
+        "INSERT INTO commitment_distinct (user_id, low_id, high_id, decided_at)"
+        " VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+        (USER_ID, low, high, now_iso()),
+    )
+    if cur.rowcount == 0:
+        raise ActionError("already marked as different")
+    return Result(ok=True, detail="kept apart")
+
+
 # ── 2. accept / reject a review-queue item ────────────────────────────────
 
 

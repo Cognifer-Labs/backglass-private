@@ -473,3 +473,12 @@ CREATE TABLE decision (
 );
 
 CREATE INDEX idx_decision_active ON decision(user_id, status) WHERE status = 'active';
+
+CREATE TABLE commitment_distinct (
+  id         INTEGER PRIMARY KEY,
+  user_id    INTEGER NOT NULL DEFAULT 1,
+  low_id     INTEGER NOT NULL REFERENCES commitment(id),
+  high_id    INTEGER NOT NULL REFERENCES commitment(id),
+  decided_at TEXT    NOT NULL,
+  UNIQUE (user_id, low_id, high_id)
+);

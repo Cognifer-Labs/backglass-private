@@ -243,6 +243,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _run(actions.snooze, conn, commitment_id, days)
         return board_fragment(request, conn)
 
+    @app.post("/commitments/{commitment_id}/same/{other_id}", response_class=HTMLResponse)
+    def same(
+        commitment_id: RowId,
+        other_id: RowId,
+        request: Request,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        _run(actions.same_thing, conn, commitment_id, other_id)
+        return board_fragment(request, conn)
+
+    @app.post("/commitments/{commitment_id}/distinct/{other_id}", response_class=HTMLResponse)
+    def distinct(
+        commitment_id: RowId,
+        other_id: RowId,
+        request: Request,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        _run(actions.different, conn, commitment_id, other_id)
+        return board_fragment(request, conn)
+
     @app.post("/review/{commitment_id}/accept", response_class=HTMLResponse)
     def accept(
         commitment_id: RowId, request: Request, conn: sqlite3.Connection = Depends(get_conn)
