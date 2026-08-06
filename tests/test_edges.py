@@ -493,6 +493,40 @@ class TestOneUnreadableRowIsNotABlankPage:
         assert "unreadable" not in client.get("/schedule?date=2026-08-10").text
 
 
+class TestTheKeyboardSurvivesAWrite:
+    """Every write on the dashboard swaps a whole panel, which discards the DOM the
+    keyboard selection lived on. `index` is module state and survives; the mark and
+    the focus did not — so a second `x` acted on a commitment that was never selected
+    and could not be seen to be selected. Verified in a browser: three presses of `x`
+    used to leave `data-selected` null and `document.activeElement` on <body>, and now
+    walk the board with the mark visible at each step.
+    """
+
+    DASHBOARD = (
+        Path(__file__).resolve().parents[1]
+        / "backglass" / "web" / "templates" / "dashboard.html"
+    )
+
+    def test_the_selection_is_restored_after_a_swap(self) -> None:
+        js = self.DASHBOARD.read_text()
+        handler = re.search(
+            r"addEventListener\('htmx:afterSwap', \(\) => \{(.+?)\}\);", js, re.S
+        )
+        assert handler, "no afterSwap handler in the keyboard block"
+        body = handler.group(1)
+        assert "select(index)" in body, "the mark is not re-applied after a swap"
+        assert "index < 0" in body, (
+            "restoring unconditionally would pull focus out from under a mouse click"
+        )
+
+    def test_the_review_jump_honours_reduced_motion(self) -> None:
+        js = self.DASHBOARD.read_text()
+        assert "prefers-reduced-motion" in js
+        assert "'smooth'" in js and "'auto'" in js, (
+            "the reduced-motion branch must still scroll, just without the animation"
+        )
+
+
 class TestTheAccessibilityTree:
     """An axe-core pass over all twelve routes in both themes found four violation
     classes; these pin the three that were fixed. The audit needs a browser and stays
