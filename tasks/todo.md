@@ -27,17 +27,35 @@ retraction, provenance-in-words — plus one link into the commitment ledger.
 
 ## Steps
 
-- [ ] 1. Migration `0017_decisions.sql`, FROZEN_CHECKSUMS entry, regenerate
+- [x] 1. Migration `0017_decisions.sql`, FROZEN_CHECKSUMS entry, regenerate
       `specs/schema.sql`.
-- [ ] 2. `backglass/decisions.py` — record (with supersession + optional commitment
+- [x] 2. `backglass/decisions.py` — record (with supersession + optional commitment
       close), active, revisit.
-- [ ] 3. `backglass/web/routes/decisions.py` + `decisions.html`, wired in `app.py`,
+- [x] 3. `backglass/web/routes/decisions.py` + `decisions.html`, wired in `app.py`,
       nav in `base.html`.
-- [ ] 4. CLI sub-app in `__main__.py`.
-- [ ] 5. `tests/test_decisions.py` — engine + page, including: case-insensitive
+- [x] 4. CLI sub-app in `__main__.py`.
+- [x] 5. `tests/test_decisions.py` — engine + page, including: case-insensitive
       supersession, linked-commitment close, closed-commitment left untouched,
       revisit does not reopen, blank 422, unknown ids 404.
-- [ ] 6. Full suite + ruff + mypy in the worktree; fresh-context verifier pass.
+- [x] 6. Full suite + ruff + mypy in the worktree (green minus three defects
+      pre-existing at bb32d2d: the tracking-pixel test, 9 ruff errors, one
+      apple_mail mypy error — all reproduced at clean HEAD); fresh-context
+      verifier pass.
+
+## Verification outcome
+
+One verifier pass, one refutation, narrow and real: `record()` claimed "same
+transaction" over an autocommit connection with no BEGIN — an interrupt between
+the INSERT and the commitment drop left a standing decision over a still-open
+commitment, or two actives sharing a title. Fixed with BEGIN IMMEDIATE /
+COMMIT / ROLLBACK (the people/merge.py shape), proven by a temp trigger
+aborting the final write and a mutation run going red without the wrapper.
+Secondary: linking an already-closed commitment rendered "closed:" — an act
+that never happened — now "re:"; and the CLI door had zero tests (a guard on
+one door is not a guard — the rule applies to tests too). 1459 passed after
+the repairs. Everything else the verifier probed independently — checksum
+seal, schema parity, 16→17 upgrade idempotency, both doors' refusals,
+multi-active supersession — confirmed.
 
 Built in worktree `decisions-ledger` (branched from bb32d2d) because two other live
 sessions share the main checkout and its tree carries a 700-line uncommitted diff.
