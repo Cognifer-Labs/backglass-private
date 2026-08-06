@@ -461,7 +461,15 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 /* Spans stay transparent so .box.on's green fill wins; the button needs paper
  * explicitly or the UA default grey shows through. */
 .wkg .box{display:inline-block;vertical-align:middle;padding:0;cursor:default}
-.wkg button.box{cursor:pointer;background:var(--paper)}
+/* The mark stays 16px; the target does not. Seven day columns plus a streak column
+ * is already the widest thing on the page, so growing the square would cost the
+ * table its last chance of fitting — and the square is the right size to read as a
+ * row of days. The hit area is grown underneath it instead, to 26px, which clears
+ * WCAG 2.5.8's 24px minimum without moving a pixel of the drawing. The cells carry
+ * 8px of padding, so two adjacent targets still do not overlap. */
+.wkg button.box{cursor:pointer;background:var(--paper);position:relative}
+.wkg button.box::after{content:"";position:absolute;top:50%;left:50%;
+  width:26px;height:26px;transform:translate(-50%,-50%)}
 .wkg button.box.on{background:var(--green)}
 /* A future scheduled day is an intention, not yet a claim: hairline, no fill. */
 .wkg .box.due{border-color:var(--rule-hair)}

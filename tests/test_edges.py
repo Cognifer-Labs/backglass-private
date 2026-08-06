@@ -533,6 +533,19 @@ class TestNothingIsWiderThanThePhone:
             "without min-width:0 a single wide row re-widens every panel on the page"
         )
 
+    def test_the_week_grids_day_boxes_are_tappable(self) -> None:
+        """WCAG 2.5.8 asks for 24px. The day box is a 16px mark on purpose — seven
+        columns plus a streak column is already the widest thing on the page — so the
+        target is grown under it instead of the drawing being grown. Verified by
+        clicking 5px above the square and watching the tick post; without the rule the
+        same click posts nothing."""
+        css = (
+            Path(__file__).resolve().parents[1]
+            / "backglass" / "web" / "static" / "dashboard.css"
+        ).read_text()
+        rule = css[css.index(".wkg button.box") :][:300]
+        assert "::after" in rule and "26px" in rule
+
     def test_the_alerts_block_survives_the_narrow_breakpoint(self) -> None:
         """Goals and Roadmaps yield on a phone — both are summaries of a page one
         tap away. Alerts have no page of their own, so hiding them meant a failing
