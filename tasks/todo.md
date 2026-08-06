@@ -81,6 +81,28 @@ And three of craft: no page had a `<main>`; muted text failed AA on every fill i
 interface (the ramp's ratios are quoted against paper, and every fill is darker than
 paper); a 16px day box became a 26px target without the mark changing size.
 
+## The backend, exercised rather than assumed
+
+Asked to confirm the backend works, not only the interface. Nothing needed fixing —
+recorded so the next session does not repeat it.
+
+- **Every CLI command, against a fresh database.** Twenty-seven of them: no traceback
+  anywhere, and every non-zero exit carries a sentence naming what to do
+  (`IMESSAGE_DB_PATH is not set — run backglass setup`, `no activity matching
+  'shadowing' — add it with …`). The four that looked like failures were an honest
+  "not configured yet" or my own shell quoting.
+- **The run lock under a genuine two-process race**, not a same-process descriptor:
+  two real `sync()` runs on one database, one ran and one was refused by pid and start
+  time, and the refused one wrote nothing.
+- **Concurrent writers.** The launchd sync writes every thirty minutes and the owner
+  clicks while it runs, so the question is real. Python's sqlite3 already carries a 5s
+  busy timeout and `connect()` opens in autocommit, so no write transaction is held
+  long enough to collide: three processes, nine thousand writes, zero `database is
+  locked`. The one failure I could produce needed a `BEGIN IMMEDIATE` held open past
+  the timeout on purpose, which nothing in the pipeline does.
+- **A brief against a populated ledger** — the degraded-source warning at the top
+  (rule 5), a provenance link on every line (rule 1), capacity, and awaiting-others.
+
 ## Left for the palette's owner
 
 Both are decisions, not defects, and both sit in the file another session is editing:
