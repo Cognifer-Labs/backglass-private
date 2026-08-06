@@ -43,6 +43,13 @@ TURQUOISE = "#009592"
 
 FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif"
 
+# The rounding ruling of 2026-08-06 replaced "radius 0 everywhere" with a three-step scale;
+# --radius-2 is the control step a chip wears on the dashboard. Word-engine Outlook drops
+# border-radius outright and renders the chip square, which is what it looked like
+# yesterday — a graceful degrade, not a defect. The section bar keeps its square corners
+# for the same reason .banner does: it runs to both edges of the column.
+RADIUS_CHIP = "4px"
+
 #: design-system.md §4. Every entry carries a glyph and a label as well as the ink,
 #: because rule 3 in §8 is "status ships as icon plus label, never color alone".
 STATUS: dict[str, tuple[str, str, str | None]] = {
@@ -64,18 +71,21 @@ def _chip(status: str | None) -> str:
     if status == "needs_review":
         # "Low confidence renders as a dashed outline, never as a confident statement."
         style = (
-            f"border:2px dashed {INK};color:{INK};background:transparent;"
-            "padding:1px 5px;font-size:11px;font-weight:700;letter-spacing:0.04em;"
+            f"border:2px dashed {INK};border-radius:{RADIUS_CHIP};color:{INK};"
+            "background:transparent;padding:1px 5px;font-size:11px;font-weight:700;"
+            "letter-spacing:0.04em;"
         )
     elif status == "protected":
         style = (
-            f"border:2px solid {INK};color:{INK};background:transparent;"
-            "padding:1px 5px;font-size:11px;font-weight:700;letter-spacing:0.04em;"
+            f"border:2px solid {INK};border-radius:{RADIUS_CHIP};color:{INK};"
+            "background:transparent;padding:1px 5px;font-size:11px;font-weight:700;"
+            "letter-spacing:0.04em;"
         )
     else:
         text = PAPER if fill == INK else INK
         style = (
             f"background:{fill};color:{text};border:2px solid {INK};"
+            f"border-radius:{RADIUS_CHIP};"
             "padding:1px 5px;font-size:11px;font-weight:700;letter-spacing:0.04em;"
         )
     return f'<span style="{style}">{glyph}&nbsp;{escape(label)}</span> '

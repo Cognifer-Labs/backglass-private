@@ -201,13 +201,55 @@ Script faces are for a wordmark only. Never for UI, never for data.
 ## 7. Structure
 
 ```
-Radius   0 everywhere. 2px on reel digit windows only.
+Radius   2 marks · 4 controls · 6 containers. Nested radii are concentric.
 Rules    2px solid black between sections; 1px neutral 200 between rows
 Borders  2px black on chips, cards, buttons
 Space    4 8 12 16 24 32 48
 Shadow   none, ever
 Targets  24px minimum, grown under the mark rather than around it
 ```
+
+**Rounding ruling, 2026-08-06 (owner).** This section previously read "Radius 0 everywhere.
+2px on reel digit windows only", and §8 rule 7 banned rounded corners outright. The owner
+re-opened it. Radius is now a three-step scale, and the reel window's 2px — the one radius
+the system already had — is the bottom of that scale rather than its exception:
+
+| step | value | carries |
+|---|---|---|
+| `--radius-1` | 2px | marks under ~20px, data fills, inline windows |
+| `--radius-2` | 4px | controls — buttons, inputs, chips, alerts, badges |
+| `--radius-3` | 6px | containers — cards, grids, timelines, washed rows |
+
+Shallow on purpose. The keyline here is a 2px black rule, and past about 6px a radius on a
+2px black border stops reading as a printed sign and starts reading as a bubble. Shadows
+and gradients are **not** re-opened by this ruling; only rounding moved.
+
+**The principle is concentric nesting, not a radius on everything.** A box sitting flush
+inside another takes the outer radius minus the inset between them, so the two curves stay
+parallel instead of running unrelated arcs. Where the child sits on the parent's edge, the
+parent clips (`overflow:hidden`) and the arithmetic is structural rather than a copied
+number — this is how `.gcard`, `.sws`, `.wk7`, `.tl` and `.track` are built. The reel is
+the principle at its simplest: 2px windows, 2px of housing padding, so the black plate
+takes exactly 4px.
+
+**What stays square**, and the reason in each case — this is the list "all elements" is
+measured against, not a set of oversights:
+
+1. **Full-bleed black section bars.** They run to both edges of their panel; a radius
+   leaves four paper nicks against the seam.
+2. **Panel cells and page seams.** These are rules between sections, not boxes. Rounding
+   one breaks the continuous seam the row-locked grid exists to keep.
+3. **The fixed failed-write strip.** Pinned to three edges of the viewport.
+4. **Ledger inputs.** `border:0` plus one bottom hairline is a line, not a box; a radius
+   puts a curl on each end of it.
+5. **Left-keyline rows** (kind stripes, failing sources, quotes). One border, no box.
+6. **The wordmark.** It has its own spec below, which this ruling does not touch.
+
+Two marks are deliberately rounded *less* than their size suggests. A column in the
+monthly chart rounds its top corners only — it stands on the axis it is read against, and
+lifting its foot off that baseline would cost the measurement its zero. The roadmap
+timeline's step node stays an 8px square at 2px, never a circle: a dot reads as a bullet
+and loses its relationship to every other box on the page.
 
 **Targets are grown under the mark, not around it.** WCAG 2.5.8 asks for 24px, and
 several marks in this system are deliberately smaller than that — a week grid's day box
@@ -271,7 +313,11 @@ Rules:
 4. Every generated claim links to its source.
 5. Low confidence renders as a dashed outline, never as a confident statement.
 6. Three chart series maximum; a chart uses status tokens or series tokens, never both.
-7. No shadows, no rounded corners, no gradients.
+7. No shadows, no gradients outside the protected hatch. Amended by the 2026-08-06
+   rounding ruling: corners are rounded from the §7 scale and nested radii are
+   concentric. Shadows and gradients were not re-opened — a drop shadow still reads as a
+   different design language on sight, and depth still comes from the black rule and
+   figure-ground.
 8. Tabular figures everywhere.
 9. Cobalt never carries text.
 

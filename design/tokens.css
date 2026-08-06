@@ -79,9 +79,23 @@
   --s2: var(--vermilion);
   --s3: var(--turquoise);
 
-  /* geometry */
-  --radius:      0;
-  --radius-reel: 2px;
+  /* geometry
+   *
+   * Rounding ruling, 2026-08-06. The scale that replaced "radius 0 everywhere" is three
+   * steps deep and deliberately shallow: the keyline in this system is a 2px black rule,
+   * and a large radius on a 2px black border stops reading as a printed sign and starts
+   * reading as a bubble. Step 1 is the reel window's existing 2px, so the one radius the
+   * system already had becomes the bottom of the scale rather than its exception.
+   *
+   * Nesting is concentric: a box sitting flush inside another takes the parent's radius
+   * minus the inset between them, so two curves never run unrelated arcs against each
+   * other. Where the child is flush to the parent's edge, the parent clips instead
+   * (overflow:hidden) and the arithmetic takes care of itself. */
+  --radius-1:    2px;   /* marks under ~20px, data fills, inline windows */
+  --radius-2:    4px;   /* controls — buttons, inputs, chips, alerts, badges */
+  --radius-3:    6px;   /* containers — cards, grids, timelines, washed rows */
+  --radius:      var(--radius-2);   /* the default: an unqualified box is a control */
+  --radius-reel: var(--radius-1);
   --border:      2px;
   --hair:        1px;
 

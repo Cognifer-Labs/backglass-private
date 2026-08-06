@@ -7,6 +7,7 @@ here is "which promise did I break", not "what does this assert".
 
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
 
 import pytest
@@ -403,7 +404,15 @@ def test_email_html_obeys_the_docs05_constraints(conn, settings: Settings) -> No
     assert "display:flex" not in html and "display:grid" not in html
     assert html.count("<table") >= 2, "table-based layout"
     assert f"background:{render.PAPER}" in html, "cream set explicitly on the outer table"
-    assert "box-shadow" not in html and "border-radius" not in html
+    assert "box-shadow" not in html
+    # The 2026-08-06 rounding ruling reaches the brief too: chips carry the 4px control
+    # radius as a literal, since email has no variables to resolve. Word-engine Outlook
+    # drops the property and renders them square, which is exactly how they looked before
+    # the ruling — a graceful degrade, not a defect. The section bar stays square for the
+    # same reason .banner does: it runs to both edges of the column.
+    assert f"border-radius:{render.RADIUS_CHIP}" in html
+    for bar in re.findall(r"<td[^>]*background:#000000[^>]*>", html):
+        assert "border-radius" not in bar, bar
 
 
 def test_every_ink_fill_carries_a_black_keyline(conn, settings: Settings) -> None:  # type: ignore[no-untyped-def]

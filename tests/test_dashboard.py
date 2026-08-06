@@ -27,6 +27,13 @@ from tests.conftest import panel_slice
 TODAY = date.today()
 
 
+def _strip_css_comments(css: str) -> str:
+    """The sheet documents its own rules at length, and the rounding ruling's prose quotes
+    the very declarations these tests scan for. Strip comments before matching or the
+    explanation of a rule reads as a second instance of it."""
+    return re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+
+
 @pytest.fixture
 def client(conn, settings: Settings):  # type: ignore[no-untyped-def]
     """The app opens its own connections against the same file the fixture migrated."""
@@ -570,26 +577,107 @@ def test_the_only_confirmation_is_on_drop(client: TestClient, conn, settings: Se
             assert "/drop" in fragment, "only drop may confirm"
 
 
-def test_no_shadows_no_radius_no_gradients_outside_the_hatch(client: TestClient) -> None:
-    """design-system.md §8 rule 7, and §7: radius 0 everywhere except the 2px reel windows."""
-    css = client.get("/static/dashboard.css").text
+def test_no_shadows_no_gradients_outside_the_hatch(client: TestClient) -> None:
+    """design-system.md §8 rule 7. The 2026-08-06 rounding ruling amended this rule but
+    re-opened only rounding: a drop shadow still reads as a different design language on
+    sight, and the one gradient in the system is still the protected block's 45° hatch."""
+    css = _strip_css_comments(client.get("/static/dashboard.css").text)
     assert "box-shadow" not in css
     assert "text-shadow" not in css
-    # The one gradient in the system is the 45° hatch on a protected block, which
-    # design-system.md §4 specifies explicitly.
     for line in css.splitlines():
         if "gradient" in line:
             assert "repeating-linear-gradient" in line and "45deg" in line, line
-    # "Radius 0 everywhere. 2px on reel digit windows only." A non-zero radius is allowed
-    # only inside the .reel rule; anywhere else it is the rounded-corner regression §8
-    # rule 7 forbids.
-    reel_rule = [b for b in css.split("}") if b.strip().startswith(".reel span")]
-    assert reel_rule, "the reel rule should exist"
-    for block in css.split("}"):
-        flat = block.replace(" ", "")
-        if "border-radius" in flat and "border-radius:0" not in flat:
-            assert flat.strip().startswith(".reelspan"), block
-    assert "border-radius:2px" in reel_rule[0].replace(" ", "")
+
+
+def test_every_radius_comes_from_the_token_scale(client: TestClient) -> None:
+    """The 2026-08-06 rounding ruling, §7. The scale is the point: a raw px radius is how
+    a system with three steps becomes a system with nine, and it is invisible in review
+    because each individual number looks reasonable. Every declaration therefore resolves
+    through --radius-*, and the only literal permitted is the 0 that opts the ledger
+    inputs out (exemption 4 — border:0 plus a bottom hairline is a line, not a box)."""
+    css = client.get("/static/dashboard.css").text
+    stripped = _strip_css_comments(css)
+
+    declarations = re.findall(r"border-radius\s*:\s*([^;}]+)", stripped)
+    assert declarations, "the sheet should declare radii"
+    for value in declarations:
+        flat = value.strip()
+        if flat == "0":
+            continue
+        assert "var(--radius" in flat, f"raw radius outside the token scale: {flat!r}"
+
+    zeroed = [
+        block
+        for block in stripped.split("}")
+        if re.search(r"border-radius\s*:\s*0\s*(;|$)", block)
+    ]
+    for block in zeroed:
+        assert "input" in block, f"only the ledger inputs opt out of rounding: {block!r}"
+
+
+def test_the_boxed_vocabulary_is_rounded(client: TestClient) -> None:
+    """"Implement the principle of rounding to all elements" is only checkable against a
+    list, so this is the list: the components that ARE boxes. The exempt ones — the
+    full-bleed banner, the panel seams, the pinned failure strip — are asserted square in
+    test_the_full_bleed_surfaces_stay_square, and the two lists together are what "all"
+    means here."""
+    css = _strip_css_comments(client.get("/static/dashboard.css").text)
+
+    def rule(selector: str) -> str:
+        """Every block for this selector, joined. A component is declared more than once
+        in this sheet (.wev is geometry near the week grid and a later size override), so
+        matching only the first or last block asks the wrong question."""
+        found = [
+            block
+            for block in css.split("}")
+            if "{" in block and block.split("{")[0].replace("\n", " ").strip() == selector
+        ]
+        assert found, f"no rule for {selector!r}"
+        return "".join(found)
+
+    for selector in (
+        ".chip",  # controls
+        ".btn",
+        "input,textarea,select",
+        "button.toggle",
+        ".salert",
+        ".box",  # marks
+        ".sq",
+        ".legend i",
+        ".hmf",
+        ".track",
+        ".wev",
+        ".gcard",  # containers
+        ".rev",
+        ".tl",
+        ".wk7",
+        ".sws",
+    ):
+        assert "border-radius" in rule(selector), f"{selector} carries no radius"
+
+    # Concentric nesting is structural, not a copied number: a container whose children
+    # sit flush on its edge clips them rather than restating the arithmetic.
+    for selector in (".gcard", ".wk7", ".sws", ".track"):
+        assert "overflow:hidden" in rule(selector).replace(" ", ""), (
+            f"{selector} rounds but does not clip its flush children"
+        )
+
+
+def test_the_full_bleed_surfaces_stay_square(client: TestClient) -> None:
+    """Exemptions 1-3 of the rounding ruling. A radius on a bar that runs to both edges of
+    its panel leaves four paper nicks against the seam, and the failed-write strip is
+    pinned to three edges of the viewport — rounding either is a regression in the
+    opposite direction from the one this suite used to guard."""
+    css = _strip_css_comments(client.get("/static/dashboard.css").text)
+    for selector in (".banner", ".panel", ".oops", ".mast"):
+        found = [
+            block
+            for block in css.split("}")
+            if "{" in block and block.split("{")[0].replace("\n", " ").strip() == selector
+        ]
+        assert found, f"no rule for {selector!r}"
+        for block in found:
+            assert "border-radius" not in block, f"{selector} should stay square"
 
 
 def test_tokens_are_served_from_the_validated_source(client: TestClient) -> None:
