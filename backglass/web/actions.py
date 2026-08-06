@@ -188,6 +188,37 @@ def accept_plan(conn: sqlite3.Connection, engagement_id: int) -> Result:
     return Result(ok=True, detail="accepted")
 
 
+def attended(conn: sqlite3.Connection, engagement_id: int) -> Result:
+    """The missing end of a plan's life: the owner went.
+
+    Migration 0014 advertised `done` and nothing could ever reach it — plans the owner
+    actually attended sat in Earlier forever, indistinguishable from ones that fizzled.
+    Attending a `proposed` plan counts too: showing up is a stronger confirmation than
+    any reply, so proposed advances straight to done rather than demanding the owner
+    click confirm about an evening that already happened. A declined or superseded plan
+    stays refused — "I went to the thing I cancelled" is a new fact for extraction to
+    find, not a status this button should overwrite. Refusals follow `_require_open`'s
+    reasoning: a stale page's write answers with a 422, never a silent no-op.
+    """
+    row = conn.execute(
+        "SELECT status FROM engagement WHERE user_id = ? AND id = ?",
+        (USER_ID, engagement_id),
+    ).fetchone()
+    if row is None:
+        raise ActionError(f"no plan {engagement_id}")
+    status = str(row["status"])
+    if status == "done":
+        raise ActionError("that plan is already marked attended")
+    if status in ("declined", "superseded"):
+        raise ActionError(f"that plan was {status}")
+    conn.execute(
+        "UPDATE engagement SET status = 'done', resolved_at = ? "
+        "WHERE id = ? AND status IN ('proposed', 'confirmed')",
+        (now_iso(), engagement_id),
+    )
+    return Result(ok=True, detail="attended")
+
+
 def reject_plan(conn: sqlite3.Connection, engagement_id: int) -> Result:
     """Reject tombstones a plan by declining it.
 

@@ -89,12 +89,24 @@
           {% for e in derived['past_plans'] %}
             <div class="row">
               <div class="grow">
-                <p class="b1">{{ e['what'] }}{% if e['status'] == 'declined' %} — declined{% endif %}</p>
+                <p class="b1">{{ e['what'] }}
+                  {%- if e['status'] == 'declined' %} — declined
+                  {%- elif e['status'] == 'done' %} — attended{% endif %}</p>
                 <p class="b2">
                   {% if e['starts_at'] %}{{ e['starts_at'][:10] }}{% else %}undated{% endif %}
                   · {{ m.source_link(e) }}
                 </p>
               </div>
+              {% if e['status'] in ('proposed', 'confirmed') %}
+                {# The missing end of a plan's life: nothing could reach `done` since
+                   migration 0014 shipped the state. Quiet link, same register as
+                   Memory's Forget — marking history is a rare act, not a workflow. #}
+                <form method="post"
+                      action="/people/{{ p['id'] }}/plans/{{ e['id'] }}/went"
+                      style="margin:0">
+                  <button class="lnk" type="submit">Went</button>
+                </form>
+              {% endif %}
             </div>
           {% endfor %}
         </details>

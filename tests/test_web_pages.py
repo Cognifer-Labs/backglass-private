@@ -251,6 +251,93 @@ class TestPeoplePages:
         assert "Seen socially" in derived
         assert "imessage" in derived
 
+    def _person_with_plan(
+        self, conn: sqlite3.Connection, *, status: str, starts: str = "2026-07-21T19:00:00"
+    ) -> tuple[int, int]:
+        conn.execute(
+            "INSERT INTO entity (kind, canonical_name, aliases_json, tags_json)"
+            " VALUES ('person', ?, '[]', '[]')",
+            (f"Priya {status.capitalize()}",),  # unique per call — entity names are UNIQUE
+        )
+        entity_id = int(
+            conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+        )
+        conn.execute(
+            "INSERT INTO source_item (source, external_id, fetched_at, occurred_at,"
+            " author, title, body_text, content_hash, triage_verdict)"
+            " VALUES ('imessage', ?, '2026-07-20T09:00:00-07:00',"
+            " '2026-07-20T09:00:00-07:00', 'Priya', 'dinner', 'b', ?, 'keep')",
+            (f"p-{status}", f"ph-{status}"),
+        )
+        source_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at,"
+            " when_is_explicit, status, confidence, source_item_id, created_at)"
+            " VALUES (1, 'social', 'dinner downtown', ?, NULL, 1, ?, 0.9, ?,"
+            " '2026-07-20T09:00:00-07:00')",
+            (starts, status, source_id),
+        )
+        engagement_id = int(
+            conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+        )
+        conn.execute(
+            "INSERT INTO engagement_person (user_id, engagement_id, entity_id)"
+            " VALUES (1, ?, ?)",
+            (engagement_id, entity_id),
+        )
+        conn.commit()
+        return entity_id, engagement_id
+
+    def test_a_past_plan_can_finally_be_marked_attended(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """Migration 0014 shipped `done` and nothing could reach it — the gap the
+        engagement work documented as needing a write surface. The person page is it."""
+        entity_id, engagement_id = self._person_with_plan(conn, status="confirmed")
+        before = panel_slice(client.get(f"/people/{entity_id}").text, "panel-plans")
+        assert "Went" in before
+
+        gone = client.post(
+            f"/people/{entity_id}/plans/{engagement_id}/went", follow_redirects=True
+        )
+        assert gone.status_code == 200
+        plans = panel_slice(gone.text, "panel-plans")
+        assert "— attended" in plans
+        assert "Went" not in plans  # the act is done; the button goes with it
+        status = conn.execute(
+            "SELECT status, resolved_at FROM engagement WHERE id = ?", (engagement_id,)
+        ).fetchone()
+        assert status["status"] == "done"
+        assert status["resolved_at"]
+
+    def test_attending_a_proposed_plan_is_confirmation_enough(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        entity_id, engagement_id = self._person_with_plan(conn, status="proposed")
+        client.post(f"/people/{entity_id}/plans/{engagement_id}/went")
+        row = conn.execute(
+            "SELECT status FROM engagement WHERE id = ?", (engagement_id,)
+        ).fetchone()
+        assert row["status"] == "done"
+
+    def test_a_settled_plan_refuses_the_button_and_the_post(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """A declined plan shows no Went and 422s a stale POST — the acted-on-nothing
+        rule; and marking twice refuses rather than silently rewriting resolved_at."""
+        entity_id, engagement_id = self._person_with_plan(conn, status="declined")
+        plans = panel_slice(client.get(f"/people/{entity_id}").text, "panel-plans")
+        assert "Went" not in plans
+        assert client.post(
+            f"/people/{entity_id}/plans/{engagement_id}/went"
+        ).status_code == 422
+        assert client.post(f"/people/{entity_id}/plans/99999/went").status_code == 422
+
+        eid2, done_id = self._person_with_plan(conn, status="confirmed")
+        client.post(f"/people/{eid2}/plans/{done_id}/went")
+        again = client.post(f"/people/{eid2}/plans/{done_id}/went")
+        assert again.status_code == 422
+
     def test_quick_add_appears_on_board(self, client: TestClient) -> None:
         response = client.post(
             "/commitments/quick-add",

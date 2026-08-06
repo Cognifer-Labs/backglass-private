@@ -133,6 +133,20 @@ def build_router(
         # Full-page action (the profile header changes shape); redirect, not fragment.
         return RedirectResponse(url=f"/people/{entity_id}", status_code=303)
 
+    @router.post("/people/{entity_id}/plans/{engagement_id}/went", response_class=HTMLResponse)
+    def went(
+        entity_id: RowId,
+        engagement_id: RowId,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        """Mark a plan attended. Full-page action like /edit above — the row moves
+        between the page's own sections, so a redirect re-reads the whole truth."""
+        try:
+            actions.attended(conn, engagement_id)
+        except actions.ActionError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return RedirectResponse(url=f"/people/{entity_id}", status_code=303)
+
     @router.post("/people/{winner_id}/merge/{loser_id}", response_class=HTMLResponse)
     def do_merge(
         winner_id: RowId,
