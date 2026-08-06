@@ -550,6 +550,15 @@ deterministic given the id.
   because its name column is first, and in a five-column register that ran two headers
   together with no gutter at all.
 
+- 2026-08-06 | Added a column to the activity table, verified it with `curl` (present),
+  then screenshotted the page in Safari and saw the OLD table with no such column — and
+  spent several minutes doubting the server. mcp-safari had returned a stale capture; a
+  cache-busting `?v=2` on the URL produced the real page immediately. | A screenshot is
+  a cache, not an observation. When a rendered check disagrees with the served HTML,
+  believe `curl` and re-request with a changed URL before touching the code. Every visual
+  QA navigation in this repo should carry a unique query param for the same reason —
+  the failure mode is silent agreement with whatever you saw last.
+
 - 2026-08-05 | Proved a mutation red, then restored with `git checkout -- backglass/sync.py`
   — which restores HEAD, and my entire uncommitted implementation lived on top of HEAD, so
   the restore deleted the feature it was meant to un-mutate. Re-typed it from the session
