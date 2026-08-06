@@ -55,7 +55,44 @@ Six defects, in severity order. Two of them lose data.
       the sweeps kept as `tests/test_edges.py` so the next value nobody types is caught
       by CI rather than by a sweep.
 
-## Outcome
+## Outcome — part two, the interface
+
+Six more commits, same branch, same method: measure first. A headless browser loads
+every route at five widths and in both themes; axe-core audits each at WCAG 2.1/2.2
+AA. Suite 1,498 → 1,510. Ten more mutations, ten red.
+
+The four that mattered, all of them functionality rather than taste:
+
+- **On a phone the board was read-only.** Resolve, Snooze and Drop are revealed on
+  hover, and a touch device has no hover — so the one surface whose whole purpose is
+  acting on a row could only be read. `@media(hover:none)` makes them present, the way
+  the Today rows' controls always are.
+- **The dashboard rendered 642px wide inside a 390px window.** One mechanism in four
+  places: a hard pixel floor inside a grid or flex track, and a grid item's automatic
+  minimum is its min-content width. The right third of every panel was unreachable.
+- **The sidebar hid every alert below 900px.** Goals and Roadmaps yielding there is
+  right — both summarize a page one tap away — but alerts have no page of their own,
+  so a failing source was invisible on a phone.
+- **The second `x` resolved a row nobody had selected.** A write swaps the panel and
+  discards the DOM the selection lived on, but `index` is module state and survived,
+  pointing into a list that had just shifted up.
+
+And three of craft: no page had a `<main>`; muted text failed AA on every fill in the
+interface (the ramp's ratios are quoted against paper, and every fill is darker than
+paper); a 16px day box became a 26px target without the mark changing size.
+
+## Left for the palette's owner
+
+Both are decisions, not defects, and both sit in the file another session is editing:
+
+- Black on vermilion measures 4.40 in dark mode — on chips, alert text and card
+  titles. §3's own table records 4.40 and ships it, but §3 also calls gold "the only
+  such exception in the system", and this is a second one under the 4.5 floor.
+- The week grid's event links are 22px tall with no gap to their neighbours. Height is
+  duration there, so the size is arguably essential and exempt — but the neighbours
+  part is real, and the fix is spacing the grid, not padding the link.
+
+## Outcome — part one, the ledger
 
 Four sweeps, three commits, on branch `polish/edge-states` in a worktree — another
 session was editing the shared checkout mid-audit, which is written up in
