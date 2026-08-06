@@ -3,7 +3,7 @@
   {{ m.foldbanner(d.today_panel.title, d.today|string) }}
   <div class="inner">
     {% if d.today_panel.empty %}
-      <p class="empty">No plan for today. The day planner runs at 05:45.</p>
+      <p class="empty">No plan for today. The day planner runs at 5:45am.</p>
     {% else %}
       {% set meta = d.today_panel.meta %}
       {# docs/05 §3 and docs/06: one capacity sentence, not a dashboard of gauges. #}

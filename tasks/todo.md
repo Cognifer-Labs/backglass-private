@@ -41,8 +41,22 @@ window, or the day") — it is the day.
 - [x] 6. Tests: `tests/test_routines.py` (parser, capacity arithmetic, 12am/12pm
       boundaries, page + week + evening engagement); 24h assertions updated in
       test_web_pages/test_schedule/test_planner to the new expected shapes.
-- [ ] 7. Full suite (1483 passed), ruff, mypy — green minus the three pre-existing
-      defects at bb32d2d; fresh verifier pass pending.
+- [x] 7. Full suite (1483 passed), ruff, mypy — green minus the three pre-existing
+      defects at bb32d2d; fresh verifier pass CONFIRMED.
+
+## Verification outcome
+
+Fresh verifier confirmed on first pass: clock12 swept all 1440 minutes against
+strftime with zero mismatches; capacity arithmetic, confidence gating, dedup after
+persist, planner-rerun supersession, DST spring/fall days, alt-tz stays and a
+midnight-crossing routine all reproduced. Its flags, acted on: the "05:45" prose
+this work itself wrote is now "5:45am" on every surface (panels, brief alert, three
+templates, CLI help). Noted, not changed: the brief's Today section now carries the
+five routine lines daily (consequence of "the plan is the day" — a product call the
+owner can reverse by blanking ROUTINES); overlapping routines double-count
+fixed_minutes (pre-existing compute behavior for any overlapping fixed events, errs
+conservative); editing ROUTINES after a day is planned shows both copies until the
+next plan supersedes — visible, not silent.
 
 ## Deliberately not
 

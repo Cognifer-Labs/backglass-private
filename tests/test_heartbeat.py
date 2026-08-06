@@ -332,7 +332,7 @@ class TestBriefLines:
     ) -> None:
         a_run(conn, timedelta(minutes=20))
         line = daily.failure_section(conn, TODAY, settings, NOW).lines[0]
-        assert line.text == "No plan for today — the 05:45 planner did not run."
+        assert line.text == "No plan for today — the 5:45am planner did not run."
         assert line.provenance.url("http://x") == "http://x/schedule?date=2026-07-30"
 
     def test_a_planned_day_says_nothing_about_the_plan(

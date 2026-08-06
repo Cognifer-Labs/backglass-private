@@ -151,7 +151,7 @@ def _staleness_lines(
     if beat.plan_missing:
         section.lines.append(
             Line(
-                text="No plan for today — the 05:45 planner did not run.",
+                text="No plan for today — the 5:45am planner did not run.",
                 provenance=LedgerRef("plans", today.isoformat(), f"day plan · {today}"),
                 status="overdue",
             )

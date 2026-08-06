@@ -59,11 +59,11 @@
     </p>
 
     {% if view.empty %}
-      <p class="empty">Nothing planned and no fixed events. The day planner runs at 05:45,
+      <p class="empty">Nothing planned and no fixed events. The day planner runs at 5:45am,
         or run <span class="kbd">backglass plan --date {{ view.day.isoformat() }}</span>.</p>
     {% else %}
       {% if view.unplanned %}
-        <p class="note">No plan for this day yet. The day planner runs at 05:45, or run
+        <p class="note">No plan for this day yet. The day planner runs at 5:45am, or run
           <span class="kbd">backglass plan --date {{ view.day.isoformat() }}</span>.</p>
       {% endif %}
       <div class="tl" style="height:{{ tl.height }}px">

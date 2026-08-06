@@ -140,7 +140,7 @@ def today_panel(conn: sqlite3.Connection, today: date) -> Panel:
     rows = _rows(conn, "dashboard_today", {"user_id": USER_ID, "local_date": today.isoformat()})
     panel = Panel(
         title="Today",
-        empty_text="No plan for today. The day planner runs at 05:45.",
+        empty_text="No plan for today. The day planner runs at 5:45am.",
         rows=rows,
     )
     if rows:
@@ -623,7 +623,7 @@ def sidebar(
         )
     if beat.plan_missing:
         alerts.append(
-            {"level": "gold", "text": "No plan for today — the 05:45 planner did not run",
+            {"level": "gold", "text": "No plan for today — the 5:45am planner did not run",
              "href": "/schedule"}
         )
 
