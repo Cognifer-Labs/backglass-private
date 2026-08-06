@@ -107,6 +107,34 @@ class TestEngine:
         conn.commit()
         assert closed is False
         assert commitment_status(conn, cid) == "done"
+        # And the list says so: linked is "re:", not "closed:" — a decision must not
+        # claim an act (the drop) that never happened.
+        [d] = decisions.active(conn)
+        assert d.closed_commitment is False
+
+    def test_record_is_one_transaction(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """An interrupt mid-act must leave nothing: no standing decision whose
+        commitment is still open, no second active row for a superseded title.
+        The trigger aborts the final write (the commitment drop); with the
+        BEGIN/ROLLBACK wrapper every earlier write vanishes with it."""
+        prior, _ = decisions.record(conn, settings, "Sallie Mae application", "undecided")
+        cid = a_commitment(conn, "Apply to Sallie Mae")
+        conn.execute(
+            "CREATE TEMP TRIGGER boom BEFORE UPDATE ON commitment"
+            " BEGIN SELECT RAISE(ABORT, 'boom'); END"
+        )
+        with pytest.raises(sqlite3.DatabaseError):
+            decisions.record(
+                conn, settings, "Sallie Mae application", "not doing it",
+                commitment_id=cid,
+            )
+        conn.execute("DROP TRIGGER boom")
+        assert commitment_status(conn, cid) == "open"
+        [d] = decisions.active(conn)  # the prior decision alone, still active
+        assert d.decision_id == prior
+        assert d.choice == "undecided"
 
     def test_unknown_commitment_refuses(
         self, conn: sqlite3.Connection, settings: Settings
@@ -195,3 +223,76 @@ class TestDecisionsPage:
     def test_nav_carries_decisions_on_every_page(self, client: TestClient) -> None:
         for path in ("/", "/memory", "/decisions"):
             assert "Decisions" in client.get(path).text, path
+
+    def test_linked_but_not_closed_reads_re_not_closed(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        cid = a_commitment(conn, "Apply to Sallie Mae", status="done")
+        conn.commit()
+        added = client.post(
+            "/decisions",
+            data={"title": "Sallie Mae application", "choice": "not doing it",
+                  "reasoning": "", "commitment": str(cid)},
+        )
+        assert "re: Apply to Sallie Mae" in added.text
+        assert "closed: Apply to Sallie Mae" not in added.text
+
+
+class TestCli:
+    """The second door. A guard on one door is not a guard — same rules as the page."""
+
+    @pytest.fixture(autouse=True)
+    def cli_settings(
+        self, settings: Settings, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        del conn  # the CLI opens its own connection against the same migrated file
+        from backglass import __main__ as cli
+
+        monkeypatch.setattr(cli, "get_settings", lambda: settings)
+
+    def test_record_list_revisit(self, conn: sqlite3.Connection) -> None:
+        from typer.testing import CliRunner
+
+        from backglass import __main__ as cli
+
+        runner = CliRunner()
+        empty = runner.invoke(cli.app, ["decisions"])
+        assert empty.exit_code == 0, empty.output
+        assert "no decisions recorded yet" in empty.output
+
+        cid = a_commitment(conn, "Apply to Sallie Mae")
+        conn.commit()
+        made = runner.invoke(
+            cli.app,
+            ["decisions", "record", "Sallie Mae application", "not doing it",
+             "--why", "federal loans cover the year", "--closes", str(cid)],
+        )
+        assert made.exit_code == 0, made.output
+        assert f"closed commitment {cid}" in made.output
+        assert commitment_status(conn, cid) == "dropped"
+
+        listed = runner.invoke(cli.app, ["decisions"])
+        assert "Sallie Mae application: not doing it" in listed.output
+        assert "closed: Apply to Sallie Mae" in listed.output
+
+        did = conn.execute("SELECT id FROM decision WHERE status='active'").fetchone()["id"]
+        gone = runner.invoke(cli.app, ["decisions", "revisit", str(did)])
+        assert gone.exit_code == 0, gone.output
+        assert "no decisions recorded yet" in runner.invoke(cli.app, ["decisions"]).output
+        # The commitment the decision closed stays closed.
+        assert commitment_status(conn, cid) == "dropped"
+
+    def test_refusals_exit_nonzero(self) -> None:
+        from typer.testing import CliRunner
+
+        from backglass import __main__ as cli
+
+        runner = CliRunner()
+        assert runner.invoke(cli.app, ["decisions", "record", " ", "choice"]).exit_code == 1
+        assert (
+            runner.invoke(
+                cli.app, ["decisions", "record", "t", "c", "--closes", "99999"]
+            ).exit_code
+            == 1
+        )
+        assert runner.invoke(cli.app, ["decisions", "revisit", "4242"]).exit_code == 1

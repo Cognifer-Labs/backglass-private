@@ -40,6 +40,10 @@ class Decision:
     reasoning: str | None
     commitment_id: int | None
     commitment_title: str | None
+    #: True only when THIS decision dropped the commitment. A decision may link a
+    #: commitment that was already closed; rendering that as "closed:" would claim
+    #: an act that never happened.
+    closed_commitment: bool
     decided_at: str
 
 
@@ -73,51 +77,63 @@ def record(
     if not title or not choice:
         raise DecisionError("a decision needs a title and a choice")
 
-    commitment: dict[str, Any] | None = None
-    if commitment_id is not None:
-        commitment = conn.execute(
-            "SELECT id, status FROM commitment WHERE id = ? AND user_id = ?",
-            (commitment_id, USER_ID),
-        ).fetchone()
-        if commitment is None:
-            raise DecisionError(f"no commitment {commitment_id}")
-
     now = timezones.local_now_iso(settings)
-    cur = conn.execute(
-        "INSERT INTO decision (user_id, title, choice, reasoning, commitment_id,"
-        " status, decided_at, created_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)",
-        (
-            USER_ID,
-            title,
-            choice,
-            (reasoning or "").strip() or None,
-            commitment_id,
-            now,
-            now,
-        ),
-    )
-    new_id = int(cur.lastrowid or 0)
+    # One transaction for the whole act. Connections are autocommit
+    # (db/__init__.py: isolation_level=None), so without this the INSERT, the
+    # supersession UPDATE and the commitment drop each commit alone — an interrupt
+    # between them leaves a standing decision whose commitment is still open, or two
+    # active decisions sharing one title. Same pattern as people/merge.py.
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        commitment: dict[str, Any] | None = None
+        if commitment_id is not None:
+            commitment = conn.execute(
+                "SELECT id, status FROM commitment WHERE id = ? AND user_id = ?",
+                (commitment_id, USER_ID),
+            ).fetchone()
+            if commitment is None:
+                raise DecisionError(f"no commitment {commitment_id}")
 
-    # Supersession by normalized title, compared in Python — the active set is small.
-    previous = conn.execute(
-        "SELECT id, title FROM decision WHERE user_id = ? AND status = 'active' AND id != ?",
-        (USER_ID, new_id),
-    ).fetchall()
-    stale = [int(r["id"]) for r in previous if _norm(str(r["title"])) == _norm(title)]
-    if stale:
-        conn.executemany(
-            "UPDATE decision SET status = 'superseded', superseded_by = ? WHERE id = ?",
-            [(new_id, sid) for sid in stale],
+        cur = conn.execute(
+            "INSERT INTO decision (user_id, title, choice, reasoning, commitment_id,"
+            " status, decided_at, created_at) VALUES (?, ?, ?, ?, ?, 'active', ?, ?)",
+            (
+                USER_ID,
+                title,
+                choice,
+                (reasoning or "").strip() or None,
+                commitment_id,
+                now,
+                now,
+            ),
         )
+        new_id = int(cur.lastrowid or 0)
 
-    closed = False
-    if commitment is not None and str(commitment["status"]) == "open":
-        conn.execute(
-            "UPDATE commitment SET status = 'dropped', resolved_at = ?,"
-            " resolution_note = ? WHERE id = ? AND status = 'open'",
-            (now, f"decision:{new_id} — {choice}", commitment_id),
-        )
-        closed = True
+        # Supersession by normalized title, compared in Python — the active set is small.
+        previous = conn.execute(
+            "SELECT id, title FROM decision"
+            " WHERE user_id = ? AND status = 'active' AND id != ?",
+            (USER_ID, new_id),
+        ).fetchall()
+        stale = [int(r["id"]) for r in previous if _norm(str(r["title"])) == _norm(title)]
+        if stale:
+            conn.executemany(
+                "UPDATE decision SET status = 'superseded', superseded_by = ? WHERE id = ?",
+                [(new_id, sid) for sid in stale],
+            )
+
+        closed = False
+        if commitment is not None and str(commitment["status"]) == "open":
+            conn.execute(
+                "UPDATE commitment SET status = 'dropped', resolved_at = ?,"
+                " resolution_note = ? WHERE id = ? AND status = 'open'",
+                (now, f"decision:{new_id} — {choice}", commitment_id),
+            )
+            closed = True
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
     return new_id, closed
 
 
@@ -125,7 +141,7 @@ def active(conn: sqlite3.Connection) -> list[Decision]:
     """Standing decisions, newest first — the list the page and the CLI both print."""
     rows = conn.execute(
         "SELECT d.id, d.title, d.choice, d.reasoning, d.commitment_id, d.decided_at,"
-        " c.what AS commitment_title"
+        " c.what AS commitment_title, c.resolution_note AS commitment_note"
         " FROM decision d LEFT JOIN commitment c ON c.id = d.commitment_id"
         " WHERE d.user_id = ? AND d.status = 'active'"
         " ORDER BY d.decided_at DESC, d.id DESC",
@@ -139,6 +155,9 @@ def active(conn: sqlite3.Connection) -> list[Decision]:
             reasoning=r["reasoning"],
             commitment_id=r["commitment_id"],
             commitment_title=r["commitment_title"],
+            closed_commitment=str(r["commitment_note"] or "").startswith(
+                f"decision:{r['id']} "
+            ),
             decided_at=str(r["decided_at"]),
         )
         for r in rows

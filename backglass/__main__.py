@@ -3127,7 +3127,8 @@ def decisions_list(ctx: typer.Context) -> None:
         return
     for d in rows:
         why = f"  — {d.reasoning}" if d.reasoning else ""
-        closed = f"  (closed: {d.commitment_title})" if d.commitment_title else ""
+        mark = "closed" if d.closed_commitment else "re"
+        closed = f"  ({mark}: {d.commitment_title})" if d.commitment_title else ""
         typer.echo(
             f"  #{d.decision_id} [{d.decided_at[:10]}] {d.title}: {d.choice}{why}{closed}"
         )

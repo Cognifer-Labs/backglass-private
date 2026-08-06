@@ -22,7 +22,9 @@
           <p class="b1">{{ d.title }} — {{ d.choice }}</p>
           <p class="b2">{% if d.reasoning %}{{ d.reasoning }}{% endif -%}
             {%- if d.reasoning and d.commitment_title %} · {% endif -%}
-            {%- if d.commitment_title %}closed: {{ d.commitment_title }}{% endif -%}
+            {#- "closed" only when this decision did the closing; a link to an
+                already-settled commitment is context, not an act. -#}
+            {%- if d.commitment_title %}{{ 'closed' if d.closed_commitment else 're' }}: {{ d.commitment_title }}{% endif -%}
             {%- if not d.reasoning and not d.commitment_title %}&nbsp;{% endif %}</p>
         </div>
         <form hx-post="/decisions/{{ d.decision_id }}/revisit" hx-target="#decisions"
