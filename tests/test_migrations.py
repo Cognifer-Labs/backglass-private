@@ -215,6 +215,9 @@ FROZEN_CHECKSUMS = {
     "0016_degrade_reason.sql": (
         "f3d0f3f23d2c65b44e3d9b32ca803f317cc2ef896b754a5a30a63b623949d92a"
     ),
+    "0017_decisions.sql": (
+        "d5e479fc3580e23fe24412c39253da1c8777f9f685f8af3be524b0e04d75e973"
+    ),
 }
 
 

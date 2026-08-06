@@ -1,3 +1,58 @@
+# Major decisions — the choices the owner has settled
+
+Started 2026-08-06. The ask, verbatim: "there needs to be a major decisions list as
+well — for example Sallie Mae application is something I don't want to do." A decision
+like that is not an open commitment (nothing left to do), not a done one (nothing was
+done), and not quite a fact (it has a lifecycle against the ledger: the Sallie Mae
+commitment should close when the decision lands). It is the fact pattern — supersession,
+retraction, provenance-in-words — plus one link into the commitment ledger.
+
+## The shape
+
+- **`decision` table** (migration 0017): title ("Sallie Mae application"), choice ("not
+  doing it"), reasoning, optional `commitment_id`, active|superseded|retracted with
+  `superseded_by`, decided_at. Same lifecycle rules as `fact`: never UPDATE a claim,
+  changing your mind is recording the replacement; identity for supersession is the
+  normalized title, compared in Python only (one `_norm`, per the Café Latino lesson).
+- **Recording a decision can close the commitment it settles.** Optional — a decision
+  needs no commitment — but when linked and the commitment is open, it is dropped with
+  `resolution_note = "decision:<id> — <choice>"` in the same transaction. Revisiting
+  (retracting) a decision does NOT reopen the commitment: resurrect-by-side-effect is
+  the resurrection bug class, and drop already has its own recovery story.
+- **`/decisions` page** mirroring Memory: list newest-first, add form with an optional
+  "also closes" select over open commitments, Revisit button. Nav entry + key '9'
+  appended after Brief so existing keys 1–8 keep their meaning.
+- **CLI** `backglass decisions` (list) / `decisions record TITLE CHOICE [--why] [--closes N]`
+  / `decisions revisit ID`, same shape as `backglass memory`.
+
+## Steps
+
+- [ ] 1. Migration `0017_decisions.sql`, FROZEN_CHECKSUMS entry, regenerate
+      `specs/schema.sql`.
+- [ ] 2. `backglass/decisions.py` — record (with supersession + optional commitment
+      close), active, revisit.
+- [ ] 3. `backglass/web/routes/decisions.py` + `decisions.html`, wired in `app.py`,
+      nav in `base.html`.
+- [ ] 4. CLI sub-app in `__main__.py`.
+- [ ] 5. `tests/test_decisions.py` — engine + page, including: case-insensitive
+      supersession, linked-commitment close, closed-commitment left untouched,
+      revisit does not reopen, blank 422, unknown ids 404.
+- [ ] 6. Full suite + ruff + mypy in the worktree; fresh-context verifier pass.
+
+Built in worktree `decisions-ledger` (branched from bb32d2d) because two other live
+sessions share the main checkout and its tree carries a 700-line uncommitted diff.
+
+## Deliberately not
+
+Auto-suppressing future extractions that mention a decided topic — a re-extracted
+"apply to Sallie Mae" commitment stays visible and droppable, because a visible
+duplicate is dismissible while an auto-suppressed real obligation is silent data loss
+(the same consequence call the engagement dedup settled on). No `source_item_id` on
+the table: decisions are owner-typed like quick-adds; evidence lives in words and in
+the linked commitment's own citation chain.
+
+---
+
 # Populate the ledger — mail, messages, and the cap that was never real
 
 Started 2026-08-03. The ask: put the owner's actual information into the system, from

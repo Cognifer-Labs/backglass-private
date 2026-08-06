@@ -3105,5 +3105,78 @@ def memory_export(
         typer.echo(doc)
 
 
+decisions_app = typer.Typer(
+    invoke_without_command=True,
+    help="Major decisions: the choices the owner has settled.",
+)
+app.add_typer(decisions_app, name="decisions")
+
+
+@decisions_app.callback()
+def decisions_list(ctx: typer.Context) -> None:
+    """List standing decisions, newest first. Same read the Decisions page runs."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from backglass import decisions
+
+    conn = _open(get_settings())
+    migrate(conn)
+    rows = decisions.active(conn)
+    if not rows:
+        typer.echo("no decisions recorded yet")
+        return
+    for d in rows:
+        why = f"  — {d.reasoning}" if d.reasoning else ""
+        closed = f"  (closed: {d.commitment_title})" if d.commitment_title else ""
+        typer.echo(
+            f"  #{d.decision_id} [{d.decided_at[:10]}] {d.title}: {d.choice}{why}{closed}"
+        )
+
+
+@decisions_app.command("record")
+def decisions_record(
+    title: str,
+    choice: str,
+    why: Annotated[str | None, typer.Option("--why", help="Reasoning, in words")] = None,
+    closes: Annotated[
+        int | None,
+        typer.Option("--closes", help="Open commitment this decision settles (dropped)"),
+    ] = None,
+) -> None:
+    """Record a decision. The previous decision with this title is superseded, not lost;
+    an open commitment named by --closes is dropped in the same transaction."""
+    from backglass import decisions
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    try:
+        decision_id, closed = decisions.record(
+            conn, settings, title, choice, reasoning=why, commitment_id=closes
+        )
+    except decisions.DecisionError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    conn.commit()
+    tail = f"; closed commitment {closes}" if closed else ""
+    typer.echo(f"decision {decision_id}: {title} — {choice}{tail}")
+
+
+@decisions_app.command("revisit")
+def decisions_revisit(decision_id: int) -> None:
+    """Withdraw a decision. The row survives; a commitment it closed stays closed."""
+    from backglass import decisions
+
+    conn = _open(get_settings())
+    migrate(conn)
+    try:
+        decisions.revisit(conn, decision_id)
+    except decisions.DecisionError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+    conn.commit()
+    typer.echo(f"decision {decision_id} retracted")
+
+
 if __name__ == "__main__":
     app()

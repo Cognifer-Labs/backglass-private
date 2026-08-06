@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = 'decisions' %}
+
+{% block title %}Backglass — Decisions{% endblock %}
+{# No meta override: Decisions keeps the global date/timezone eyebrow like every
+   other page — the banner already carries the count once. #}
+
+{% block content %}
+<section class="sec" id="decisions">
+  {{ m.banner('Decisions', count ~ ' standing') }}
+  <div class="inner">
+    {% if not decisions %}
+      <p class="empty">No decisions recorded yet. Record one below, or
+        <span class="kbd">backglass decisions record &lt;title&gt; &lt;choice&gt;</span>.</p>
+    {% endif %}
+
+    {% for d in decisions %}
+      <div class="row">
+        <span class="time">{{ d.decided_at[:10] }}</span>
+        <div class="grow">
+          <p class="b1">{{ d.title }} — {{ d.choice }}</p>
+          <p class="b2">{% if d.reasoning %}{{ d.reasoning }}{% endif -%}
+            {%- if d.reasoning and d.commitment_title %} · {% endif -%}
+            {%- if d.commitment_title %}closed: {{ d.commitment_title }}{% endif -%}
+            {%- if not d.reasoning and not d.commitment_title %}&nbsp;{% endif %}</p>
+        </div>
+        <form hx-post="/decisions/{{ d.decision_id }}/revisit" hx-target="#decisions"
+              hx-swap="outerHTML" style="margin:0">
+          {# Retraction, not deletion — the row keeps its history, and the commitment
+             it closed stays closed (a revisit must not resurrect the nagging the
+             decision ended). Rare action, quiet ink — same ruling as Memory's Forget. #}
+          <button class="lnk" type="submit">Revisit</button>
+        </form>
+      </div>
+    {% endfor %}
+
+    <div class="addform">
+      <p class="lbl">Record a decision</p>
+      <form hx-post="/decisions" hx-target="#decisions" hx-swap="outerHTML">
+        <input type="text" name="title" placeholder="about (e.g. Sallie Mae application)"
+               required aria-label="Title">
+        <input type="text" name="choice" placeholder="the decision (e.g. not doing it)"
+               required aria-label="Choice">
+        <input type="text" name="reasoning" placeholder="why (optional)"
+               aria-label="Reasoning">
+        <select name="commitment" aria-label="Also closes commitment">
+          <option value="">also closes: nothing</option>
+          {% for c in open_commitments %}
+            <option value="{{ c.id }}">also closes: {{ c.what }}</option>
+          {% endfor %}
+        </select>
+        <button class="btn ok" type="submit">Record</button>
+      </form>
+      <p class="note">Recording the same title again replaces the standing decision and
+        keeps its history. Changing your mind is recording the new decision.</p>
+    </div>
+  </div>
+</section>
+{% endblock %}
