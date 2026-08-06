@@ -361,6 +361,10 @@ def compute(
     # asking "what would the day look like with these three meetings" would silently get
     # a fourth.
     fixed = list(events) if events is not None else day_events(conn, settings, day)
+    # The window filter belongs to this function and not to `day_events`: capacity is
+    # "how much work fits between nine and six", so an evening dinner is correctly not
+    # subtracted from it. The Schedule page asks a different question and calls the
+    # reader without this line.
     fixed = [e for e in fixed if e.ends_at > window_start and e.starts_at < window_end]
     fixed.sort(key=lambda e: e.starts_at)
 

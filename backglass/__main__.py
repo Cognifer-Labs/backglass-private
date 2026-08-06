@@ -754,7 +754,6 @@ def plan(
     shut down at 05:45 gets its plan when it is next opened, and a machine that was
     awake keeps the 05:45 plan — including any edits or acceptance — untouched.
     """
-    from datetime import date as _date
 
     from backglass.goals import health
     from backglass.plan import planner, timezones
@@ -762,7 +761,7 @@ def plan(
     settings = get_settings()
     conn = _open(settings)
     migrate(conn)
-    day = _date.fromisoformat(for_date) if for_date else _today(settings)
+    day = _day_option(for_date, "--date") or _today(settings)
 
     if if_missing and planner.current_plan_id(conn, day) is not None:
         typer.echo(f"{day}: already planned — nothing to do")
@@ -816,7 +815,6 @@ def shutdown(
     state and the rest rolls over. Nothing here nags about a skipped shutdown — docs/04:
     "A productivity system that scolds gets deleted."
     """
-    from datetime import date as _date
 
     from backglass.brief import weekly
     from backglass.plan import rollover
@@ -824,7 +822,7 @@ def shutdown(
     settings = get_settings()
     conn = _open(settings)
     migrate(conn)
-    day = _date.fromisoformat(for_date) if for_date else _today(settings)
+    day = _day_option(for_date, "--date") or _today(settings)
 
     ids = {int(part) for part in done.split(",") if part.strip()} if done else None
     report = rollover.close_day(conn, settings, day, done_block_ids=ids)
@@ -843,6 +841,30 @@ def _today(settings: Settings):  # type: ignore[no-untyped-def]
     return today_in(settings.default_tz)
 
 
+def _day_option(value: str | None, flag: str):  # type: ignore[no-untyped-def]
+    """Read a `YYYY-MM-DD` command-line option, or exit with a sentence about it.
+
+    `date.fromisoformat` fails in two ways — a shape it cannot read (`ValueError:
+    Invalid isoformat string`) and a shape it reads into a day that does not exist
+    (`ValueError: day is out of range for month`) — and every CLI option that took a
+    date let both out as a traceback. One of them (`log --on`) had a message; the rest
+    printed forty lines of Rich frames and the word ValueError, which tells the owner
+    they broke the program rather than that they mistyped a date.
+
+    Returns None for None so `--date` staying unset still means "today", which is each
+    caller's own default and not this function's business.
+    """
+    from datetime import date as _date
+
+    if value is None:
+        return None
+    try:
+        return _date.fromisoformat(value)
+    except ValueError:
+        typer.echo(f"{flag} {value!r} is not a date; use YYYY-MM-DD", err=True)
+        raise typer.Exit(code=1) from None
+
+
 @app.command()
 def brief(
     send: Annotated[bool, typer.Option("--send", help="Deliver it; otherwise print")] = False,
@@ -856,14 +878,13 @@ def brief(
     B6: a generation failure produces a short failure notice rather than silence, because
     "silence is indistinguishable from 'no news' and that ambiguity is corrosive".
     """
-    from datetime import date as _date
 
     from backglass.brief import daily, deliver, render
 
     settings = get_settings()
     conn = _open(settings)
     migrate(conn)
-    target = _date.fromisoformat(for_date) if for_date else daily.today_in(settings.default_tz)
+    target = _day_option(for_date, "--date") or daily.today_in(settings.default_tz)
 
     degraded = False
     try:
@@ -1194,7 +1215,20 @@ def _print_report(report: Any, *, dry_run: bool) -> None:
 
 
 def main() -> None:
-    sys.exit(app())
+    """The console-script entry point.
+
+    The backstop for a refused run. `sync`, `batch submit` and `batch collect` each
+    catch `SyncLocked` and print their own sentence, which is better than a generic one
+    — but a lock is not an error in the program, it is the program correctly declining
+    to be the second writer, and the next command to take the lock would otherwise
+    traceback until someone remembered to add a fourth handler. This one costs three
+    lines and cannot be forgotten.
+    """
+    try:
+        sys.exit(app())
+    except SyncLocked as exc:
+        typer.echo(str(exc), err=True)
+        sys.exit(1)
 
 
 # ── Phase 6: people ───────────────────────────────────────────────────────
@@ -1490,7 +1524,6 @@ def log(
     checkpoint — the same write the roadmap page makes, so there is no second source
     of truth and `amcas-export` sees this immediately.
     """
-    from datetime import date as _date
 
     from backglass.plan import timezones
 
@@ -1528,11 +1561,8 @@ def log(
     # every day while they are there.
     today = timezones.today_for(settings)
     if on:
-        try:
-            day = _date.fromisoformat(on)
-        except ValueError:
-            typer.echo(f"--on {on!r} is not a date; use YYYY-MM-DD", err=True)
-            raise typer.Exit(code=1) from None
+        day = _day_option(on, "--on")
+        assert day is not None  # `on` is truthy, so the option was given
         if day > today:
             # A future entry counts toward the total immediately — the accumulator has no
             # date filter — so it would inflate every progress bar until the day arrived.
@@ -1689,7 +1719,6 @@ def roadmap_start(
     ] = False,
 ) -> None:
     """Instantiate a path — after a short personalization interview, unless told not to."""
-    from datetime import date as _date
 
     from backglass.roadmap import instantiate, interview, presets
 
@@ -1701,7 +1730,7 @@ def roadmap_start(
     except presets.PresetError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
-    start_date = _date.fromisoformat(start) if start else _today(settings)
+    start_date = _day_option(start, "--start") or _today(settings)
 
     result = None
     adjustments = None
@@ -1776,7 +1805,6 @@ def roadmap_step(
     down: Annotated[bool, typer.Option("--down")] = False,
 ) -> None:
     """Edit one step: --done | --skip | --unskip | --date | --up | --down."""
-    from datetime import date as _date
 
     from backglass.roadmap import adjust
 
@@ -1797,7 +1825,9 @@ def roadmap_step(
         elif unskip:
             adjust.unskip_step(conn, step_id)
         elif on_date is not None:
-            adjust.redate_step(conn, step_id, _date.fromisoformat(on_date))
+            redated = _day_option(on_date, "--date")
+            assert redated is not None  # `on_date is not None`, so the option was given
+            adjust.redate_step(conn, step_id, redated)
         else:
             adjust.move_step(conn, step_id, "up" if up else "down")
     except adjust.AdjustError as exc:
@@ -3182,4 +3212,4 @@ def decisions_revisit(decision_id: int) -> None:
 
 
 if __name__ == "__main__":
-    app()
+    main()

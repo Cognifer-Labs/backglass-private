@@ -24,6 +24,7 @@ from fastapi.templating import Jinja2Templates
 from backglass.config import Settings
 from backglass.db import query
 from backglass.ledger import USER_ID
+from backglass.web.params import RowId
 
 
 def build_router(
@@ -37,7 +38,7 @@ def build_router(
 
     @router.get("/source/{source_item_id}", response_class=HTMLResponse)
     def source_item(
-        source_item_id: int,
+        source_item_id: RowId,
         request: Request,
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:

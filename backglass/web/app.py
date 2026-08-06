@@ -26,6 +26,7 @@ from backglass.config import REPO_ROOT, Settings, get_settings
 from backglass.db import connect, migrate
 from backglass.plan import timezones
 from backglass.web import actions, panels, security
+from backglass.web.params import RowId
 
 HERE = Path(__file__).parent
 templates = Jinja2Templates(directory=str(HERE / "templates"))
@@ -130,7 +131,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     @app.get("/b/{brief_id}.gif")
-    def tracking_pixel(brief_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> Response:
+    def tracking_pixel(
+        brief_id: RowId, conn: sqlite3.Connection = Depends(get_conn)
+    ) -> Response:
         """docs/05 B7. The brief was opened; that is the metric that matters most."""
         actions.mark_brief_opened(conn, brief_id)
         return Response(
@@ -218,21 +221,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/commitments/{commitment_id}/resolve", response_class=HTMLResponse)
     def resolve(
-        commitment_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+        commitment_id: RowId, request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ) -> Any:
         _run(actions.resolve, conn, commitment_id)
         return board_fragment(request, conn)
 
     @app.post("/commitments/{commitment_id}/drop", response_class=HTMLResponse)
     def drop(
-        commitment_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+        commitment_id: RowId, request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ) -> Any:
         _run(actions.drop, conn, commitment_id)
         return board_fragment(request, conn)
 
     @app.post("/commitments/{commitment_id}/snooze/{days}", response_class=HTMLResponse)
     def snooze(
-        commitment_id: int,
+        commitment_id: RowId,
         days: int,
         request: Request,
         conn: sqlite3.Connection = Depends(get_conn),
@@ -242,14 +245,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/review/{commitment_id}/accept", response_class=HTMLResponse)
     def accept(
-        commitment_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+        commitment_id: RowId, request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ) -> Any:
         _run(actions.accept, conn, commitment_id)
         return review_fragment(request, conn)
 
     @app.post("/review/{commitment_id}/reject/{reason}", response_class=HTMLResponse)
     def reject(
-        commitment_id: int,
+        commitment_id: RowId,
         reason: str,
         request: Request,
         conn: sqlite3.Connection = Depends(get_conn),
@@ -262,35 +265,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # silently, which is the one thing a review queue must never do.
     @app.post("/review/plan/{engagement_id}/accept", response_class=HTMLResponse)
     def accept_plan(
-        engagement_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+        engagement_id: RowId, request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ) -> Any:
         _run(actions.accept_plan, conn, engagement_id)
         return review_fragment(request, conn)
 
     @app.post("/review/plan/{engagement_id}/reject", response_class=HTMLResponse)
     def reject_plan(
-        engagement_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+        engagement_id: RowId, request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ) -> Any:
         _run(actions.reject_plan, conn, engagement_id)
         return review_fragment(request, conn)
 
     @app.post("/checklist/{item_id}/tick", response_class=HTMLResponse)
     def tick(
-        item_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+        item_id: RowId, request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ) -> Any:
         _run(actions.tick, conn, item_id, today().isoformat())
         return checklist_fragment(request, conn)
 
     @app.post("/checklist/{item_id}/untick", response_class=HTMLResponse)
     def untick(
-        item_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+        item_id: RowId, request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ) -> Any:
         _run(actions.untick, conn, item_id, today().isoformat())
         return checklist_fragment(request, conn)
 
     @app.post("/blocks/{block_id}/outcome/{outcome}", response_class=HTMLResponse)
     def block_outcome(
-        block_id: int,
+        block_id: RowId,
         outcome: str,
         request: Request,
         conn: sqlite3.Connection = Depends(get_conn),
@@ -300,7 +303,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/blocks/{block_id}/pin/{pinned}", response_class=HTMLResponse)
     def block_pin(
-        block_id: int,
+        block_id: RowId,
         pinned: int,
         request: Request,
         conn: sqlite3.Connection = Depends(get_conn),
@@ -310,7 +313,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/commitments/{commitment_id}/estimate/{minutes}", response_class=HTMLResponse)
     def estimate(
-        commitment_id: int,
+        commitment_id: RowId,
         minutes: int,
         request: Request,
         conn: sqlite3.Connection = Depends(get_conn),
@@ -340,7 +343,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.post("/targets/{target_id}/weekly/{count}", response_class=HTMLResponse)
     def weekly(
-        target_id: int,
+        target_id: RowId,
         count: int,
         request: Request,
         conn: sqlite3.Connection = Depends(get_conn),

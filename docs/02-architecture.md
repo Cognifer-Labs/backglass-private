@@ -162,6 +162,17 @@ which is free and needs no hardware.
 
 Nothing here is real time. An hour of lag is acceptable everywhere.
 
+**One pipeline run at a time.** The ingest job fires every thirty minutes and a person
+runs `backglass sync` by hand, so the two overlap — and two runs select the same
+`pending_extraction` rows and extract them twice. The ledger cannot catch that: two
+extractions of one item are two legitimate-looking commitment inserts, and the only
+thing between them and a duplicated ledger is a similarity heuristic. `backglass/
+runlock.py` holds an advisory `flock` on `<database>.lock` for the length of a run;
+the second run is refused with a sentence and writes nothing. A file lock rather than
+a row because the case that matters is the one where nothing gets to clean up — a
+sleep, a `kill -9` — and the kernel drops a `flock` however the process dies. A dry
+run is exempt: it writes nothing, so it is safe at any time.
+
 ## Failure policy
 
 - A failing source degrades and does not block the others.

@@ -140,6 +140,198 @@ the linked commitment's own citation chain.
 
 ---
 
+# Polish pass — the states nobody drives, and the values nobody types
+
+Started 2026-08-05. The ask: audit the whole app, check every state, check the edge
+cases. Method: two adversarial sweeps rather than a reading of the code — one over every
+route against an empty ledger with hostile path/query params, one over every write
+against a ledger seeded with one of everything. 67 GETs + 205 POSTs, then 60 more writes
+with out-of-range values. The suite was green (1425) before and says nothing about any
+of this, because every test drives a value someone chose to write down.
+
+## What the sweeps found
+
+Six defects, in severity order. Two of them lose data.
+
+1. **A malformed date is a traceback, in six places.** `date.fromisoformat` is called on
+   user input at `web/routes/schedule.py:419` (`?date=`), `:444` (`?start=`) and at four
+   CLI `--date` options — and exactly one caller in the tree (`log --on`) explains
+   itself. `/schedule?date=2026-02-30` is a 500. So is a stale bookmark, a hand-edited
+   URL, or a typo in `backglass plan --date`. `/brief/{on_date}` gets this right by
+   accident of typing its parameter `date`, which is the fix the others want.
+2. **Snooze erases the deadline.** `date(base, '+N days')` returns NULL when SQLite's
+   date arithmetic overflows, and `snooze()` bounds `days` below (`>= 1`) and not above.
+   `POST /commitments/1/snooze/1000000000000000` sets `due_at = NULL` and reports
+   "snoozed". The commitment stays open with no date, on a board that sorts by date.
+3. **Quick-add writes an unvalidated due date.** The form field goes to the ledger raw:
+   `tomorrow`, `2026-02-30`, `9999-99-99` and 300 characters of `x` all land in
+   `commitment.due_at`, a column every board query orders and compares by. The
+   extraction door already resolves through `dates.resolve_due`; the owner's own door
+   does not.
+4. **Twenty routes 500 on a large id.** FastAPI's `int` is unbounded, SQLite's is 64-bit,
+   so `/people/999999999999999999999999999999` is an OverflowError rather than a 404.
+5. **Ticking a checklist item that is gone is a 500**, not the 422 every other stale-row
+   write returns — `tick`/`untick` are the only two actions that write without checking
+   the row exists, so the FK failure escapes as an IntegrityError.
+6. **No upper bound on an estimate, a weekly count, or quick-add's text.** A
+   4.6-quintillion-minute estimate is stored and then fed to the planner's capacity
+   arithmetic; 20,000 characters render as a board row.
+
+## Steps
+
+- [x] 1. One way to read a day from user input. `parse_day()` in `backglass/dates_cli.py`
+      (or the nearest existing home) raising one error type with the message `log --on`
+      already gives; every CLI `--date` uses it. Web routes annotate the parameter `date`
+      so FastAPI answers 422, and the prev/next arithmetic clamps at `date.min`/`date.max`
+      so `9999-12-31` is a page and not an OverflowError.
+- [x] 2. `snooze` bounds `days` above as well as below, and the bound is a real one
+      (a snooze is a working-life gesture, not a century).
+- [x] 3. Quick-add routes `due_at` through `dates.resolve_due` against the owner's local
+      now — so "friday" works, and unresolvable text is a 422 rather than a silent
+      corruption. `Ledger.insert_commitment` refuses a non-ISO `due_at` regardless of
+      door, because that is where the data is written.
+- [x] 4. One bounded id type for every integer path parameter.
+- [x] 5. `tick`/`untick` check the item the way every other action checks its row.
+- [x] 6. Upper bounds on estimate minutes, weekly count, and quick-add text length.
+- [x] 7. A test per defect that has been watched to fail against the current code, and
+      the sweeps kept as `tests/test_edges.py` so the next value nobody types is caught
+      by CI rather than by a sweep.
+
+## Outcome — part two, the interface
+
+Six more commits, same branch, same method: measure first. A headless browser loads
+every route at five widths and in both themes; axe-core audits each at WCAG 2.1/2.2
+AA. Suite 1,498 → 1,510. Ten more mutations, ten red.
+
+The four that mattered, all of them functionality rather than taste:
+
+- **On a phone the board was read-only.** Resolve, Snooze and Drop are revealed on
+  hover, and a touch device has no hover — so the one surface whose whole purpose is
+  acting on a row could only be read. `@media(hover:none)` makes them present, the way
+  the Today rows' controls always are.
+- **The dashboard rendered 642px wide inside a 390px window.** One mechanism in four
+  places: a hard pixel floor inside a grid or flex track, and a grid item's automatic
+  minimum is its min-content width. The right third of every panel was unreachable.
+- **The sidebar hid every alert below 900px.** Goals and Roadmaps yielding there is
+  right — both summarize a page one tap away — but alerts have no page of their own,
+  so a failing source was invisible on a phone.
+- **The second `x` resolved a row nobody had selected.** A write swaps the panel and
+  discards the DOM the selection lived on, but `index` is module state and survived,
+  pointing into a list that had just shifted up.
+
+And three of craft: no page had a `<main>`; muted text failed AA on every fill in the
+interface (the ramp's ratios are quoted against paper, and every fill is darker than
+paper); a 16px day box became a 26px target without the mark changing size.
+
+## The backend, exercised rather than assumed
+
+Asked to confirm the backend works, not only the interface. Nothing needed fixing —
+recorded so the next session does not repeat it.
+
+- **Every CLI command, against a fresh database.** Twenty-seven of them: no traceback
+  anywhere, and every non-zero exit carries a sentence naming what to do
+  (`IMESSAGE_DB_PATH is not set — run backglass setup`, `no activity matching
+  'shadowing' — add it with …`). The four that looked like failures were an honest
+  "not configured yet" or my own shell quoting.
+- **The run lock under a genuine two-process race**, not a same-process descriptor:
+  two real `sync()` runs on one database, one ran and one was refused by pid and start
+  time, and the refused one wrote nothing.
+- **Concurrent writers.** The launchd sync writes every thirty minutes and the owner
+  clicks while it runs, so the question is real. Python's sqlite3 already carries a 5s
+  busy timeout and `connect()` opens in autocommit, so no write transaction is held
+  long enough to collide: three processes, nine thousand writes, zero `database is
+  locked`. The one failure I could produce needed a `BEGIN IMMEDIATE` held open past
+  the timeout on purpose, which nothing in the pipeline does.
+- **A brief against a populated ledger** — the degraded-source warning at the top
+  (rule 5), a provenance link on every line (rule 1), capacity, and awaiting-others.
+
+## The three open calls, decided
+
+Left open for the owner in the first pass; taken here on 2026-08-06 when asked.
+
+**The duplicate run lock — theirs stays.** Both sessions built one, independently, to
+nearly the same design. Theirs reached main first and covers the same three doors, so
+`backglass/runlock.py` and `tests/test_runlock.py` are deleted rather than a committed,
+integrated, passing feature being replaced by its twin. Two things came across, because
+they are where the implementations actually differed: a real second process in the
+tests (their four stand-ins all pass against `LOCK_EX` weakened to `LOCK_SH`, which is
+the entire defect), and a reentrancy depth keyed by database rather than counted once
+for the process. See the merge commit.
+
+**Black on vermilion at 4.40 — the ink stays, the claim changes.** Reaching 4.5 means
+darkening the alarm ink, and a desaturated overdue mark is a quieter alarm: a worse
+outcome than a 2% shortfall on text that already carries a keyline, a glyph and a word.
+The all-pairs CVD separation was validated at these exact values, so moving a series
+slot would have to be re-argued against deuteranopia and not just against WCAG. What
+was actually wrong was §3's sentence claiming gold was the only exception;
+`design/design-system.md` now documents both, and says precisely where the second one
+bites — normal text on full-strength vermilion, dark mode only.
+
+**The week grid's 22px links — exempt, and written down as exempt.** Height is duration
+there; padding the link would make the timeline lie. §7 now carries the rule the 26px
+day box already follows (targets grow *under* the mark, never around it) together with
+the two exemptions that apply here, so the next reader does not re-open it. If the
+touching neighbours ever want fixing, the fix is a gap in the grid.
+
+## Outcome — part one, the ledger
+
+Four sweeps, three commits, on branch `polish/edge-states` in a worktree — another
+session was editing the shared checkout mid-audit, which is written up in
+`tasks/lessons.md`. Suite 1,441 → 1,498. Twenty-seven mutations, twenty-seven red, in
+three passes: the first pass of each left survivors, and one of those survivors was a
+defect rather than a missing test.
+
+1. **Six defects in the values a URL and a form can carry** (commit 1). Two lost data:
+   a snooze large enough to overflow SQLite's date arithmetic erased an open
+   commitment's deadline and reported success, and quick-add wrote its due field into
+   the ledger as typed, so `tomorrow` and `2026-02-30` became due dates in the column
+   the board sorts by. The rest: a malformed date was a traceback in six places, twenty
+   routes 500'd on a large id, ticking a vanished checklist item was a 500, and nothing
+   bounded an estimate, a weekly count, or a commitment's length.
+2. **Two syncs can no longer run at once** (commit 2) — the defect this file left open,
+   closed with an advisory `flock` rather than a row, because the case that matters is
+   the one where nothing gets to clear the row.
+3. **A confirmed dinner is on the day, and one unreadable row is not a blank page**
+   (commit 3). The Schedule page never read engagements at all; and a `plan_block`
+   timestamp that is not full ISO took down the day view and the week grid's other six
+   days with it.
+
+## Swept and found sound
+
+Recorded because a negative result is a result, and re-sweeping these is wasted effort:
+
+- **Every temporal edge on the schedule surface** — an event that ends before it starts,
+  a zero-length one, one spanning midnight, a 25-hour one, one written in the other
+  timezone, one with no offset at all, a date with no time, an empty title, 5,000
+  characters of title, markup in a title (escaped correctly), two events at the same
+  minute. All render.
+- **Goals and roadmaps against the shapes progress arithmetic divides by** — a goal with
+  no targets, a NULL weekly count, a weekly count of zero, NULL minutes-each, a
+  milestone with a total of zero, a total already exceeded, checkpoints at ±the bound, a
+  roadmap with no steps, one with every step done, one whose goal is dropped, two
+  targets differing only by case, a step with no planned date. No 500s, no unescaped
+  markup, no division by zero.
+- **The first run a stranger gets.** `init` then `doctor` on an empty database: five
+  failing checks, every one naming the environment variable or command that fixes it.
+  `plan`, `brief`, `status`, `costs`, `people`, `memory export` all render an empty
+  ledger without complaint.
+
+## Left alone, deliberately
+
+- **`engagement.done` is still unreachable** — migration 0014 advertises the state,
+  nothing can reach it. It needs a write surface (a "went" button and its route), which
+  is a feature and a product decision about where that button lives, not a polish fix.
+  Still worth doing.
+- **The brief, the connectors and the security middleware.** A second session was
+  auditing exactly those files in the shared checkout while this ran; touching them
+  would have raced it.
+- **`tests/test_dashboard.py::test_the_tracking_pixel_records_the_first_open_only` is
+  red at HEAD** — `mark_brief_opened` requires `sent_at IS NOT NULL` and the committed
+  test never sets it. Not fixed here because the other session's uncommitted tree
+  already fixes it, and two fixes would conflict.
+
+---
+
 # Populate the ledger — mail, messages, and the cap that was never real
 
 Started 2026-08-03. The ask: put the owner's actual information into the system, from
@@ -231,6 +423,16 @@ launchd fire mid-backfill is a clean skip, not a failure. flock releases on proc
 death, so a crashed run cannot strand it. `tests/test_sync_lock.py` covers both
 branches plus reentrancy, mutation-proven red; refusal verified live against a running
 sync (pid printed, no run row written).
+
+**Fixed 2026-08-05** — `backglass/runlock.py`, the lock file rather than the row: the
+case that matters is a sleep or a `kill -9`, where nothing gets to clear a row and a
+stale one converts an occasional duplicate into a permanent outage. Taken inside
+`sync()` and `batch.collect()` rather than at the CLI, because there are three doors
+into the pipeline and a guard on one of them is not a guard; reentrant, because
+`batch submit` calls `sync`. A dry run is exempt. `tests/test_runlock.py`, ten
+mutations, ten red — including one that only a real second process could catch:
+weakening `LOCK_EX` to `LOCK_SH` is the entire defect and passed every same-process
+test in the file.
 
 ## Deliberately not
 
@@ -490,6 +692,17 @@ small write surface, which is a design call rather than a fix.
   are evenings, and the day view is where someone would look. Fixing it means deciding
   what the schedule page is: the working window, or the day. That is a design call, not
   a bug fix, so it is written down rather than guessed at.
+
+  **Fixed 2026-08-05, and the design call turned out to be already made.** The cause was
+  only half of what is written above: the Schedule page never read engagements *at all*
+  — `day_view` called `capacity.fixed_events` (calendar only), so a confirmed 14:00
+  coffee was just as invisible as a 19:00 dinner until the planner had run and left a
+  plan_block behind. And the page had already answered the question: its ruler "always
+  spans at least the default working window, widened to fit anything scheduled outside
+  it" (`_window`), which is the day, not the window. So there was nothing to decide —
+  one reader, `capacity.day_events`, now answers "what is immovable on this day" for
+  both callers, and `compute` keeps the window filter, because *its* question really is
+  how much work fits between nine and six.
 - **Nothing yet exercises this against real messages.** Every test drives canned model
   responses. Whether the model reliably tells a commitment from an engagement is an eval
   question, and `evals/` is where it belongs — it never gates CI (docs/10).

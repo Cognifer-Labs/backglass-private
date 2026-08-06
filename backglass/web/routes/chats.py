@@ -18,6 +18,7 @@ from fastapi.templating import Jinja2Templates
 
 from backglass import chats as chats_mod
 from backglass.config import Settings
+from backglass.web.params import RowId
 
 
 def build_router(
@@ -49,7 +50,7 @@ def build_router(
 
     @router.post("/chats/{chat_id}/{decision}", response_class=HTMLResponse)
     def decide(
-        chat_id: int,
+        chat_id: RowId,
         decision: str,
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:

@@ -14,9 +14,10 @@ import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from typing import Any
+from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
+from annotated_types import Ge, Le
 from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
@@ -65,6 +66,21 @@ def day_view(conn: sqlite3.Connection, settings: Settings, day: date) -> DayView
 
 def week_of(day: date) -> date:
     return day - timedelta(days=day.weekday())
+
+
+#: The window these two pages will render. `date.min`/`date.max` are representable and
+#: are not days in anyone's life: `?date=9999-12-31` parsed fine, reached the handler,
+#: and then raised OverflowError inside `timezones.day_bounds` — which adds a day to
+#: find the day's end — while the page was building its own "next" link. Bounding the
+#: parameter is one guard at the door rather than clamped arithmetic at each of the
+#: three places that does date maths downstream.
+EARLIEST_DAY = date(1900, 1, 1)
+LATEST_DAY = date(2200, 1, 1)
+
+#: The bound travels with the type rather than being spelled out at each of the two
+#: routes. `Query(ge=…)` takes numbers, so the constraint is expressed the way pydantic
+#: expresses one over any ordered type.
+DayParam = Annotated[date, Ge(EARLIEST_DAY), Le(LATEST_DAY)]
 
 
 # ── the day timeline ──────────────────────────────────────────────────────
@@ -117,8 +133,21 @@ class Timeline:
     now_top: int | None
 
 
-def _minutes(hhmm: str) -> int:
-    return int(hhmm[:2]) * 60 + int(hhmm[3:5])
+def _minutes(hhmm: str) -> int | None:
+    """`HH:MM` as a minute of the day, or None if that is not what this is.
+
+    Callers slice it out of a stored timestamp by position (`starts_at[11:16]`), which
+    is right for every stamp the planner writes and is not a guarantee: `plan_block.
+    starts_at` is TEXT with no CHECK behind it, and one row that is not a full ISO
+    timestamp used to raise `ValueError: invalid literal for int()` out of the template
+    call — taking down the whole day page and, because the week grid builds from the
+    same reader, all seven days with it. Rule 5's unit here is the block: one row the
+    page cannot place is one row missing from the ruler, not a blank screen.
+    """
+    try:
+        return int(hhmm[:2]) * 60 + int(hhmm[3:5])
+    except ValueError:
+        return None
 
 
 def _clock(minute_of_day: int) -> str:
@@ -192,8 +221,16 @@ def _raw_entries(view: DayView) -> list[RawEntry]:
             )
         )
     for b in view.blocks:
-        start = _minutes(b["starts_at"][11:16])
-        end = _minutes(b["ends_at"][11:16])
+        start = _minutes(str(b["starts_at"])[11:16])
+        end = _minutes(str(b["ends_at"])[11:16])
+        if start is None or end is None:
+            # Dropped, not placed. The page draws nothing but this timeline, so a row
+            # skipped here is invisible — which is the right trade against the two
+            # alternatives: raising takes the whole day (and the week's other six days)
+            # down, and defaulting to midnight draws a block at a time nothing says it
+            # happens. A schedule that asserts a wrong hour is worse than one missing a
+            # row it could not read.
+            continue
         raw.append(
             (start, max(end - start, 1), str(b["title"]), str(b["kind"]),
              str(b["outcome"]), False)
@@ -437,10 +474,14 @@ def build_router(
     @router.get("/schedule", response_class=HTMLResponse)
     def schedule(
         request: Request,
-        date_: str | None = Query(None, alias="date"),
+        date_: DayParam | None = Query(None, alias="date"),
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:
-        day = date.fromisoformat(date_) if date_ else today()
+        # Typed `date`, not `str` parsed in the body: a hand-edited URL, a stale
+        # bookmark or a typo used to reach `date.fromisoformat` unguarded and 500 the
+        # page. FastAPI answers the same input with a 422 naming the parameter, which
+        # is what /brief/{on_date} has always done by virtue of typing its parameter.
+        day = date_ or today()
         view = day_view(conn, settings, day)
         return templates.TemplateResponse(
             request,
@@ -462,10 +503,10 @@ def build_router(
     @router.get("/schedule/week", response_class=HTMLResponse)
     def week(
         request: Request,
-        start: str | None = None,
+        start: DayParam | None = Query(None),
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:
-        first = week_of(date.fromisoformat(start) if start else today())
+        first = week_of(start or today())
         days = [day_view(conn, settings, first + timedelta(days=i)) for i in range(7)]
         return templates.TemplateResponse(
             request,

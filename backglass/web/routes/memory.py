@@ -17,6 +17,7 @@ from fastapi.templating import Jinja2Templates
 
 from backglass import facts
 from backglass.config import Settings
+from backglass.web.params import RowId
 
 
 def build_router(
@@ -60,7 +61,7 @@ def build_router(
 
     @router.post("/memory/{fact_id}/forget", response_class=HTMLResponse)
     def forget(
-        fact_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+        fact_id: RowId, request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ) -> Any:
         try:
             facts.forget(conn, fact_id)

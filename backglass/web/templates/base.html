@@ -55,7 +55,14 @@
       </div>
     </header>
 
-    {% block content %}{% endblock %}
+    {# A <main> so the page has somewhere to skip to. Without it every panel on
+       every page sat outside a landmark, which is how a screen reader reports "no
+       structure here": the only way through was to read the sidebar again on each
+       navigation. The element is styleless — .wrap keeps the layout — so the change
+       is entirely to the accessibility tree. #}
+    <main id="content">
+      {% block content %}{% endblock %}
+    </main>
   </div>
 </div>
 

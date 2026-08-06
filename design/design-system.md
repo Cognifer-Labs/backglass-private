@@ -82,9 +82,31 @@ pivot, the one step that works on both.
 | cobalt | `#2766C0` | 5.06 | 3.75 | 3.75 |
 
 Gold is the one ink below 3:1 on paper, kept at full brightness on purpose because a
-dimmed gold stops reading as gold. The black keyline plus label is the mitigation. It is
-the only such exception in the system, and adding a second is how a palette stops being
-accessible.
+dimmed gold stops reading as gold. The black keyline plus label is the mitigation.
+
+### The second exception, and why it stays
+
+That paragraph used to end "it is the only such exception in the system." An axe-core
+pass over every page in both themes on 2026-08-06 found that it is not: **black on
+vermilion measures 4.40, under the 4.5 floor for normal text**, and in dark mode the
+washes resolve to the full inks, so vermilion carries body copy — an overdue card's
+title at 15px, its metadata at 13px, its OVERDUE chip at 11px bold, and the sidebar's
+failing-source alert. The figure is not new; the table above has always recorded 4.40.
+What was wrong was the claim that nothing else fell short.
+
+It stays at 4.40, for the reason gold stays at 1.83. Reaching 4.5 means darkening
+vermilion, and the argument against a dimmed gold applies with more force to the alarm
+ink: an overdue mark that has been desaturated to pass a threshold is a quieter alarm,
+which is a worse outcome than a 2% contrast shortfall on text that also carries a
+keyline, a glyph and a word. The palette's all-pairs CVD separation was validated at
+these exact values (see the appendix); moving one of three series slots to buy 0.1 of
+contrast would have to be re-argued against deuteranopia, not just against WCAG.
+
+Light mode is unaffected — a resting component there wears the pastel wash, and the
+full ink appears only under a keyline. So the exception is precisely: **normal text on
+full-strength vermilion, in dark mode.** Recorded here rather than fixed, because a
+palette with two documented exceptions is honest and a palette with one documented and
+one undocumented is not.
 
 **Cobalt is chart-only.** Black text on cobalt measures 3.75, below the 4.5 threshold for
 normal text, so cobalt never carries a chip label. It appears as a chart fill — and as
@@ -184,7 +206,21 @@ Rules    2px solid black between sections; 1px neutral 200 between rows
 Borders  2px black on chips, cards, buttons
 Space    4 8 12 16 24 32 48
 Shadow   none, ever
+Targets  24px minimum, grown under the mark rather than around it
 ```
+
+**Targets are grown under the mark, not around it.** WCAG 2.5.8 asks for 24px, and
+several marks in this system are deliberately smaller than that — a week grid's day box
+is 16px because seven of them in a row is what makes the row read as a week. The rule is
+that the drawing keeps its size and the hit area is expanded beneath it, so meeting the
+minimum never costs the density the mark was chosen for.
+
+Two exemptions, both the standard ones and both real here: a link inside a sentence of
+metadata is inline text, and a block whose height *is* its duration has an essential
+size. The week agenda's event blocks are the second case — they are 22px because they
+are 22 minutes, and padding them would make the timeline lie. What is not exempt there
+is spacing: stacked events touch, so the fix if it is ever wanted is a gap in the grid,
+not a taller link.
 
 Depth comes from the black rule and from figure-ground, the way it does on a printed sign.
 A drop shadow reads as a different design language immediately.

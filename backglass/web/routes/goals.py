@@ -45,6 +45,7 @@ from backglass.ledger import USER_ID
 from backglass.plan import timezones
 from backglass.web import actions
 from backglass.web.panels import week_start_of
+from backglass.web.params import RowId
 
 
 @dataclass(frozen=True)
@@ -479,7 +480,7 @@ def build_router(
 
     @router.post("/goals/checklist/{item_id}/{action}", response_class=HTMLResponse)
     def tick(
-        item_id: int,
+        item_id: RowId,
         action: str,
         request: Request,
         conn: sqlite3.Connection = Depends(get_conn),
@@ -497,7 +498,7 @@ def build_router(
 
     @router.post("/goals/targets/{target_id}/log", response_class=HTMLResponse)
     def log_total(
-        target_id: int,
+        target_id: RowId,
         request: Request,
         amount: int = Form(...),
         note: str = Form(""),
@@ -532,7 +533,7 @@ def build_router(
 
     @router.post("/goals/targets/{target_id}/tick", response_class=HTMLResponse)
     def tick_cadence(
-        target_id: int,
+        target_id: RowId,
         request: Request,
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:
@@ -560,7 +561,7 @@ def build_router(
 
     @router.post("/goals/targets/{target_id}/weekly/{count}", response_class=HTMLResponse)
     def weekly(
-        target_id: int,
+        target_id: RowId,
         count: int,
         request: Request,
         conn: sqlite3.Connection = Depends(get_conn),

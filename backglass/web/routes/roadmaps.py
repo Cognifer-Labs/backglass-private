@@ -22,6 +22,7 @@ from backglass.goals.targets import count_between, week_start_of
 from backglass.ledger import USER_ID
 from backglass.plan import timezones
 from backglass.roadmap import adjust, instantiate, presets
+from backglass.web.params import RowId
 
 
 # The list row's headline accumulator: the goal's first live total target. One
@@ -237,7 +238,7 @@ def build_router(
 
     @router.get("/roadmaps/{roadmap_id}", response_class=HTMLResponse)
     def roadmap_page(
-        roadmap_id: int, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+        roadmap_id: RowId, request: Request, conn: sqlite3.Connection = Depends(get_conn)
     ) -> Any:
         return templates.TemplateResponse(request, "roadmap.html", _detail(conn, roadmap_id))
 
@@ -245,8 +246,8 @@ def build_router(
         "/roadmaps/{roadmap_id}/totals/{target_id}/log", response_class=HTMLResponse
     )
     def total_log(
-        roadmap_id: int,
-        target_id: int,
+        roadmap_id: RowId,
+        target_id: RowId,
         request: Request,
         amount: int = Form(...),
         note: str = Form(""),
@@ -273,7 +274,7 @@ def build_router(
 
     @router.post("/roadmaps/{roadmap_id}/activities", response_class=HTMLResponse)
     def activity_add(
-        roadmap_id: int,
+        roadmap_id: RowId,
         request: Request,
         title: str = Form(...),
         org: str = Form(""),
@@ -293,8 +294,8 @@ def build_router(
         response_class=HTMLResponse,
     )
     def activity_meaningful(
-        roadmap_id: int,
-        activity_id: int,
+        roadmap_id: RowId,
+        activity_id: RowId,
         request: Request,
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:
@@ -310,8 +311,8 @@ def build_router(
         "/roadmaps/{roadmap_id}/totals/{target_id}/set", response_class=HTMLResponse
     )
     def total_set(
-        roadmap_id: int,
-        target_id: int,
+        roadmap_id: RowId,
+        target_id: RowId,
         request: Request,
         total: int = Form(...),
         conn: sqlite3.Connection = Depends(get_conn),
@@ -328,8 +329,8 @@ def build_router(
         "/roadmaps/{roadmap_id}/totals/{target_id}/title", response_class=HTMLResponse
     )
     def total_title(
-        roadmap_id: int,
-        target_id: int,
+        roadmap_id: RowId,
+        target_id: RowId,
         request: Request,
         title: str = Form(...),
         conn: sqlite3.Connection = Depends(get_conn),
@@ -347,9 +348,9 @@ def build_router(
         response_class=HTMLResponse,
     )
     def total_unlog(
-        roadmap_id: int,
-        target_id: int,
-        checkpoint_id: int,
+        roadmap_id: RowId,
+        target_id: RowId,
+        checkpoint_id: RowId,
         request: Request,
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:
@@ -369,7 +370,7 @@ def build_router(
 
     @router.post("/roadmaps/{roadmap_id}/edit", response_class=HTMLResponse)
     def roadmap_edit(
-        roadmap_id: int,
+        roadmap_id: RowId,
         title: str = Form(...),
         definition_of_done: str = Form(""),
         conn: sqlite3.Connection = Depends(get_conn),
@@ -385,8 +386,8 @@ def build_router(
         "/roadmaps/{roadmap_id}/steps/{step_id}/edit", response_class=HTMLResponse
     )
     def step_edit(
-        roadmap_id: int,
-        step_id: int,
+        roadmap_id: RowId,
+        step_id: RowId,
         request: Request,
         title: str = Form(...),
         detail: str = Form(""),
@@ -426,7 +427,7 @@ def build_router(
 
     @router.post("/roadmaps/{roadmap_id}/steps/{step_id}/done", response_class=HTMLResponse)
     def step_done(
-        roadmap_id: int, step_id: int, request: Request,
+        roadmap_id: RowId, step_id: RowId, request: Request,
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:
         _adjust(adjust.complete_step, conn, step_id)
@@ -434,7 +435,7 @@ def build_router(
 
     @router.post("/roadmaps/{roadmap_id}/steps/{step_id}/skip", response_class=HTMLResponse)
     def step_skip(
-        roadmap_id: int, step_id: int, request: Request,
+        roadmap_id: RowId, step_id: RowId, request: Request,
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:
         _adjust(adjust.skip_step, conn, step_id)
@@ -442,7 +443,7 @@ def build_router(
 
     @router.post("/roadmaps/{roadmap_id}/steps/{step_id}/unskip", response_class=HTMLResponse)
     def step_unskip(
-        roadmap_id: int, step_id: int, request: Request,
+        roadmap_id: RowId, step_id: RowId, request: Request,
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:
         _adjust(adjust.unskip_step, conn, step_id)
@@ -452,7 +453,7 @@ def build_router(
         "/roadmaps/{roadmap_id}/steps/{step_id}/date/{iso}", response_class=HTMLResponse
     )
     def step_date(
-        roadmap_id: int, step_id: int, iso: str, request: Request,
+        roadmap_id: RowId, step_id: RowId, iso: str, request: Request,
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:
         try:
@@ -466,7 +467,7 @@ def build_router(
         "/roadmaps/{roadmap_id}/steps/{step_id}/move/{direction}", response_class=HTMLResponse
     )
     def step_move(
-        roadmap_id: int, step_id: int, direction: str, request: Request,
+        roadmap_id: RowId, step_id: RowId, direction: str, request: Request,
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:
         if direction not in ("up", "down"):
@@ -475,7 +476,7 @@ def build_router(
         return steps_fragment(request, conn, roadmap_id)
 
     @router.post("/roadmaps/{roadmap_id}/drop", response_class=HTMLResponse)
-    def drop(roadmap_id: int, conn: sqlite3.Connection = Depends(get_conn)) -> Any:
+    def drop(roadmap_id: RowId, conn: sqlite3.Connection = Depends(get_conn)) -> Any:
         _adjust(adjust.drop_roadmap, conn, roadmap_id)
         return RedirectResponse(url="/roadmaps", status_code=303)
 

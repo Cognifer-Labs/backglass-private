@@ -9,7 +9,8 @@
   {% if grid.empty %}
     <p class="empty">No checklist items yet.</p>
   {% else %}
-    <table class="wkg">
+    <div class="wkgwrap">
+      <table class="wkg">
       <thead>
         <tr>
           <th class="nm"></th>
@@ -50,7 +51,8 @@
           </tr>
         {% endfor %}
       </tbody>
-    </table>
+      </table>
+    </div>
     <div class="legend">
       <span><i style="background:var(--green)"></i>Done</span>
       <span><i></i>Open</span>

@@ -10,12 +10,12 @@
     {% for tag in r['tags'] %}<span class="chip">{{ tag }}</span>{% endfor %}
     {% if r['open_count'] %}<span class="chip k-black">{{ r['open_count'] }} open</span>{% endif %}
     {% if t and t.level == 'cold' %}
-      <span class="chip k-verm"><span aria-hidden="true">▲</span>{{ t.chip() }}</span>
+      <span class="chip k-verm long"><span aria-hidden="true">▲</span>{{ t.chip() }}</span>
     {% elif t and t.level == 'warn' %}
-      <span class="chip k-gold"><span aria-hidden="true">◆</span>{{ t.chip() }}</span>
+      <span class="chip k-gold long"><span aria-hidden="true">◆</span>{{ t.chip() }}</span>
     {% elif t and t.level == 'new' %}
       {# Young data, not a lapse — neutral ink, no fill. #}
-      <span class="chip k-plain">{{ t.chip() }}</span>
+      <span class="chip k-plain long">{{ t.chip() }}</span>
     {% endif %}
   </div>
 {%- endmacro %}

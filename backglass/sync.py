@@ -158,10 +158,19 @@ class SyncLocked(RuntimeError):
     """Another run holds the sync lock; the message says which pid and since when."""
 
 
-#: Reentrancy depth for `run_lock`, so batch submit can hold the lock around the
+#: Reentrancy for `run_lock`, so batch submit can hold the lock around the
 #: `sync(extract=False)` it calls without deadlocking on itself. Written only from
 #: the main thread of a run — the pool in `_in_parallel` never touches the lock.
-_LOCK_DEPTH = 0
+#:
+#: Keyed by database rather than counted once for the process: flock excludes by open
+#: file description, so "is this me?" is a question the kernel cannot answer and the
+#: depth has to be tracked here — but a single counter answers it for the wrong
+#: database as readily as the right one. Holding the lock on one ledger would make the
+#: first acquire on a second ledger look reentrant and skip locking it entirely. One
+#: database per process is the normal case and would never notice; the test suite runs
+#: several per process, and so would any future tool that opened a demo copy beside the
+#: real one.
+_HELD: dict[str, list[Any]] = {}  # resolved db path -> [file handle, depth]
 
 
 @contextmanager
@@ -175,15 +184,18 @@ def run_lock(settings: Settings) -> Iterator[None]:
     guarantee. flock releases on process death, so a crashed run cannot strand the
     lock; a held lock always means a live process.
     """
-    global _LOCK_DEPTH
-    if _LOCK_DEPTH:
-        _LOCK_DEPTH += 1
+    db = Path(settings.db_path).expanduser()
+    key = str(db.resolve())
+    entry = _HELD.get(key)
+    if entry is not None:
+        entry[1] += 1
         try:
             yield
         finally:
-            _LOCK_DEPTH -= 1
+            entry[1] -= 1
+            if entry[1] == 0:
+                _release(key)
         return
-    db = Path(settings.db_path).expanduser()
     db.parent.mkdir(parents=True, exist_ok=True)
     # Opened append, never "w": truncating before a failed acquire would erase the
     # holder's pid line while it is still running.
@@ -199,12 +211,25 @@ def run_lock(settings: Settings) -> Iterator[None]:
     fh.truncate()
     fh.write(f"pid {os.getpid()} since {now_iso()}")
     fh.flush()
-    _LOCK_DEPTH += 1
+    _HELD[key] = [fh, 1]
     try:
         yield
     finally:
-        _LOCK_DEPTH -= 1
+        entry = _HELD.get(key)
+        if entry is not None:
+            entry[1] -= 1
+            if entry[1] == 0:
+                _release(key)
+
+
+def _release(key: str) -> None:
+    entry = _HELD.pop(key, None)
+    if entry is None:
+        return
+    fh = entry[0]
+    try:
         fcntl.flock(fh, fcntl.LOCK_UN)
+    finally:
         fh.close()
 
 
