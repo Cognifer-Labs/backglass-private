@@ -979,6 +979,9 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .atbl td.nm{font:600 14px/20px system-ui,sans-serif}
 .atbl td.sub{font:400 12px/17px system-ui,sans-serif;color:var(--ink-muted)}
 .atbl td.span{white-space:nowrap}
+/* "contact · notes" wrapping to two lines made every incomplete row taller than a
+ * complete one, which reads as emphasis on the gap. It is a checklist, not an alarm. */
+.atbl td.needs,.atbl th.needs{white-space:nowrap}
 .atbl td.stk,.atbl th.stk{white-space:nowrap}
 .atbl td.stk{font:700 13px/18px ui-monospace,"SF Mono",Menlo,monospace;
   font-variant-numeric:tabular-nums;color:var(--ink)}

@@ -1,3 +1,37 @@
+# What Work & Activities would still be missing
+
+Started 2026-08-06. Third pass on the log zone, and the last one the page needed.
+
+`amcas-export` has always known what each activity is short of — it prints
+"Organization: —", "Contact: — (add a supervisor entity)", "no dates logged", and a
+zero-character draft. But it only says so when it runs, and there is no reason to run it
+until the application is due, by which point the four years it summarizes are over. The
+checklist belongs on the page where the record is made.
+
+## Steps
+
+- [x] 1. `activities.export_gaps(row)` — the four fields the export renders a placeholder
+      for, named in the order it prints them. `EXPORT_FIELDS` is the one table both
+      surfaces read from. `list_with_hours` gains `note_entries` (every checkpoint
+      carrying words, not only hour-bearing ones, matching what the export concatenates).
+- [x] 2. A Needs column and a "N of M ready" rollup in the registry footer. Muted, no
+      chip, nowrap: a gap is a checklist item, not an alarm, and a wrapped two-line cell
+      made every incomplete row taller than a complete one, which reads as emphasis.
+- [x] 3. `tests/test_amcas_readiness.py` — including the anti-drift test that runs the
+      real `amcas-export` through `CliRunner` and asserts every word the page prints is
+      a placeholder the export actually emits, and that an activity the page calls ready
+      exports with none of them. Three mutations proven red (whitespace org, dates
+      requiring a hand-entered start, and a renamed gap word breaking the binding).
+
+## Why a checklist and not validation
+
+AMCAS's own caps are surfaced and never enforced — that is the module's stated rule, and
+an activity is perfectly loggable with all four gaps open. The dates rule follows the
+export exactly: `started_on` OR a logged span, so an activity with real logged hours
+never asks for a start date it does not need.
+
+---
+
 # Hours the bars count and the registry cannot
 
 Started 2026-08-06. Follows the log-zone rework. The table built there put two figures

@@ -212,13 +212,56 @@ def list_with_hours(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         "  (SELECT MIN(c.occurred_at) FROM checkpoint c WHERE c.activity_id = a.id) "
         "   AS first_logged, "
         "  (SELECT MAX(c.occurred_at) FROM checkpoint c WHERE c.activity_id = a.id) "
-        "   AS last_logged "
+        "   AS last_logged, "
+        # Every checkpoint carrying words, not only the hour-bearing ones: this is the
+        # raw material `amcas-export` concatenates into the draft description, and it
+        # counts a cadence tick's note the same way the export does.
+        "  (SELECT COUNT(*) FROM checkpoint c WHERE c.activity_id = a.id "
+        "   AND c.note IS NOT NULL AND TRIM(c.note) != '') AS note_entries "
         "FROM activity a LEFT JOIN entity e ON e.id = a.contact_entity_id "
         "WHERE a.user_id = ? AND a.active = 1 "
         "ORDER BY a.most_meaningful DESC, a.category, a.id",
         (USER_ID,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+#: What `amcas-export` prints a placeholder for, in the order the export prints it.
+#: Each key is a field the export renders as `—` when it is missing, and the value is
+#: the word the page shows instead. Kept as one table so the two surfaces cannot drift:
+#: `tests/test_amcas_readiness.py` asserts every key here still corresponds to a
+#: placeholder the export actually emits, and that an activity with none of these gaps
+#: produces an export section with no placeholder in it at all.
+EXPORT_FIELDS = ("org", "contact", "dates", "notes")
+
+
+def export_gaps(activity: dict[str, Any]) -> list[str]:
+    """What this activity would still be missing in Work & Activities, in export order.
+
+    The CLI has always known this — it prints "Organization: —" and "Contact: — (add a
+    supervisor entity)" and "no dates logged" — but the page that is used to *build* the
+    record never said it, so a gap was only discoverable by running an export the owner
+    had no reason to run until the application was due.
+
+    A gap is not a failure and this is not validation: AMCAS's own limits are surfaced
+    and never enforced (see the module docstring), and an activity is perfectly loggable
+    with every one of these missing. It is a checklist, printed where the record is made.
+    """
+    gaps: list[str] = []
+    if not (activity.get("org") or "").strip():
+        gaps.append("org")
+    if not activity.get("contact_name"):
+        gaps.append("contact")
+    # The export falls back to the logged span when `started_on` is unset, so dates are
+    # missing only when neither exists — an activity logged against real dates needs no
+    # hand-entered start.
+    if not (activity.get("started_on") or activity.get("first_logged")):
+        gaps.append("dates")
+    # No noted checkpoint means the export's "draft material" is the empty string: hours
+    # with nothing to write the description from.
+    if not int(activity.get("note_entries") or 0):
+        gaps.append("notes")
+    return gaps
 
 
 def find_by_name(conn: sqlite3.Connection, name: str) -> list[dict[str, Any]]:

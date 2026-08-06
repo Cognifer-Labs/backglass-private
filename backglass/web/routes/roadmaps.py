@@ -204,7 +204,12 @@ def progress_context(
     detail["hours"] = hours.monthly(
         detail["totals"], today=day, target_date=detail["r"].get("target_date")
     )
-    detail["activities"] = activities.list_with_hours(conn)
+    # Each activity carries what Work & Activities would still be missing from it, so
+    # the checklist prints where the record is made rather than in an export the owner
+    # has no reason to run until the application is due.
+    detail["activities"] = [
+        {**a, "gaps": activities.export_gaps(a)} for a in activities.list_with_hours(conn)
+    ]
     detail["categories"] = activities.CATEGORIES
     detail["amcas_slots"] = activities.AMCAS_SLOTS
     detail["amcas_meaningful"] = activities.AMCAS_MOST_MEANINGFUL
