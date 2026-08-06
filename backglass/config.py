@@ -145,6 +145,11 @@ class Settings(BaseSettings):
     buffer_long_threshold_minutes: int = 30
     #: P11. "An item that rolls over three times is flagged."
     rollover_question_at: int = 3
+    #: A commitment this many days past due stops crowding the board's Overdue lane and
+    #: folds into Stale — a backfilled mail window reaches months back, so obligations
+    #: answered long ago arrive looking open, and thirty of them drown the three that
+    #: are genuinely late. Folded, never hidden: same rows, same actions, one click away.
+    stale_after_days: int = 14
 
     #: docs/04 §1.3. "Otherwise the default is by commitment type, configurable: review 30,
     #: draft 60, decision 15, meeting-prep 30, unknown 45." Never auto-adjusted — §1.3

@@ -202,7 +202,31 @@ def board_panel(conn: sqlite3.Connection, settings: Settings, today: date) -> Pa
     for row in rows:
         row["bucket"] = urgency_bucket(row["due_at"], today)
         row["due_line"] = board_due_line(row["due_at"], today)
-    return Panel(title="Commitments", empty_text="Nothing open.", rows=rows)
+    # Long-overdue rows fold into Stale rather than crowding the lane a person scans
+    # every morning. A 120-day mail backfill delivers months-old obligations that were
+    # answered before the ledger existed; they are real extractions and real decisions
+    # to make, but they are not today's news, and thirty of them drown the three that
+    # are. The split is presentation only — same rows, same actions, still counted open.
+    def _days_late(row: dict[str, Any]) -> int:
+        return (today - date.fromisoformat(str(row["due_at"])[:10])).days
+
+    live = [
+        r for r in rows
+        if r["bucket"] != "Overdue" or _days_late(r) <= settings.stale_after_days
+    ]
+    stale = [
+        r for r in rows
+        if r["bucket"] == "Overdue" and _days_late(r) > settings.stale_after_days
+    ]
+    return Panel(
+        title="Commitments",
+        empty_text="Nothing open.",
+        rows=live,
+        # The threshold rides in meta because the board also renders as an HTMX
+        # fragment whose context has no `settings` — a template that reaches for it
+        # there raises at the first swap, not at review time.
+        meta={"stale": stale, "stale_after_days": settings.stale_after_days},
+    )
 
 
 def swimlanes(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:

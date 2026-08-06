@@ -1,6 +1,46 @@
 {% import "_macros.html" as m %}
+{% macro commitment_card(c) %}
+  {# docs/06: "Every commitment card is a click target in full, not just its title."
+     One macro, two callers (the lanes and the Stale fold) — a card's shape must not
+     fork on which list it renders in. #}
+  <div class="row card" tabindex="0" data-commitment="{{ c['id'] }}"
+       data-state="{{ c['state'] }}">
+    <p class="b1 hang"><span class="dir" aria-label="{{ 'I owe' if c['direction'] == 'i_owe' else 'Owed to me' }}"
+        title="{{ 'I owe' if c['direction'] == 'i_owe' else 'Owed to me' }}">{{ '→' if c['direction'] == 'i_owe' else '←' }}</span><span>
+      {%- if c['counterparty'] %}<strong>{{ c['counterparty'] }}:</strong> {% endif -%}
+      {{ c['what'] }}</span>
+      {#- The bucket heading already says overdue/today, so those chips would be
+          noise; slipping is the one state the headings cannot carry. -#}
+      {%- if c['state'] == 'slipping' %} {{ m.chip('slipping') }}{% endif %}</p>
+    <p class="b2">
+      {%- if c['due_line'] %}{{ c['due_line'] }} · {% endif -%}
+      {%- if c['estimated_minutes'] %}{{ c['estimated_minutes'] }}m · {% endif -%}
+      {%- if c['goal_title'] %}{{ c['goal_title'] }} · {% endif -%}
+      {{ m.source_link(c) }}
+      {#- How many documents say this. Only shown above one: the register form's
+          ruling is one line per commitment, and "1 mention" on every row is a
+          column of noise. Above one it is real information — a promise restated
+          across a thread is not the same object as one said once — and the
+          sentences themselves are one click away on the source page. -#}
+      {%- if c['mention_count'] and c['mention_count'] > 1 %} · {{ c['mention_count'] }} mentions{% endif %}
+    </p>
+    <div class="acts">
+      {# docs/11 §3: no confirmation on resolve. The action is reversible and the
+         dialog costs more over a year than the occasional misclick. #}
+      <button class="btn ok" hx-post="/commitments/{{ c['id'] }}/resolve"
+              hx-target="#panel-board" hx-swap="outerHTML">Resolve</button>
+      <button class="btn defer" hx-post="/commitments/{{ c['id'] }}/snooze/1"
+              hx-target="#panel-board" hx-swap="outerHTML">Snooze</button>
+      {# docs/06: "No confirmation dialogs except for drop, which is destructive
+         and rare." This is the only hx-confirm in the application. #}
+      <button class="btn danger" hx-post="/commitments/{{ c['id'] }}/drop"
+              hx-target="#panel-board" hx-swap="outerHTML"
+              hx-confirm="Drop “{{ c['what'] }}”? This tombstones it.">Drop</button>
+    </div>
+  </div>
+{% endmacro %}
 <details class="panel" id="panel-board" open>
-  {{ m.foldbanner(d.board.title, d.board.rows|length ~ ' open') }}
+  {{ m.foldbanner(d.board.title, (d.board.rows|length + d.board.meta.stale|length) ~ ' open') }}
   <div class="inner">
     {# Phase 6: the one way a commitment enters by hand. Provenance is a manual
        source_item — see actions.quick_add. #}
@@ -21,7 +61,7 @@
         <button class="btn ok" type="submit">Add</button>
       </form>
     </details>
-    {% if d.board.empty %}
+    {% if d.board.empty and not d.board.meta.stale %}
       {# docs/06 §Empty states: declarative, never cheerful. #}
       <p class="empty">Nothing open.</p>
     {% else %}
@@ -46,43 +86,21 @@
             <p class="lane">{{ c['bucket'] }}</p>
           {% endif %}
         {% endif %}
-        {# docs/06: "Every commitment card is a click target in full, not just its title." #}
-        <div class="row card" tabindex="0" data-commitment="{{ c['id'] }}"
-             data-state="{{ c['state'] }}">
-          <p class="b1 hang"><span class="dir" aria-label="{{ 'I owe' if c['direction'] == 'i_owe' else 'Owed to me' }}"
-              title="{{ 'I owe' if c['direction'] == 'i_owe' else 'Owed to me' }}">{{ '→' if c['direction'] == 'i_owe' else '←' }}</span><span>
-            {%- if c['counterparty'] %}<strong>{{ c['counterparty'] }}:</strong> {% endif -%}
-            {{ c['what'] }}</span>
-            {#- The bucket heading already says overdue/today, so those chips would be
-                noise; slipping is the one state the headings cannot carry. -#}
-            {%- if c['state'] == 'slipping' %} {{ m.chip('slipping') }}{% endif %}</p>
-          <p class="b2">
-            {%- if c['due_line'] %}{{ c['due_line'] }} · {% endif -%}
-            {%- if c['estimated_minutes'] %}{{ c['estimated_minutes'] }}m · {% endif -%}
-            {%- if c['goal_title'] %}{{ c['goal_title'] }} · {% endif -%}
-            {{ m.source_link(c) }}
-            {#- How many documents say this. Only shown above one: the register form's
-                ruling is one line per commitment, and "1 mention" on every row is a
-                column of noise. Above one it is real information — a promise restated
-                across a thread is not the same object as one said once — and the
-                sentences themselves are one click away on the source page. -#}
-            {%- if c['mention_count'] and c['mention_count'] > 1 %} · {{ c['mention_count'] }} mentions{% endif %}
-          </p>
-          <div class="acts">
-            {# docs/11 §3: no confirmation on resolve. The action is reversible and the
-               dialog costs more over a year than the occasional misclick. #}
-            <button class="btn ok" hx-post="/commitments/{{ c['id'] }}/resolve"
-                    hx-target="#panel-board" hx-swap="outerHTML">Resolve</button>
-            <button class="btn defer" hx-post="/commitments/{{ c['id'] }}/snooze/1"
-                    hx-target="#panel-board" hx-swap="outerHTML">Snooze</button>
-            {# docs/06: "No confirmation dialogs except for drop, which is destructive
-               and rare." This is the only hx-confirm in the application. #}
-            <button class="btn danger" hx-post="/commitments/{{ c['id'] }}/drop"
-                    hx-target="#panel-board" hx-swap="outerHTML"
-                    hx-confirm="Drop “{{ c['what'] }}”? This tombstones it.">Drop</button>
-          </div>
-        </div>
+        {{ commitment_card(c) }}
       {% endfor %}
+      {% if d.board.meta.stale %}
+        {# Months-old obligations a backfill delivered looking open. Folded, never
+           hidden: they are real decisions, they are just not this morning's — and
+           thirty of them above the fold drown the three that are. Same cards, same
+           actions; resolving from here is how the pile shrinks. #}
+        <details class="addform">
+          <summary class="lbl">Stale ({{ d.board.meta.stale|length }}) —
+            overdue {{ d.board.meta.stale_after_days }}+ days, likely already answered</summary>
+          {% for c in d.board.meta.stale %}
+            {{ commitment_card(c) }}
+          {% endfor %}
+        </details>
+      {% endif %}
     {% endif %}
   </div>
 </details>

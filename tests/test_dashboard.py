@@ -116,6 +116,66 @@ def test_low_confidence_is_in_the_review_queue_and_not_on_the_board(
     assert "a guess" not in board
 
 
+class TestStaleFold:
+    """Long-overdue rows fold into Stale instead of drowning the Overdue lane.
+
+    The 120-day mail backfill delivered thirty months-old obligations that were
+    answered before the ledger existed; they buried the three genuinely late rows.
+    Presentation only: same cards, same actions, still counted open."""
+
+    def test_the_boundary_is_the_configured_day_not_near_it(
+        self, conn, settings: Settings
+    ) -> None:  # type: ignore[no-untyped-def]
+        """Both edges in one change (lessons.md): exactly stale_after_days late is
+        still live; one more day folds."""
+        from datetime import timedelta
+
+        edge = (TODAY - timedelta(days=settings.stale_after_days)).isoformat()
+        past = (TODAY - timedelta(days=settings.stale_after_days + 1)).isoformat()
+        commitment(conn, settings, n=1, what="on the edge", due_at=edge)
+        commitment(conn, settings, n=2, what="long gone", due_at=past)
+        board = panels.board_panel(conn, settings, TODAY)
+        assert [r["what"] for r in board.rows] == ["on the edge"]
+        assert [r["what"] for r in board.meta["stale"]] == ["long gone"]
+
+    def test_the_fold_renders_with_working_actions_and_an_honest_count(
+        self, client: TestClient, conn, settings: Settings
+    ) -> None:  # type: ignore[no-untyped-def]
+        from datetime import timedelta
+
+        past = (TODAY - timedelta(days=40)).isoformat()
+        commitment(conn, settings, n=1, what="answered in April", due_at=past)
+        commitment(conn, settings, n=2, what="late but live",
+                   due_at=(TODAY - timedelta(days=2)).isoformat())
+        board = panel_slice(client.get("/").text, "panel-board")
+        assert "Stale (1)" in board
+        assert "answered in April" in board
+        assert "2 open" in board  # folded is still open; the count must not lie
+
+        # Resolving from inside the fold is the whole point — drive the real door.
+        stale_id = conn.execute(
+            "SELECT id FROM commitment WHERE what = 'answered in April'"
+        ).fetchone()["id"]
+        done = client.post(f"/commitments/{stale_id}/resolve")
+        assert done.status_code == 200
+        assert "Stale (" not in done.text  # the fold vanishes with its last row
+        status = conn.execute(
+            "SELECT status FROM commitment WHERE id = ?", (stale_id,)
+        ).fetchone()["status"]
+        assert status == "done"
+
+    def test_a_board_of_only_stale_rows_does_not_claim_nothing_open(
+        self, client: TestClient, conn, settings: Settings
+    ) -> None:  # type: ignore[no-untyped-def]
+        from datetime import timedelta
+
+        commitment(conn, settings, n=1, what="ancient",
+                   due_at=(TODAY - timedelta(days=90)).isoformat())
+        board = panel_slice(client.get("/").text, "panel-board")
+        assert "Nothing open" not in board
+        assert "Stale (1)" in board
+
+
 def test_swimlanes_group_by_counterparty(conn, settings: Settings) -> None:  # type: ignore[no-untyped-def]
     """docs/06: "Board grouped by status, swimlanes by counterparty."."""
     commitment(conn, settings, n=1, counterparty="Dana <dana@example.gov>")
