@@ -569,3 +569,11 @@ deterministic given the id.
   code bug — `sample <pid>` bottoming out in `_io_FileIO___init__ → open` is the
   signature. Diagnose by running the same binary from the same cwd in a terminal:
   if it serves there, the code is fine and the sandbox is the variable.
+
+- 2026-08-06 (addendum) | The TCC prompt recurs on EVERY rebuild: ad-hoc codesign (-s -)
+  mints a fresh identity each time, and macOS keys the Downloads grant to it. | The
+  durable fix is a stable self-signed signing identity (Keychain Access → Certificate
+  Assistant → code-signing cert, e.g. "Backglass Dev"), then `codesign -s "Backglass
+  Dev"` in build-sidecar.sh — the grant survives rebuilds. Until that exists, every
+  reinstall costs the owner one Allow click, and a sidecar with ~0 CPU stuck pre-bind
+  is that click waiting to happen.
