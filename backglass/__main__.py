@@ -2979,9 +2979,11 @@ def schedule_install(
     again after moving the repo or reinstalling uv — it just re-renders and reloads.
     """
     from backglass import schedule as schedule_mod
+    from backglass.extract.client import anthropic_api_key
 
+    batch_lane = bool(anthropic_api_key(get_settings()))
     try:
-        rendered = schedule_mod.install(dry_run=dry_run)
+        rendered = schedule_mod.install(dry_run=dry_run, batch_lane=batch_lane)
     except schedule_mod.ScheduleError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -2994,6 +2996,12 @@ def schedule_install(
 
     for filename in rendered:
         typer.echo(f"installed {filename}")
+    if not batch_lane:
+        typer.echo(
+            "batch jobs skipped: no Anthropic API key, so batch submit/collect can "
+            "only fail — the sync path covers extraction. Set MODEL_API_KEY or "
+            "ANTHROPIC_API_KEY and re-run to schedule the overnight lane."
+        )
     typer.echo(f"wrote {len(rendered)} job(s) to {schedule_mod.LAUNCH_AGENTS_DIR}")
     typer.echo("verify with `backglass doctor` or `launchctl list | grep backglass`")
 

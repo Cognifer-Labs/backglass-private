@@ -144,6 +144,44 @@ def test_real_run_writes_and_loads_each_job(monkeypatch, tmp_path) -> None:
     assert all(cmd[:2] == ["launchctl", "load"] for cmd in loads)
 
 
+def test_no_api_key_skips_the_batch_jobs() -> None:
+    """A job whose every fire can only exit 2 is not a schedule, it is an error log."""
+    rendered = schedule.install(dry_run=True, uv_bin="/fake/uv", batch_lane=False)
+    assert rendered  # the other six still ship
+    assert not any(f.startswith(schedule.BATCH_PREFIX) for f in rendered)
+    assert "com.backglass.sync.plist" in rendered
+
+
+def test_a_key_keeps_the_batch_jobs() -> None:
+    rendered = schedule.install(dry_run=True, uv_bin="/fake/uv", batch_lane=True)
+    assert "com.backglass.batch-submit.plist" in rendered
+    assert "com.backglass.batch-collect.plist" in rendered
+
+
+def test_losing_the_key_unloads_previously_installed_batch_jobs(
+    monkeypatch, tmp_path
+) -> None:
+    """The machine this fixes: batch jobs installed back when they seemed harmless,
+    now failing every night. A re-run of `schedule install` must take them out, not
+    merely stop adding them."""
+    agents = tmp_path / "LaunchAgents"
+    agents.mkdir()
+    stale = agents / "com.backglass.batch-submit.plist"
+    stale.write_text("<plist/>")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(schedule, "LAUNCH_AGENTS_DIR", agents)
+    monkeypatch.setattr(schedule.subprocess, "run", lambda cmd, **k: calls.append(cmd))
+
+    rendered = schedule.install(dry_run=False, uv_bin="/fake/uv", batch_lane=False)
+
+    assert not stale.exists()
+    assert ["launchctl", "unload", str(stale)] in calls
+    loaded = [cmd for cmd in calls if cmd[1] == "load"]
+    assert loaded
+    assert not any(schedule.BATCH_PREFIX in cmd[2] for cmd in loaded)
+    assert not any(f.startswith(schedule.BATCH_PREFIX) for f in rendered)
+
+
 # ── the Schedule page: one event, one entry ───────────────────────────────
 
 DAY = date(2026, 8, 20)
