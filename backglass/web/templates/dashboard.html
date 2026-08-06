@@ -38,7 +38,11 @@
     <span class="kbd">j</span> <span class="kbd">k</span> move ·
     <span class="kbd">x</span> resolve · <span class="kbd">d</span> drop ·
     <span class="kbd">s</span> snooze · <span class="kbd">r</span> review queue ·
-    <span class="kbd">1</span>–<span class="kbd">6</span> pages
+    {# The range tracks base.html's `pages` map, which grew to eight destinations
+       when Chats and Brief joined the sidebar; the legend kept advertising six, so
+       two working keys were undiscoverable. tests/test_edges.py derives the range
+       from that map rather than restating it. #}
+    <span class="kbd">1</span>–<span class="kbd">8</span> pages
   </p>
 {% endblock %}
 

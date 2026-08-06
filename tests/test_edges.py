@@ -493,6 +493,41 @@ class TestOneUnreadableRowIsNotABlankPage:
         assert "unreadable" not in client.get("/schedule?date=2026-08-10").text
 
 
+class TestTheKeyboardLegendMatchesTheKeyboard:
+    """A legend is a claim about the program, and this one had drifted: base.html
+    binds 1-8 to the eight sidebar destinations, the dashboard advertised 1-6, and
+    the two keys that reach Chats and Brief were undiscoverable.
+
+    Derived from the bindings rather than restated. A test that hard-codes "1-8"
+    teaches the next author to edit the assertion instead of reading it — the same
+    shape as the migration-version lists tasks/lessons.md already regrets.
+    """
+
+    TEMPLATES = Path(__file__).resolve().parents[1] / "backglass" / "web" / "templates"
+
+    def _bound_keys(self) -> list[str]:
+        base = (self.TEMPLATES / "base.html").read_text()
+        table = re.search(r"const pages = \{(.+?)\}", base, re.S)
+        assert table, "base.html no longer declares a `pages` map"
+        return re.findall(r"'(\d)':", table.group(1))
+
+    def test_every_bound_page_key_is_advertised(self) -> None:
+        keys = self._bound_keys()
+        assert keys, "no page keys found"
+        legend = (self.TEMPLATES / "dashboard.html").read_text()
+        span = f'<span class="kbd">{keys[0]}</span>-<span class="kbd">{keys[-1]}</span>'
+        span = span.replace("-", "\u2013")
+        assert span in legend, (
+            f"the legend does not cover {keys[0]}-{keys[-1]}; the bindings did not "
+            "change, the sentence describing them did"
+        )
+
+    def test_the_keys_are_contiguous(self) -> None:
+        """A range in the legend only tells the truth if the map has no holes."""
+        keys = [int(k) for k in self._bound_keys()]
+        assert keys == list(range(keys[0], keys[0] + len(keys))), keys
+
+
 class TestNothingIsWiderThanThePhone:
     """The dashboard measured 642px wide inside a 390px viewport, and the right
     third of every panel was unreachable on a phone.
