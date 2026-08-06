@@ -415,10 +415,15 @@ def test_adjusting_a_weekly_target(client: TestClient, conn) -> None:  # type: i
 
 def test_the_tracking_pixel_records_the_first_open_only(client: TestClient, conn) -> None:  # type: ignore[no-untyped-def]
     """docs/05 B7: "A brief nobody opens is the signal that matters most."."""
+    # `sent_at` is not decoration: `mark_brief_opened` requires it, so without it this
+    # test asserts the opposite of what the code does and main has been red on it. A
+    # fuller version — a `_a_brief_row(sent=…)` helper plus the case where an unsent
+    # brief is NOT marked — is sitting uncommitted in the main checkout and should win
+    # over this line when it lands.
     conn.execute(
         "INSERT INTO brief (user_id, generated_for_date, kind, content_md, items_json, "
-        " word_count) VALUES (?, ?, 'daily', 'md', '[]', 10)",
-        (USER_ID, TODAY.isoformat()),
+        " word_count, sent_at) VALUES (?, ?, 'daily', 'md', '[]', 10, ?)",
+        (USER_ID, TODAY.isoformat(), "2026-07-30T06:00:12Z"),
     )
     brief_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
 

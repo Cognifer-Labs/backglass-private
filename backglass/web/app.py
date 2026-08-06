@@ -195,13 +195,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         if action not in ("enable", "disable"):
             raise HTTPException(status_code=422, detail=f"unknown action {action!r}")
-        # `set_enabled` upserts, so without this the route is a public writer into the
-        # credential table: any path segment becomes a row, and the row shows up in the
-        # Sources panel as a configured source that no connector will ever sync. There is
-        # no connector registry to check against — a source name is `gmail:<label>` or
-        # `calendar:apple`, minted by whatever authed — so the credential row IS the set
-        # of sources that exist, and the panel only ever renders a toggle for one of them.
-        if credentials.load(conn, source) is None:
+        # Only sources that already have a credential row — set_enabled is an UPSERT,
+        # and an unknown name would mint a green row in the Sources panel that no
+        # connector backs and no route can remove.
+        known = conn.execute(
+            "SELECT 1 FROM credential WHERE user_id = ? AND source = ?", (1, source)
+        ).fetchone()
+        if known is None:
             raise HTTPException(status_code=422, detail=f"unknown source {source!r}")
         credentials.set_enabled(conn, source, action == "enable")
         return sources_fragment(request, conn)

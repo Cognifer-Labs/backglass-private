@@ -232,6 +232,26 @@ class TestSayingYesMeansTheHistoryToo:
 
         assert credentials.load(conn, "imessage").cursor is None
 
+    def test_monitoring_an_instagram_chat_rewinds_both_lanes(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """The decision lives under `instagram`; the conversation can arrive through
+        `instagram` (export) or `instagram:live`. Saying yes must reach backwards on
+        whichever lane carries it — and must not touch an unrelated source."""
+        from backglass.connectors import credentials
+
+        credentials.save_cursor(conn, "instagram", "1783695845000")
+        credentials.save_cursor(conn, "instagram:live", "2026-07-10T15:04:05+00:00")
+        credentials.save_cursor(conn, "imessage", "43003")
+        seen(conn, "Goa trip", source="instagram")
+        chat = chats_mod.listing(conn, "instagram")[0]
+
+        chats_mod.decide(conn, chat.id, chats_mod.MONITOR)
+
+        assert credentials.load(conn, "instagram").cursor is None
+        assert credentials.load(conn, "instagram:live").cursor is None
+        assert credentials.load(conn, "imessage").cursor == "43003"
+
     def test_ignoring_leaves_the_cursor_alone(self, conn: sqlite3.Connection) -> None:
         """Declining a chat is not a reason to re-scan the store."""
         from backglass.connectors import credentials
@@ -297,6 +317,31 @@ class TestThePage:
         client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
 
         assert client.post(f"/chats/{chat.id}/delete-everything").status_code == 422
+
+    def test_a_vanished_chat_refuses_instead_of_redirecting_as_if_it_worked(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """Found by the unresponsiveness sweep: deciding about a chat that does not
+        exist redirected 303 like a success. Same acted-on-nothing rule as
+        `_require_open` — refuse, so the page shows the truth."""
+        client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
+
+        assert client.post("/chats/999999/monitor").status_code == 422
+
+    def test_a_repeated_decision_still_lands_quietly(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """A double-click is not an error: the second press of the same button on a
+        real chat redirects like the first, it just changes nothing."""
+        seen(conn, "Pih ball")
+        conn.commit()
+        (chat,) = chats_mod.listing(conn)
+        client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
+
+        first = client.post(f"/chats/{chat.id}/monitor", follow_redirects=False)
+        second = client.post(f"/chats/{chat.id}/monitor", follow_redirects=False)
+        assert first.status_code == 303
+        assert second.status_code == 303
 
     def test_the_dashboard_raises_the_question(
         self, conn: sqlite3.Connection, settings: Settings

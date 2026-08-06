@@ -215,19 +215,19 @@ def reject_plan(conn: sqlite3.Connection, engagement_id: int) -> Result:
 
 
 def _require_checklist_item(conn: sqlite3.Connection, item_id: int) -> None:
-    """The row check every other action in this module does before it writes.
+    """Same shape as `_require_open`: a stale page's tick must refuse, not lie.
 
-    `tick` and `untick` were the two that did not, and they failed in opposite
-    directions: an insert against a deleted item escaped as a raw `IntegrityError:
-    FOREIGN KEY constraint failed` — a 500, not the 422 the failed-write strip knows how
-    to show — while the delete matched nothing and cheerfully reported "unticked". Both
-    are the same stale open tab, and it should get the same sentence either way.
-    """
+    Without this, ticking a vanished id was the one 500 in the whole route table
+    (the FK on checklist_tick raised IntegrityError past the ActionError catch),
+    and unticking one deleted nothing and still said "unticked"."""
     row = conn.execute(
-        "SELECT 1 FROM checklist_item WHERE id = ? AND user_id = ?", (item_id, USER_ID)
+        "SELECT active FROM checklist_item WHERE id = ? AND user_id = ?",
+        (item_id, USER_ID),
     ).fetchone()
     if row is None:
         raise ActionError(f"no checklist item {item_id}")
+    if not row["active"]:
+        raise ActionError(f"checklist item {item_id} is no longer on the checklist")
 
 
 def tick(conn: sqlite3.Connection, item_id: int, local_date: str) -> Result:
@@ -350,9 +350,12 @@ def mark_brief_opened(conn: sqlite3.Connection, brief_id: int) -> None:
     signal honest: without it any GET marks any brief read, including one that was never
     delivered — and "nobody opened it" is the one reading this metric exists to give.
     """
+    # `sent_at IS NOT NULL`: the pixel only means something for a brief that was
+    # actually emailed. Without it, one hostile page with <img src="/b/1.gif">…/b/N.gif
+    # marks the whole opened/not-opened history read, irreversibly.
     conn.execute(
-        "UPDATE brief SET opened_at = ? "
-        "WHERE id = ? AND opened_at IS NULL AND sent_at IS NOT NULL",
+        "UPDATE brief SET opened_at = ? WHERE id = ? AND opened_at IS NULL "
+        "AND sent_at IS NOT NULL",
         (now_iso(), brief_id),
     )
 

@@ -256,16 +256,14 @@ What the backfill also produced, said plainly rather than left for the owner to 
 
 ## Found and not fixed
 
-**Two syncs can run at once.** There is no lock: not a file lock, not a row, not a check
-of the `run` table for an unfinished row. The launchd job fires every 30 minutes and a
-manual `backglass sync` during a backfill will overlap it, at which point both processes
-select the same `pending_extraction` rows and extract them twice. The ledger's
-immutability trigger does not catch this, because two extractions of one item are two
-legitimate-looking commitment inserts; the only thing standing between that and a
-duplicated ledger is the 0.85 fuzzy dedup, which is a similarity heuristic and not a
-guarantee. Worked around here by unloading the job. The fix is a `BEGIN IMMEDIATE`-held
-row or an advisory lock file taken for the length of a run, and it belongs in its own
-change with its own test.
+**Two syncs can run at once — FIXED 2026-08-05.** `sync.run_lock` holds an advisory
+flock on `<db>.sync-lock` for the length of a run; `sync()`, `batch.submit()` and
+`batch.collect()` all take it (submit nests around the `sync(extract=False)` it calls).
+A refused run raises `SyncLocked`; the CLI prints who holds the lock and exits 0 — a
+launchd fire mid-backfill is a clean skip, not a failure. flock releases on process
+death, so a crashed run cannot strand it. `tests/test_sync_lock.py` covers both
+branches plus reentrancy, mutation-proven red; refusal verified live against a running
+sync (pid printed, no run row written).
 
 **Fixed 2026-08-05** — `backglass/runlock.py`, the lock file rather than the row: the
 case that matters is a sleep or a `kill -9`, where nothing gets to clear a row and a
@@ -329,9 +327,13 @@ be typed, it is a decision to be made.
 Run against the owner's real store: **47 conversations discovered**, every one awaiting a
 decision — three busy group chats, the rest one-to-one. None is read until it is chosen.
 
-Instagram still reads its env allowlist; the table is wired for it (`source` is already
-per-service) but the connector does not yet report sightings. That is the obvious next
-step and is deliberately not claimed here.
+Instagram joined 2026-08-05: both lanes report sightings under the shared source
+`instagram` (export lane discovers the whole export cursor-free; the live lane sights
+every thread it lists without fetching unallowed ones — the ban-risk budget pays for
+nothing nobody said yes to). The allowlist now comes from the table with
+`INSTAGRAM_CHATS` seeded on first run, an empty allowlist no longer disables the
+connectors, and Monitor rewinds both lanes' cursors so a decision reaches backwards on
+whichever lane carries the conversation.
 
 ## Deliberately not
 

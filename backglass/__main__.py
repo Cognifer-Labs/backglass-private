@@ -28,7 +28,7 @@ from backglass.extract import client as model_client
 from backglass.extract import prompts
 from backglass.goals import activities as activities_mod
 from backglass.ledger import USER_ID
-from backglass.sync import EXTRACT_PROMPT, sync
+from backglass.sync import EXTRACT_PROMPT, SyncLocked, sync
 
 app = typer.Typer(
     add_completion=False,
@@ -242,7 +242,7 @@ def instagram_login(
 def instagram_chats(
     limit: Annotated[int, typer.Option("--limit", help="How many threads to list")] = 30,
 ) -> None:
-    """List thread titles, so INSTAGRAM_CHATS can be filled in from real names.
+    """List thread titles — the same names a sync discovers onto the /chats page.
 
     The live lane reads an allowlist, never an inbox — `docs/07`: "a personal tool reads
     the handful of threads the owner names." Guessing those names from memory is how an
@@ -272,7 +272,10 @@ def instagram_chats(
         typer.echo("  a session can be invalidated by Instagram; re-run `instagram login`")
         raise typer.Exit(1) from exc
 
-    typer.echo("Copy the ones worth reading into INSTAGRAM_CHATS, comma-separated:\n")
+    typer.echo(
+        "Choose the ones worth reading on the /chats page — a sync discovers these "
+        "same threads and lists them there for a Monitor/Ignore decision:\n"
+    )
     for thread in threads:
         title = getattr(thread, "thread_title", "") or ", ".join(
             getattr(user, "username", "?") for user in getattr(thread, "users", [])
@@ -405,14 +408,20 @@ def sync_command(
         typer.echo("no sources configured; run `backglass auth <label>` first", err=True)
         raise typer.Exit(2)
 
-    report = sync(
-        conn,
-        settings,
-        connectors,
-        _build_model_client(settings),
-        dry_run=dry_run,
-        contacts_source=_contacts_source(conn, settings),
-    )
+    try:
+        report = sync(
+            conn,
+            settings,
+            connectors,
+            _build_model_client(settings),
+            dry_run=dry_run,
+            contacts_source=_contacts_source(conn, settings),
+        )
+    except SyncLocked as locked:
+        # Expected under launchd: a 30-minute timer will sometimes fire mid-backfill.
+        # The other run is doing the work, so this is a clean skip, not a failure.
+        typer.echo(f"{locked}; skipped")
+        raise typer.Exit(0) from None
     _print_report(report, dry_run=dry_run)
     raise typer.Exit(report.exit_code)
 
@@ -897,6 +906,19 @@ def brief(
         typer.echo(f"\n[{built.word_count()} words, limit {model.WORD_LIMIT}; not sent]")
         return
 
+    if not settings.brief_to.strip():
+        # Email never configured is a choice, not a failure: the brief above is already
+        # persisted and readable at /brief, and doctor's "brief recipient configured"
+        # check is where the absence is surfaced. Exiting 1 here made the scheduled job
+        # log the same non-error every morning forever. A *partial* delivery config
+        # (BRIEF_TO set, key or sender missing) still falls through to DeliveryError —
+        # someone who named a recipient wants the mail to arrive.
+        typer.echo(
+            "not emailed: BRIEF_TO is not set — the brief is saved and readable at "
+            f"{base}/brief"
+        )
+        return
+
     try:
         result = deliver.Sender(settings).send(
             subject=deliver.subject_for(built.generated_for_date, degraded=degraded),
@@ -1053,17 +1075,19 @@ def _all_connectors(conn: sqlite3.Connection, settings: Settings) -> list[Connec
             )
         )
 
-    if settings.instagram_chats and (
-        settings.instagram_export_path
-        or (settings.instagram_username and settings.instagram_session_file)
+    if settings.instagram_export_path or (
+        settings.instagram_username and settings.instagram_session_file
     ):
-        from backglass.connectors.allowlist import Allowlist
         from backglass.connectors.instagram import (
             InstagramExportConnector,
             InstagramLiveConnector,
         )
 
-        allowlist = Allowlist(settings.instagram_chats)
+        # Same shape as iMessage above: `.env` seeds the table once, the table decides
+        # from then on — and an empty allowlist no longer disables the connectors,
+        # because a run with nothing chosen is what discovers the chats to choose from.
+        chats_mod.seed_from_env(conn, "instagram", settings.instagram_chats)
+        allowlist = chats_mod.allowlist_for(conn, "instagram", settings.instagram_chats)
         if settings.instagram_export_path:
             built.append(
                 InstagramExportConnector(
@@ -1191,17 +1215,16 @@ def _print_report(report: Any, *, dry_run: bool) -> None:
 def main() -> None:
     """The console-script entry point.
 
-    One place turns a refused run into a sentence. `runlock.RunLocked` can come out of
-    `sync`, `batch submit` and `batch collect` today and out of anything that later
-    calls them, and a lock is not an error in the program — it is the program correctly
-    declining to be the second writer. Handled here rather than in each command so the
-    next command to take the lock inherits the sentence instead of a traceback.
+    The backstop for a refused run. `sync`, `batch submit` and `batch collect` each
+    catch `SyncLocked` and print their own sentence, which is better than a generic one
+    — but a lock is not an error in the program, it is the program correctly declining
+    to be the second writer, and the next command to take the lock would otherwise
+    traceback until someone remembered to add a fourth handler. This one costs three
+    lines and cannot be forgotten.
     """
-    from backglass import runlock
-
     try:
         sys.exit(app())
-    except runlock.RunLocked as exc:
+    except SyncLocked as exc:
         typer.echo(str(exc), err=True)
         sys.exit(1)
 
@@ -2336,9 +2359,13 @@ def batch_submit() -> None:
     conn = _open(settings)
     migrate(conn)
     connectors = _all_connectors(conn, settings)
-    report = batch_mod.submit(
-        conn, settings, connectors, model_client.build(settings)
-    )
+    try:
+        report = batch_mod.submit(
+            conn, settings, connectors, model_client.build(settings)
+        )
+    except SyncLocked as locked:
+        typer.echo(f"{locked}; skipped")
+        raise typer.Exit(0) from None
     typer.echo(
         f"fetched {report.fetched} · triaged {report.triaged} · "
         f"batched {report.batched}"
@@ -2363,7 +2390,11 @@ def batch_collect() -> None:
     _require_anthropic_key(settings)
     conn = _open(settings)
     migrate(conn)
-    report = batch_mod.collect(conn, settings)
+    try:
+        report = batch_mod.collect(conn, settings)
+    except SyncLocked as locked:
+        typer.echo(f"{locked}; skipped")
+        raise typer.Exit(0) from None
     if not report.batches and not report.still_processing and not report.errors:
         typer.echo("no outstanding batches")
         raise typer.Exit()
@@ -2991,9 +3022,11 @@ def schedule_install(
     again after moving the repo or reinstalling uv — it just re-renders and reloads.
     """
     from backglass import schedule as schedule_mod
+    from backglass.extract.client import anthropic_api_key
 
+    batch_lane = bool(anthropic_api_key(get_settings()))
     try:
-        rendered = schedule_mod.install(dry_run=dry_run)
+        rendered = schedule_mod.install(dry_run=dry_run, batch_lane=batch_lane)
     except schedule_mod.ScheduleError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -3006,6 +3039,12 @@ def schedule_install(
 
     for filename in rendered:
         typer.echo(f"installed {filename}")
+    if not batch_lane:
+        typer.echo(
+            "batch jobs skipped: no Anthropic API key, so batch submit/collect can "
+            "only fail — the sync path covers extraction. Set MODEL_API_KEY or "
+            "ANTHROPIC_API_KEY and re-run to schedule the overnight lane."
+        )
     typer.echo(f"wrote {len(rendered)} job(s) to {schedule_mod.LAUNCH_AGENTS_DIR}")
     typer.echo("verify with `backglass doctor` or `launchctl list | grep backglass`")
 

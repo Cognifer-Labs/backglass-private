@@ -197,6 +197,11 @@ def decide(conn: sqlite3.Connection, chat_id: int, decision: str) -> bool:
         "SELECT source FROM monitored_chat WHERE user_id = ? AND id = ?",
         (USER_ID, chat_id),
     ).fetchone()
+    # A vanished id refuses rather than redirecting as if it worked — the same
+    # acted-on-nothing rule as actions._require_open. A *repeated* decision on a real
+    # chat still returns False quietly: a double-click is not an error.
+    if row is None:
+        raise ValueError(f"no conversation {chat_id}")
     cursor = conn.execute(
         "UPDATE monitored_chat SET decision = ?, decided_at = ?"
         " WHERE user_id = ? AND id = ? AND (decision IS NOT ? OR decision IS NULL)",
@@ -222,9 +227,14 @@ def rewind(conn: sqlite3.Connection, source: str) -> None:
     writes) is what guarantees the rescan costs a scan and nothing else. The messages a
     *narrower* allowlist now rejects are handled from the other side, by `prune`.
     """
+    # `source` here is the decision table's source, and lanes of one service share it:
+    # instagram's sightings come from both `instagram` (export) and `instagram:live`,
+    # so saying yes must rewind every lane that can carry the conversation, or the
+    # decision reaches backwards on one lane and silently not the other.
     conn.execute(
-        "UPDATE credential SET cursor = NULL WHERE user_id = ? AND source = ?",
-        (USER_ID, source),
+        "UPDATE credential SET cursor = NULL WHERE user_id = ?"
+        " AND (source = ? OR source LIKE ? || ':%')",
+        (USER_ID, source, source),
     )
 
 

@@ -76,11 +76,18 @@ file gets `.env`'s treatment: mode 0600, set *before* the session lands in it.
 None of that makes the lane sanctioned. It drives an interface Meta does not publish and
 its terms do not permit, and the realistic downside is a checkpointed or banned account
 rather than a broken connector. The trade is the owner's; these commands only make the
-safer half of it easy. `INSTAGRAM_CHATS` still gates everything — see below.
+safer half of it easy. The allowlist still gates everything — see below.
 
-**Allowlist, not inbox.** `INSTAGRAM_CHATS` names the only group-chat titles and people
-either lane reads — the Slack rule again: a personal tool reads the handful of threads
-the owner names. Everything else is counted (`allowlist` rule) and never stored.
+**Allowlist, not inbox.** Only named group-chat titles and people are read by either
+lane — the Slack rule again: a personal tool reads the handful of threads the owner
+names. The list lives in `monitored_chat` under the shared source `instagram` (see
+§Monitored conversations): both lanes report every thread they see as a sighting —
+the export lane from a full scan of the export, the live lane from the threads it
+lists without fetching unallowed ones — and the /chats page is where each becomes
+`monitor` or `ignore`. One decision governs both lanes, and saying yes rewinds both
+lanes' cursors so the history is read too. `INSTAGRAM_CHATS` seeds the table on the
+first run, after which the page is the only thing that matters. Everything not chosen
+is counted (`allowlist` rule) and never stored.
 
 **Friend plans ride low.** Commitments whose evidence came from Instagram are demoted
 out of Slipping/Awaiting into a last-priority "Friend plans" brief section — unless the
@@ -264,8 +271,9 @@ manual runs work. Then `backglass setup` writes `IMESSAGE_DB_PATH`.
 
 **Instagram.** Request a data export in JSON (not HTML) at `accountscenter.instagram.com`
 and unzip it into `~/Downloads`; detection finds any `instagram-*` folder containing a
-`messages/inbox`. Set `INSTAGRAM_CHATS` to the threads worth reading — the connector is
-allowlist-only by design, because a DM archive is the least filtered thing the owner owns.
+`messages/inbox`. The first sync discovers every thread in it; choose what to read on
+the /chats page — the connector is allowlist-only by design, because a DM archive is
+the least filtered thing the owner owns, and nothing is read until it is chosen.
 A live lane exists (`INSTAGRAM_SESSION_FILE`) and is experimental.
 
 **Slack.** A user token in `SLACK_TOKEN` plus the channel ids in `SLACK_CHANNELS`. Named

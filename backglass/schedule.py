@@ -57,13 +57,31 @@ def find_uv() -> str:
     return found
 
 
-def install(*, dry_run: bool = False, uv_bin: str | None = None) -> dict[str, str]:
+#: The overnight Batches-API jobs. They need a real Anthropic API key — the
+#: subscription CLI backend cannot drive them — so they are conditional where every
+#: other job is not.
+BATCH_PREFIX = "com.backglass.batch-"
+
+
+def install(
+    *, dry_run: bool = False, uv_bin: str | None = None, batch_lane: bool = True
+) -> dict[str, str]:
     """Render every template for this machine, then write and `launchctl load` it.
 
     `dry_run=True` renders and returns without writing or loading anything, so the
     output can be inspected or smoke-tested without touching the real machine.
+
+    `batch_lane=False` means this machine has no Anthropic API key: the batch-submit
+    and batch-collect jobs are skipped, and any previously installed copies are
+    unloaded and removed. A job whose every fire can only exit 2 is not a schedule,
+    it is a nightly error log — and extraction is covered by the sync path anyway.
     """
     rendered = render(REPO_ROOT, uv_bin or find_uv(), Path.home())
+    skipped = (
+        [] if batch_lane else [f for f in rendered if f.startswith(BATCH_PREFIX)]
+    )
+    for filename in skipped:
+        rendered.pop(filename)
     if dry_run:
         return rendered
 
@@ -72,4 +90,9 @@ def install(*, dry_run: bool = False, uv_bin: str | None = None) -> dict[str, st
         target = LAUNCH_AGENTS_DIR / filename
         target.write_text(text)
         subprocess.run(["launchctl", "load", str(target)], check=False)
+    for filename in skipped:
+        target = LAUNCH_AGENTS_DIR / filename
+        if target.exists():
+            subprocess.run(["launchctl", "unload", str(target)], check=False)
+            target.unlink()
     return rendered

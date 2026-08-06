@@ -14,16 +14,19 @@ Three properties this file exists to guarantee, all of them load-bearing:
 
 from __future__ import annotations
 
+import fcntl
+import os
 import sqlite3
 from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from backglass import chats as chats_mod
 from backglass import contacts as contacts_mod
-from backglass import runlock
 from backglass.config import Settings
 from backglass.connectors import base, credentials
 from backglass.connectors.base import Connector
@@ -151,6 +154,85 @@ class SpendCap:
         self.this_run_usd += usd
 
 
+class SyncLocked(RuntimeError):
+    """Another run holds the sync lock; the message says which pid and since when."""
+
+
+#: Reentrancy for `run_lock`, so batch submit can hold the lock around the
+#: `sync(extract=False)` it calls without deadlocking on itself. Written only from
+#: the main thread of a run — the pool in `_in_parallel` never touches the lock.
+#:
+#: Keyed by database rather than counted once for the process: flock excludes by open
+#: file description, so "is this me?" is a question the kernel cannot answer and the
+#: depth has to be tracked here — but a single counter answers it for the wrong
+#: database as readily as the right one. Holding the lock on one ledger would make the
+#: first acquire on a second ledger look reentrant and skip locking it entirely. One
+#: database per process is the normal case and would never notice; the test suite runs
+#: several per process, and so would any future tool that opened a demo copy beside the
+#: real one.
+_HELD: dict[str, list[Any]] = {}  # resolved db path -> [file handle, depth]
+
+
+@contextmanager
+def run_lock(settings: Settings) -> Iterator[None]:
+    """One writing run at a time, held for the run's whole duration.
+
+    launchd fires sync every 30 minutes, and nothing else stops a manual sync (or a
+    batch submit/collect) from overlapping it. Two concurrent passes select the same
+    pending items and extract them twice, and the only thing between that and a
+    duplicated ledger is the 0.85 fuzzy dedup — a similarity heuristic, not a
+    guarantee. flock releases on process death, so a crashed run cannot strand the
+    lock; a held lock always means a live process.
+    """
+    db = Path(settings.db_path).expanduser()
+    key = str(db.resolve())
+    entry = _HELD.get(key)
+    if entry is not None:
+        entry[1] += 1
+        try:
+            yield
+        finally:
+            entry[1] -= 1
+            if entry[1] == 0:
+                _release(key)
+        return
+    db.parent.mkdir(parents=True, exist_ok=True)
+    # Opened append, never "w": truncating before a failed acquire would erase the
+    # holder's pid line while it is still running.
+    fh = (db.parent / f"{db.name}.sync-lock").open("a+")
+    try:
+        fcntl.flock(fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        fh.seek(0)
+        holder = fh.read().strip() or "unknown pid"
+        fh.close()
+        raise SyncLocked(f"another sync is already running ({holder})") from None
+    fh.seek(0)
+    fh.truncate()
+    fh.write(f"pid {os.getpid()} since {now_iso()}")
+    fh.flush()
+    _HELD[key] = [fh, 1]
+    try:
+        yield
+    finally:
+        entry = _HELD.get(key)
+        if entry is not None:
+            entry[1] -= 1
+            if entry[1] == 0:
+                _release(key)
+
+
+def _release(key: str) -> None:
+    entry = _HELD.pop(key, None)
+    if entry is None:
+        return
+    fh = entry[0]
+    try:
+        fcntl.flock(fh, fcntl.LOCK_UN)
+    finally:
+        fh.close()
+
+
 def sync(
     conn: sqlite3.Connection,
     settings: Settings,
@@ -161,38 +243,33 @@ def sync(
     extract: bool = True,
     contacts_source: ContactsSource | None = None,
 ) -> SyncReport:
-    """Run the pipeline, holding the run lock. `extract=False` stops after triage — the
-    batch-mode submit path (backglass/batch.py) reuses ingest, rules, and triage through
-    here and hands extraction to the Batches API instead.
+    """Run the pipeline. `extract=False` stops after triage — the batch-mode submit
+    path (backglass/batch.py) reuses ingest, rules, and triage through here and hands
+    extraction to the Batches API instead.
 
-    The lock is taken here rather than in the CLI command because there are three doors
-    into this pipeline (`sync`, `batch submit`, and the launchd job that calls the
-    first) and a guard on one of them is not a guard. A dry run does not take it: it
-    writes nothing, so it can neither corrupt a concurrent run nor be corrupted by one,
-    and refusing it during a long backfill would remove the one command that is safe to
-    run at any time.
+    Raises `SyncLocked` instead of running when another run already holds the lock.
     """
-    if dry_run:
-        return _pipeline(
-            conn, settings, connectors, client,
-            dry_run=True, extract=extract, contacts_source=contacts_source,
-        )
-    with runlock.held(settings.db_path, what="sync"):
-        return _pipeline(
-            conn, settings, connectors, client,
-            dry_run=False, extract=extract, contacts_source=contacts_source,
+    with run_lock(settings):
+        return _sync(
+            conn,
+            settings,
+            connectors,
+            client,
+            dry_run=dry_run,
+            extract=extract,
+            contacts_source=contacts_source,
         )
 
 
-def _pipeline(
+def _sync(
     conn: sqlite3.Connection,
     settings: Settings,
     connectors: list[Connector],
     client: ModelClient,
     *,
-    dry_run: bool,
-    extract: bool,
-    contacts_source: ContactsSource | None,
+    dry_run: bool = False,
+    extract: bool = True,
+    contacts_source: ContactsSource | None = None,
 ) -> SyncReport:
     report = SyncReport()
     ledger = Ledger(conn, settings, dry_run=dry_run)
@@ -370,7 +447,9 @@ def _ingest(
         if sightings and not dry_run:
             seen = chats_mod.record(
                 conn,
-                connector.name,
+                # Lanes of one service (instagram, instagram:live) share their decision
+                # rows: a conversation is monitored or not, however it arrives.
+                str(getattr(connector, "chats_source", connector.name)),
                 list(sightings.values()),
                 # A connector that rescans a window reports a total, not an increment.
                 cumulative=bool(getattr(connector, "sightings_are_cumulative", True)),
