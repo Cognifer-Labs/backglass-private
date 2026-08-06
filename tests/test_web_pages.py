@@ -656,14 +656,14 @@ class TestScheduleTimeline:
         )
         conn.execute(
             "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
-            " VALUES (1, '2026-07-28T09:00:00-07:00', '2026-07-28T09:20:00-07:00',"
+            " VALUES (1, '2026-07-28T09:00:00-07:00', '2026-07-28T09:15:00-07:00',"
             " 'small', 'Inbox sweep')"
         )
         conn.commit()
         page = client.get("/schedule?date=2026-07-28").text
-        assert "height:20px" in page
+        assert "height:15px" in page
         assert "tiny" in page
-        assert 'title="9:00am–9:20am Inbox sweep"' in page
+        assert 'title="9:00am–9:15am Inbox sweep"' in page
         # The title is not drawn on the canvas: only the attributes carry it.
         assert ">Inbox sweep<" not in page
 

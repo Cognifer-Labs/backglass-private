@@ -100,10 +100,13 @@ class Entry:
 
     @property
     def tiny(self) -> bool:
-        """Under 32px even one 13px line plus its keylines does not fit. Rather than
-        shrink type below the 11px floor, the title is deleted from the canvas and
-        moved to the title attribute: stripe plus start time is all that renders."""
-        return self.height < 32
+        """Under 20px even slim's single 13px line plus keylines does not fit. Rather
+        than shrink type below the 11px floor, the title is deleted from the canvas
+        and moved to the title attribute: stripe plus start time is all that renders.
+        The threshold sat at 32px until the routines landed: a 25–30 minute block
+        (breakfast, a short reply) is the common case, slim's one row fits inside
+        20px, and a canvas of unnamed boxes is a schedule that cannot be read."""
+        return self.height < 20
 
 
 @dataclass(frozen=True)

@@ -34,14 +34,19 @@
             <div class="grow">
               <p class="b1">{{ b['title'] }}{% if b['pinned'] %} <span class="kbd">pinned</span>{% endif %}</p>
               <p class="b2">{{ b['kind'] }}{% if b['rollover_count'] %} · rolled {{ b['rollover_count'] }}x{% endif %}</p>
-              <div class="acts">
-                <button class="btn ok" hx-post="/blocks/{{ b['id'] }}/outcome/done"
-                        hx-target="#panel-today" hx-swap="outerHTML">Done</button>
-                <button class="btn defer" hx-post="/blocks/{{ b['id'] }}/outcome/rolled"
-                        hx-target="#panel-today" hx-swap="outerHTML">Roll</button>
-                <button class="btn pin" hx-post="/blocks/{{ b['id'] }}/pin/{{ 0 if b['pinned'] else 1 }}"
-                        hx-target="#panel-today" hx-swap="outerHTML">{{ 'Unpin' if b['pinned'] else 'Pin' }}</button>
-              </div>
+              {% if b['kind'] != 'routine' %}
+                {# Routines get no verbs: "Roll" on breakfast is a question nobody asked,
+                   and three chips per row on five daily rows out-inked the schedule
+                   itself. Life holds its place; only work carries actions. #}
+                <div class="acts">
+                  <button class="btn ok" hx-post="/blocks/{{ b['id'] }}/outcome/done"
+                          hx-target="#panel-today" hx-swap="outerHTML">Done</button>
+                  <button class="btn defer" hx-post="/blocks/{{ b['id'] }}/outcome/rolled"
+                          hx-target="#panel-today" hx-swap="outerHTML">Roll</button>
+                  <button class="btn pin" hx-post="/blocks/{{ b['id'] }}/pin/{{ 0 if b['pinned'] else 1 }}"
+                          hx-target="#panel-today" hx-swap="outerHTML">{{ 'Unpin' if b['pinned'] else 'Pin' }}</button>
+                </div>
+              {% endif %}
             </div>
           </div>
         {% endif %}

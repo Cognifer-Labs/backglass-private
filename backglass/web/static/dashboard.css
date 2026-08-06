@@ -129,7 +129,7 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
 .b1.hang .chip{margin-top:2px}
 .b2{margin:var(--sp-1) 0 0;font-size:13px;line-height:18px;color:var(--ink-muted)}
 .b2 a{color:var(--ink-muted);text-underline-offset:2px}
-.time{font-size:12px;font-weight:700;letter-spacing:.04em;color:var(--ink-muted);flex:0 0 88px;padding-top:4px}
+.time{font-size:12px;font-weight:700;letter-spacing:.04em;color:var(--ink-muted);flex:0 0 132px;padding-top:4px}
 .prot{border:2px solid var(--rule);padding:var(--sp-3);margin:var(--sp-3) 0;
   background:repeating-linear-gradient(45deg,transparent,transparent 5px,var(--rule-hair) 5px,var(--rule-hair) 6px)}
 .prot .hd{display:flex;justify-content:space-between;align-items:center;gap:var(--sp-3)}
@@ -274,8 +274,11 @@ button.box::before{content:"";position:absolute;inset:-6px}
 .row.k-work{border-left:3px solid var(--cobalt)}
 .row.k-small{border-left:3px solid var(--turquoise)}
 .row.k-fixed{border-left:3px solid var(--ink)}
-/* Routines are life, not work: they hold their place without spending an ink. */
-.row.k-routine{border-left:3px dashed var(--rule)}
+/* Routines are life, not work: they hold their place without spending an ink —
+   and without the dashed line, which rule 5 reserves for low-confidence guesses.
+   Breakfast is certain; it is just quiet. Solid hairline, faded register. */
+.row.k-routine{border-left:3px solid var(--rule-hair)}
+.row.k-routine .b1{color:var(--ink-2)}
 
 /* Schedule pages. */
 .pager{display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-2) var(--sp-3);background:var(--fill-mild);border:1px solid var(--rule-hair)}
@@ -317,7 +320,7 @@ button.box::before{content:"";position:absolute;inset:-6px}
 .wev.k-work{border-color:var(--cobalt-line);border-left-width:3px;background:var(--cobalt-wash)}
 .wev.k-small{border-color:var(--turq-line);border-left-width:3px;background:var(--turq-wash)}
 .wev.k-buffer{border-style:dashed}
-.wev.k-routine{border-style:dashed;border-color:var(--rule);background:var(--paper)}
+.wev.k-routine{border-color:var(--rule-hair);background:var(--paper)}
 .wev.k-protected{background:repeating-linear-gradient(45deg,transparent,transparent 5px,var(--rule-hair) 5px,var(--rule-hair) 6px) var(--paper)}
 .wnow{position:absolute;left:0;right:0;border-top:2px solid var(--ink);z-index:2}
 
@@ -535,7 +538,8 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .tl .ev.k-work{border-color:var(--cobalt-line);border-left-width:4px;background:var(--cobalt-wash)}
 .tl .ev.k-small{border-color:var(--turq-line);border-left-width:4px;background:var(--turq-wash)}
 .tl .ev.k-buffer{border-style:dashed;border-left-width:2px}
-.tl .ev.k-routine{border-style:dashed;border-color:var(--rule);background:var(--paper)}
+.tl .ev.k-routine{border-color:var(--rule-hair);background:var(--paper)}
+.tl .ev.k-routine .en,.tl .ev.k-routine .ek{color:var(--ink-2)}
 .tl .ev.k-buffer .en{color:var(--ink-muted)}
 .tl .ev.k-protected{background:repeating-linear-gradient(45deg,transparent,transparent 5px,var(--rule-hair) 5px,var(--rule-hair) 6px) var(--paper)}
 .tl .ev.k-protected .en{font-size:14px}

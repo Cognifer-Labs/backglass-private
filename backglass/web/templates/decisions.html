@@ -40,10 +40,12 @@
     <div class="addform">
       <p class="lbl">Record a decision</p>
       <form hx-post="/decisions" hx-target="#decisions" hx-swap="outerHTML">
-        <input type="text" name="title" placeholder="about (e.g. Sallie Mae application)"
-               required aria-label="Title">
-        <input type="text" name="choice" placeholder="the decision (e.g. not doing it)"
-               required aria-label="Choice">
+        {# Placeholders sized to what the inputs can actually show — a truncated
+           example reads as a bug, not a hint. #}
+        <input type="text" name="title" placeholder="about"
+               required aria-label="Title (e.g. Sallie Mae application)">
+        <input type="text" name="choice" placeholder="the decision"
+               required aria-label="Choice (e.g. not doing it)">
         <input type="text" name="reasoning" placeholder="why (optional)"
                aria-label="Reasoning">
         <select name="commitment" aria-label="Also closes commitment">
