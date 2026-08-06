@@ -60,7 +60,10 @@ def emlx_bytes(
     message["Message-ID"] = message_id
     message.set_content(body)
     raw = message.as_bytes()
-    plist = b'<?xml version="1.0"?><plist><dict><key>flags</key><integer>1</integer></dict></plist>'
+    plist = (
+        b'<?xml version="1.0"?>'
+        b"<plist><dict><key>flags</key><integer>1</integer></dict></plist>"
+    )
     return str(len(raw)).encode() + b"\n" + raw + b"\n" + plist
 
 
@@ -114,7 +117,8 @@ def build_store(root: Path, messages: list[dict]) -> Path:
             continue
         folder = version / "ACCOUNT-A" / "box.mbox" / "Data" / "Messages"
         folder.mkdir(parents=True, exist_ok=True)
-        name = f"{spec['rowid']}.partial.emlx" if spec.get("partial") else f"{spec['rowid']}.emlx"
+        suffix = ".partial.emlx" if spec.get("partial") else ".emlx"
+        name = f"{spec['rowid']}{suffix}"
         (folder / name).write_bytes(
             spec.get("raw") or emlx_bytes(**spec.get("message", {}))
         )
@@ -428,7 +432,8 @@ class TestTheAccountsInScope:
     ) -> None:
         root = build_store(
             tmp_path,
-            [{"rowid": 1, "date_received": NOW, "raw": emlx_with_delivered_to("Parent@Example.COM")}],
+            [{"rowid": 1, "date_received": NOW,
+              "raw": emlx_with_delivered_to("Parent@Example.COM")}],
         )
         conn = connector(
             root, boundary, out_of_scope_accounts=frozenset({"parent@example.com"})

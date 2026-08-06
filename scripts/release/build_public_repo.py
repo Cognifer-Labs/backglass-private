@@ -48,6 +48,50 @@ def _matches_prefix(rel_path: str, prefixes: list[str]) -> bool:
     return False
 
 
+def require_clean_worktree(repo_root: Path) -> None:
+    """Refuse to export from a tree with uncommitted changes under ALLOW_PATHS.
+
+    `git ls-files` lists TRACKED files, so an uncommitted new file is silently absent
+    from the export while every tracked file that depends on it ships normally. That
+    failure has already happened once: `backglass/ledger.py` shipped calling a table
+    whose migration (`0013_commitment_evidence.sql`) was still untracked, so the public
+    repo built cleanly, passed the scrub gate, and was broken for every recipient on
+    first run. Only the scratch-tree pytest caught it.
+
+    release-process.md's step 1 already says "private tree committed + pytest green".
+    This makes the tooling enforce it rather than trusting the operator to remember,
+    because the failure mode is silent and the consequence is a broken public release.
+
+    Scoped to ALLOW_PATHS: edits under `tasks/` or `data/` never ship and must not block
+    a release.
+    """
+    result = subprocess.run(
+        ["git", "-C", str(repo_root), "status", "--porcelain"],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    dirty = []
+    for line in result.stdout.splitlines():
+        rel_path = line[3:].strip()
+        # Renames read as "old -> new"; the destination is what would ship.
+        if " -> " in rel_path:
+            rel_path = rel_path.split(" -> ", 1)[1]
+        if _matches_prefix(rel_path, ALLOW_PATHS) and not _matches_prefix(
+            rel_path, DENY_PATHS
+        ):
+            dirty.append(line.strip())
+    if dirty:
+        listed = "\n  ".join(sorted(dirty))
+        raise SystemExit(
+            "error: the private tree has uncommitted changes that would ship "
+            "(or, worse, would NOT ship while their dependents do):\n  "
+            f"{listed}\n\n"
+            "Commit them and re-run. `git ls-files` cannot see them, so exporting now "
+            "produces a partial snapshot — see release-process.md step 1."
+        )
+
+
 def resolve_export_files(repo_root: Path) -> dict[str, str]:
     """Return {dest_relpath: src_relpath} for every file that ships.
 
@@ -57,6 +101,7 @@ def resolve_export_files(repo_root: Path) -> dict[str, str]:
     `specs/roadmaps/medical.md`) is denylisted, because the substitution
     supplies different, already-vetted source content instead.
     """
+    require_clean_worktree(repo_root)
     result = subprocess.run(
         ["git", "-C", str(repo_root), "ls-files"],
         capture_output=True,

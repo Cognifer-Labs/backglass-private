@@ -25,28 +25,42 @@
       {# docs/06 §Empty states: declarative, never cheerful. #}
       <p class="empty">Nothing open.</p>
     {% else %}
-      {# Register form (owner ruling 2026-08-01): the counterparty-lane card stack
-         outgrew the panel — a lane heading per person plus a three-button row per card
-         made nine commitments taller than the rest of the page. One ledger line per
-         commitment now: counterparty inline (the Awaiting panel's grammar), two
-         direction groups instead of N lanes, and the action row surfaces only on the
-         row under the cursor or keyboard selection. The SQL sort (direction, then
-         counterparty) is unchanged, so rows keep the stable order muscle memory needs. #}
+      {# Urgency register (owner ruling 2026-08-05): sections are when a promise bites —
+         Overdue / Today / This week / Later / No date — not which way it points. The
+         old direction lanes told the reader who the debtor was before telling them what
+         was late; on a board opened to decide what to do next, the deadline is the
+         organizing fact. Direction compresses to an inline arrow on the row: → going
+         out (I owe), ← coming in (owed to me). The board query sorts by these same
+         buckets, so loop.changed() cuts the headings, and the action-row reveal from
+         the 2026-08-01 register ruling is unchanged. #}
       {% for c in d.board.rows %}
-        {% if loop.changed(c['direction']) %}
-          <p class="lane">{{ 'I owe' if c['direction'] == 'i_owe' else 'Owed to me' }}</p>
+        {% if loop.changed(c['bucket']) %}
+          {# The stated buckets head their section with the state's own chip — fill,
+             glyph and label in one mark — so the state ink lives once, on the heading,
+             instead of washing every row beneath it. #}
+          {% if c['bucket'] == 'Overdue' %}
+            <p class="lane">{{ m.chip('overdue') }}</p>
+          {% elif c['bucket'] == 'Today' %}
+            <p class="lane">{{ m.chip('due_today') }}</p>
+          {% else %}
+            <p class="lane">{{ c['bucket'] }}</p>
+          {% endif %}
         {% endif %}
         {# docs/06: "Every commitment card is a click target in full, not just its title." #}
         <div class="row card" tabindex="0" data-commitment="{{ c['id'] }}"
              data-state="{{ c['state'] }}">
-          <p class="b1 hang">{{ m.chip(c['state']) }}<span>
+          <p class="b1 hang"><span class="dir" aria-label="{{ 'I owe' if c['direction'] == 'i_owe' else 'Owed to me' }}"
+              title="{{ 'I owe' if c['direction'] == 'i_owe' else 'Owed to me' }}">{{ '→' if c['direction'] == 'i_owe' else '←' }}</span><span>
             {%- if c['counterparty'] %}<strong>{{ c['counterparty'] }}:</strong> {% endif -%}
-            {{ c['what'] }}</span></p>
+            {{ c['what'] }}</span>
+            {#- The bucket heading already says overdue/today, so those chips would be
+                noise; slipping is the one state the headings cannot carry. -#}
+            {%- if c['state'] == 'slipping' %} {{ m.chip('slipping') }}{% endif %}</p>
           <p class="b2">
-            {{ m.due_text(c, d.today) }}
-            {%- if c['estimated_minutes'] %} · {{ c['estimated_minutes'] }}m{% endif %}
-            {%- if c['goal_title'] %} · {{ c['goal_title'] }}{% endif %}
-            · {{ m.source_link(c) }}
+            {%- if c['due_line'] %}{{ c['due_line'] }} · {% endif -%}
+            {%- if c['estimated_minutes'] %}{{ c['estimated_minutes'] }}m · {% endif -%}
+            {%- if c['goal_title'] %}{{ c['goal_title'] }} · {% endif -%}
+            {{ m.source_link(c) }}
             {#- How many documents say this. Only shown above one: the register form's
                 ruling is one line per commitment, and "1 mention" on every row is a
                 column of noise. Above one it is real information — a promise restated

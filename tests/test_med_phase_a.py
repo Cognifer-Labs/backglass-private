@@ -639,7 +639,14 @@ class TestDownstream:
             data={"amount": "6", "note": "night shift", "activity_id": str(aid)},
         )
         assert logged.status_code == 200
-        assert "6 h" in logged.text and "across 1 entry" in logged.text
+        # The registry is a table now, so the round trip is read down its columns:
+        # the hours land in the row's Hours cell and again in the footer's rollup,
+        # not in a prose "6 h across 1 entry".
+        assert 'class="wkg atbl"' in logged.text
+        registry = logged.text[logged.text.index('class="wkg atbl"') :]
+        assert "ER scribe" in registry
+        assert ">6</td>" in registry and ">1</td>" in registry
+        assert "1 activity" in registry
         row = conn.execute(
             "SELECT activity_id, delta FROM checkpoint WHERE target_id = ?", (tid,)
         ).fetchone()

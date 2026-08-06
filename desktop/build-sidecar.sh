@@ -30,6 +30,23 @@ kill $SIDECAR_PID; trap - EXIT
 popd >/dev/null
 echo "   ok — served / and /design/tokens.css from a frozen tree"
 
+# PyInstaller's googleapiclient hook collects the whole discovery_cache directory
+# unless the spec filters it back out. Unfiltered that is 586 files and 99MB of a
+# 160MB app, for APIs this program never calls. The spec drops all but the three
+# (api, version) pairs __main__._google_service actually builds; this asserts the
+# result, because the failure is invisible — the app just quietly triples in size.
+DOCS="$ROOT/desktop/sidecar-dist/backglass-server/_internal/googleapiclient/discovery_cache/documents"
+FOUND="$(ls "$DOCS" 2>/dev/null | sort | tr '\n' ' ')"
+WANT="calendar.v3.json drive.v3.json gmail.v1.json "
+if [ "$FOUND" != "$WANT" ]; then
+  echo "discovery documents wrong."
+  echo "  want: $WANT"
+  echo "  got:  $FOUND"
+  echo "  (see the filter after Analysis in desktop/sidecar/backglass-server.spec)"
+  exit 1
+fi
+echo "   ok — 3 discovery documents, not 586"
+
 echo "── staging into the Tauri bundle"
 rsync -a --delete desktop/sidecar-dist/backglass-server/ desktop/src-tauri/sidecar/backglass-server/
 chmod +x desktop/src-tauri/sidecar/backglass-server/backglass-server

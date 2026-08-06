@@ -201,6 +201,21 @@ def test_resolving_removes_it_from_tomorrows_brief(
     assert not any("revised migration plan" in line.text for line in after.all_lines())
 
 
+def test_acting_on_a_closed_commitment_is_refused_not_silent(
+    client: TestClient, conn, settings: Settings
+) -> None:  # type: ignore[no-untyped-def]
+    """A stale page's second click must 422 (which the failed-write strip shows), not
+    report success over a zero-row UPDATE. Rule: never let a failure be quiet."""
+    cid = commitment(conn, settings, n=1)
+    assert client.post(f"/commitments/{cid}/resolve").status_code == 200
+    for verb in (f"/commitments/{cid}/resolve", f"/commitments/{cid}/drop",
+                 f"/commitments/{cid}/snooze/1", f"/review/{cid}/accept"):
+        response = client.post(verb)
+        assert response.status_code == 422, verb
+        assert "already done" in response.json()["detail"]
+    assert status_of(conn, cid) == "done", "the refusals wrote nothing"
+
+
 def test_drop_tombstones_rather_than_deleting(
     client: TestClient, conn, settings: Settings
 ) -> None:  # type: ignore[no-untyped-def]
@@ -413,19 +428,18 @@ def test_adjusting_a_weekly_target(client: TestClient, conn) -> None:  # type: i
 # ── B7 ────────────────────────────────────────────────────────────────────
 
 
-def test_the_tracking_pixel_records_the_first_open_only(client: TestClient, conn) -> None:  # type: ignore[no-untyped-def]
-    """docs/05 B7: "A brief nobody opens is the signal that matters most."."""
-    # `sent_at` is not decoration: `mark_brief_opened` requires it, so without it this
-    # test asserts the opposite of what the code does and main has been red on it. A
-    # fuller version — a `_a_brief_row(sent=…)` helper plus the case where an unsent
-    # brief is NOT marked — is sitting uncommitted in the main checkout and should win
-    # over this line when it lands.
+def _a_brief_row(conn, *, sent: bool) -> int:  # type: ignore[no-untyped-def]
     conn.execute(
         "INSERT INTO brief (user_id, generated_for_date, kind, content_md, items_json, "
         " word_count, sent_at) VALUES (?, ?, 'daily', 'md', '[]', 10, ?)",
-        (USER_ID, TODAY.isoformat(), "2026-07-30T06:00:12Z"),
+        (USER_ID, TODAY.isoformat(), "2026-07-30T06:00:12Z" if sent else None),
     )
-    brief_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+
+def test_the_tracking_pixel_records_the_first_open_only(client: TestClient, conn) -> None:  # type: ignore[no-untyped-def]
+    """docs/05 B7: "A brief nobody opens is the signal that matters most."."""
+    brief_id = _a_brief_row(conn, sent=True)
 
     response = client.get(f"/b/{brief_id}.gif")
     assert response.status_code == 200
@@ -436,6 +450,24 @@ def test_the_tracking_pixel_records_the_first_open_only(client: TestClient, conn
     assert first
     client.get(f"/b/{brief_id}.gif")
     assert conn.execute("SELECT opened_at FROM brief").fetchone()["opened_at"] == first
+
+
+def test_only_a_sent_brief_can_be_marked_opened(client: TestClient, conn) -> None:  # type: ignore[no-untyped-def]
+    """The pixel is an unauthenticated GET by design — a mail client fetches it — so
+    anyone who can reach the dashboard can call it for any id. A brief that was never
+    delivered cannot have been opened, and "nobody opened it" is the one reading this
+    metric exists to give."""
+    brief_id = _a_brief_row(conn, sent=False)
+
+    assert client.get(f"/b/{brief_id}.gif").status_code == 200  # still a pixel, never a 404
+    assert conn.execute("SELECT opened_at FROM brief").fetchone()["opened_at"] is None
+
+    conn.execute(
+        "UPDATE brief SET sent_at = ? WHERE id = ?", ("2026-07-30T06:00:12Z", brief_id)
+    )
+    conn.commit()
+    client.get(f"/b/{brief_id}.gif")
+    assert conn.execute("SELECT opened_at FROM brief").fetchone()["opened_at"]
 
 
 # ── the design system, and the dark patterns it rules out ─────────────────
@@ -506,10 +538,10 @@ def test_tokens_are_served_from_the_validated_source(client: TestClient) -> None
     checks, not a copy that can drift from it."""
     tokens = client.get("/design/tokens.css")
     assert tokens.status_code == 200
-    assert "--paper:        #FAF3DF" in tokens.text or "--paper:" in tokens.text
+    assert "--paper:        #FCF8EC" in tokens.text or "--paper:" in tokens.text
     body = client.get("/").text
     assert "/design/tokens.css" in body
-    assert "#FAF3DF" not in body, "the page must not hard-code a token value"
+    assert "#FCF8EC" not in body, "the page must not hard-code a token value"
 
 
 def test_htmx_is_vendored_not_fetched_from_a_cdn(client: TestClient) -> None:

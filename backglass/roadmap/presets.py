@@ -82,9 +82,17 @@ class Preset:
 
 
 def load(path_id: str, base_dir: Path | None = None) -> Preset:
-    path = (base_dir or PRESETS_DIR) / f"{path_id}.md"
-    if not path.exists():
-        raise PresetError(f"no roadmap preset at {path}")
+    # `path_id` is a URL segment (/roadmaps/start/{path_id}), so the join is a traversal
+    # primitive until it is contained: `../../../etc/passwd` reads a file this parser
+    # then quotes back in its own error messages. Resolve both sides — a `..` inside the
+    # join and a symlink out of the tree both survive a string comparison.
+    root = (base_dir or PRESETS_DIR).resolve()
+    path = (root / f"{path_id}.md").resolve()
+    # One message for "outside the tree" and "not there", naming only what the caller
+    # sent. Distinguishing them answers "does this file exist?" for arbitrary paths, and
+    # printing the resolved path maps the filesystem into a 422 body.
+    if not path.is_relative_to(root) or not path.is_file():
+        raise PresetError(f"no roadmap preset {path_id!r}")
     raw = path.read_text()
 
     meta = _frontmatter(path, raw)

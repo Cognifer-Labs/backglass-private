@@ -2,7 +2,7 @@
 
 **Product** Backglass
 **Version** 2.1 · July 2026
-**Scheme** Beige paper `#FAF3DF` and black `#000000`
+**Scheme** Beige paper `#FCF8EC` and black `#000000`
 
 Tokens in `tokens.css` and `tokens.json`. Rendered reference in `preview.html`.
 Re-validate any change with `scripts/validate-palette.mjs`.
@@ -43,7 +43,7 @@ hex values and dark mode is a true inversion rather than a separately designed p
 
 | token | hex | notes |
 |---|---|---|
-| paper | `#FAF3DF` | OKLCH L 0.964, C 0.027, hue 91 |
+| paper | `#FCF8EC` | OKLCH L 0.979, C 0.016, hue 92 |
 | ink | `#000000` | 18.95:1 against paper |
 
 Dark mode swaps them. Nothing else changes.
@@ -279,7 +279,7 @@ Rules:
 
 ## Appendix: validation
 
-Contrast figures are WCAG relative luminance against `#FAF3DF` and `#000000`. The series
+Contrast figures are WCAG relative luminance against `#FCF8EC` and `#000000`. The series
 set was validated with `scripts/validate-palette.mjs` under Machado-Oliveira-Fernandes 2009
 colorblindness simulation at severity 1.0, all-pairs in both modes.
 

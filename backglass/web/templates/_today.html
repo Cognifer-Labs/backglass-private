@@ -17,40 +17,43 @@
            empty plan. The absence of a deep-work slot is the news, not the schedule. #}
         <p class="note">Fully booked — no deep work slot today.</p>
       {% endif %}
+      {# Timetable form (owner ruling 2026-08-05): one line per block — time and title
+         at rest, nothing else. Kind moved off the row into its keyline colour plus the
+         shared legend (the week view's grammar), and the outcome buttons surface only
+         on the row under the cursor or holding focus — the board register's reveal. #}
       {% for b in d.today_panel.rows %}
         {% if b['kind'] == 'protected' %}
-          {# design-system.md §4: 2px keyline plus 45° hatch. The .prot class carries the
-             hatch as a repeating-linear-gradient, not an image. #}
-          <div class="prot">
-            <div class="hd">
-              <span class="cond">{{ b['title'] }}</span>
-              {{ m.chip('protected') }}
-            </div>
-            <p class="b2">{{ b['starts_at']|t12 }}–{{ b['ends_at']|t12 }}</p>
+          {# design-system.md §4: 2px keyline plus 45° hatch — now one row tall. #}
+          <div class="row sched k-protected">
+            <span class="time">{{ b['starts_at']|t12 }}–{{ b['ends_at']|t12 }}</span>
+            <p class="b1"><span class="cond">{{ b['title'] }}</span></p>
+            {{ m.chip('protected') }}
+          </div>
+        {% elif b['kind'] == 'routine' %}
+          {# Routines get no verbs, hovered or not: "Roll" on breakfast is a question
+             nobody asked. Life holds its place; only work carries actions. #}
+          <div class="row sched k-routine">
+            <span class="time">{{ b['starts_at']|t12 }}–{{ b['ends_at']|t12 }}</span>
+            <p class="b1"><span>{{ b['title'] }}</span></p>
           </div>
         {% else %}
-          <div class="row k-{{ b['kind'] }}">
+          <div class="row sched k-{{ b['kind'] }}">
             <span class="time">{{ b['starts_at']|t12 }}–{{ b['ends_at']|t12 }}</span>
-            <div class="grow">
-              <p class="b1">{{ b['title'] }}{% if b['pinned'] %} <span class="kbd">pinned</span>{% endif %}</p>
-              <p class="b2">{{ b['kind'] }}{% if b['rollover_count'] %} · rolled {{ b['rollover_count'] }}x{% endif %}</p>
-              {% if b['kind'] != 'routine' %}
-                {# Routines get no verbs: "Roll" on breakfast is a question nobody asked,
-                   and three chips per row on five daily rows out-inked the schedule
-                   itself. Life holds its place; only work carries actions. #}
-                <div class="acts">
-                  <button class="btn ok" hx-post="/blocks/{{ b['id'] }}/outcome/done"
-                          hx-target="#panel-today" hx-swap="outerHTML">Done</button>
-                  <button class="btn defer" hx-post="/blocks/{{ b['id'] }}/outcome/rolled"
-                          hx-target="#panel-today" hx-swap="outerHTML">Roll</button>
-                  <button class="btn pin" hx-post="/blocks/{{ b['id'] }}/pin/{{ 0 if b['pinned'] else 1 }}"
-                          hx-target="#panel-today" hx-swap="outerHTML">{{ 'Unpin' if b['pinned'] else 'Pin' }}</button>
-                </div>
-              {% endif %}
+            <p class="b1"><span>{{ b['title'] }}</span>
+              {%- if b['pinned'] %} <span class="kbd">pinned</span>{% endif %}
+              {%- if b['rollover_count'] %} <span class="b2i">rolled {{ b['rollover_count'] }}x</span>{% endif %}</p>
+            <div class="acts">
+              <button class="btn ok" hx-post="/blocks/{{ b['id'] }}/outcome/done"
+                      hx-target="#panel-today" hx-swap="outerHTML">Done</button>
+              <button class="btn defer" hx-post="/blocks/{{ b['id'] }}/outcome/rolled"
+                      hx-target="#panel-today" hx-swap="outerHTML">Roll</button>
+              <button class="btn pin" hx-post="/blocks/{{ b['id'] }}/pin/{{ 0 if b['pinned'] else 1 }}"
+                      hx-target="#panel-today" hx-swap="outerHTML">{{ 'Unpin' if b['pinned'] else 'Pin' }}</button>
             </div>
           </div>
         {% endif %}
       {% endfor %}
+      {{ m.kind_legend() }}
     {% endif %}
   </div>
 </details>

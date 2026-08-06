@@ -110,3 +110,67 @@ def test_no_overlap_between_denied_data_and_env_and_allow_of_same_name():
     always_private = {"data/", ".env", ".claude/"}
     assert always_private.issubset(set(DENY_PATHS))
     assert always_private.isdisjoint(set(ALLOW_PATHS))
+
+
+# ── the export must never be a partial snapshot ───────────────────────────
+
+
+def test_an_uncommitted_file_under_an_allowed_path_blocks_the_export(tmp_path):
+    """`git ls-files` lists TRACKED files, which is fail-DANGEROUS here.
+
+    An uncommitted new file is silently absent from the export while every tracked
+    file that depends on it ships normally. That happened: `backglass/ledger.py`
+    shipped calling `commitment_evidence`, whose migration was still untracked, so
+    the export built cleanly, passed the scrub gate, and was broken on first run for
+    anyone who cloned it. Only the scratch-tree pytest caught it, and only because
+    that step exists.
+
+    release-process.md step 1 already says "private tree committed"; this makes the
+    tooling refuse rather than trusting the operator to remember.
+    """
+    import subprocess
+
+    from scripts.release.build_public_repo import require_clean_worktree
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True,
+                       capture_output=True)
+
+    git("init")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+    (tmp_path / "backglass").mkdir()
+    (tmp_path / "backglass" / "shipped.py").write_text("x = 1\n")
+    git("add", "-A")
+    git("commit", "-m", "initial")
+    require_clean_worktree(tmp_path)  # clean: no complaint
+
+    # The exact shape of the real failure: a new file the export would omit.
+    (tmp_path / "backglass" / "migration.sql").write_text("CREATE TABLE t (id INT);\n")
+    with pytest.raises(SystemExit) as caught:
+        require_clean_worktree(tmp_path)
+    assert "migration.sql" in str(caught.value)
+
+
+def test_uncommitted_changes_to_never_shipped_paths_do_not_block(tmp_path):
+    """`tasks/` and `data/` never ship, so editing them must not stop a release —
+    otherwise the guard is noise and the next person adds a bypass flag."""
+    import subprocess
+
+    from scripts.release.build_public_repo import require_clean_worktree
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(tmp_path), *args], check=True,
+                       capture_output=True)
+
+    git("init")
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "Test")
+    (tmp_path / "backglass").mkdir()
+    (tmp_path / "backglass" / "shipped.py").write_text("x = 1\n")
+    git("add", "-A")
+    git("commit", "-m", "initial")
+
+    (tmp_path / "tasks").mkdir()
+    (tmp_path / "tasks" / "todo.md").write_text("private planning\n")
+    require_clean_worktree(tmp_path)

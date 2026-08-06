@@ -517,3 +517,43 @@ deterministic given the id.
   tell is cheap to read: `ls -lT` on the surprising file against the time you last
   touched it. Moving to a worktree mid-session cost one `git worktree add` and fifteen
   minutes; the commit race it removed has cost more than that four times.
+
+- 2026-08-05 | Concurrent session reverted `actions.py`/`app.py` to HEAD mid-work,
+  destroying three landed fixes (re-applied from a scratchpad snapshot). Same checkout,
+  two writers — the exact race the global worktree rule exists for, now with a file-level
+  revert instead of a commit race. | Before editing a repo, check for a second active
+  session (`git status` churn you didn't cause, processes, mtimes). If one exists, move
+  to a worktree or snapshot every change outside the repo (`git diff HEAD > patch`)
+  after each green suite. An uncommitted fix in a shared tree is one `checkout --` from
+  gone.
+
+- 2026-08-05 | `apple-contacts` had never completed a sync: the JXA script looped
+  per-person (`p.name()`, `p.phones()…` = 6+ Apple Events × N cards) and blew the 120s
+  osascript timeout; bulk-array fetch (`app.people.name()`, `app.people.phones.value()`)
+  returns the same data in ~6 events — 0.6s for the whole book. Also: WebKit never
+  focuses a `tabindex` div on mouse click, so a CSS `:focus-within` reveal is
+  keyboard-only until a click handler selects the card. | In JXA, never loop property
+  reads — fetch whole-collection arrays. In Safari/WKWebView, never gate UI on
+  `:focus-within` reaching a div from a click.
+
+- 2026-08-06 | Built a column chart whose markup and tests were all green, and the first
+  render showed two defects no assertion could have caught: the current month's "still
+  filling" ground fill drew a full-height pale block that read as a second, lighter bar,
+  and the pace line — the reference the whole chart is judged against — was occluded by
+  every column, so it appeared only in the two months that happened to be empty. | A
+  chart's correctness is partly optical and has to be looked at. Two rules fall out: a
+  decoration inside the plot area is read as a mark, so state that is not data ("this
+  month is incomplete") belongs on the axis, not behind a column; and a reference line
+  must be drawn above the marks it references, or it is a line drawn only where there is
+  no data. Corollary from the same page: a table idiom borrowed wholesale carries
+  assumptions about its own shape — `.wkg` zeroes `padding-left` on every name cell
+  because its name column is first, and in a five-column register that ran two headers
+  together with no gutter at all.
+
+- 2026-08-05 | Proved a mutation red, then restored with `git checkout -- backglass/sync.py`
+  — which restores HEAD, and my entire uncommitted implementation lived on top of HEAD, so
+  the restore deleted the feature it was meant to un-mutate. Re-typed it from the session
+  transcript. | `checkout --`/`restore` mean "back to HEAD", not "undo my last edit". For a
+  mutate-and-prove-red pass on uncommitted work, save the exact pre-mutation bytes first
+  (`cp file file.bak` in the scratchpad, or `git diff > patch`) and restore from that copy
+  — never from git — and purge __pycache__ on both edges as before.

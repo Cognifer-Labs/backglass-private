@@ -70,6 +70,19 @@ def test_toggle_route_flips_state_and_rerenders(
     assert client.post("/sources/notes/sideways").status_code == 422
 
 
+def test_the_toggle_cannot_invent_a_source(
+    client: TestClient, conn: sqlite3.Connection
+) -> None:
+    """`set_enabled` upserts, so an unvalidated `{source}` made this route a public
+    writer into the credential table: any path segment became a row, and the row showed
+    up in Sources as a configured source no connector will ever sync."""
+    assert client.post("/sources/notreal/enable").status_code == 422
+    assert client.post("/sources/notreal/disable").status_code == 422
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM credential WHERE source = 'notreal'"
+    ).fetchone()["n"] == 0
+
+
 def test_paused_failing_source_raises_no_sidebar_alert(
     client: TestClient, conn: sqlite3.Connection
 ) -> None:

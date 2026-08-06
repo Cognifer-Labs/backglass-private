@@ -935,6 +935,66 @@ def test_status_chips_survive_the_round_trip(conn) -> None:  # type: ignore[no-u
     assert [line.status for line in parsed.all_lines()] == ["overdue", None]
 
 
+# ── a source item may not mint a brief line ───────────────────────────────
+# B2 asks "does every line have a source". This asks the inverse, which is the one an
+# attacker cares about: can a source write a line? `commitment.what` is model output
+# over mail nobody here wrote, and `to_markdown` → `parse_markdown` is a real
+# serialization boundary, so a newline in it used to emit a second physical `- ` line
+# that came back from storage as a claim of its own, with an href of its choosing.
+
+FORGERY = "Send Dana the plan.\n- x ([l](javascript:alert(1)))"
+
+
+def test_one_line_is_one_physical_line_in_the_stored_markdown(
+    conn, settings: Settings
+) -> None:  # type: ignore[no-untyped-def]
+    seed(conn, settings, [{"direction": "i_owe", "what": FORGERY, "due_at": "2026-07-31"}])
+    brief = daily.build(conn, settings, TODAY)
+    content_md = render.to_markdown(brief, base_url=BASE)
+
+    bullets = [row for row in content_md.splitlines() if row.startswith("- ")]
+    expected = len(brief.all_lines()) + sum(len(s.notes) for s in brief.ordered())
+    assert len(bullets) == expected, "a Line emitted more than one markdown line"
+    assert "\n- x " not in content_md
+
+    # And the round trip agrees: one claim went in, one claim comes back.
+    assert len(render.parse_markdown(content_md).all_lines()) == len(brief.all_lines())
+
+
+def test_the_read_page_never_serves_a_javascript_href(
+    client: TestClient, conn, settings: Settings
+) -> None:  # type: ignore[no-untyped-def]
+    seed(conn, settings, [{"direction": "i_owe", "what": FORGERY, "due_at": "2026-07-31"}])
+    brief = daily.build(conn, settings, TODAY)
+    daily.persist(conn, brief, render.to_markdown(brief, base_url=BASE))
+    conn.commit()
+
+    body = client.get("/brief").text
+    assert 'href="javascript:' not in body
+    assert 'href="data:' not in body
+    # The forged markup is still *shown* — they are the owner's own words, escaped and
+    # inert — but it is one line's text, not a second claim with a link of its own.
+    assert body.count('class="b1 hang"') == len(brief.all_lines())
+
+
+def test_stored_provenance_only_ever_comes_back_as_a_path_or_https() -> None:
+    """The read-side half. `StoredRef` holds an href recovered from markdown, so the
+    template gets a link only for the two shapes `to_markdown` writes; everything else
+    is dropped and the source is named without one."""
+    gmail = render.StoredRef("l", "https://mail.google.com/mail/u/0/#all/m1")
+    assert gmail.url(BASE) == "https://mail.google.com/mail/u/0/#all/m1"
+    assert render.StoredRef("l", f"{BASE}/source/4").url(BASE) == "/source/4"
+    assert render.StoredRef("l", "/source/4").url(BASE) == "/source/4"
+    for hostile in (
+        "javascript:alert(1)",
+        "JavaScript:alert(1)",
+        "data:text/html,<script>x</script>",
+        "//evil.example/source/4",  # protocol-relative: off-site wearing a path's clothes
+        "http://stale-host:9000/goals",  # generated against another base, links nowhere
+    ):
+        assert render.StoredRef("l", hostile).url(BASE) == "", hostile
+
+
 # ── W1: Monday scores cadence targets, and only cadence targets ───────────
 # `TargetProgress.complete` means three different things by kind, so scoring every
 # active target against it wrote "0 missed." for milestones that were never weekly and

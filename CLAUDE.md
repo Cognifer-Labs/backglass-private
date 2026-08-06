@@ -36,7 +36,7 @@ architecture. See `docs/02-architecture.md`.
 | Raw source items are immutable and kept forever | `docs/03-data-model.md` |
 | `user_id` on every table even though it is always 1 | `docs/03-data-model.md` |
 | Credentials live in a table, not env vars | `docs/07-connectors.md` |
-| Cream `#FAF3DF` and black, five reserved inks | `design/design-system.md` |
+| Cream `#FCF8EC` and black, five reserved inks | `design/design-system.md` |
 | No shadows, no rounded corners, no gradients | `design/design-system.md` |
 | Three chart series maximum | `design/design-system.md` |
 | Python + uv, SQLite + raw SQL, FastAPI + Jinja2 + HTMX | `docs/10-tech-stack.md` |

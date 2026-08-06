@@ -90,6 +90,40 @@ def due_label(due_at: Any, today: date) -> str:
     return f"due {due.strftime('%d %b %Y')}"
 
 
+def urgency_bucket(due_at: Any, today: date) -> str:
+    """The board's section grammar (owner ruling 2026-08-05): a commitment's place on
+    the page is when it bites — Overdue, Today, This week, Later, No date — not which
+    way the promise points. Direction survives as an inline marker on the row."""
+    if not due_at:
+        return "No date"
+    try:
+        due = date.fromisoformat(str(due_at)[:10])
+    except ValueError:
+        return "No date"
+    if due < today:
+        return "Overdue"
+    if due == today:
+        return "Today"
+    if (due - today).days <= 6:
+        return "This week"
+    return "Later"
+
+
+def board_due_line(due_at: Any, today: date) -> str:
+    """What a board row still says about its date once its bucket heading has spoken.
+
+    Overdue rows carry the size of the slip; a Today row says nothing — the heading is
+    the whole message; future rows keep due_label's distance-sized wording.
+    """
+    bucket = urgency_bucket(due_at, today)
+    if bucket in ("No date", "Today"):
+        return ""
+    if bucket == "Overdue":
+        days = (today - date.fromisoformat(str(due_at)[:10])).days
+        return f"{days}d late"
+    return due_label(due_at, today)
+
+
 def when_label(starts_at: Any, today: date) -> str:
     """`due_label`'s wording for something that is not due.
 
@@ -165,15 +199,19 @@ def board_panel(conn: sqlite3.Connection, settings: Settings, today: date) -> Pa
             "confidence_threshold": settings.confidence_threshold,
         },
     )
+    for row in rows:
+        row["bucket"] = urgency_bucket(row["due_at"], today)
+        row["due_line"] = board_due_line(row["due_at"], today)
     return Panel(title="Commitments", empty_text="Nothing open.", rows=rows)
 
 
 def swimlanes(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     """docs/06: "Board grouped by status, swimlanes by counterparty."
 
-    Insertion-ordered, and the board query already sorts by direction then counterparty,
-    so the lanes come out stable between renders. A board whose lanes reorder on every
-    HTMX swap is a board you cannot build muscle memory against.
+    Insertion-ordered, and the board query sorts deterministically (urgency, then due
+    date, then counterparty), so the lanes come out stable between renders. A board
+    whose lanes reorder on every HTMX swap is a board you cannot build muscle memory
+    against.
     """
     lanes: dict[str, list[dict[str, Any]]] = {}
     for row in rows:

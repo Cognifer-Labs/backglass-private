@@ -8,7 +8,7 @@
 /* Tokens mirror design/tokens.css. Kept inline so this file opens standalone. */
 :root{
   color-scheme:light;
-  --paper:#FAF3DF; --ink:#000000; --on-ink:#FAF3DF;
+  --paper:#FCF8EC; --ink:#000000; --on-ink:#FCF8EC;
   --ink-2:#3d3c37; --ink-muted:#716f67;
   --rule:#000000; --rule-hair:#c9c4b5;
   --vermilion:#D03D37; --gold:#E8AC1D; --green:#249041;
@@ -17,15 +17,15 @@
 }
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){
   color-scheme:dark;
-  --paper:#000000; --ink:#FAF3DF; --on-ink:#000000;
+  --paper:#000000; --ink:#FCF8EC; --on-ink:#000000;
   --ink-2:#c9c4b5; --ink-muted:#aca79b;
-  --rule:#FAF3DF; --rule-hair:#3d3c37;
+  --rule:#FCF8EC; --rule-hair:#3d3c37;
 }}
 :root[data-theme="dark"]{
   color-scheme:dark;
-  --paper:#000000; --ink:#FAF3DF; --on-ink:#000000;
+  --paper:#000000; --ink:#FCF8EC; --on-ink:#000000;
   --ink-2:#c9c4b5; --ink-muted:#aca79b;
-  --rule:#FAF3DF; --rule-hair:#3d3c37;
+  --rule:#FCF8EC; --rule-hair:#3d3c37;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--paper);color:var(--ink);
@@ -75,9 +75,9 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
 .k-green{background:var(--green)}
 .k-dash{border-style:dashed;background:transparent;color:var(--ink-muted)}
 .reel{display:inline-flex;background:#000;border:2px solid #000;padding:2px;gap:1px}
-:root[data-theme="dark"] .reel{border-color:#FAF3DF}
-@media(prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .reel{border-color:#FAF3DF}}
-.reel span{background:#FAF3DF;color:#000;font:700 20px/24px ui-monospace,"SF Mono",Menlo,monospace;
+:root[data-theme="dark"] .reel{border-color:#FCF8EC}
+@media(prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .reel{border-color:#FCF8EC}}
+.reel span{background:#FCF8EC;color:#000;font:700 20px/24px ui-monospace,"SF Mono",Menlo,monospace;
   padding:1px 5px;border-radius:2px;font-variant-numeric:tabular-nums}
 .goal{padding:16px 0;border-top:1px solid var(--rule-hair)}
 .goal:first-of-type{border-top:0}
@@ -295,14 +295,14 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
         <div class="sw" style="background:#E8AC1D"><b>Gold</b><code>#E8AC1D</code></div>
         <div class="sw" style="background:#249041"><b>Green</b><code>#249041</code></div>
         <div class="sw" style="background:#009592"><b>Turquoise</b><code>#009592</code></div>
-        <div class="sw" style="background:#2766C0;color:#FAF3DF"><b>Cobalt</b><code>#2766C0</code></div>
+        <div class="sw" style="background:#2766C0;color:#FCF8EC"><b>Cobalt</b><code>#2766C0</code></div>
       </div>
       <div class="sws" style="margin-top:20px">
-        <div class="sw" style="background:#FAF3DF"><b>Paper</b><code>#FAF3DF</code></div>
+        <div class="sw" style="background:#FCF8EC"><b>Paper</b><code>#FCF8EC</code></div>
         <div class="sw" style="background:#c9c4b5"><b>N 200</b><code>#c9c4b5</code></div>
-        <div class="sw" style="background:#716f67;color:#FAF3DF"><b>N 500</b><code>#716f67</code></div>
-        <div class="sw" style="background:#3d3c37;color:#FAF3DF"><b>N 700</b><code>#3d3c37</code></div>
-        <div class="sw" style="background:#000000;color:#FAF3DF"><b>Ink</b><code>#000000</code></div>
+        <div class="sw" style="background:#716f67;color:#FCF8EC"><b>N 500</b><code>#716f67</code></div>
+        <div class="sw" style="background:#3d3c37;color:#FCF8EC"><b>N 700</b><code>#3d3c37</code></div>
+        <div class="sw" style="background:#000000;color:#FCF8EC"><b>Ink</b><code>#000000</code></div>
       </div>
       <div class="legend">
         <span>Series, validated all-pairs both modes:</span>

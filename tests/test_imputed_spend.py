@@ -17,7 +17,6 @@ import pytest
 
 from backglass import costs
 from backglass.config import Settings
-from backglass.extract import client as client_mod
 from backglass.extract.client import (
     AnthropicAPIBackend,
     ClaudeCLIBackend,

@@ -37,8 +37,17 @@ LEFT JOIN goal g ON g.id = c.goal_id
 WHERE c.user_id = :user_id
   AND c.status = 'open'
   AND c.confidence >= :confidence_threshold
+-- Urgency register (owner ruling 2026-08-05): rows arrive in the buckets the panel
+-- renders as section headings — overdue, today, this week, later, no date — so the
+-- template can cut headings with loop.changed(). Within a bucket, soonest first, then
+-- counterparty for a stable tiebreak.
 ORDER BY
-  CASE WHEN c.direction = 'i_owe' THEN 0 ELSE 1 END,
-  COALESCE(e.canonical_name, 'zzz'),
-  c.due_at IS NULL,
-  date(c.due_at) ASC;
+  CASE
+    WHEN c.due_at IS NULL                          THEN 4
+    WHEN date(c.due_at) <  date(:today)            THEN 0
+    WHEN date(c.due_at) =  date(:today)            THEN 1
+    WHEN date(c.due_at) <= date(:today, '+6 days') THEN 2
+    ELSE 3
+  END,
+  date(c.due_at) ASC,
+  COALESCE(e.canonical_name, 'zzz');

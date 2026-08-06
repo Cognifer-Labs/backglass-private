@@ -11,6 +11,7 @@
   {% if totals %}
     <div class="logzone">
       <p class="lbl">Hours &amp; totals</p>
+      {% include "_hours_chart.html" %}
       {% for t in totals %}
         {% set pct = (100 * t['done'] / t['total_count'])|round|int %}
         {% set behind = risk and risk.at_risk and t['done'] < t['total_count'] %}
@@ -101,41 +102,82 @@
       {% endfor %}
     </div>
 
-    {# The activity registry: the discrete extracurriculars hour logs
-       file under. Collapsed to a counted summary — it is reference data, edited
-       rarely, and it was outweighing the numbers it supports. A write inside
-       re-renders #roadmap-totals and the fold closes; activity writes are rare.
-       Hours are summed on read from each activity's checkpoints; the 15-slot and
-       3-most-meaningful figures are AMCAS's caps, surfaced never enforced. #}
+    {# The activity registry: the discrete extracurriculars hour logs file under.
+       A table, not a stack of prose blocks — every field here is a column of a
+       database view (category, where, hours, entries, span), and down a column they
+       compare. The footer is the rollup the page could not state before: total hours,
+       total entries, and the two AMCAS caps as counts. Still collapsed, because it is
+       reference data edited rarely; the summary carries the rollup so the counts read
+       without opening it. A write inside re-renders #roadmap-totals and the fold
+       closes; activity writes are rare. Hours are summed on read from each activity's
+       checkpoints; the 15-slot and 3-most-meaningful figures are AMCAS's caps,
+       surfaced never enforced. #}
+    {% set act_hours = activities|sum(attribute='hours') %}
+    {% set act_entries = activities|sum(attribute='entry_count') %}
+    {% set act_meaningful = activities|selectattr('most_meaningful')|list|length %}
     <details class="addform">
       <summary class="lbl">Activities
-        <span class="tnum">· {{ activities|length }} of {{ amcas_slots }} slots</span></summary>
+        <span class="tnum">· {{ activities|length }} of {{ amcas_slots }} slots
+          · {{ act_hours }} h · {{ act_meaningful }} of {{ amcas_meaningful }} most meaningful</span></summary>
       <div style="margin-top:var(--sp-3)">
-        {% for a in activities %}
-          <div class="tot">
-            <div class="hd">
-              <span class="nm">{{ a['title'] }}</span>
-              <span class="chip k-plain">{{ a['category'] }}</span>
-              {% if a['most_meaningful'] %}<span class="chip">most meaningful</span>{% endif %}
-            </div>
-            <p class="b2 tent">
-              {%- if a['org'] %}{{ a['org'] }}{% if a['role'] %} · {{ a['role'] }}{% endif %} · {% endif -%}
-              <span class="tnum">{{ a['hours'] }} h</span> across {{ a['entry_count'] }} entr{{ 'y' if a['entry_count'] == 1 else 'ies' }}
-              {%- if a['first_logged'] %} · {{ a['first_logged'][:10] }} → {{ a['last_logged'][:10] }}{% endif %}
-            </p>
-            <div class="acts">
-              <form class="logform"
-                    hx-post="/roadmaps/{{ r['id'] }}/activities/{{ a['id'] }}/meaningful"
-                    hx-target="#roadmap-totals" hx-swap="outerHTML">
-                <button class="lnk" type="submit">
-                  {{ 'Unmark meaningful' if a['most_meaningful'] else 'Mark meaningful' }}
-                </button>
-              </form>
-            </div>
-          </div>
-        {% else %}
-          <p class="b2">—</p>
-        {% endfor %}
+        <table class="wkg atbl">
+          <thead>
+            <tr>
+              <th class="nm">Activity</th>
+              <th class="nm">Category</th>
+              <th class="nm">Where</th>
+              <th class="stk">Hours</th>
+              <th class="stk">Entries</th>
+              <th class="nm">Span</th>
+              <th class="stk"><span class="vh">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for a in activities %}
+              <tr>
+                <td class="nm">{{ a['title'] }}
+                  {%- if a['most_meaningful'] %} <span class="chip">most meaningful</span>{% endif %}</td>
+                <td class="nm"><span class="chip k-plain">{{ a['category'] }}</span></td>
+                <td class="nm sub">{% if a['org'] %}{{ a['org'] }}{% if a['role'] %} · {{ a['role'] }}{% endif %}
+                  {%- elif a['role'] %}{{ a['role'] }}{% else %}—{% endif %}</td>
+                <td class="stk">{{ a['hours'] }}</td>
+                <td class="stk">{{ a['entry_count'] }}</td>
+                <td class="nm sub span tnum">
+                  {%- if a['first_logged'] %}{{ a['first_logged'][:10] }} → {{ a['last_logged'][:10] }}
+                  {%- else %}—{% endif %}</td>
+                {# The control says Mark / Unmark and its label says the rest: the full
+                   phrase in every row was the widest thing in the table and pushed the
+                   span dates into wrapping mid-date. #}
+                <td class="stk">
+                  <form class="logform"
+                        hx-post="/roadmaps/{{ r['id'] }}/activities/{{ a['id'] }}/meaningful"
+                        hx-target="#roadmap-totals" hx-swap="outerHTML">
+                    <button class="lnk" type="submit"
+                            title="{{ 'Unmark' if a['most_meaningful'] else 'Mark' }} {{ a['title'] }} as most meaningful"
+                            aria-label="{{ 'Unmark' if a['most_meaningful'] else 'Mark' }} {{ a['title'] }} as most meaningful">
+                      {{ 'Unmark' if a['most_meaningful'] else 'Mark' }}
+                    </button>
+                  </form>
+                </td>
+              </tr>
+            {% else %}
+              <tr><td class="nm" colspan="7">—</td></tr>
+            {% endfor %}
+          </tbody>
+          {% if activities %}
+            <tfoot>
+              <tr>
+                <td class="nm">{{ activities|length }} activit{{ 'y' if activities|length == 1 else 'ies' }}</td>
+                <td class="nm"></td>
+                <td class="nm"></td>
+                <td class="stk">{{ act_hours }}</td>
+                <td class="stk">{{ act_entries }}</td>
+                <td class="nm"></td>
+                <td class="stk"></td>
+              </tr>
+            </tfoot>
+          {% endif %}
+        </table>
         <form class="logform" hx-post="/roadmaps/{{ r['id'] }}/activities"
               hx-target="#roadmap-totals" hx-swap="outerHTML">
           <input type="text" name="title" placeholder="activity title" required

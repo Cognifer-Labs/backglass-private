@@ -11,7 +11,7 @@
  */
 import { validate, contrast } from './_validator_core.js';
 
-const PAPER = '#FAF3DF';
+const PAPER = '#FCF8EC';
 const BLACK = '#000000';
 
 const INKS = {

@@ -34,7 +34,7 @@ from backglass.brief.model import Brief, Line, Note, Section
 # design/tokens.css. Duplicated as literals because email cannot use CSS variables; this
 # is the one place in the codebase allowed to hard-code them, and validate-palette.mjs
 # still governs the source of truth in tokens.css.
-PAPER = "#FAF3DF"
+PAPER = "#FCF8EC"
 INK = "#000000"
 INK_MUTED = "#716f67"
 VERMILION = "#D03D37"
@@ -174,6 +174,20 @@ def to_text(brief: Brief, *, base_url: str) -> str:
     return "\n".join(out).strip()
 
 
+_WHITESPACE = re.compile(r"\s+")
+
+
+def _flat(text: str) -> str:
+    """One Line, one physical line.
+
+    `parse_markdown` reads a leading `- ` as the start of a new claim, so a newline
+    inside a line's text — extracted from mail nobody here wrote — would come back as a
+    second claim with provenance of its own choosing. The brief format has no multi-line
+    line, so collapsing whitespace loses nothing and closes the forgery.
+    """
+    return _WHITESPACE.sub(" ", text).strip()
+
+
 def to_markdown(brief: Brief, *, base_url: str) -> str:
     """What gets stored in `brief.content_md` for the feedback loop."""
     out: list[str] = [f"# {brief.generated_for_date}", ""]
@@ -182,12 +196,12 @@ def to_markdown(brief: Brief, *, base_url: str) -> str:
         for line in section.lines:
             tag = f"`{STATUS[line.status][1]}` " if line.status in STATUS else ""
             out.append(
-                f"- {tag}{line.text} "
-                f"([{line.provenance.label}]({line.provenance.url(base_url)}))"
+                f"- {tag}{_flat(line.text)} "
+                f"([{_flat(line.provenance.label)}]({line.provenance.url(base_url)}))"
             )
-        out.extend(f"- _{note.text}_" for note in section.notes)
+        out.extend(f"- _{_flat(note.text)}_" for note in section.notes)
         out.append("")
-    out.extend(f"_{note.text}_" for note in brief.notes)
+    out.extend(f"_{_flat(note.text)}_" for note in brief.notes)
     return "\n".join(out).strip()
 
 
@@ -239,11 +253,22 @@ class StoredRef:
         would link into nothing. A link that already points at `base` comes back as a
         path, so it resolves against the running dashboard; a Gmail deep link does not
         match and is returned exactly as generated.
+
+        What comes back is only ever one of the two shapes `to_markdown` writes: a path
+        on this dashboard, or an https deep link. The stored href is text recovered from
+        markdown, and the markdown was written from model output over mail nobody here
+        wrote, so `javascript:` and `data:` are reachable from a source item and a
+        protocol-relative `//host` is a link off this dashboard wearing a path's clothes.
+        Anything else returns nothing and the page names the source without a link — a
+        dead link is worse than no link (templates/_macros.html).
         """
         prefix = base.rstrip("/")
-        if prefix and self.href.startswith(f"{prefix}/"):
-            return self.href[len(prefix) :]
-        return self.href
+        href = self.href
+        if prefix and href.startswith(f"{prefix}/"):
+            href = href[len(prefix) :]
+        if href.startswith("//") or not href.startswith(("/", "https://")):
+            return ""
+        return href
 
 
 def parse_markdown(content_md: str, *, kind: str = "daily") -> Brief:
