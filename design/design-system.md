@@ -245,7 +245,11 @@ measured against, not a set of oversights:
    leaves four paper nicks against the seam.
 2. **Panel cells and page seams.** These are rules between sections, not boxes. Rounding
    one breaks the continuous seam the row-locked grid exists to keep.
-3. **The fixed failed-write strip.** Pinned to three edges of the viewport.
+3. ~~**The fixed failed-write strip.**~~ Retired the same day it was written. The strip is
+   pinned to three edges and its top is free, so it rounds there. **A pinned or flush
+   element is not exempt — only its pinned edges are.** That is the same reading that gives
+   the timeline's NOW tab a left-only radius and a chart column a top-only one, and it is
+   the rule to apply to anything that meets an edge: round what is free.
 4. **Ledger inputs.** `border:0` plus one bottom hairline is a line, not a box; a radius
    puts a curl on each end of it.
 5. **Left-keyline rows** — kind stripes, failing sources, quotes, the roadmap's next-step

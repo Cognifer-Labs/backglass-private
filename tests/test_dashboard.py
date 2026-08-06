@@ -686,7 +686,7 @@ def test_the_full_bleed_surfaces_stay_square(client: TestClient) -> None:
     pinned to three edges of the viewport — rounding either is a regression in the
     opposite direction from the one this suite used to guard."""
     css = _strip_css_comments(client.get("/static/dashboard.css").text)
-    for selector in (".banner", ".panel", ".oops", ".mast", ".side", ".sec"):
+    for selector in (".banner", ".panel", ".mast", ".side", ".sec"):
         # Every rule that TOUCHES the element, not only the one whose selector text equals
         # it. `details.panel > summary.banner` restyles the same bar, and an exact-match
         # check would wave a radius through there while claiming the bar stays square.
@@ -698,6 +698,29 @@ def test_the_full_bleed_surfaces_stay_square(client: TestClient) -> None:
         assert found, f"no rule for {selector!r}"
         for block in found:
             assert "radius" not in block, f"{selector} should stay square: {block!r}"
+
+
+def test_an_element_rounds_the_edges_it_is_not_pinned_to(client: TestClient) -> None:
+    """The correction to exemption 3. A pinned element is not exempt — only its pinned
+    edges are. Each of these meets an edge on some sides and is free on others, and a
+    single-value radius on any of them would round a corner that has to stay flush."""
+    css = _strip_css_comments(client.get("/static/dashboard.css").text)
+
+    def radius_of(selector: str) -> str:
+        for block in css.split("}"):
+            if "{" in block and block.split("{")[0].replace("\n", " ").strip() == selector:
+                found = re.search(r"border-radius\s*:\s*([^;}]+)", block)
+                if found:
+                    return " ".join(found.group(1).split())
+        raise AssertionError(f"no radius on {selector!r}")
+
+    # bottom-pinned strip → top two corners; right-flush tabs → left two; column on an
+    # axis → top two. Each is a four-value radius with a 0 on the pinned side.
+    assert radius_of(".oops") == "var(--radius-3) var(--radius-3) 0 0"
+    assert radius_of(".tl .now span") == "var(--radius-1) 0 0 var(--radius-1)"
+    assert radius_of(".mpace span") == "var(--radius-1) 0 0 var(--radius-1)"
+    assert radius_of(".mcol > i") == "var(--radius-1) var(--radius-1) 0 0"
+    assert radius_of(".bar .b") == "0 var(--radius-1) var(--radius-1) 0"
 
 
 def test_tokens_are_served_from_the_validated_source(client: TestClient) -> None:

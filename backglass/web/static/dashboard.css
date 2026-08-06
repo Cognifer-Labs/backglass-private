@@ -32,7 +32,10 @@
  *      the seam;
  *   2. panel cells and page seams (.panel, .mast, .side, .sec) — rules between sections,
  *      not boxes; rounding one breaks the continuous seam the row-locked grid exists for;
- *   3. the fixed failed-write strip (.oops) — pinned to the viewport edge;
+ *   3. — retired. The failed-write strip was listed here as "pinned to the viewport", but
+ *      it is pinned to THREE edges and its top is free, so it rounds there like any other
+ *      box. A pinned element is not exempt; only its pinned edges are. Same reading gives
+ *      the NOW tab its left-only radius and a chart column its top-only one;
  *   4. ledger inputs — border:0 plus one bottom hairline is a line, not a box;
  *   5. left-keyline rows — one border and no box. The membership test is the keyline, not
  *      the class name: .row.k-work/.k-small/.k-fixed/.k-routine, .src.fail, .quote and
@@ -455,6 +458,11 @@ input:focus,textarea:focus,select:focus{outline:3px solid var(--rule);outline-of
  * carried the entire page off the right edge of the screen. */
 .addform form .what{flex:1 1 100%;min-width:0}
 .addform form input,.addform form select{min-width:0;max-width:100%}
+/* A select is as wide as its widest OPTION, and one option here is a commitment title —
+ * so a single long obligation stretched the "also closes" picker across the whole form,
+ * 1300px of control for a secondary field. Cap it and let it shrink: the chosen value is
+ * what has to be readable, not every candidate at once. */
+.addform form select{flex:0 1 320px}
 .src .nm a,a.nm{color:var(--ink);text-decoration:none}
 a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 /* A paused source stays listed — configuration is visible even when inactive. */
@@ -533,6 +541,10 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
   text-transform:uppercase;color:var(--ink-muted);padding-top:var(--sp-3);
   border-top:1px solid var(--rule-hair)}
 .lane:first-of-type{border-top:0;padding-top:0}
+/* …except when the lane IS the first thing under a section bar. On the board a .cap sits
+ * between them and carries the gap; on Memory and Decisions the lane opens the section, so
+ * zeroing its padding put the group label hard against the black bar with no air at all. */
+.banner + .inner > .lane:first-of-type{padding-top:var(--sp-3)}
 
 /* ── Goals page (Phase 8) ──────────────────────────────────────────────────
  * The deep view behind the dashboard's Goals + Checklist panels. Cards per
@@ -1026,7 +1038,10 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
  * on paper so it survives crossing one. */
 .mpace{position:absolute;left:0;right:0;z-index:1;border-top:1px dashed var(--rule);
   pointer-events:none}
+/* Same knockout-label idiom as the day timeline's NOW tab, so the same treatment: it
+ * hangs off the right edge, and only the two corners that are free of that edge round. */
 .mpace span{position:absolute;right:0;top:-15px;background:var(--paper);padding:0 3px;
+  border-radius:var(--radius-1) 0 0 var(--radius-1);
   font:700 10px/13px ui-monospace,"SF Mono",Menlo,monospace;color:var(--ink-muted)}
 .maxis{display:flex;gap:2px;margin-top:var(--sp-1)}
 .maxis span{flex:1 1 0;min-width:0;text-align:center;overflow:hidden;
@@ -1215,6 +1230,7 @@ details.panel:not([open]){padding-bottom:0}
 .oops{position:fixed;left:0;right:0;bottom:0;z-index:10;
   display:flex;align-items:center;gap:var(--sp-3);
   padding:var(--sp-3) var(--sp-5);
+  border-radius:var(--radius-3) var(--radius-3) 0 0;
   background:var(--verm-wash);border-top:2px solid var(--rule);color:#000}
 .oops[hidden]{display:none}
 .oops .oops-what{flex:1;min-width:0;font-size:14px;line-height:20px}
