@@ -1,3 +1,66 @@
+# The loop could not learn from its most expensive mistake
+
+Started 2026-08-06. Asked to make the information processing better on the claude_cli
+backend. The measurement came first, against a copy of the real ledger.
+
+## What the ledger said
+
+Triage kill rate 86.3% — above the 85% alarm, below docs/02's 90–95% expectation. Counted
+through the miner's own query: of 614 kept items, 611 reached a completed extraction and
+**539 of those produced no record at all** — no commitment, no engagement, no fact, no
+citation, no checkpoint. 417 of the 539 carried an unsubscribe footer. They are college marketing —
+scholarship blasts, admissions promos, "Apply in the next 48 hrs" — kept precisely
+because they are written to look like deadlines.
+
+Every one of those is a full `claude -p` subprocess. On this backend that is the
+dominant cost: the 2026-07-30 lesson measured ~30k cache-creation tokens per call.
+
+`learned_noise` exists for exactly this and held **zero rows**. Its evidence was "the
+model dropped it" and its disqualifier was "was it ever kept" — so the senders doing the
+most damage were structurally invisible to it, because their mail is *kept*.
+
+## The change
+
+- [x] 1. A second evidence class: a keep the expensive pass **settled to nothing**, on
+      mail carrying a broadcast marker. Four conditions, none removable — produced
+      nothing, extraction actually ran (`extraction_version`, unset when parked), and
+      the marker, which is what keeps this class away from human correspondents. A quiet
+      new colleague accumulates barren keeps too; personal mail has no unsubscribe link.
+- [x] 2. The disqualifier moves from "one keep, ever" to "anything ever came of it, or
+      anything is still open" — commitment, engagement, fact, citation or checkpoint
+      disqualifies forever, and an unanswered keep (pending or parked) disqualifies too.
+      The bar moves only for keeps the pass has actually answered, so this is not a
+      loosening.
+- [x] 3. `suggest` prints the two classes apart and a sample subject line. "78 barren"
+      and "78 drops" are different observations and the owner is deciding whether to
+      stop reading a sender forever.
+
+## Measured against the real ledger, old code vs new
+
+70 address candidates / 1,433 observations → **140 candidates / 3,066**. The newly
+visible half is exactly the senders whose mail was being kept and extracted for nothing:
+`webmaster@fastweb.com` alone is 62 drops and 78 barren keeps, and was previously
+disqualified by those same 78.
+
+## What this is not
+
+Tuning away triage.md's keep-bias. The model's "when in doubt, keep" is untouched; what
+changed is that its doubt, once resolved to nothing by the pass that costs real money,
+finally counts as the observation it always was. Promotion stays an explicit act, domains
+are still never auto-promoted, and `--all` still takes addresses only.
+
+## Found and not fixed
+
+Two display-metadata defects of the same shape, filed together rather than folded in.
+`_Tally.see` takes a string min/max over `occurred_at`, which carries mixed offsets —
+the shape `tasks/lessons.md` names four times — so the evidence window `suggest` prints
+can name the wrong day. And `sample_title` keeps the FIRST barren title it meets while
+the query has no ORDER BY, so "arbitrary row order wearing deterministic clothes", the
+2026-08-02 lesson exactly. Both misprint a line and change no decision: the promotion
+bar reads neither.
+
+---
+
 # What Work & Activities would still be missing
 
 Started 2026-08-06. Third pass on the log zone, and the last one the page needed.

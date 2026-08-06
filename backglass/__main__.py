@@ -1929,7 +1929,7 @@ def noise_list(ctx: typer.Context) -> None:
 @noise_app.command("suggest")
 def noise_suggest(
     min_evidence: Annotated[
-        int, typer.Option("--min-evidence", help="Model drops required")
+        int, typer.Option("--min-evidence", help="Observations required (drops + barren keeps)")
     ] = 5,
 ) -> None:
     """Dry-run: who would be promoted, with the evidence. Writes nothing."""
@@ -1943,15 +1943,22 @@ def noise_suggest(
         typer.echo("no candidates — every repeat-dropped sender is already covered")
         raise typer.Exit()
     typer.echo(
-        "candidates (zero keeps ever, no commitment ever; a sender's first real"
-        " ask after promotion would be lost — promote deliberately):"
+        "candidates (nothing ever came of their mail; a sender's first real ask after"
+        " promotion would be lost — promote deliberately):"
     )
     for c in found:
         window = f"{(c.first_seen or '')[:10]}..{(c.last_seen or '')[:10]}"
-        typer.echo(
-            f"  {c.kind:<7} {c.value:<36} {c.evidence_count:>3} model drops  {window}"
-            f"  e.g. {c.sample_reason or '—'}"
-        )
+        # The two evidence classes are printed apart, not summed. "78 barren" means the
+        # expensive pass read 78 of this sender's mails and found nothing in any of
+        # them; "78 drops" means the triage model never let them through. The owner is
+        # deciding whether to stop reading a sender forever and should see which.
+        counts = f"{c.model_drops:>3} drops {c.barren_bulk_keeps:>3} barren"
+        typer.echo(f"  {c.kind:<7} {c.value:<36} {counts}  {window}")
+        # A sample of what they actually write. A domain reads as junk in a list right
+        # up until the one letter a year that carries a real deadline.
+        detail = c.sample_title or c.sample_reason
+        if detail:
+            typer.echo(f"          e.g. {detail[:76]}")
     typer.echo("promote with: backglass noise promote <value> | --all")
 
 
@@ -1963,7 +1970,7 @@ def noise_promote(
     ] = False,
     min_evidence: Annotated[int, typer.Option("--min-evidence")] = 5,
 ) -> None:
-    """Promote candidates into free tier-0 drops. Refuses any sender with a keep."""
+    """Promote candidates into free tier-0 drops. Refuses any sender that ever produced."""
     from backglass.extract import noise as noise_mod
 
     if not value and not all_:
