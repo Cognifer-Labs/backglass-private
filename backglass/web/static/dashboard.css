@@ -129,6 +129,8 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
  * which then wraps or scrolls on its own terms. */
 .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0}
 @media(max-width:840px){.grid{grid-template-columns:minmax(0,1fr)}}
+
+}
 .panel{min-width:0;border-bottom:2px solid var(--rule);border-right:2px solid var(--rule);padding:0 0 var(--sp-5)}
 .panel:nth-child(2n){border-right:0}
 @media(max-width:840px){.panel{border-right:0}}
@@ -1048,3 +1050,26 @@ details.panel:not([open]){padding-bottom:0}
  * the panel grid — the page has to stay readable for the mail nobody wrote by hand. */
 .raw{margin:var(--sp-3) 0 0;font-size:14px;line-height:20px;
   white-space:pre-wrap;overflow-wrap:anywhere}
+
+/* Below ~420px the phrases stop fitting, and `nowrap` stops being a kindness.
+ *
+ * A chip reads best on one line and a count must never break across two, which is
+ * why both are nowrap everywhere else — but on a 320px screen "no checkpoints yet"
+ * is 160px of unbreakable text and "3 investor conversations per week" is 338px,
+ * and an element that cannot shrink sets the width of the page it sits on. The
+ * choice at that size is a chip on two lines or a page 57px wider than the screen,
+ * and only one of those loses information.
+ *
+ * Deliberately not applied at 430px, where everything still fits: this is the
+ * relief valve for the smallest screens, not a different design for phones. */
+@media(max-width:420px){
+  .chip{white-space:normal;flex:0 1 auto}
+  .goal .hd,.sgoal .hd,.gcard .hd,.gcard .ghd,.src{flex-wrap:wrap}
+  /* The heading claims the line so the chip drops beneath it, rather than both
+     splitting the width and the title stacking one word per line. */
+  .gcard .ghd > :first-child{flex:1 1 100%}
+  /* Same for a target's name against its CADENCE/SLIPPING pair: shrinking the
+     name until it wraps under the label reads as two texts on top of each other. */
+  .gcard .gtgt .hd .nm{flex:1 1 100%}
+  .goalrow .gr-n,.goalrow .gr-l{white-space:normal}
+  .src .ts.clip{max-width:none}
