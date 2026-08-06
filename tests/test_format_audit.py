@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import date
 
@@ -118,7 +119,12 @@ class TestYoungDataInk:
         )
         conn.commit()
         body = client.get("/people").text
-        assert '<span class="chip k-plain">no interactions yet</span>' in body
+        # Matched with the ink class anchored to its own text rather than as one
+        # exact attribute string: the rule under test is "young data gets the
+        # neutral ink", and pinning the whole class list made a purely
+        # presentational modifier (`.long`, which lets a sentence-length chip
+        # wrap on a phone) read as a violation of it.
+        assert re.search(r'class="chip k-plain[^"]*">no interactions yet</span>', body)
         assert "k-verm" not in body
 
     def test_never_touched_person_is_not_going_cold(

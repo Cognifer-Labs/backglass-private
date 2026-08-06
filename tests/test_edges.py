@@ -13,8 +13,10 @@ field straight into the column the board sorts by.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from datetime import date
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -489,3 +491,69 @@ class TestOneUnreadableRowIsNotABlankPage:
         could not read."""
         self._block(conn, stamp, stamp, "unreadable")
         assert "unreadable" not in client.get("/schedule?date=2026-08-10").text
+
+
+class TestNothingIsWiderThanThePhone:
+    """The dashboard measured 642px wide inside a 390px viewport, and the right
+    third of every panel was unreachable on a phone.
+
+    The measurement itself needs a browser and lives outside CI (a Playwright pass
+    over every route at 390/430/768/1024/1440). What is checkable here is the
+    mechanism that caused it, which was the same in all four places: a hard pixel
+    floor on something inside a grid or flex track. A grid item's automatic minimum
+    is its min-content width, so one un-shrinkable child silently widens its track,
+    then the page, then everything in it.
+    """
+
+    TEMPLATES = Path(__file__).resolve().parents[1] / "backglass" / "web" / "templates"
+
+    def test_no_template_hard_codes_a_width(self) -> None:
+        """A width in a style attribute cannot carry a media query or a min-width:0
+        escape hatch, so it is the one place a floor can never be relaxed. The
+        quick-add field's `style="min-width:220px"` pushed the whole dashboard
+        200px off the right of the screen."""
+        offenders = [
+            f"{path.name}: {line.strip()[:90]}"
+            for path in sorted(self.TEMPLATES.glob("*.html"))
+            for line in path.read_text().splitlines()
+            if re.search(r'style="[^"]*(?:min-)?width:\s*\d', line)
+        ]
+        assert not offenders, (
+            "widths belong in dashboard.css, where a breakpoint can reach them:\n"
+            + "\n".join(offenders)
+        )
+
+    def test_the_panel_grid_cannot_be_stretched_by_its_contents(self) -> None:
+        css = (
+            Path(__file__).resolve().parents[1]
+            / "backglass" / "web" / "static" / "dashboard.css"
+        ).read_text()
+        assert "grid-template-columns:repeat(2,minmax(0,1fr))" in css
+        assert re.search(r"\.panel\{min-width:0", css), (
+            "without min-width:0 a single wide row re-widens every panel on the page"
+        )
+
+    def test_the_alerts_block_survives_the_narrow_breakpoint(self) -> None:
+        """Goals and Roadmaps yield on a phone — both are summaries of a page one
+        tap away. Alerts have no page of their own, so hiding them meant a failing
+        source was invisible on the device the dashboard is most read on."""
+        css = (
+            Path(__file__).resolve().parents[1]
+            / "backglass" / "web" / "static" / "dashboard.css"
+        ).read_text()
+        start = css.index("@media(max-width:900px)")
+        depth, end = 0, start
+        for i in range(start, len(css)):
+            if css[i] == "{":
+                depth += 1
+            elif css[i] == "}":
+                depth -= 1
+                if depth == 0:
+                    end = i
+                    break
+        narrow = css[start:end]
+        assert "#side-alerts" in narrow, "the alerts block has no rule at this breakpoint"
+        assert "#side-goals" in narrow and "#side-roadmaps" in narrow
+        assert ".sblock{display:none}" not in narrow, (
+            "a blanket hide takes the alerts with it — name the two blocks that yield"
+        )

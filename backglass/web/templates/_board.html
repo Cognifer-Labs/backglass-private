@@ -7,7 +7,11 @@
     <details class="addform" style="margin-top:12px;border-top:0;padding-top:0">
       <summary class="lbl">Quick add</summary>
       <form hx-post="/commitments/quick-add" hx-target="#panel-board" hx-swap="outerHTML">
-        <input name="what" placeholder="What was promised" required style="min-width:220px">
+        {# The width lives in dashboard.css (.addform input.what), not in a style
+           attribute: a hard 220px floor could not shrink on a phone, so the form
+           stretched its grid track and pushed the whole page 200px wider than the
+           screen. #}
+        <input class="what" name="what" placeholder="What was promised" required>
         <select name="direction" aria-label="Direction">
           <option value="i_owe">I owe</option>
           <option value="owed_to_me">Owed to me</option>

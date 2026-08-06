@@ -86,7 +86,21 @@ body{margin:0;background:var(--paper);color:var(--ink);
     position:static;height:auto}
   .snav{flex-direction:row;flex-wrap:wrap}
   .snav a{border-bottom:0;flex:1 1 auto;justify-content:center}
-  .sblock{display:none}
+  /* Goals and Roadmaps yield: both blocks are summaries of a page one tap away,
+   * and a phone cannot afford two screens of nav before the content starts.
+   * Alerts do NOT yield. They are derived state with no page of their own — a
+   * failing source, an undecided conversation, a queue awaiting review — and
+   * hiding them here meant the one class of thing the interface exists to raise
+   * was invisible on the device it is most often read on. §8 rule 3 says status
+   * always ships; a breakpoint is not an exemption.
+   *
+   * They lay out as a wrapping row rather than the sidebar's stack, so three
+   * alerts cost one line instead of three screens of scrolling. */
+  #side-goals,#side-roadmaps{display:none}
+  #side-alerts{margin-top:0;padding-bottom:var(--sp-3);
+    display:flex;flex-wrap:wrap;align-items:center;gap:var(--sp-2)}
+  #side-alerts .shd{margin-bottom:0}
+  #side-alerts .salert{margin:0;flex:1 1 220px}
 }
 
 /* width:100% matters: as a grid item, the auto margins would otherwise defeat the
@@ -106,9 +120,16 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
  * destroy, and a red ring on every tabbed element wore the alarm ink decoratively.
  * The offset keeps the ring clear of the element's own keyline. */
 :focus-visible{outline:3px solid var(--rule);outline-offset:2px}
-.grid{display:grid;grid-template-columns:1fr 1fr;gap:0}
-@media(max-width:840px){.grid{grid-template-columns:1fr}}
-.panel{border-bottom:2px solid var(--rule);border-right:2px solid var(--rule);padding:0 0 var(--sp-5)}
+/* minmax(0,…) and min-width:0, not 1fr and auto: a grid item's automatic minimum
+ * is its min-content width, so ONE wide row — four reject buttons at min-width:96px,
+ * a date input, a seven-column table — pushed its track past the viewport and took
+ * every other panel with it. At 390px the page measured 642px wide and the right
+ * third of every panel was unreachable. Letting the track ignore min-content puts
+ * the overflow back where it belongs: inside the row that is actually too wide,
+ * which then wraps or scrolls on its own terms. */
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0}
+@media(max-width:840px){.grid{grid-template-columns:minmax(0,1fr)}}
+.panel{min-width:0;border-bottom:2px solid var(--rule);border-right:2px solid var(--rule);padding:0 0 var(--sp-5)}
 .panel:nth-child(2n){border-right:0}
 @media(max-width:840px){.panel{border-right:0}}
 .banner{background:var(--ink);color:var(--on-ink);padding:var(--sp-2) var(--sp-5);font-size:14px;line-height:18px;
@@ -141,6 +162,12 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
   font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
   border:2px solid var(--rule);border-radius:0;padding:2px 8px;color:var(--ink);background:var(--paper);white-space:nowrap}
 .chip svg{width:10px;height:10px;flex:0 0 10px}
+/* `nowrap` is right for a chip that is a word — OVERDUE, 3 OPEN — and wrong for
+ * one that is a sentence. "87 days since last touch" is 212px that cannot break,
+ * so on a phone it set the People page's minimum width and pushed the names off
+ * the screen to keep its own line intact. `.long` opts a chip out; the keyline
+ * still encloses it, so it reads as one mark however many lines it takes. */
+.chip.long{white-space:normal;flex:0 1 auto;text-align:left}
 /* due_today is the strongest mark in the system (§4): solid ink, paper text.
  * In dark the tokens invert to a paper chip with black text — same statement. */
 .k-black{background:var(--ink);border-color:var(--rule);color:var(--on-ink)}
@@ -338,6 +365,12 @@ input:focus,textarea:focus,select:focus{outline:3px solid var(--rule);outline-of
 .addform{margin-top:var(--sp-4);background:var(--fill-mild);border:1px solid var(--rule-hair);padding:var(--sp-3)}
 .addform summary{cursor:pointer}
 .addform form{display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-3)}
+/* The sentence field wants the room, so it takes the whole line and gives the
+ * rest back — `flex-basis:100%` on a wrapping row, not a min-width floor. The
+ * floor is what a phone cannot honour: it stretched the panel's grid track and
+ * carried the entire page off the right edge of the screen. */
+.addform form .what{flex:1 1 100%;min-width:0}
+.addform form input,.addform form select{min-width:0;max-width:100%}
 .src .nm a,a.nm{color:var(--ink);text-decoration:none}
 a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 /* A paused source stays listed — configuration is visible even when inactive. */
@@ -408,7 +441,13 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
  * goal because staleness and risk are goal-level signals (G11); the checklist
  * is a week of tick cells because a habit is a row over days, and the streak
  * is a bare tabular number (C4: quiet). */
-.wkg{width:100%;border-collapse:collapse;margin-top:var(--sp-4)}
+/* Eight columns of fixed-width day boxes plus a streak column do not fit a phone,
+ * and a table cannot reflow into something narrower without stopping being a
+ * table. It scrolls sideways inside its own box, the way the week agenda already
+ * does (.wk7wrap) — the alternative was the whole page scrolling, which moves the
+ * nav and the panel seams off screen to show a checkbox. */
+.wkgwrap{overflow-x:auto}
+.wkg{width:100%;border-collapse:collapse;margin-top:var(--sp-4);min-width:420px}
 .wkg th{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
   color:var(--ink-muted);border-bottom:2px solid var(--rule);padding:var(--sp-2);text-align:center}
 .wkg th .dnum{font:700 12px/16px ui-monospace,monospace;color:var(--ink);font-variant-numeric:tabular-nums}
@@ -562,7 +601,9 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 /* Cadence picker folded inline beside +1 (format audit): the fold sits in the
  * .acts row without the section border-top the block fold carries. */
 .acts .cadfold{border-top:none;padding:0;margin-top:0;align-self:center}
-.cadfold .cadopts{display:inline-flex;gap:var(--sp-2);margin-left:var(--sp-2)}
+/* Five cadence buttons in a row is 298px that cannot break, which is wider than a
+ * phone's whole content column — it carried the Goals page 200px off the screen. */
+.cadfold .cadopts{display:inline-flex;flex-wrap:wrap;gap:var(--sp-2);margin-left:var(--sp-2)}
 
 /* The headline strip. 16px of padding, closed by the 2px rule §7 uses between
  * sections — the strip is a section, not a caption. */
@@ -665,8 +706,12 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .alltrack{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;
   text-transform:uppercase;color:var(--ink-muted);margin:var(--sp-4) 0 0}
 .goalrow{border-bottom:1px solid var(--rule-hair)}
+/* Wraps rather than overflows: the title ellipsises (it has min-width:0), but the
+ * two tabular readouts beside it are deliberately nowrap — a count broken across
+ * lines stops being a number — so on a narrow column they have to be allowed to
+ * fall to a second line instead of pushing the page sideways. */
 .goalrow > summary{cursor:pointer;display:flex;align-items:baseline;gap:var(--sp-3);
-  padding:var(--sp-3) 0}
+  flex-wrap:wrap;padding:var(--sp-3) 0}
 .goalrow > summary:focus-visible{outline:3px solid var(--rule);outline-offset:2px}
 .goalrow .gr-t{flex:1;min-width:0;font-size:15px;line-height:23px;
   overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
