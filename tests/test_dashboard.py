@@ -686,14 +686,22 @@ def test_every_content_unit_is_a_tile(client: TestClient) -> None:
     css = _strip_css_comments(client.get("/static/dashboard.css").text)
     tile = [b for b in css.split("}") if "--tile-line" in b and "background:var(--fill-mild)" in b]
     assert tile, "no tile rule"
+    # Two blocks, not one, and the split is the point: ".tt li" and ".mlist li" are a class
+    # plus an element, so keeping them in the grouped :is() lifted it to (0,1,1) and every
+    # single-class rule written to refine it silently lost. They carry the same declarations
+    # in their own block. Membership is the claim here; the specificity shape of the grouped
+    # rule is asserted separately by test_the_tile_rule_never_outranks_a_state_wash.
+    declared = "".join(tile)
     for selector in (
         ".row", ".card", ".src", ".chk", ".goal", ".tt li", ".rmrow", ".tot",
-        # The four the first pass argued its way out of. The owner asked twice. Named by
-        # bare class, because a descendant selector here would outrank the state washes —
-        # see test_the_tile_rule_never_outranks_a_state_wash.
+        # The four the first pass argued its way out of. The owner asked twice.
         ".sgoal", ".goalrow", ".stepx", ".gtgt", ".mlist li",
     ):
-        assert selector in tile[0], f"{selector} is not a tile"
+        assert selector in declared, f"{selector} is not a tile"
+    for block in tile:
+        flat = block.replace(" ", "")
+        assert "border-radius:var(--radius-3)" in flat, "a tile block must set the radius"
+        assert "border:var(--border)solid" in flat, "a tile keyline must carry the 2px weight"
     flat = tile[0].replace(" ", "")
     assert "border-radius:var(--radius-3)" in flat
     # 2026-08-07: "separated by MORE than a thin line". A 1px keyline is a thin line, so
@@ -715,8 +723,13 @@ def test_the_tile_rule_never_outranks_a_state_wash(client: TestClient) -> None:
     inside = selector[selector.index(":is(") + 4 : selector.rindex(")")]
     for arg in (a.strip() for a in inside.split(",")):
         assert arg, "empty selector argument"
-        # One class, optionally qualified by a bare element (".tt li", ".mlist li").
-        assert re.fullmatch(r"\.[\w-]+(\s+[a-z]+)?", arg), (
+        # ONE class. Nothing else. The previous pattern was r"\.[\w-]+(\s+[a-z]+)?" — it
+        # permitted a trailing bare element so that ".tt li" and ".mlist li" could stay in
+        # the list, and that permission is the hole this test exists to close: a class plus
+        # an element is (0,1,1), not (0,1,0), so the grouped rule outranked every
+        # single-class rule written after it to refine it. Those two selectors now carry the
+        # tile declarations in their own block instead.
+        assert re.fullmatch(r"\.[\w-]+", arg), (
             f"tile selector argument {arg!r} is more specific than one class, which lifts "
             f"the whole :is() above the state washes"
         )

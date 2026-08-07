@@ -30,7 +30,11 @@
         <p class="rmst">
           {%- if r['next_title'] -%}
             Next: {{ r['next_title'] }}
-            {%- if r['next_date'] %} · {{ r['next_date'][:10] }}{% endif %}
+            {# A .sep span, not a literal "·": .rmst is a flex row with an 8px gap, so a
+               separator inside the text run rides along in the same anonymous item and
+               renders at a word space while every other separator on the line gets the
+               gap on both sides. Two widths for the same mark on one line. #}
+            {%- if r['next_date'] %}<span class="sep">·</span>{{ r['next_date'][:10] }}{% endif %}
             {{ m.due_state_chip((r['next_date'] or '')[:10], today) }}
           {%- else -%}
             All live steps done.

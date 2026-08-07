@@ -650,3 +650,41 @@ deterministic given the id.
   revert is unbounded loss. Better still, do scratch experiments in a copy under the
   scratchpad and never touch the real file. The tell that I was about to do it again: I
   typed the checkout from muscle memory rather than deciding to.
+
+- 2026-08-07 | `border-top:0` on twelve tile selectors, plus a `:first-of-type` rule that
+  restored `border-top-WIDTH:var(--border)`, shipped a design system whose every list opened
+  with an unbounded tile. The shorthand sets `border-top-style:none` as well as the width,
+  and a used border width is forced to 0 while the style is none — so the restore could
+  never fire, on any page, in either theme. 1642 tests were green, including one written
+  specifically to assert that every content unit is a tile: it checked that the selectors
+  appear in the tile rule, which they did. | A property reset with a shorthand cannot be
+  undone by a longhand of one of its components. When retiring an idiom, delete its resets
+  rather than writing a rule to counteract them — a counteracting rule has to beat both the
+  specificity AND the other longhands the shorthand quietly set, and the second half is
+  invisible at the call site. The test that missed it asserted membership; what needed
+  asserting was the rendered result.
+
+- 2026-08-07 | `:is()` took (0,1,1) rather than the (0,1,0) its own comment claimed, because
+  `.tt li` and `.mlist li` are a class plus an element. The comment warning about exactly
+  this failure was three lines above, and the test enforcing it had `(\s+[a-z]+)?` in its
+  regex — a deliberate exemption written to let those two selectors stay in the list. The
+  state washes never broke, so nothing surfaced; what broke was `.sgoal`'s tighter sidebar
+  padding, written afterwards with a comment explaining why the 236px column needed it,
+  which had never once rendered. | An exemption written into a guard is the guard's blind
+  spot, and it will be the thing that fails. If a rule is worth asserting, assert it without
+  the carve-out and change the code to fit — here that meant moving the two element-qualified
+  selectors into their own block, which cost four lines. Also: a specificity bug does not
+  announce itself by breaking the thing the comment warns about. It breaks whatever quiet
+  declaration lost silently, which is why "the failure mode has not fired" is not evidence
+  the rule is sound.
+
+- 2026-08-07 | Ran a ten-page visual audit against screenshots, five of which were blank, four
+  in the wrong theme, one of a different page, and eight taken after the window had drifted
+  off the capture region. Every one of those failures produces a confident, specific,
+  entirely fictional finding — and a blank frame yields "no findings", which is
+  indistinguishable from a page that is genuinely fine. | A screenshot handed to an auditor
+  is an input that must be validated like any other. Check theme, non-blankness, window
+  geometry AND page identity before anyone reads it, and pin the window before every shot
+  rather than once at the start. The corollary that cost the most time: each check only
+  catches its own failure, and a frame can pass all the ones you wrote while failing the one
+  you did not — the wrong-page frame passed theme, blankness and geometry together.
