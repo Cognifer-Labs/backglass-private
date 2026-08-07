@@ -84,6 +84,15 @@
 function toggleTheme() {
   const root = document.documentElement;
   const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+  // The flip repaints every surface in one frame. `.theming` is what lets the whole
+  // page cross-fade instead of snapping (dashboard.css §Motion 3); it is added for the
+  // length of one transition and removed, so the universal selector it enables costs
+  // nothing at rest. Timer, not transitionend: hundreds of elements fire that event
+  // and only one of them is worth listening to. 240ms clears --motion's 160ms with
+  // room to spare; the class outliving the fade by a frame is harmless, cutting it
+  // short is not.
+  root.classList.add('theming');
+  window.setTimeout(() => root.classList.remove('theming'), 240);
   root.setAttribute('data-theme', next);
   localStorage.setItem('bg-theme', next);
 }

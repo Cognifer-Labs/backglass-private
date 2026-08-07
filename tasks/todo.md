@@ -1988,3 +1988,57 @@ using `tasks/`) or manually confirmed not to be in ALLOW_PATHS (if elsewhere).
    serving dashboard. This is the actual "done" check the Goal states; steps 1-8 are
    necessary but not sufficient without this one.
 10. LICENSE present with an owner-approved copyright name; MIT text unmodified.
+
+---
+
+# Motion layer: animate every action and every page change
+
+Written 2026-08-07. Goal: "add animations for all actions and tab changes throughout
+the site."
+
+**Assumption, stated because nothing in the markup settles it:** there are no literal
+tab controls in this app. "Tab changes" means the sidebar page navigation (nine full
+document loads) plus the 1–9 keyboard page switch in `base.html`. Panel-swapping
+HTMX targets are "actions", not tabs. Planned on that reading; no question asked.
+
+## What is there now
+
+One line of motion in the whole product: `.htmx-swapping{opacity:0;transition:.08s}`
+at `dashboard.css:324` — and it never plays, because htmx 2.0.4's
+`defaultSwapDelay` is `0`, so the outgoing node is replaced before a transition can
+run. `defaultSettleDelay` is `20`. `design-system.md` has no motion section at all.
+
+## Shape of the work
+
+1. **Motion tokens** in `design/tokens.css` — durations and the three strong curves,
+   with one `prefers-reduced-motion: reduce` block that zeroes the durations at the
+   token layer instead of scattering overrides.
+2. **One motion layer** appended to `dashboard.css`, single author, no per-page forks.
+   Transform and opacity only (§8 rule 7 — no shadows, no gradients — extends to
+   motion: things fade and slide, they never levitate).
+3. **Swap animation with zero template edits** — `htmx.config.defaultSwapDelay` in
+   `base.html` plus CSS on `.htmx-swapping` / `.htmx-added` / `.htmx-settling` covers
+   all 94 `hx-` attributes at once. Every template edit avoided is a `panel_slice`
+   test not broken.
+4. **Page transitions** — `@view-transition { navigation: auto }` as progressive
+   enhancement, probed in both Safari and the Tauri WKWebView rather than assumed,
+   over an unconditional body fade-in baseline.
+5. **§9 Motion** in `design-system.md`, with the frequency gate written down — this
+   repo records its rulings there, so the section is deliverable, not garnish.
+
+## Frequency gate (Kowalski), applied to this product
+
+- Board Resolve/Snooze/Done and the 1–9 page keys fire tens of times a day: minimal
+  or no motion. A daily action that got slower is a regression, not a polish pass.
+- Panel swaps, the review queue, the failed-write strip: occasional — standard.
+- Nothing here is rare enough to earn delight.
+
+## Verification
+
+- `uv run pytest` green (no template edits expected; prove it).
+- `node scripts/validate-palette.mjs` after touching tokens.
+- Adversarial CSS audit: transform/opacity only, every duration under 300ms, no
+  `ease-in`, no keyframes on frequently-triggered elements, reduced-motion reaching
+  every rule.
+- Look at it in Safari, cache-busted, both themes (2026-08-06 lesson: a screenshot is
+  a cache, not an observation).

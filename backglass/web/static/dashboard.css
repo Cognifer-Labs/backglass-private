@@ -321,7 +321,13 @@ button.box::before{content:"";position:absolute;inset:-6px}
  * of noise, and design-system.md has no loading language.
  */
 .htmx-request{opacity:.55}
-.htmx-swapping{opacity:0;transition:opacity .08s}
+/* The dim, not the disappearance. `.htmx-swapping` used to carry an 80ms fade-out
+ * that never once played: htmx's `defaultSwapDelay` is 0, so the outgoing node is
+ * replaced in the same frame the class lands on it. Raising that delay would buy the
+ * fade at the cost of putting 80ms in front of every write on the site — and Resolve,
+ * Done and the checklist ticks are fired tens of times a day. See §9: what arrives is
+ * animated, what leaves is not, because only the arrival is free. */
+.htmx-swapping{opacity:0}
 [aria-busy="true"]{cursor:progress}
 
 /* Wash register (owner ruling 2026-07-31): a semantic action carries its state
@@ -1290,3 +1296,99 @@ details.panel:not([open]){padding-bottom:0}
  * two corners disagree by the width of the keyline. */
 .track > .fill{border-radius:var(--radius-sm) 0 0 var(--radius-sm)}
 .track > .fill[style*="width:100%"]{border-radius:var(--radius-sm)}
+
+/* ── Motion (design-system.md §9) ───────────────────────────────────────────
+ * One layer, at the bottom, rather than a transition tucked into each component:
+ * motion is a system-level decision here in the same way the ink set is, and a
+ * duration invented inside a component is how a scale stops being a scale.
+ *
+ * Four things move. Content that arrives fades up four pixels; a pressed control
+ * dips three percent; a colour that changes crossfades; the failed-write strip
+ * slides in from the bottom edge. Nothing else moves, and the omissions are as
+ * deliberate as the inclusions — §9 lists them and says why.
+ *
+ * Only transform and opacity are animated. §8 rule 7 forbids the two effects that
+ * each announce a design language this one is not; the same reasoning reaches motion,
+ * so surfaces here shift by a hair and fade, and nothing lifts, bounces or springs.
+ * (The rule's own words are avoided in this comment on purpose — the test that
+ * enforces it reads the sheet line by line and does not know a comment from a
+ * declaration.) Everything sits under the 300ms ceiling, and every value
+ * comes from the five motion tokens — including the two that `prefers-reduced-
+ * motion` zeroes, which is why no rule below mentions that media query.
+ */
+
+/* 1 — content arriving.
+ * `@starting-style` rather than htmx's swap classes, and that is the load-bearing
+ * choice in this file. `htmx-added` and `htmx-settling` are both removed 20ms after
+ * the swap, so a transition keyed to them animates for 20ms and snaps; and animating
+ * the outgoing element would mean delaying every write. `@starting-style` needs no
+ * class at all: any element newly inserted into the document starts here and
+ * transitions to its resting state. That covers the swapped panel, the swapped
+ * fragment, and — because a navigation inserts the whole document — the page itself,
+ * which is why "tab changes" needs no separate mechanism.
+ *
+ * The resting state deliberately declares no transform, so a panel that has finished
+ * arriving is not a containing block for anything positioned inside it. */
+#content,.panel,
+#people-rows,#today-ticks,#goal-cards,#roadmap-totals,#roadmap-steps,#roadmap-masthead{
+  transition:opacity var(--motion) var(--ease-out),transform var(--motion) var(--ease-out)}
+@starting-style{
+  #content,.panel,
+  #people-rows,#today-ticks,#goal-cards,#roadmap-totals,#roadmap-steps,#roadmap-masthead{
+    opacity:0;transform:translateY(var(--motion-travel))}
+}
+/* The week-pace readout is an inline span mid-sentence — a transform would not apply
+ * to it and making it a block to earn one would move the text. It fades only. */
+#wk-pace{transition:opacity var(--motion) var(--ease-out)}
+@starting-style{#wk-pace{opacity:0}}
+
+/* 2 — the press, and every colour that changes.
+ * One declaration covers three separate feedbacks because they share a duration: the
+ * dip on `:active`, the wash deepening on hover, and the .55 dim htmx puts on a
+ * control while its write is in flight. 90ms is chosen against the frequency of the
+ * controls that carry it, not against how it looks in isolation — Resolve, Done and a
+ * checklist tick are daily-many, and the felt cost of animating a daily-many control
+ * too slowly is that the whole application feels slower than it did before.
+ *
+ * No transform on hover anywhere in this file, so none of it needs a `(hover: hover)`
+ * gate: a colour crossfade that fires from a phantom touch-hover is invisible, a
+ * scale that does is a glitch. */
+.btn,button.toggle,button.box,.snav a,a.nm,.card,.row.sched,.wbc,.salert,.wev,.pager a{
+  transition:background-color var(--motion-fast) ease,
+             border-color var(--motion-fast) ease,
+             color var(--motion-fast) ease,
+             opacity var(--motion-fast) var(--ease-out),
+             transform var(--motion-fast) var(--ease-out)}
+/* Pressable means a control the finger lands on, so a full-bleed panel banner is
+ * excluded: a summary the width of the grid dipping three percent reads as the layout
+ * breaking, not as a button being pressed. Checkbox spans in the week grid are
+ * excluded for the same reason the CSS already gives them `cursor:default` — they are
+ * a readout, and only `button.box` is a control. */
+.btn:active,button.toggle:active,button.box:active{transform:scale(var(--motion-press))}
+
+/* 3 — the theme flip.
+ * Every token changes in one frame, so this is all-or-nothing: transitioning the few
+ * components that happen to carry a transition would leave the rest snapping, and a
+ * page where half the surfaces crossfade and half do not looks broken in a way the
+ * instant flip does not. The universal selector is affordable because it is scoped to
+ * a class the toggle adds for the length of one transition and then removes — it
+ * costs nothing at rest, which is the only reason it is allowed to be this broad.
+ * Not routed through the motion tokens' reduced-motion zeroing because this animates
+ * colour rather than position: it is gated on the media query directly, so the flip
+ * is instant for a reader who asked for less movement. */
+@media (prefers-reduced-motion: no-preference){
+  :root.theming,:root.theming *{
+    transition:background-color var(--motion) ease,
+               border-color var(--motion) ease,
+               color var(--motion) ease !important}
+}
+
+/* 4 — the failed-write strip.
+ * The one alarm in the product, and the one place a keyframe is correct rather than a
+ * transition: it is shown by flipping `hidden`, which means display, which no
+ * transition can interpolate. Keyframes restart from zero when interrupted, which
+ * would matter for something triggered rapidly; a refused write is not that.
+ * It travels twice the standard distance and takes the slow duration, because it
+ * arrives unbidden at the edge of vision and has to be seen to do its job. */
+@keyframes oops-in{from{opacity:0;transform:translateY(calc(var(--motion-travel) * 2))}}
+.oops:not([hidden]){animation:oops-in var(--motion-slow) var(--ease-out)}

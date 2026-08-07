@@ -132,11 +132,57 @@
   --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px; --sp-4: 16px;
   --sp-5: 24px; --sp-6: 32px; --sp-7: 48px;
 
+  /* motion — see design-system.md §9.
+     Three durations, one travel distance, one press depth, two curves. That is the
+     entire vocabulary, and it is small on purpose: the same discipline §3 applies to
+     ink applies here. You pay per duration, and a system with seven of them has no
+     rhythm, only seven speeds.
+
+     Every value sits under the 300ms ceiling. The fast step is for what the owner
+     fires tens of times a day — a tick, a press, a hover — where anything slower is
+     felt as the app getting worse; the middle step is content arriving, which is a
+     swapped panel and a navigated page by the same mechanism; the slow step is spent
+     on the two things that interrupt rather than update, the failed-write strip and
+     the theme flip.
+
+     Curves are the strong ones, not the browser's weak built-ins, and both are
+     ease-out family: `ease-in` starts slow and delays the exact instant the owner is
+     watching, so it appears nowhere in this product. */
+  --motion-fast:   90ms;
+  --motion:       160ms;
+  --motion-slow:  240ms;
+  --ease-out:     cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out:  cubic-bezier(0.77, 0, 0.175, 1);
+
+  /* The only distance anything travels, and the only depth anything presses. Both are
+     deliberately below the threshold where motion reads as a thing moving across the
+     page: this is a flat print aesthetic, and §8 rule 7's ban on shadows and gradients
+     extends to motion — surfaces fade and shift a hair, they never levitate. */
+  --motion-travel: 4px;
+  --motion-press:  0.97;
+
   /* type */
   --font-body: system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-cond: "Oswald", "Helvetica Neue Condensed", "HelveticaNeue-CondensedBold",
                "Arial Narrow", system-ui, sans-serif;
   --font-reel: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* Reduced motion, settled at the token layer rather than in fifty overrides.
+   Zeroing travel and press makes every transform in the product resolve to the
+   identity transform, so the rules keyed on these tokens go still without any of them
+   being restated here — and a rule added later inherits the setting instead of
+   forgetting it.
+
+   The durations are deliberately left alone. Reduced motion means less movement, not
+   no transition: an opacity crossfade carries no vestibular load and it is what keeps
+   a swapped panel from reading as a page that flickered. What goes is position and
+   scale, which is exactly what these two tokens control. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --motion-travel: 0px;
+    --motion-press:  1;
+  }
 }
 
 @media (prefers-color-scheme: dark) {

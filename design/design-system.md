@@ -297,6 +297,98 @@ Rules:
 
 ---
 
+## 9. Motion
+
+Added 2026-08-07. Until then the product had one line of motion in it, and that line
+never played.
+
+The governing question is not "would this look nice moving" but **how often does the
+owner see it.** A dashboard is used, not toured. Something that animates the first time
+you see it is charming; the same thing on the four-hundredth resolve is the application
+being slow at you.
+
+| How often | What it gets |
+|---|---|
+| Tens of times a day — Resolve, Done, a checklist tick, page keys 1–9 | 90ms, or nothing |
+| Daily — opening a page, a panel replacing its contents | 160ms |
+| Occasional — the failed-write strip, the theme flip | 240ms |
+| Rare | Nothing here is rare enough to earn more |
+
+### The vocabulary
+
+Five tokens, and the same reasoning as §3's five inks: you pay per duration, and a
+system with seven of them has no rhythm, only seven speeds.
+
+| Token | Value | For |
+|---|---|---|
+| `--motion-fast` | 90ms | A press, a hover, the dim on a write in flight |
+| `--motion` | 160ms | Content arriving — a swapped panel, a page |
+| `--motion-slow` | 240ms | The failed-write strip, the theme cross-fade |
+| `--motion-travel` | 4px | The only distance anything travels |
+| `--motion-press` | 0.97 | The only depth anything presses |
+
+Two curves, both ease-out family: `--ease-out` `cubic-bezier(.23,1,.32,1)` for anything
+entering, `--ease-in-out` `cubic-bezier(.77,0,.175,1)` for anything moving on screen.
+**`ease-in` appears nowhere.** It starts slow, which delays the exact instant the owner
+is looking at, and a 200ms ease-in feels slower than a 200ms ease-out.
+
+### What moves
+
+1. **Content that arrives** fades up four pixels over 160ms. This is one mechanism, not
+   three: a swapped panel, a swapped fragment and a whole navigated page are all
+   "elements newly inserted into the document", which is what `@starting-style`
+   selects. The nine-page sidebar therefore animates without any page-transition
+   machinery.
+2. **A pressed control** dips to 0.97 over 90ms, on buttons only.
+3. **A colour that changes** cross-fades over 90ms — hover, selection, the enabled
+   state of a source, and the 0.55 dim htmx puts on a control mid-write.
+4. **The failed-write strip** slides eight pixels up from the bottom edge over 240ms.
+5. **The theme flip** cross-fades every surface at once over 160ms, via a class the
+   toggle adds and removes.
+
+### What does not move, and why
+
+The omissions carry the design more than the inclusions do.
+
+- **Nothing leaves.** Only arrivals are animated, because only arrivals are free. Fading
+  a panel out means holding the swap open while it fades — htmx's `defaultSwapDelay` is
+  0 for exactly this reason — and that is latency added to the most frequent actions in
+  the product.
+- **No page cross-fade on navigation.** Cross-document view transitions were considered
+  and rejected: page switching is bound to keys 1–9 and fired tens of times a day, and
+  a whole-page fade is the single most effective way to make a keyboard-driven app feel
+  sluggish. The arriving content already fades; the frame around it stays still, which
+  is also what makes the sidebar read as persistent across a navigation.
+- **Selection does not animate.** `j`/`k` move the card selection. Keyboard actions
+  repeat hundreds of times a day, so the highlight is instant.
+- **Focus rings are instant.** A focus ring is an answer to "where am I", and an answer
+  that fades in is worse than one that is simply there.
+- **Progress bars do not grow.** They could — htmx settles `style` attributes over a
+  20ms window, which is the hook — but only for elements it can match by `id` across
+  the swap, and no bar in this product has one. Adding ids to seven templates to buy
+  one animation was not worth it; noted here so the next author knows it was weighed.
+- **Hover reveals stay instant.** A card's action row is revealed with `display`, which
+  no transition can interpolate. Converting it to opacity would make the row occupy
+  space at all times and move the layout, which is a worse trade than a hard reveal.
+- **No stagger anywhere.** Panels arrive together. Staggering nine panels puts the last
+  one a third of a second behind the first on a page opened all day long.
+
+### Rules
+
+1. Animate `transform` and `opacity` only. They skip layout and paint. §8 rule 7 bans
+   shadows and gradients because each announces a different design language; motion is
+   held to the same standard, so surfaces fade and shift a hair and nothing lifts.
+2. Nothing exceeds 300ms.
+3. No duration or curve is written literally in a component. If a component needs a
+   speed the five tokens do not have, that is a system decision, not a component one.
+4. `prefers-reduced-motion: reduce` is honoured at the token layer — `--motion-travel`
+   goes to 0 and `--motion-press` to 1, which resolves every transform in the product
+   to the identity and leaves the cross-fades alone. Reduced motion means less
+   movement, not less feedback. A rule written after this one inherits the setting
+   instead of having to remember it.
+
+---
+
 ## Appendix: validation
 
 Contrast figures are WCAG relative luminance against `#FCF8EC` and `#000000`. The series
