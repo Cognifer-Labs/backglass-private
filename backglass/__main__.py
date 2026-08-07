@@ -3132,15 +3132,37 @@ def memory_set(
     key: str,
     value: str,
     note: Annotated[str | None, typer.Option("--note", help="Evidence, in words")] = None,
+    from_item: Annotated[
+        int | None,
+        typer.Option("--from", help="Source item id this fact was learned from"),
+    ] = None,
 ) -> None:
-    """Remember a fact. The previous value for this subject+key is superseded, not lost."""
+    """Remember a fact. The previous value for this subject+key is superseded, not lost.
+
+    `--from` records which source item taught it. `fact.source_item_id` has existed
+    since the table did, `/source/{id}` already renders "what came of this item" from
+    it, and every one of the owner's twenty facts has it NULL — not because nobody
+    bothered, but because this command was the only writer and had no way to pass one.
+    A column no door can reach is a column that will read as unused and get dropped.
+    """
     from backglass import facts
 
     settings = get_settings()
     conn = _open(settings)
     migrate(conn)
+    if from_item is not None:
+        known = conn.execute(
+            "SELECT 1 FROM source_item WHERE id = ? AND user_id = ?", (from_item, USER_ID)
+        ).fetchone()
+        if known is None:
+            # Refused here rather than left to the foreign key, because the FK message
+            # names a constraint and this names the mistake.
+            typer.echo(f"no source item {from_item}", err=True)
+            raise typer.Exit(code=1)
     try:
-        fact_id = facts.remember(conn, settings, subject, key, value, note=note)
+        fact_id = facts.remember(
+            conn, settings, subject, key, value, note=note, source_item_id=from_item
+        )
     except facts.FactError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc

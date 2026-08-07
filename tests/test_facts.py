@@ -219,3 +219,46 @@ class TestConfigDrift:
         """Absence is not disagreement. A ledger whose owner has written nothing down
         yet must not fail a preflight check for it."""
         assert facts.config_drift(conn, settings) == []
+
+
+class TestProvenanceDoor:
+    """`fact.source_item_id` had no writer until 2026-08-07.
+
+    The column existed from the table's first migration, `/source/{id}` already renders
+    what a source item produced by reading it, and all twenty of the owner's facts had
+    it NULL. Not neglect — `memory set` was the only writer and had no way to pass one.
+    A column no door can reach reads as unused, and unused columns get dropped.
+    """
+
+    def _item(self, conn: sqlite3.Connection) -> int:
+        conn.execute(
+            "INSERT INTO source_item (user_id, source, external_id, fetched_at,"
+            " occurred_at, author, title, body_text, raw_json, content_hash,"
+            " triage_verdict) VALUES (1, 'gmail:t', 'f1', '2026-08-07T00:00:00Z',"
+            " '2026-08-07T00:00:00Z', 'reg@example.edu', 'Housing', 'b', '{}', 'hf1',"
+            " 'keep')"
+        )
+        return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+    def test_a_fact_can_name_the_item_that_taught_it(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        item = self._item(conn)
+        fact_id = facts.remember(
+            conn, settings, "housing", "hall", "Willow 502", source_item_id=item
+        )
+        stored = conn.execute(
+            "SELECT source_item_id FROM fact WHERE id = ?", (fact_id,)
+        ).fetchone()
+        assert stored["source_item_id"] == item
+
+    def test_the_source_page_shows_the_fact_it_taught(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The surface that reads this column has been rendering an empty section for
+        as long as the column has been unreachable. Drive the real door."""
+        item = self._item(conn)
+        facts.remember(conn, settings, "housing", "hall", "Willow 502", source_item_id=item)
+        client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
+        body = client.get(f"/source/{item}").text
+        assert "Willow 502" in body
