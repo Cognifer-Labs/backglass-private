@@ -113,7 +113,7 @@ body{margin:0;background:var(--paper);color:var(--ink);
 .mast .meta{font-size:11px;line-height:15px;letter-spacing:.06em;color:var(--ink-muted);margin:var(--sp-2) 0 0;
   font-weight:700;text-transform:uppercase}
 button.toggle{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
-  background:var(--ink);color:var(--on-ink);border:2px solid var(--rule);border-radius:0;
+  background:var(--ink);color:var(--on-ink);border:2px solid var(--rule);border-radius:var(--radius);
   padding:var(--sp-2) var(--sp-4);cursor:pointer}
 button.toggle:hover{background:var(--paper);color:var(--ink)}
 /* Focus rings are ink, not vermilion: §8 rule 1 reserves vermilion for overdue and
@@ -127,12 +127,17 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
  * third of every panel was unreachable. Letting the track ignore min-content puts
  * the overflow back where it belongs: inside the row that is actually too wide,
  * which then wraps or scrolls on its own terms. */
-.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+  gap:var(--sp-4);padding:var(--sp-4) var(--sp-5)}
 @media(max-width:840px){.grid{grid-template-columns:minmax(0,1fr)}}
 
-}
-.panel{min-width:0;border-bottom:2px solid var(--rule);border-right:2px solid var(--rule);padding:0 0 var(--sp-5)}
-.panel:nth-child(2n){border-right:0}
+/* Detached, since 2026-08-07. The grid was seamless — panels carried a right and a
+ * bottom rule and shared every edge, which is what made it read as one ledger. A curve
+ * cannot survive that: two rounded corners meeting across a shared seam leave a notch
+ * the width of the radius and nothing else, so the rounding was invisible on precisely
+ * the largest boxes on the page. Panels now carry their own keyline on all four sides
+ * and stand apart, which is the layout a radius is for. */
+.panel{min-width:0;border:2px solid var(--rule);padding:0 0 var(--sp-5)}
 
 /* ── Panel grounds (owner ruling 2026-08-06) ───────────────────────────────
  * Each panel sits on a light tint of its own ink, so two panels sharing a row
@@ -200,7 +205,7 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
  * either surface, which is what the palette validator checks. */
 .chip{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;
   font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
-  border:2px solid var(--rule);border-radius:0;padding:2px 8px;color:var(--ink);background:var(--paper);white-space:nowrap}
+  border:2px solid var(--rule);border-radius:var(--radius);padding:2px 8px;color:var(--ink);background:var(--paper);white-space:nowrap}
 .chip svg{width:10px;height:10px;flex:0 0 10px}
 /* `nowrap` is right for a chip that is a word — OVERDUE, 3 OPEN — and wrong for
  * one that is a sentence. "87 days since last touch" is 212px that cannot break,
@@ -226,7 +231,7 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
 :root[data-theme="dark"] .reel{border-color:#FCF8EC}
 @media(prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .reel{border-color:#FCF8EC}}
 .reel span{background:#FCF8EC;color:#000;font:700 22px/22px ui-monospace,"SF Mono",Menlo,monospace;
-  padding:1px 5px;border-radius:2px;font-variant-numeric:tabular-nums}
+  padding:1px 5px;border-radius:var(--radius-reel);font-variant-numeric:tabular-nums}
 .goal{padding:var(--sp-4) 0;border-top:1px solid var(--rule-hair)}
 .goal:first-of-type{border-top:0}
 .goal .hd{display:flex;justify-content:space-between;gap:var(--sp-4);align-items:center;margin-bottom:var(--sp-1)}
@@ -263,7 +268,7 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
  * inline style repeated across five templates. */
 .row .acts,.goal .acts{margin-top:var(--sp-2)}
 .btn{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
-  border:2px solid var(--rule);border-radius:0;padding:var(--sp-2) var(--sp-4);cursor:pointer;
+  border:2px solid var(--rule);border-radius:var(--radius);padding:var(--sp-2) var(--sp-4);cursor:pointer;
   background:var(--paper);color:var(--ink)}
 .btn:hover{background:var(--ink);color:var(--on-ink)}
 .chk{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3) 0;border-top:1px solid var(--rule-hair)}
@@ -410,9 +415,9 @@ button.box::before{content:"";position:absolute;inset:-6px}
  * tidier, but a radius that resolves through a second stylesheet is square only while
  * that stylesheet loads — and this one is the floor. The value that cannot fail is the
  * one written here. */
-button,input,textarea,select{border-radius:0}
+button,input,textarea,select{border-radius:var(--radius)}
 input,textarea,select{font:600 14px/20px system-ui,sans-serif;background:var(--paper);color:var(--ink);
-  border:2px solid var(--rule);border-radius:0;padding:var(--sp-2) var(--sp-3)}
+  border:2px solid var(--rule);border-radius:var(--radius);padding:var(--sp-2) var(--sp-3)}
 /* The one native checkbox (People search) joins the .box language: square, 2px
  * keyline, green fill + drawn tick when checked. The UA control had rounded
  * corners and vanished in dark mode. */
@@ -1165,7 +1170,7 @@ details.panel:not([open]){padding-bottom:0}
 
 /* The odd panel out spans the full row (Sources): no half-empty grid cell, and
  * no stray border-right on the page's outer edge. */
-.panel.span2{grid-column:1/-1;border-right:0}
+.panel.span2{grid-column:1/-1}
 
 /* ── The failed-write strip (audit #11 follow-up) ───────────────────────────
  * A write that the server refuses swaps nothing, so without this the click is
@@ -1214,3 +1219,43 @@ details.panel:not([open]){padding-bottom:0}
   .gcard .gtgt .hd .nm{flex:1 1 100%}
   .goalrow .gr-n,.goalrow .gr-l{white-space:normal}
   .src .ts.clip{max-width:none}
+}
+
+/* ── Corners (owner ruling 2026-08-07) ─────────────────────────────────────
+ * The system was square everywhere by rule; it is curved everywhere now. One
+ * grouped block rather than a radius appended to each of a hundred component
+ * rules, so the scale stays visible as a scale and the next component inherits a
+ * decision instead of copying a number.
+ *
+ * Assigned by what a box IS, not by where it sits: `--radius` for anything a hand
+ * acts on, `--radius-lg` for the containers those things sit inside, `--radius-sm`
+ * for marks small enough that 4px would swallow the shape. A curve reads as
+ * intentional only while it stays proportional to its box.
+ *
+ * `overflow:hidden` on the panels is load-bearing, not tidiness: every panel opens
+ * with a full-bleed black banner, and a square banner inside a rounded panel puts
+ * its corners outside the curve — the exact tell that a radius was bolted on. The
+ * banner keeps its own square corners and the panel clips them. */
+
+/* containers */
+.panel,.gcard,.steppanel,.rev,.addform,.salert,.wk7,.wkgwrap,.wk7wrap,.dstrip,
+.sws,.kpi,.mplot{border-radius:var(--radius-lg)}
+.panel,details.panel{overflow:hidden}
+/* And the banner rounds its own top corners rather than trusting the clip. A
+ * <summary> inside a <details> is the one child WebKit does not reliably clip to its
+ * parent's radius, and the banner is exactly that — so the panel's curve was there in
+ * the CSS and invisible on the page, which is the same as not being there. */
+.panel > .banner,details.panel > summary.banner{
+  border-radius:var(--radius-lg) var(--radius-lg) 0 0}
+
+/* things a hand acts on */
+.card,.row.card,.btn,button.toggle,.chip,.kbd,.box,.track,.tot,.src,.rmrow,
+.sgoal,.wbc,.whd,.wev,.sq,.tl{border-radius:var(--radius)}
+
+/* marks: small enough that the default would round them away */
+.fill,.mcol > i,.bar .b,.track.mini,.track.thin,.track.wee{border-radius:var(--radius-sm)}
+
+/* A fill inside a track keeps the track's inner curve rather than its own, or the
+ * two corners disagree by the width of the keyline. */
+.track > .fill{border-radius:var(--radius-sm) 0 0 var(--radius-sm)}
+.track > .fill[style*="width:100%"]{border-radius:var(--radius-sm)}

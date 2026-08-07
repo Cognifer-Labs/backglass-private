@@ -108,9 +108,23 @@
   --s2: var(--vermilion);
   --s3: var(--turquoise);
 
-  /* geometry */
-  --radius:      0;
-  --radius-reel: 2px;
+  /* geometry — owner ruling 2026-08-07, reversing the original "radius 0 everywhere".
+     Three steps, because one radius applied to both a 12px chip and a full panel makes
+     the chip look melted and the panel look barely touched: the curve has to stay
+     proportional to the box it is on.
+
+       sm   marks and small fills — reel digit windows, progress fills, tick cells.
+            Keeps the reel's original 2px, which §7 had already carved out.
+       md   the default: anything a hand acts on — buttons, chips, inputs, cards, rows.
+       lg   containers that hold other components — panels, alerts, folds, tables.
+
+     Still no shadows and no gradients; §8 rule 7 loses only its middle clause. The 2px
+     keyline stays the boundary of every component, which is what kept the system legible
+     when the corners were square and is doing more work now that they are not. */
+  --radius-sm:   2px;
+  --radius:      4px;
+  --radius-lg:   8px;
+  --radius-reel: var(--radius-sm);
   --border:      2px;
   --hair:        1px;
 

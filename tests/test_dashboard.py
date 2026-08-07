@@ -571,8 +571,15 @@ def test_the_only_confirmation_is_on_drop(client: TestClient, conn, settings: Se
             assert "/drop" in fragment, "only drop may confirm"
 
 
-def test_no_shadows_no_radius_no_gradients_outside_the_hatch(client: TestClient) -> None:
-    """design-system.md §8 rule 7, and §7: radius 0 everywhere except the 2px reel windows."""
+def test_no_shadows_no_gradients_outside_the_hatch(client: TestClient) -> None:
+    """design-system.md §8 rule 7, minus its middle clause.
+
+    Corners were square by rule until the owner reversed it on 2026-08-07. Shadows and
+    gradients did not come back with them, and that is the point of asserting the two
+    separately: the rule forbade three things for one reason — each announces a
+    different design language — and only one of them was reconsidered. A drop shadow
+    arriving on the coat-tails of the radius change is exactly the drift this catches.
+    """
     css = client.get("/static/dashboard.css").text
     assert "box-shadow" not in css
     assert "text-shadow" not in css
@@ -581,16 +588,33 @@ def test_no_shadows_no_radius_no_gradients_outside_the_hatch(client: TestClient)
     for line in css.splitlines():
         if "gradient" in line:
             assert "repeating-linear-gradient" in line and "45deg" in line, line
-    # "Radius 0 everywhere. 2px on reel digit windows only." A non-zero radius is allowed
-    # only inside the .reel rule; anywhere else it is the rounded-corner regression §8
-    # rule 7 forbids.
-    reel_rule = [b for b in css.split("}") if b.strip().startswith(".reel span")]
-    assert reel_rule, "the reel rule should exist"
-    for block in css.split("}"):
-        flat = block.replace(" ", "")
-        if "border-radius" in flat and "border-radius:0" not in flat:
-            assert flat.strip().startswith(".reelspan"), block
-    assert "border-radius:2px" in reel_rule[0].replace(" ", "")
+
+
+def test_every_radius_comes_from_the_scale(client: TestClient) -> None:
+    """§7, as rewritten: three steps, and a component picks one rather than a number.
+
+    The rule that mattered when corners were square was "0 everywhere"; the rule that
+    matters now is that the curve stays proportional to its box. A literal radius is
+    how that erodes — one component at 6px because it looked better alone, and the
+    scale stops being a scale.
+    """
+    css = client.get("/static/dashboard.css").text
+    allowed = {
+        "var(--radius)",
+        "var(--radius-sm)",
+        "var(--radius-lg)",
+        "var(--radius-reel)",
+        # Composites, and they are still the scale: a shape curves on the sides it
+        # actually has. A progress fill curves where it starts; a panel banner curves
+        # where the panel does and stops where its body continues.
+        "var(--radius-sm) 0 0 var(--radius-sm)",
+        "var(--radius-lg) var(--radius-lg) 0 0",
+    }
+    for match in re.finditer(r"border-radius:\s*([^;}]+)", css):
+        assert match.group(1).strip() in allowed, (
+            f"border-radius: {match.group(1).strip()!r} is a literal. §7 gives three "
+            f"steps; pick the one that fits the box."
+        )
 
 
 def test_tokens_are_served_from_the_validated_source(client: TestClient) -> None:
@@ -692,29 +716,64 @@ class TestPanelGrounds:
 
 
 class TestGeometryRules:
-    """§7 "Radius 0 everywhere. 2px on reel digit windows only."
+    """The floor under §7, which survived the rule being reversed.
 
-    The rule itself is already pinned by
-    `test_no_shadows_no_radius_no_gradients_outside_the_hatch`, which reads the served
-    sheet and allows a non-zero radius inside `.reel span` alone. This covers the case
-    that test cannot see: a control with no rule of its own at all. WebKit rounds
-    buttons and text fields by default, so a component that simply never mentions
-    radius is round — the violation is an omission, and an omission leaves nothing in
-    the CSS to assert against.
+    When corners were square this rule existed because WebKit rounds buttons and text
+    fields by default, so squareness had to be re-declared on every control the UA
+    styles. The reversal does not retire it — it inverts what it defends. The UA's
+    radius is not the scale's radius, and a control that never mentions one now gets
+    whatever WebKit picks rather than `--radius`. Either way the violation is an
+    omission, which leaves nothing in the CSS for the other tests to assert against.
     """
 
     CSS = Path(__file__).resolve().parents[1] / "backglass/web/static/dashboard.css"
 
     def test_the_controls_the_browser_rounds_have_a_floor(self) -> None:
         css = self.CSS.read_text()
-        assert re.search(r"button,\s*input,\s*textarea,\s*select\{border-radius:0\}", css), (
-            "the UA-rounded controls need one rule that squares them regardless of "
-            "which component classes reach them"
+        assert re.search(
+            r"button,\s*input,\s*textarea,\s*select\{border-radius:var\(--radius\)\}", css
+        ), (
+            "the UA-rounded controls need one rule putting them on the scale, "
+            "regardless of which component classes reach them"
         )
 
-    def test_the_floor_is_a_literal_not_a_token(self) -> None:
-        """`--radius` says 0 and reads tidier, but a radius resolved through a second
-        stylesheet is square only while that stylesheet loads. This rule is the floor;
-        the value that cannot fail is the one written into it."""
-        css = self.CSS.read_text()
-        assert "border-radius:var(--radius)" not in css
+    def test_the_scale_is_ordered(self) -> None:
+        """sm < md < lg, and the reel keeps the 2px §7 always allowed it. A scale whose
+        steps cross is three numbers, not a scale."""
+        tokens = (Path(__file__).resolve().parents[1] / "design/tokens.css").read_text()
+        values = {}
+        for name in ("radius-sm", "radius", "radius-lg"):
+            match = re.search(rf"--{name}:\s*(\d+)px\s*;", tokens)
+            assert match, f"--{name} is not defined"
+            values[name] = int(match.group(1))
+        assert values["radius-sm"] < values["radius"] < values["radius-lg"]
+        assert re.search(r"--radius-reel:\s*var\(--radius-sm\)\s*;", tokens)
+
+
+def test_the_stylesheet_closes_every_block_it_opens() -> None:
+    """An unbalanced sheet swallows whatever is appended after it.
+
+    `@media(max-width:420px)` sat unclosed at the end of this file for months and cost
+    nothing, because it was last — a browser closes the sheet at EOF. It became a bug
+    the moment a rule was appended below it: the whole corner scale landed inside a
+    420px media query, applied nowhere anyone was looking, and nothing failed. The CSS
+    served correctly, the selectors were right, and the page was simply square.
+
+    Balance is what makes appending safe, so it is asserted rather than assumed.
+    """
+    import re as _re
+
+    sheet = Path(__file__).resolve().parents[1] / "backglass/web/static/dashboard.css"
+    css = sheet.read_text()
+    stripped = _re.sub(r"/\*.*?\*/", "", css, flags=_re.S)
+    depth = 0
+    for line_no, line in enumerate(stripped.splitlines(), start=1):
+        for char in line:
+            depth += (char == "{") - (char == "}")
+            assert depth >= 0, (
+                f"dashboard.css closes a block it never opened, line {line_no}"
+            )
+    assert depth == 0, (
+        f"dashboard.css leaves {depth} block(s) open; the next rule appended "
+        f"below them will not apply"
+    )

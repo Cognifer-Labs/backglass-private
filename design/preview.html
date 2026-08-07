@@ -40,7 +40,7 @@ body{margin:0;background:var(--paper);color:var(--ink);
 .mast .meta{font-size:11px;line-height:15px;letter-spacing:.06em;color:var(--ink-muted);margin:8px 0 0;
   font-weight:700;text-transform:uppercase}
 button.toggle{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
-  background:var(--ink);color:var(--on-ink);border:2px solid var(--rule);border-radius:0;
+  background:var(--ink);color:var(--on-ink);border:2px solid var(--rule);border-radius:var(--radius);
   padding:8px 16px;cursor:pointer}
 button.toggle:hover{background:var(--paper);color:var(--ink)}
 :focus-visible{outline:3px solid var(--vermilion);outline-offset:2px}
@@ -66,7 +66,7 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
 .prot .hd{display:flex;justify-content:space-between;align-items:center;gap:12px}
 .chip{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;
   font:700 10px/13px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
-  border:2px solid var(--rule);border-radius:0;padding:3px 8px;color:#000;background:var(--paper);white-space:nowrap}
+  border:2px solid var(--rule);border-radius:var(--radius);padding:3px 8px;color:#000;background:var(--paper);white-space:nowrap}
 .chip svg{width:10px;height:10px;flex:0 0 10px}
 .k-black{background:var(--ink);color:var(--on-ink)}
 .k-verm{background:var(--vermilion)}
@@ -78,7 +78,7 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
 :root[data-theme="dark"] .reel{border-color:#FCF8EC}
 @media(prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .reel{border-color:#FCF8EC}}
 .reel span{background:#FCF8EC;color:#000;font:700 20px/24px ui-monospace,"SF Mono",Menlo,monospace;
-  padding:1px 5px;border-radius:2px;font-variant-numeric:tabular-nums}
+  padding:1px 5px;border-radius:var(--radius-reel);font-variant-numeric:tabular-nums}
 .goal{padding:16px 0;border-top:1px solid var(--rule-hair)}
 .goal:first-of-type{border-top:0}
 .goal .hd{display:flex;justify-content:space-between;gap:16px;align-items:center;margin-bottom:4px}
@@ -100,7 +100,7 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
   padding-left:12px;border-left:2px solid var(--rule)}
 .acts{display:flex;gap:8px;flex-wrap:wrap}
 .btn{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
-  border:2px solid var(--rule);border-radius:0;padding:8px 16px;cursor:pointer;
+  border:2px solid var(--rule);border-radius:var(--radius);padding:8px 16px;cursor:pointer;
   background:var(--paper);color:var(--ink)}
 .btn:hover{background:var(--ink);color:var(--on-ink)}
 .chk{display:flex;align-items:center;gap:12px;padding:12px 0;border-top:1px solid var(--rule-hair)}

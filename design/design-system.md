@@ -201,13 +201,33 @@ Script faces are for a wordmark only. Never for UI, never for data.
 ## 7. Structure
 
 ```
-Radius   0 everywhere. 2px on reel digit windows only.
+Radius   2px marks · 4px controls and rows · 8px containers. One scale, no literals.
 Rules    2px solid black between sections; 1px neutral 200 between rows
 Borders  2px black on chips, cards, buttons
 Space    4 8 12 16 24 32 48
 Shadow   none, ever
 Targets  24px minimum, grown under the mark rather than around it
 ```
+
+**Corners follow the box (owner ruling 2026-08-07).** The system was square everywhere
+until this date, on the argument that a radius reads as a different design language. The
+owner reversed it. What survives the reversal is the reasoning underneath: a curve has to
+stay proportional to what it curves, so there are three steps and a component picks one
+rather than a number. `--radius-sm` for marks a 4px curve would swallow — reel digit
+windows, progress fills, chart bars. `--radius` for anything a hand acts on. `--radius-lg`
+for the containers those things sit in.
+
+Two consequences the reversal forced, both structural rather than cosmetic. The panel grid
+lost its shared seams: panels used to carry a right and a bottom rule and touch, which is
+what made the page read as one ledger, and two rounded corners meeting across a shared
+seam leave a notch and nothing else. Panels now carry a keyline on all four sides and
+stand apart. And every panel's banner rounds its own top corners rather than relying on
+the panel to clip it — a `<summary>` inside a `<details>` is the one child WebKit does not
+reliably clip to its parent's radius, which made the curve real in the CSS and invisible
+on the page.
+
+Shadows and gradients did not come back with the corners. §8 rule 7 forbade three things
+for one reason each; exactly one of them was reconsidered.
 
 **Targets are grown under the mark, not around it.** WCAG 2.5.8 asks for 24px, and
 several marks in this system are deliberately smaller than that — a week grid's day box
@@ -271,7 +291,7 @@ Rules:
 4. Every generated claim links to its source.
 5. Low confidence renders as a dashed outline, never as a confident statement.
 6. Three chart series maximum; a chart uses status tokens or series tokens, never both.
-7. No shadows, no rounded corners, no gradients.
+7. No shadows, no gradients. Corners are rounded, from the scale in §7.
 8. Tabular figures everywhere.
 9. Cobalt never carries text.
 
