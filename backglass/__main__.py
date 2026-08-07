@@ -647,6 +647,42 @@ def extract(
     typer.echo(f"{pending['n']} item(s) pending at {current}; run `backglass sync` to extract")
 
 
+@app.command("state")
+def state_command(
+    as_json: Annotated[
+        bool, typer.Option("--json", help="Machine-readable, every claim with its derivation")
+    ] = False,
+) -> None:
+    """Ground truth about this installation, with how each claim was derived.
+
+    `status` answers "is it healthy" for a person. This answers "what IS it" for
+    anything that has to check rather than trust — including a future session of an
+    assistant, which is what it was written for. Every field names the query, file or
+    command behind it, so a reader can re-derive instead of believing; a probe that
+    cannot run says `unknown` and why, because a confident answer assembled from a
+    missing input is the failure this exists to prevent.
+
+    Nothing here is cached. Every field is read at call time.
+    """
+    from backglass import state as state_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    snapshot = state_mod.collect(conn, settings)
+    if as_json:
+        typer.echo(state_mod.as_json(snapshot))
+        return
+    for section, claims in snapshot.as_dict().items():
+        typer.echo(section)
+        for name, claim in claims.items():
+            if claim.get("unknown"):
+                typer.echo(f"  {name}: unknown — {claim['unknown']}")
+            else:
+                typer.echo(f"  {name}: {claim['value']}")
+            typer.echo(f"      via {claim['how']}")
+
+
 @app.command("purge-boundary")
 def purge_boundary(
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Report, delete nothing")] = False,
