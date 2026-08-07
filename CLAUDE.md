@@ -71,6 +71,34 @@ Do these in sequence. Do not start a phase until the previous one runs clean twi
 one of those, follow it and this file together; the prompt scopes the session, this file
 sets the rules.
 
+## Before you trust anything about this installation
+
+```
+uv run backglass state          # human
+uv run backglass state --json   # machine
+```
+
+Ground truth, read fresh, with the derivation of every claim: what the code is and what
+is uncommitted, **whether the installed app matches this checkout**, schema applied
+versus on disk, prompt versions on disk versus in the ledger, ledger counts, pipeline
+liveness with per-tier cost and latency, and the knowledge base with its config drift.
+
+Run it first, and prefer it to inference. Four things were believed in one session on
+2026-08-07 that this would have answered in a second: a screenshot that was a stale
+capture, a CSS scale remembered rather than read, a cost premise carried from a
+measurement taken elsewhere, and an audit section silently dropped by a merge. None of
+them failed loudly.
+
+Two properties make it worth trusting rather than reading. Every field names the query,
+file or command behind it, so you can re-derive instead of believing. And a probe that
+cannot run says `unknown` and why — never zero, never silence, because a confident
+answer assembled from a missing input is the failure it exists to prevent.
+
+The deployed-versus-source line is the one to check before blaming the app for anything:
+the desktop sidecar freezes templates and CSS at build time, so the running app can be
+arbitrarily far behind the repo with nothing on either side saying so. It is compared by
+file hash, not a version number.
+
 ## Rules that are load-bearing
 
 These are not style preferences. Violating any of them breaks the product.
