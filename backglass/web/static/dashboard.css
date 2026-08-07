@@ -960,8 +960,11 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .atl summary{display:flex;gap:var(--sp-4);align-items:flex-start;cursor:pointer;
   list-style:none;position:relative;padding:var(--sp-3) 0 var(--sp-3) var(--sp-5)}
 .atl summary::-webkit-details-marker{display:none}
-.atl summary::before{content:"";position:absolute;left:7px;top:0;bottom:0;
-  border-left:2px solid var(--rule-hair)}
+/* The rail is retired by the tile ruling. It ran the full height of the row to connect one
+ * step to the next, and once each step is its own bounded tile it cannot connect anything —
+ * it stops at the tile's padding and renders as a dangling 2px stub inside every row. The
+ * node stays: it still carries done and skipped. */
+.atl summary::before{content:none}
 .atl summary::after{content:"";position:absolute;left:3px;top:20px;width:8px;height:8px;
   background:var(--paper);border:2px solid var(--ink);border-radius:var(--radius-1);z-index:1}
 .atl .stepx.done summary::after{background:var(--ink)}
@@ -1191,13 +1194,29 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
   border-top-width:var(--border)}
 .tt li:last-child{border-bottom-width:var(--border)}
 /* The sidebar column is 236px and its tiles carry a 2px edge like every other, so they
- * take the tighter padding step or the text has nowhere to go. */
+ * take the tighter padding step or the text has nowhere to go. The block's own 24px
+ * gutters come in to 12px for the same reason: at 24px the tile plus its border left 168px
+ * of measure, and a goal name clamped at two lines started truncating mid-word ("Get into
+ * a competitive med…"). The gutter was sized for text sitting directly on the page, not
+ * for text inside a box that has its own. */
 .sgoal{padding:var(--sp-2)}
+.sblock{padding-left:var(--sp-3);padding-right:var(--sp-3)}
+/* An alert and a goal are both 2px boxes of the same size in the same column, so they take
+ * the same radius. They were one step apart, which read as an accident because it was. */
+.salert{border-radius:var(--radius-3)}
 /* A goal card's own 2px frame plus a 2px tile on every row inside it reads as a box in a
  * box. The card keeps the frame; its rows drop to the hairline ink so the nesting stays
  * legible — still a 2px edge, still a tile, one step quieter than the frame around it. */
 .gcard :is(.gtgt,.mlist li){--tile-line:var(--rule-hair)}
 .gcard .mlist li{padding:var(--sp-2) var(--sp-3)}
+/* …and inset from the frame, which is the concentric rule doing real work rather than
+ * being quoted. A tile flush against the card's inner edge puts its own 6px corner on the
+ * card's 4px arc (6 minus the 2px frame), and the two curves collide — visibly, at every
+ * corner of every target row. Insetting by one space step means the tile never meets the
+ * frame, so no arc has to agree with any other. The milestone rows were already inset and
+ * read correctly; this is what makes the target rows match them. */
+.gcard :is(.gtgt,.mlist li){margin-left:var(--sp-2);margin-right:var(--sp-2)}
+.gcard .gtgt:last-child{margin-bottom:var(--sp-2)}
 
 /* A kind OVERRIDES its panel's category, because it is the more specific statement about
  * the same tile: "this is a plan" is what the Today panel already says, and "this is
