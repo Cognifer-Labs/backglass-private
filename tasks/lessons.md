@@ -659,3 +659,17 @@ deterministic given the id.
   revert is unbounded loss. Better still, do scratch experiments in a copy under the
   scratchpad and never touch the real file. The tell that I was about to do it again: I
   typed the checkout from muscle memory rather than deciding to.
+
+- 2026-08-07 | Merged a 13-commit branch that had rewritten the same design files, and
+  resolved six CSS conflicts by taking "theirs" because each one looked like a pure
+  token rename. One of them was not: it also carried this branch's panel grounds and
+  the detached-grid ruling, which the other branch had never seen. Nothing failed —
+  `git` was satisfied, the sheet parsed, and the loss showed up only because a
+  HEAD-only test (`TestPanelGrounds`) went red four failures deep in an unrelated
+  run. | In a merge where both sides edited the same file, "take theirs" is a decision
+  about content, not a formality: before resolving, diff each side against the merge
+  base and ask what only ONE side has. A conflict hunk whose two halves differ in
+  length by more than a few lines is carrying unique work, not a rename. And when the
+  two sides hold contradictory rulings from the same owner (seamless grid vs detached
+  panels, both dated this week), that is not a resolution to pick — it is a question,
+  and asking cost one message where guessing would have silently deleted a day's work.
