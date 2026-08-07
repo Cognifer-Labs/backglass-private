@@ -149,6 +149,12 @@ metadata lines, sources and sidebar, schedule and forms) plus a synthesis pass. 
 findings against round one's forty-five, which is the honest measure of what round one fixed.
 Zero were dropped at verification.
 
+**The failing anki source in every round-two frame is synthetic.** Round one parked the
+`.src.fail` finding because no screenshot in the corpus showed a failing source and it
+refused to fix blind. So this round set one `credential` row to `auth_expired` in the
+SCRATCH COPY of the ledger — never the live one — which is what made the finding measurable.
+Anki did not break on 2026-08-07; the alert in those captures is the seed.
+
 **The trap this round, stated because it nearly generated a page of churn:** a metadata line
 of literal `·` characters in a plain text run is CORRECT and self-consistent. It is a defect
 only when a line MIXES flex-gap-spaced elements with literal separators, because then the
