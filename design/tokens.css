@@ -28,6 +28,35 @@
      outlined in the saturated ink and filled with its pastel (~25% ink over paper).
      Light theme only; dark keeps full-ink fills (the wash tokens resolve to the
      inks there), so components styled through these tokens need no theme forks. */
+  /* panel tints — owner ruling 2026-08-06: each dashboard panel sits on a light tint
+     of its own ink so the panels separate as surfaces, not only where a black banner
+     interrupts the page. Roughly a quarter of the wash register's strength: a wash
+     fills one component and says "this row is overdue", a tint sits under a whole
+     panel and says only "this is a different thing than the one beside it". 16% over
+     paper — 7% was measured in the browser and could not be seen at all, which fails
+     the one thing a tint is for; this lands the colored grounds at roughly the depth of
+     `--fill-mild-2`, so a colored panel and a neutral one read as equals rather than as
+     a painted one beside a plain one. Still far above the AA floor for body text, so no
+     wash-fg fork is needed. Dark takes 18%, not the same 16%: a tint over black gains
+     saturation as it gains lightness, so the number that reads as a whisper on cream
+     reads as a painted panel on black — 30% was tried and the Today panel came back a
+     navy block. 18% lands the colored grounds beside `--fill-mild-2`'s dark step, which
+     is the same relationship the light theme has.
+
+     Every panel wears the ink it already owns rather than a new assignment — awaiting
+     is turquoise wherever it appears, goals go green as they complete, and cobalt is
+     the schedule's work-block stripe (§5), so Today inherits it. The board keeps a
+     neutral ground on purpose: it is the ledger, and its rows already carry vermilion
+     and ink of their own that a colored ground would fight.
+
+     Literal hexes, mixed the same way the washes were, because WebKit drops a
+     `color-mix()` that reaches it through a custom property — the CSS serves fine and
+     the band silently does not paint. Found in the browser; no assertion can see it. */
+  --tint-cobalt:    #DAE1E5;
+  --tint-turquoise: #D4E8DE;
+  --tint-gold:      #F9ECCB;
+  --tint-green:     #D9E7D1;
+
   --verm-wash:    #F2CBC1;
   --gold-wash:    #F6E2B2;
   --green-wash:   #C7DBBE;
@@ -110,6 +139,10 @@
     --fill-mild-2:#252421;   /* neutral 800 on black */
     /* dark: washes resolve to the full inks and lines to the rule color, which
        reproduces the pre-wash rendering exactly — no component forks per theme */
+    --tint-cobalt:    #071223;
+    --tint-turquoise: #001B1A;
+    --tint-gold:      #2A1F05;
+    --tint-green:     #061A0C;
     --verm-wash:  var(--vermilion);
     --gold-wash:  var(--gold);
     --green-wash: var(--green);
@@ -140,6 +173,10 @@
   --rule-hair:  #3d3c37;
   --fill-mild:  #0e0d0b;
   --fill-mild-2:#252421;
+  --tint-cobalt:    #071223;
+  --tint-turquoise: #001B1A;
+  --tint-gold:      #2A1F05;
+  --tint-green:     #061A0C;
   --verm-wash:  var(--vermilion);
   --gold-wash:  var(--gold);
   --green-wash: var(--green);

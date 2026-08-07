@@ -133,6 +133,29 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
 }
 .panel{min-width:0;border-bottom:2px solid var(--rule);border-right:2px solid var(--rule);padding:0 0 var(--sp-5)}
 .panel:nth-child(2n){border-right:0}
+
+/* ── Panel grounds (owner ruling 2026-08-06) ───────────────────────────────
+ * Each panel sits on a light tint of its own ink, so two panels sharing a row
+ * read as two surfaces rather than one field split by a rule. The banner already
+ * separates them horizontally; nothing separated them vertically once a panel ran
+ * past its neighbour's last row.
+ *
+ * The ink each panel already owns, never a new assignment: awaiting is turquoise
+ * wherever it appears, goals go green as they complete, review is the gold of
+ * something waiting on a decision, and cobalt is the schedule's work-block stripe
+ * (§5), which is what Today is. The board and the checklist take the neutral ramp's
+ * two steps — the board because it is the ledger and its rows already carry
+ * vermilion and ink that a colored ground would fight, the checklist because two
+ * neutral panels still differ from each other and from every colored one.
+ *
+ * Sources stays on paper. It runs full width below the grid with nothing beside it
+ * to be told apart from, and a tint there would be decoration. */
+#panel-today{background:var(--tint-cobalt)}
+#panel-board{background:var(--fill-mild)}
+#panel-awaiting{background:var(--tint-turquoise)}
+#panel-review{background:var(--tint-gold)}
+#panel-goals{background:var(--tint-green)}
+#panel-checklist{background:var(--fill-mild-2)}
 @media(max-width:840px){.panel{border-right:0}}
 .banner{background:var(--ink);color:var(--on-ink);padding:var(--sp-2) var(--sp-5);font-size:14px;line-height:18px;
   display:flex;justify-content:space-between;align-items:baseline;gap:var(--sp-3)}

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 from datetime import date
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -641,3 +642,50 @@ def test_no_reject_control_hardwires_a_reason_the_owner_did_not_choose(
         assert key in actions.REJECT_REASONS, key
         # "Wrong date" names wrong_date; a button reading "Reject" names nothing.
         assert label.strip().lower() == actions.REJECT_REASONS[key], (key, label)
+
+
+class TestPanelGrounds:
+    """Each dashboard panel sits on its own light tint (owner ruling 2026-08-06).
+
+    Two panels share a row and the banner separates them across; nothing separated
+    them down, so once one ran past the other the page read as a single field with a
+    rule through it.
+    """
+
+    CSS = Path(__file__).resolve().parents[1] / "backglass/web/static/dashboard.css"
+    TOKENS = Path(__file__).resolve().parents[1] / "design/tokens.css"
+    PANELS = ("today", "board", "awaiting", "review", "goals", "checklist")
+
+    def _grounds(self) -> dict[str, str]:
+        css = self.CSS.read_text()
+        found = {}
+        for panel in self.PANELS:
+            match = re.search(rf"#panel-{panel}\{{background:var\((--[a-z0-9-]+)\)\}}", css)
+            assert match, f"#panel-{panel} has no ground"
+            found[panel] = match.group(1)
+        return found
+
+    def test_no_two_panels_share_a_ground(self) -> None:
+        """The whole point is separation. Two panels on the same tint are two panels
+        the tint cannot tell apart, and the pair most at risk is the one the ruling
+        named: Today beside Commitments."""
+        grounds = self._grounds()
+        assert grounds["today"] != grounds["board"]
+        assert len(set(grounds.values())) == len(self.PANELS)
+
+    def test_every_ground_token_is_defined_in_both_themes(self) -> None:
+        """The failure this pins was found in a browser, not a test: a background
+        naming a token that does not exist is not an error anywhere — the declaration
+        parses away and the panel silently paints paper. A token missing from only the
+        dark blocks fails the same way for half the users of a two-theme system."""
+        tokens = self.TOKENS.read_text()
+        light, _, rest = tokens.partition("@media")
+        for name in set(self._grounds().values()):
+            assert f"{name}:" in light, f"{name} is not defined for the light theme"
+            # Both dark surfaces: the media query and the explicit data-theme override.
+            assert rest.count(f"{name}:") >= 2, f"{name} is missing from a dark theme block"
+
+    def test_the_full_width_panel_stays_on_paper(self) -> None:
+        """Sources runs below the grid with nothing beside it to be told apart from,
+        so a tint there would be decoration rather than structure."""
+        assert "#panel-sources{background" not in self.CSS.read_text()
