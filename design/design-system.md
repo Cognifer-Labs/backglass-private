@@ -311,12 +311,27 @@ rules that used to do that job are gone. The 2px section seams stay — seams di
 tiles divide content.
 
 ```
-surface   --fill-mild        neutral, both themes
-keyline   1px, category ink  the "different colour"
+surface   --fill-mild             neutral, both themes
+keyline   2px, --rule by default  black on paper, paper on black
+          category ink where one exists — it replaces the ink, never the weight
 radius    --radius-3
 padding   --sp-3
 gap       --sp-2
 ```
+
+**Amended 2026-08-07, same owner, after looking at it:** *"every item should be separated by
+MORE than a thin line — by color, or tile, or dark outline. Choose and apply throughout."*
+The first cut used a 1px keyline, which is a thin line, so it answered the letter of the
+ruling and not its point. The tile now carries the system's own 2px border weight and
+defaults to `--rule`, so a tile with no category still separates unmistakably. "Throughout"
+is literal: every list that was a run of hairline-separated rows is a tile, including the
+four the first pass argued its way out of — the sidebar's goals, the goals page's per-goal
+rows, the roadmap's step rows, and the target and milestone rows inside a goal card. That
+density argument was mine, not the owner's, and the owner asked for the opposite twice.
+
+One nesting exception, because a 2px tile inside a goal card's own 2px frame reads as a box
+in a box: rows inside a `.gcard` keep the weight and the tile and drop to the hairline ink,
+one step quieter than the frame around them.
 
 **This re-opens two rulings and amends a third**, and the reasons they recorded are real, so
 the design answers them rather than ignoring them. 2026-08-01 returned the board to ledger

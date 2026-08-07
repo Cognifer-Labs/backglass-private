@@ -1163,20 +1163,41 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
  * State still wins. The wash register below is declared after this block on purpose,
  * so an overdue or going-cold tile keeps its wash and its saturated line and still
  * reads as state rather than as its category. */
-:is(.row,.card,.src,.chk,.goal,.tt li,.rmrow,.tot){
+/* Amended 2026-08-07, same owner, after looking at it: "every item should be separated by
+ * MORE than a thin line — by color, or tile, or dark outline. Choose and apply throughout."
+ *
+ * The first cut used a 1px keyline, which is a thin line, so it answered the letter of the
+ * ruling and not the point of it. One treatment, chosen and applied everywhere: the tile
+ * takes the system's own 2px border weight, and the default ink is --rule — black on paper,
+ * paper on black — so a tile with no category still separates unmistakably. Category ink
+ * replaces the default where a category exists; it never replaces the weight.
+ *
+ * "Throughout" is now literal. Every list that was a run of hairline-separated rows is in
+ * this selector, including the four the first pass argued its way out of: the sidebar's
+ * goals, the goals page's per-goal rows, the roadmap's step rows, and the target and
+ * milestone rows inside a goal card. The density argument for keeping the sidebar as ledger
+ * lines was mine, not the owner's, and the owner has now twice asked for the opposite. */
+:is(.row,.card,.src,.chk,.goal,.tt li,.rmrow,.tot,
+    .sgoal,.goalrow,.atl .stepx,.gcard .gtgt,.gcard .mlist li){
   background:var(--fill-mild);
-  border:1px solid var(--tile-line,var(--rule-hair));
+  border:var(--border) solid var(--tile-line,var(--rule));
   border-radius:var(--radius-3);
   padding:var(--sp-3);
   margin:0 0 var(--sp-2)}
 /* The hairline idiom and every :first-of-type reset that existed only to serve it.
  * A tile is separated by the gap, so the first one needs no special case. */
-:is(.row,.card,.src,.chk,.goal,.tt li,.rmrow,.tot):first-of-type{border-top-width:1px}
-.tt li:last-child{border-bottom-width:1px}
-/* The sidebar keeps ledger lines. It is a 236px column of derived state, and eleven
- * tiles stacked in it read as a second page rather than a summary — the density the
- * 2026-08-01 ruling was protecting is real here even though the owner overruled it
- * for the panels. */
+:is(.row,.card,.src,.chk,.goal,.tt li,.rmrow,.tot,
+    .sgoal,.goalrow,.atl .stepx,.gcard .gtgt,.gcard .mlist li):first-of-type{
+  border-top-width:var(--border)}
+.tt li:last-child{border-bottom-width:var(--border)}
+/* The sidebar column is 236px and its tiles carry a 2px edge like every other, so they
+ * take the tighter padding step or the text has nowhere to go. */
+.sgoal{padding:var(--sp-2)}
+/* A goal card's own 2px frame plus a 2px tile on every row inside it reads as a box in a
+ * box. The card keeps the frame; its rows drop to the hairline ink so the nesting stays
+ * legible — still a 2px edge, still a tile, one step quieter than the frame around it. */
+.gcard :is(.gtgt,.mlist li){--tile-line:var(--rule-hair)}
+.gcard .mlist li{padding:var(--sp-2) var(--sp-3)}
 
 /* A kind OVERRIDES its panel's category, because it is the more specific statement about
  * the same tile: "this is a plan" is what the Today panel already says, and "this is

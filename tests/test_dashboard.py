@@ -686,9 +686,17 @@ def test_every_content_unit_is_a_tile(client: TestClient) -> None:
     css = _strip_css_comments(client.get("/static/dashboard.css").text)
     tile = [b for b in css.split("}") if "--tile-line" in b and "background:var(--fill-mild)" in b]
     assert tile, "no tile rule"
-    for selector in (".row", ".card", ".src", ".chk", ".goal", ".tt li", ".rmrow", ".tot"):
+    for selector in (
+        ".row", ".card", ".src", ".chk", ".goal", ".tt li", ".rmrow", ".tot",
+        # The four the first pass argued its way out of. The owner asked twice.
+        ".sgoal", ".goalrow", ".atl .stepx", ".gcard .gtgt", ".gcard .mlist li",
+    ):
         assert selector in tile[0], f"{selector} is not a tile"
-    assert "border-radius:var(--radius-3)" in tile[0].replace(" ", "")
+    flat = tile[0].replace(" ", "")
+    assert "border-radius:var(--radius-3)" in flat
+    # 2026-08-07: "separated by MORE than a thin line". A 1px keyline is a thin line, so
+    # the weight is the assertion — the ink may vary by category, the weight may not.
+    assert "border:var(--border)solid" in flat, "a tile keyline must carry the 2px weight"
 
 
 def test_a_tile_keyline_never_uses_a_wash_line_token(client: TestClient) -> None:
