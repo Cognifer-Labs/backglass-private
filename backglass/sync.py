@@ -27,6 +27,7 @@ from typing import Any
 
 from backglass import chats as chats_mod
 from backglass import contacts as contacts_mod
+from backglass import facts
 from backglass.config import Settings
 from backglass.connectors import base, credentials
 from backglass.connectors.base import Connector
@@ -604,9 +605,16 @@ def _triage_pass(
             cap,
             report,
             pending,
+            facts.owner_context(conn),
         )
         if not pending or report.rate_limited:
             return
+
+    # Built once for the pass. The knowledge base does not change mid-run, and it has
+    # to be identical across calls or a caching backend sees a different prompt every
+    # time. Read here rather than in `work` — that runs in the pool, and this connection
+    # is not shared across threads.
+    context = facts.owner_context(conn)
 
     def work(item: dict[str, Any]) -> tuple[int, tier1.TriageOutcome | Exception]:
         try:
@@ -616,6 +624,7 @@ def _triage_pass(
                 client=client,
                 model=settings.model_triage,
                 budget_usd=settings.per_call_budget_usd,
+                owner_context=context,
             )
         except Exception as exc:  # noqa: BLE001
             return int(item["id"]), exc
@@ -663,6 +672,7 @@ def _batch_triage_pass(
     cap: SpendCap,
     report: SyncReport,
     pending: list[dict[str, Any]],
+    owner_context: str = "",
 ) -> list[dict[str, Any]]:
     """Run the batched tier-1 pass; return the items that still need per-item triage."""
     prompt = prompts.load(TRIAGE_BATCH_PROMPT)
@@ -678,6 +688,7 @@ def _batch_triage_pass(
                 client=client,
                 model=settings.model_triage,
                 budget_usd=settings.per_call_budget_usd,
+                owner_context=owner_context,
             )
         except Exception as exc:  # noqa: BLE001
             return chunk, exc

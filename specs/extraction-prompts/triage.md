@@ -1,10 +1,20 @@
 ---
 id: triage
-version: 2
+version: 3
 model: small/fast
 output: strict JSON
 ---
 
+<!-- v3 (2026-08-07): the prompt learns who it is triaging for. `{{owner_context}}`
+     carries the `fact` table — the owner's own recorded facts — so the model can tell
+     their obligations from broadcast marketing. It could not before: a university's
+     admissions mail is a deadline to a prospective student and noise to one who has
+     already enrolled elsewhere, and nothing in this prompt could tell those apart.
+     The block is STATED, never instruction: it says who the owner is, it does not say
+     what to drop, and the keep-bias below is untouched. It renders empty on a ledger
+     with no facts, so a fresh install sends the v2 prompt byte for byte. Placed after
+     the instructions so Prompt.split() still hands a caching backend a static prefix.
+     Mirrored in triage-batch.md, per the note below. -->
 <!-- v2 (2026-08-01): two failure modes closed. (1) The keep tests and the drop list
      could conflict — a receipt carrying a payment deadline matched both, and the model
      picked either. Precedence is now explicit: keep tests outrank the drop list.
@@ -48,6 +58,8 @@ like a pleasantry.
 When genuinely uncertain, return keep=true. A false positive costs one extraction
 call. A false negative loses a commitment permanently, and the user will never
 know it happened.
+
+{{owner_context}}
 
 MESSAGE
 From: {{author}}

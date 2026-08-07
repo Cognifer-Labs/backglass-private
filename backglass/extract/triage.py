@@ -54,6 +54,7 @@ def triage(
     client: ModelClient,
     model: str,
     budget_usd: float,
+    owner_context: str = "",
 ) -> TriageOutcome:
     body = str(item.get("body_text") or "")
     # The static instruction half rides in `system` so a caching backend can bill it
@@ -66,6 +67,7 @@ def triage(
         occurred_at=item.get("occurred_at") or "",
         title=item.get("title") or "",
         body_text_truncated_2000=body[:BODY_LIMIT],
+        owner_context=owner_context,
     )
     result = client.complete(
         system=system, user=rendered, schema=SCHEMA, model=model, budget_usd=budget_usd
@@ -99,6 +101,7 @@ def triage_batch(
     client: ModelClient,
     model: str,
     budget_usd: float,
+    owner_context: str = "",
 ) -> BatchOutcome:
     """One model call over many items. Instruction tokens are paid once.
 
@@ -109,7 +112,8 @@ def triage_batch(
     static, _ = prompt.split()
     system = f"{SYSTEM}\n\n{static}" if static else SYSTEM
     rendered = prompt.render_dynamic(
-        items="\n\n".join(_render_batch_item(i) for i in items)
+        items="\n\n".join(_render_batch_item(i) for i in items),
+        owner_context=owner_context
     )
     result = client.complete(
         system=system, user=rendered, schema=BATCH_SCHEMA, model=model,

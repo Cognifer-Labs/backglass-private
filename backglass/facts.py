@@ -120,6 +120,49 @@ def forget(conn: sqlite3.Connection, fact_id: int) -> None:
         raise FactError(f"no active fact {fact_id}")
 
 
+#: How much of the knowledge base may ride on a triage call. Every token spent in
+#: triage multiplies across the whole inbox (triage.md), so the block is capped rather
+#: than trusted to stay small — twenty facts is nothing, five hundred would be a tax on
+#: every item forever. Measured 2026-08-07: cost tracks OUTPUT, not input, so the
+#: marginal cost of a few hundred characters of context is close to nothing; the cap is
+#: there for the day that stops being true, not because it is expensive today.
+OWNER_CONTEXT_CHARS = 900
+
+
+def owner_context(conn: sqlite3.Connection, *, limit: int = OWNER_CONTEXT_CHARS) -> str:
+    """The knowledge base as a block a prompt can carry, or "" when there is none.
+
+    Triage's whole job is telling the owner's own obligations from broadcast noise, and
+    until now it did that knowing nothing about the owner. It could not tell that a
+    university's admissions mail is marketing to someone who has already enrolled
+    somewhere, because it did not know they had.
+
+    Two properties this has to keep. It is DETERMINISTIC — ordered by subject then key,
+    so the same ledger renders the same block and a caching backend is not defeated by a
+    dictionary's iteration order. And it is EMPTY when the ledger has no facts, which
+    means a fresh install sends byte-for-byte the prompt it sent before this existed:
+    nobody inherits a behaviour change they have no data for.
+
+    Facts are stated, never instructions. The block says who the owner is; it does not
+    say what to drop. triage.md's asymmetry — when in doubt, keep — is the model's rule
+    and this must not read as permission to override it.
+    """
+    rows = sorted(recall(conn), key=lambda f: (f.subject, f.key))
+    if not rows:
+        return ""
+    lines: list[str] = []
+    used = 0
+    for fact in rows:
+        line = f"- {fact.subject}/{fact.key}: {fact.value}"
+        if used + len(line) + 1 > limit:
+            break
+        lines.append(line)
+        used += len(line) + 1
+    if not lines:
+        return ""
+    return "ABOUT THE OWNER (facts they have recorded about themselves)\n" + "\n".join(lines)
+
+
 def config_drift(conn: sqlite3.Connection, settings: Any) -> list[str]:
     """Where the knowledge base and the effective config disagree about the owner.
 

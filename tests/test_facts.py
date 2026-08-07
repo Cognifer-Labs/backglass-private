@@ -262,3 +262,77 @@ class TestProvenanceDoor:
         client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
         body = client.get(f"/source/{item}").text
         assert "Willow 502" in body
+
+
+class TestOwnerContext:
+    """The knowledge base reaches triage — knowledge-base plan item B.
+
+    Triage's whole job is telling the owner's own obligations from broadcast noise, and
+    it did that knowing nothing about the owner. It could not tell that a university's
+    admissions mail is a deadline to a prospective student and marketing to one who has
+    already enrolled somewhere, because nothing in the prompt said which they were.
+    """
+
+    def test_a_ledger_with_no_facts_sends_the_prompt_it_always_sent(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The property that makes this safe to ship: nobody inherits a behaviour change
+        they have no data for. An empty knowledge base renders an empty block, so a
+        fresh install's triage prompt is byte-for-byte what v2 sent."""
+        assert facts.owner_context(conn) == ""
+
+    def test_facts_render_deterministically(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """Same ledger, same block — or a caching backend is defeated by dictionary
+        order and every call pays for a prefix it should have been billed once for."""
+        facts.remember(conn, settings, "education", "college", "ASU Tempe")
+        facts.remember(conn, settings, "identity", "name", "Alex Rivera")
+        facts.remember(conn, settings, "education", "major", "Biology")
+        first = facts.owner_context(conn)
+        assert first == facts.owner_context(conn)
+        assert first.index("education/college") < first.index("education/major")
+        assert first.index("education/major") < first.index("identity/name")
+
+    def test_the_block_is_bounded(self, conn: sqlite3.Connection, settings: Settings) -> None:
+        """Every token spent in triage multiplies across the whole inbox. Twenty facts
+        is nothing; five hundred would be a tax on every item forever."""
+        for i in range(200):
+            facts.remember(conn, settings, "bulk", f"k{i:03d}", "x" * 40)
+        assert len(facts.owner_context(conn)) <= facts.OWNER_CONTEXT_CHARS + 60
+
+    def test_a_retracted_fact_leaves_the_prompt(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """Forgetting is how the owner corrects what the model is told about them, so it
+        has to reach the prompt and not only the Memory page."""
+        fact_id = facts.remember(conn, settings, "housing", "hall", "Willow 502")
+        assert "Willow 502" in facts.owner_context(conn)
+        facts.forget(conn, fact_id)
+        assert "Willow 502" not in facts.owner_context(conn)
+
+    def test_the_context_reaches_the_model_through_a_real_sync(
+        self, conn: sqlite3.Connection, settings: Settings, boundary
+    ) -> None:
+        """Drive the real door: the payload the client is handed, not the helper."""
+        from backglass.sync import sync
+        from tests.conftest import gmail_message, make_connector
+        from tests.test_triage_batch import RecordingModel
+
+        facts.remember(conn, settings, "education", "college", "ASU Tempe, enrolled")
+        message = gmail_message(
+            {
+                "id": "ctx1",
+                "from": "admissions@other.example",
+                "to": "alex.rivera@example.com",
+                "subject": "Your place is waiting",
+                "date": "Fri, 07 Aug 2026 09:00:00 -0700",
+                "body": "Apply by August 15 to secure your spot.",
+            }
+        )
+        model = RecordingModel(triage={"Apply by": {"keep": False, "reason": "marketing"}})
+        sync(conn, settings, [make_connector([message], boundary)], model)
+        triage_payloads = [user for tier, _, user in model.users if tier == "triage"]
+        assert triage_payloads, "the item reached triage"
+        assert any("ASU Tempe, enrolled" in payload for payload in triage_payloads)
+        assert any("ABOUT THE OWNER" in payload for payload in triage_payloads)

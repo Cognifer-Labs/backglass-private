@@ -1,6 +1,6 @@
 ---
 id: triage-batch
-version: 2
+version: 3
 model: small/fast
 output: strict JSON
 ---
@@ -46,6 +46,8 @@ Return exactly one entry per message id: no more, no fewer, and only ids that
 appear below. `reason` must quote or paraphrase the specific trigger.
 
 MESSAGES
+{{owner_context}}
+
 {{items}}
 ```
 

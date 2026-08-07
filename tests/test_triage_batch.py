@@ -122,11 +122,16 @@ class TestEscalation:
         assert report.escalated == 3
         assert report.model_triaged == 12
         # The per-item pass must run the full single-item prompt (its static half now
-        # rides in `system` for caching), not the batch excerpt prompt.
+        # rides in `system` for caching), not the batch excerpt prompt. The dynamic half
+        # begins at `{{owner_context}}` since triage v3 — the instruction block is still
+        # static and still cached; what moved across the boundary is the literal MESSAGE
+        # header, because split() cuts before the FIRST placeholder and that is now the
+        # context. The assertion checks the item is carried in the dynamic half, which
+        # is what it was always for.
         for tier, system, user in model.users:
             if tier == "triage":
                 assert "You are triaging one message" in system
-                assert user.startswith("From: ")
+                assert "MESSAGE\nFrom: " in user
 
     def test_unknown_ids_in_the_response_are_ignored(
         self, conn: sqlite3.Connection, settings: Settings, boundary
