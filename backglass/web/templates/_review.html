@@ -24,7 +24,7 @@
           {% else %}
             <p class="quote">{{ r['source_title'] or 'no subject' }} — {{ m.source_link(r) }}</p>
           {% endif %}
-          <p class="conf">{{ '%.0f'|format(r['confidence'] * 100) }}% confident · {{ r['starts_at']|when(d.today) }}</p>
+          <p class="b2">{{ '%.0f'|format(r['confidence'] * 100) }}% confident · {{ r['starts_at']|when(d.today) }}</p>
           <div class="acts">
             <button class="btn accept" hx-post="/review/plan/{{ r['id'] }}/accept"
                     hx-target="#panel-review" hx-swap="outerHTML">Accept</button>
@@ -53,11 +53,18 @@
           {% if r['evidence_quote'] %}
             <p class="quote">“{{ r['evidence_quote'] }}”</p>
             <p class="b2">{{ r['source_title'] or 'no subject' }} — {{ m.source_link(r) }}
-              {%- if r['mention_count'] and r['mention_count'] > 1 %} · said in {{ r['mention_count'] }} places{% endif %}</p>
+              {%- if r['mention_count'] and r['mention_count'] > 1 %} · said in {{ r['mention_count'] }} places{% endif %}
+              {#- Confidence rides the provenance line rather than taking a row of its
+                  own. It was an uppercase band of its own between the source and the
+                  buttons, which read as a label for Accept rather than as a property of
+                  the claim — and cost a line on every one of 164 items. #}
+ · {{ '%.0f'|format(r['confidence'] * 100) }}% confident
+              {%- if r['due_at'] %} · due {{ r['due_at'][:10] }}{% endif %}</p>
           {% else %}
             <p class="quote">{{ r['source_title'] or 'no subject' }} — {{ m.source_link(r) }}</p>
+            <p class="b2">{{ '%.0f'|format(r['confidence'] * 100) }}% confident
+              {%- if r['due_at'] %} · due {{ r['due_at'][:10] }}{% endif %}</p>
           {% endif %}
-          <p class="conf">{{ '%.0f'|format(r['confidence'] * 100) }}% confident{% if r['due_at'] %} · due {{ r['due_at'][:10] }}{% endif %}</p>
           {# docs/11 §4: "Accept and Reject as equal-weight buttons." Never make Accept the
              primary button, style it larger, or preselect it — a nudge toward accepting
              turns the queue into a rubber stamp. Same class, same size, same order weight. #}
@@ -75,11 +82,13 @@
              keeps the reject side visibly heavier than Accept rather than lighter. #}
           <div class="why">
             <span class="lbl">reject as</span>
-            {% for key, label in [('wrong_date','Wrong date'), ('not_a_commitment','Not a commitment'),
-                                  ('not_mine','Not mine'), ('already_done','Already done')] %}
-              <button class="btn reject" hx-post="/review/{{ r['id'] }}/reject/{{ key }}"
-                      hx-target="#panel-review" hx-swap="outerHTML">{{ label }}</button>
-            {% endfor %}
+            <div class="whybtns">
+              {% for key, label in [('wrong_date','Wrong date'), ('not_a_commitment','Not a commitment'),
+                                    ('not_mine','Not mine'), ('already_done','Already done')] %}
+                <button class="btn reject" hx-post="/review/{{ r['id'] }}/reject/{{ key }}"
+                        hx-target="#panel-review" hx-swap="outerHTML">{{ label }}</button>
+              {% endfor %}
+            </div>
           </div>
         </div>
         {% endif %}
