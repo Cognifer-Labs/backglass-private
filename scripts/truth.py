@@ -41,6 +41,7 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass, field
+from fnmatch import fnmatch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -58,39 +59,94 @@ class ExtractionError(RuntimeError):
 
 @dataclass(frozen=True)
 class Site:
-    """One place a value is written down."""
+    """One place a value is written down.
+
+    `occurrences` decides what a repeated match means, and it has to be per-site because
+    both answers are correct somewhere. `wordmark.svg` paints the paper colour eight times
+    and every one of them is the same fact, so all eight must agree and all eight must be
+    repaired. `preview.html` contains that same hex thirteen times — but as `--paper`,
+    `--on-ink`, and as `--ink`/`--rule` inside the dark blocks, which are different facts
+    that merely share a value in one theme. Forcing "all" there would bind unrelated tokens
+    together forever. Default is "first"; opt into "all" when the repeats are genuinely one
+    fact restated.
+    """
 
     path: str
     pattern: str
     #: Human label for the report; defaults to the path.
     label: str | None = None
+    #: "first" — check one match (see `nth`). "all" — every match must agree, --fix repairs all.
+    occurrences: str = "first"
+    #: Which match, when `occurrences` is "first". Needed because the theme aliases name the
+    #: same custom property twice with different meanings: `--ink-2` is neutral 700 in the
+    #: light block and neutral 200 in the dark one. They are two facts sharing a spelling, so
+    #: position is the only thing that tells them apart without parsing CSS properly.
+    nth: int = 0
 
     def describe(self) -> str:
         return self.label or self.path
 
-    def read(self) -> tuple[str, int]:
-        """Return (value, 1-indexed line number) for this site's single capture group."""
-        text = (ROOT / self.path).read_text()
-        match = re.search(self.pattern, text, re.M)
-        if match is None:
+    def _text(self) -> str:
+        target = ROOT / self.path
+        if not target.exists():
+            raise ExtractionError(
+                f"{self.path}: registered site does not exist.\n"
+                f"  Either the file moved (update the registry) or a fact lost one of its "
+                f"homes (drop the site deliberately). Silence is not an option here."
+            )
+        return target.read_text()
+
+    def read_all(self) -> list[tuple[str, int]]:
+        """Every (value, 1-indexed line) this site's capture group matches."""
+        text = self._text()
+        found = [
+            (m.group(1), text[: m.start(1)].count("\n") + 1)
+            for m in re.finditer(self.pattern, text, re.M)
+        ]
+        if not found:
             raise ExtractionError(
                 f"{self.path}: pattern found nothing.\n"
                 f"    {self.pattern}\n"
                 f"  The file changed shape. Fix the pattern — a fact that cannot be read "
                 f"is not a fact that is correct."
             )
-        line = text[: match.start(1)].count("\n") + 1
-        return match.group(1), line
+        if self.occurrences == "all":
+            return found
+        if self.nth >= len(found):
+            raise ExtractionError(
+                f"{self.path}: wanted match #{self.nth} of {self.pattern!r} "
+                f"but only {len(found)} exist. The file lost an occurrence — that is a "
+                f"fact quietly disappearing, which is why this raises."
+            )
+        return [found[self.nth]]
+
+    def read(self) -> tuple[str, int]:
+        """The first (value, line). Kept for authorities, which are always single-valued."""
+        return self.read_all()[0]
+
+    def disagreeing(self, expected: str, normalise: str) -> list[tuple[str, int]]:
+        """The matches that do NOT equal `expected`, under the fact's normaliser."""
+        return [
+            (value, line)
+            for value, line in self.read_all()
+            if _norm(value, normalise) != _norm(expected, normalise)
+        ]
 
     def rewrite(self, new_value: str) -> None:
-        """Replace just the captured span, leaving every other byte alone."""
-        target = ROOT / self.path
-        text = target.read_text()
-        match = re.search(self.pattern, text, re.M)
-        if match is None:  # pragma: no cover — read() would have raised first
+        """Replace the captured spans, leaving every other byte alone.
+
+        Right-to-left, because rewriting left-to-right invalidates every later span the
+        moment the replacement differs in length from what it replaced.
+        """
+        text = self._text()
+        spans = [m.span(1) for m in re.finditer(self.pattern, text, re.M)]
+        if not spans:  # pragma: no cover — read_all() would have raised first
             raise ExtractionError(f"{self.path}: pattern found nothing on rewrite")
-        start, end = match.span(1)
-        target.write_text(text[:start] + new_value + text[end:])
+        if self.occurrences != "all":
+            spans = [spans[self.nth]]
+        for start, end in reversed(spans):
+            text = text[:start] + new_value + text[end:]
+        (ROOT / self.path).write_text(text)
 
 
 @dataclass(frozen=True)
@@ -137,7 +193,66 @@ def _line_written_at(path: str, line: int) -> int | None:
     return None
 
 
-OK, STALE, ASK = "OK", "STALE", "ASK"
+OK, STALE, ASK, ORPHAN = "OK", "STALE", "ASK", "ORPHAN"
+
+
+def _tracked_files() -> list[str]:
+    result = subprocess.run(
+        ["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True
+    )
+    return result.stdout.splitlines()
+
+
+def _is_distinctive(value: str) -> bool:
+    """Is this value specific enough to search for as a bare literal?
+
+    A hex colour is. The number 6 is not — searching for it would match every line in the
+    repo and drown the report, so geometry facts are checked only where they are registered.
+    The orphan scan is a net for values that carry their own identity.
+    """
+    return bool(re.fullmatch(r"#[0-9A-Fa-f]{6}", value.strip())) or len(value.strip()) >= 6
+
+
+def find_orphans(facts: list[Fact], ignore: tuple[str, ...]) -> list[Finding]:
+    """Files that state an authority's value without being registered as a mirror.
+
+    This is the hole every registry has: it only checks what somebody remembered to add.
+    A new hardcode in a new file is invisible to a pure registry check, and invisible is how
+    all four of this repo's drifts survived. So rather than trusting the registry to be
+    complete, go the other way — take the value the authority declares, look for it across
+    every tracked file, and flag anything holding a copy that nobody registered.
+
+    File-level on purpose. If a file has even one registered site for the fact, its author
+    is assumed to have thought about it, and within-file completeness is the `occurrences`
+    setting's job. What this catches is a whole file nobody linked up.
+    """
+    findings: list[Finding] = []
+    tracked = _tracked_files()
+    for fact in facts:
+        value, _ = fact.authority.read()
+        if not _is_distinctive(value):
+            continue
+        known = {fact.authority.path} | {m.path for m in fact.mirrors}
+        for path in tracked:
+            if path in known or any(fnmatch(path, pattern) for pattern in ignore):
+                continue
+            try:
+                text = (ROOT / path).read_text()
+            except (UnicodeDecodeError, FileNotFoundError, IsADirectoryError):
+                continue
+            if value in text:
+                line = text[: text.index(value)].count("\n") + 1
+                findings.append(
+                    Finding(
+                        fact.name,
+                        Site(path, "", f"{path}:{line}"),
+                        ORPHAN,
+                        value,
+                        value,
+                        "holds this value but is not a registered mirror",
+                    )
+                )
+    return findings
 
 
 @dataclass
@@ -150,26 +265,49 @@ class Finding:
     detail: str = ""
 
 
+def _classify(mirror_at: int | None, truth_at: int | None) -> tuple[str, str]:
+    """Which way does the repair run?
+
+    None means "uncommitted", which sorts newest — an edit you have not committed is the
+    freshest statement of intent in the tree. Both uncommitted is genuinely ambiguous and
+    gets its own message rather than being reported as though only the mirror moved; the
+    honest answer there is that a human is mid-edit and the machine should keep its hands
+    off. Equal timestamps mean one commit set the two to different values, which is a real
+    inconsistency introduced atomically — the authority wins, but the report says so
+    plainly instead of implying the mirror is old.
+    """
+    if mirror_at is None and truth_at is None:
+        return ASK, "both the mirror and the authority have uncommitted changes"
+    if mirror_at is None:
+        return ASK, "mirror has uncommitted changes"
+    if truth_at is None:
+        return STALE, "authority has uncommitted changes, so the mirror predates it"
+    if mirror_at > truth_at:
+        return ASK, "mirror's line is newer than the authority's"
+    if mirror_at == truth_at:
+        return STALE, "same commit set both, to different values — the authority wins"
+    return STALE, "mirror's line predates the authority's"
+
+
 def check(facts: list[Fact]) -> list[Finding]:
     findings: list[Finding] = []
     for fact in facts:
         truth, truth_line = fact.authority.read()
-        truth_at = _line_written_at(fact.authority.path, truth_line)
+        truth_at: int | None = None
+        blamed_authority = False
         for mirror in fact.mirrors:
-            value, line = mirror.read()
-            if _norm(value, fact.normalise) == _norm(truth, fact.normalise):
-                findings.append(Finding(fact.name, mirror, OK, truth, value))
+            disagreeing = mirror.disagreeing(truth, fact.normalise)
+            if not disagreeing:
+                findings.append(Finding(fact.name, mirror, OK, truth, mirror.read()[0]))
                 continue
-            mirror_at = _line_written_at(mirror.path, line)
-            # Uncommitted (None) sorts newest on either side.
-            if mirror_at is None:
-                verdict, detail = ASK, "mirror has uncommitted changes"
-            elif truth_at is None:
-                verdict, detail = STALE, "authority has uncommitted changes"
-            elif mirror_at > truth_at:
-                verdict, detail = ASK, "mirror's line is newer than the authority's"
-            else:
-                verdict, detail = STALE, "mirror's line predates the authority's"
+            # Blame is a subprocess per call, so only pay for it once a fact is in dispute.
+            if not blamed_authority:
+                truth_at = _line_written_at(fact.authority.path, truth_line)
+                blamed_authority = True
+            value, line = disagreeing[0]
+            verdict, detail = _classify(_line_written_at(mirror.path, line), truth_at)
+            if len(disagreeing) > 1:
+                detail += f" ({len(disagreeing)} of its occurrences disagree)"
             findings.append(Finding(fact.name, mirror, verdict, truth, value, detail))
     return findings
 
@@ -179,13 +317,15 @@ def main() -> int:
     parser.add_argument("--fix", action="store_true", help="rewrite STALE mirrors")
     args = parser.parse_args()
 
-    from truth_registry import FACTS  # noqa: PLC0415 — kept beside this file
+    from truth_registry import FACTS, ORPHAN_IGNORE  # noqa: PLC0415 — kept beside this file
 
     findings = check(FACTS)
+    orphans = find_orphans(FACTS, ORPHAN_IGNORE)
     stale = [f for f in findings if f.verdict == STALE]
     ask = [f for f in findings if f.verdict == ASK]
 
-    print(f"\n{len(FACTS)} facts, {len(findings)} mirrors checked\n")
+    print(f"\n{len(FACTS)} facts, {len(findings)} mirrors checked, "
+          f"{len(_tracked_files())} tracked files scanned for unregistered copies\n")
 
     if args.fix:
         for finding in stale:
@@ -210,8 +350,14 @@ def main() -> int:
     if stale:
         print("\n  Run with --fix to correct these.\n")
 
-    if not stale and not ask:
-        print("  All mirrors agree with their authority.\n")
+    for finding in orphans:
+        print(f"  ORPHAN {finding.fact}")
+        print(f"         {finding.site.describe()} holds {finding.authority_value!r}")
+        print("         but is not a registered mirror, so nothing keeps it in step.")
+        print("         Register it, or replace the literal with the token.\n")
+
+    if not stale and not ask and not orphans:
+        print("  All mirrors agree with their authority, and no unregistered copies.\n")
         return 0
     return 1
 

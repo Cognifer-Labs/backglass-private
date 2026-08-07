@@ -638,3 +638,15 @@ deterministic given the id.
   When a value must be copied because the medium cannot resolve the original — email has no
   custom properties — the copy needs a machine-checked link back, not a comment naming its
   source. `scripts/truth.py` is that link now.
+
+- 2026-08-07 | Used `git checkout -- backglass/web/static/dashboard.css` to undo a two-line
+  scratch edit, and destroyed an uncommitted fix elsewhere in the same file. The lesson
+  saying exactly this — "`checkout --` means back to HEAD, not undo my last edit" — has been
+  in this file since 2026-08-05, written after the identical mistake. Reading it was not
+  enough; I reached for the fastest revert under time pressure. | The lesson was right and
+  restating it changes nothing, so the rule becomes mechanical instead: never revert a file
+  with `git checkout`/`restore` while it carries uncommitted work. `cp file file.bak` before
+  the scratch edit and `cp` back, every time — the backup is two seconds and the file-level
+  revert is unbounded loss. Better still, do scratch experiments in a copy under the
+  scratchpad and never touch the real file. The tell that I was about to do it again: I
+  typed the checkout from muscle memory rather than deciding to.

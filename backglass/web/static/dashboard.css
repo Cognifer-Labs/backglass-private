@@ -919,7 +919,7 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .lnk:hover{background:var(--ink);color:var(--on-ink);text-decoration:none}
 /* Drop is the destructive action, demoted from a boxed danger button to a quiet
  * link. Vermilion arrives as the underline and the hover fill, not as the text
- * colour: #D03D37 on cream is 4.3:1, under AA for 11px, and the codebase already
+ * colour: #D03D37 on cream is 4.49:1, under AA for 11px, and the codebase already
  * carries destructive ink as a keyline (.btn.reject) rather than as type. The
  * word "Drop" plus the confirm dialog carry the meaning; the ink corroborates. */
 .lnk.danger{text-decoration-color:var(--vermilion);text-decoration-thickness:2px}
