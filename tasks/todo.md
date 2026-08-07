@@ -1,3 +1,155 @@
+# Audit: what the telemetry says, and where the knowledge base actually sits
+
+Written 2026-08-07, one day after Phase 0 landed. Thirty model calls is a small sample
+and it is already enough to refute the premise the rest of the plan was resting on.
+
+## What a call costs, measured
+
+| tier | calls | median | p95 | mean chars | imputed per call |
+|---|---|---|---|---|---|
+| extract | 9 | 39.4s | 53.8s | 8,999 | **17.53c** |
+| triage | 20 | 11.6s | 15.8s | 3,168 | 0.83c |
+| triage_batch | 1 | 36.6s | — | 4,340 | 2.12c (~12 items) |
+
+Three readings, and the first one changes the plan.
+
+**Cost does not track payload, it tracks output.** A 13,372-char extraction cost 5.7c;
+a 7,822-char one cost 22.5c. Duration tracks cost almost exactly (5.2s → 2.5c, 64s →
+30c). What the model *writes* is the bill, not what it reads.
+
+**So per-call session overhead does not dominate here.** If it did, cost would be
+roughly flat across tiers; instead extract costs 21× triage. `CLI_ISOLATION_FLAGS` is
+doing its job and the 2026-07-30 measurement — taken in a different context, on a
+different call shape — does not describe this pipeline. **Phase 2.2 (batch extraction)
+is withdrawn, not deferred**: batching saves per-call overhead, five items still emit
+five items' worth of output, and crowding is how one item's evidence sentence gets
+attributed to another. It was a plan built on an unmeasured premise, which is exactly
+what Phase 0 existed to test.
+
+**Batching triage is real, and nearly never happens.** 0.18c per item batched against
+0.83c per item alone — 4.6× — but one batch call fired across thirteen runs, because
+`triage_batch_min` is 4 and a run typically has one to three items pending. Worth
+fixing and worth almost nothing: triage is 16.6c of the window's 176.6c.
+
+**Everything is extraction.** A run with no extractions costs about 1c; run 213, with
+six, cost 101.6c. At 17.5c a call and 539 historically barren extractions, roughly
+**$94 of imputed spend has bought nothing** — and that is the number every remaining
+item should be measured against.
+
+## Done in this pass
+
+- [x] Templates learn from the same evidence senders do. `template_verdicts.sql` now
+      reports `settled` / `productive` / `unsettled` beside `dropped`, and the tier-0
+      rule drops a shape once enough siblings have been ANSWERED — dropped by the model,
+      or kept and proved empty by the expensive pass on broadcast-marked mail — with one
+      productive or one unanswered sibling disqualifying it. Identical in shape to the
+      2026-08-05 sender fix and for the identical reason: "one keep, ever, disqualifies"
+      aimed the right instinct at the wrong signal, and marketing mail is kept precisely
+      because it is written to look like a deadline.
+      **Measured on the live ledger: 18 shapes, zero productive siblings, 98 completed
+      extractions that produced nothing — about $17 imputed, already spent, and
+      recurring.** Four tests, two mutations proven red.
+
+## Still open, reordered by the measurement
+
+- [ ] 1. **Promote.** `backglass noise suggest` — 142 senders, owner's call.
+- [ ] 2. `triage_batch_min` 4 → 2, so batching fires on the runs that have anything to
+      batch. Cheap, measured, marginal.
+- [ ] 3. Bulk headers at ingest (`List-Unsubscribe` and siblings). The body grep is a
+      proxy for a machine-intended marker that the connector currently discards.
+- [ ] 4. Phase 3's quality items are unchanged: 32 commitments past due on arrival, six
+      duplicate clusters, uncalibrated confidence.
+
+---
+
+# The knowledge base is a notebook beside the pipeline, not inside it
+
+Audited 2026-08-07. `fact` is what CLAUDE.md calls the personal knowledge base.
+
+## What is actually there
+
+Twenty facts across eight subjects — identity, education, premed, housing, preferences,
+people, family, orgtruth. All of them true and useful. And:
+
+- **Zero have a `source_item_id`.** Every one was typed by hand. A pipeline that has
+  read 8,778 items has contributed nothing to the owner's knowledge base.
+- **Zero are superseded.** The supersession machinery has never run.
+- **Three readers exist, and none is the pipeline**: `facts.py` (the CLI), the Memory
+  page, and the source page's "what came of this item". Neither triage nor extraction
+  reads a single fact.
+
+So both directions are disconnected. The model that decides what matters knows nothing
+about the person it is deciding for, and the record of that person learns nothing from
+the 8,778 documents it has read.
+
+## Why that is the expensive gap, not a cosmetic one
+
+The KB already contains `education.college = ASU Tempe, Barrett Honors, incoming fall
+2026`. The ledger contains 95 sender domains and 18 template shapes of *other*
+universities' admissions marketing, which cost 436 triage calls and 98 extractions and
+produced nothing. A triage pass that knew the college decision was made would drop that
+class on sight, as a rule rather than as a per-sender promotion the owner has to
+approve one at a time.
+
+That is the argument for integration, and it is also the argument for being careful:
+the same fact, wrong or stale, would silently suppress real mail. A KB that steers the
+pipeline needs provenance and a review path before it needs volume.
+
+## How it should be implemented and integrated
+
+Read direction first — it is the one with measured value, and it can be built without
+touching a prompt.
+
+- [ ] **A. Facts reach the RULE layer.** Open, and deliberately not attempted. The
+      facts are prose ("ASU Tempe, Barrett Honors, incoming fall 2026") and a rule needs
+      a domain or an address. Turning one into the other is either a new structured fact
+      shape — which is `learned_noise` with extra steps, a third channel for one truth,
+      the exact duplication item D exists to prevent — or an inference, which is a model,
+      which is B. Left alone until there is a shape that is neither. Original framing: A fact with a
+      `rule` shape (a domain, an address, a template class) can feed `rules.classify`
+      the way `learned_noise` already does. No prompt version bump, no re-extraction, no
+      eval question — and the same suggest/promote gate, because a rule derived from a
+      fact is still a rule that can silence a real correspondent.
+- [x] **B. Facts reach the triage prompt as owner context.** Done 2026-08-07, and much
+      cheaper than this plan assumed — which is why the assumption was checked before
+      building. Triage is NOT versioned: `pending_triage` selects on a NULL verdict, so
+      bumping `triage.md` changes what future items see and re-reads none of the 8,778
+      already judged. The token objection is answered by the telemetry above: cost
+      tracks output, not input, so a few hundred characters on a 3,168-character prompt
+      is close to free at the 0.83c tier. `{{owner_context}}` carries the fact table
+      into both triage prompts — empty on a factless ledger, deterministic, bounded at
+      900 chars, and stated rather than instructed so triage.md's keep-bias is untouched.
+      Whether the model uses it well is an eval question and belongs in `evals/`.
+      **This went before A, not after.** The plan gated it on A proving the facts
+      trustworthy, which had the risk backwards: A acts on a fact with no model in the
+      loop, where a wrong fact silently suppresses mail; here a wrong fact is one more
+      line of context a model weighs against everything else.
+- [ ] **C. Extraction writes facts back, last.** `source_item_id` exists on `fact` and
+      has never been used. A durable fact learned from mail is a fifth record type
+      beside commitment, engagement, checkpoint and evidence, and it needs the same
+      treatment: confidence, the review queue below threshold (rule 2), supersession
+      rather than edits, and provenance on every row (rule 1). This is the largest of
+      the three and the only one that changes the extraction schema.
+- [ ] **D. Settle the duplication before any of it.** `identity.emails` and
+      `identity.timezones` restate `OWNER_EMAILS` and `DEFAULT_TZ`/`ALT_TZ` from `.env`.
+      Two sources for one truth is how they drift; decide which one is canonical and
+      have the other read it.
+
+## Note on this file
+
+This section was written on 2026-08-07 and dropped by a concurrent session's merge
+resolution the same day — restored from commit 0a86456. Two sessions editing one
+append-only log is how that happens; the halves of a todo.md conflict are almost never
+alternatives, they are both real.
+
+## Deliberately not
+
+A vector store or embeddings over the fact table. CLAUDE.md's one idea forbids it and
+it would not help: twenty rows keyed by subject and key are a lookup, not a search
+problem, and the queries are known in advance.
+
+---
+
 # One truth per fact, and a tool that enforces it
 
 **Goal (owner, 2026-08-07):** "resolve everything and make sure everything has a state that
