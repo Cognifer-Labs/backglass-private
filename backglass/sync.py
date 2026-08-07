@@ -495,20 +495,25 @@ def _rule_pass(
             report.triaged_out += 1
             continue
 
-        # Template dedup: a sibling of a shape that has only ever been dropped, at
-        # least `template_drop_after` times, dies here for free. One kept sibling,
-        # ever, disqualifies the template — precision is not for sale, and same-run
-        # cold starts (verdicts not yet written) simply escalate to the model.
+        # Template dedup: a sibling of a shape that has been ANSWERED, at least
+        # `template_drop_after` times, and never produced anything, dies here for free.
+        # Same-run cold starts (verdicts not yet written) simply escalate to the model.
+        # See template_verdicts.sql for why "answered" replaced "dropped" — precision is
+        # not for sale, and the shapes costing the most were the ones being kept.
         template = item.get("template_hash")
         if template:
             siblings = conn.execute(
                 query("template_verdicts"),
                 {"user_id": USER_ID, "template_hash": template, "id": int(item["id"])},
             ).fetchone()
-            if (
-                int(siblings["kept"]) == 0
-                and int(siblings["dropped"]) >= settings.template_drop_after
-            ):
+            # Two evidence classes, one disqualifier — the shape the sender rule took
+            # on 2026-08-05 and the same measurement behind it. A shape earns a free
+            # drop once enough siblings have been ANSWERED, whether the model dropped
+            # them or the expensive pass read them and found nothing. It is disqualified
+            # the moment one sibling produced anything, or while one is still open.
+            evidence = int(siblings["dropped"]) + int(siblings["settled"])
+            disqualified = int(siblings["productive"]) or int(siblings["unsettled"])
+            if not disqualified and evidence >= settings.template_drop_after:
                 ledger.record_triage(int(item["id"]), "drop", f"template:{template[:8]}")
                 report.rule_dropped += 1
                 report.triaged_out += 1

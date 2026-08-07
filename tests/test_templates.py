@@ -175,3 +175,142 @@ class TestBackfill:
         conn.execute(
             "UPDATE source_item SET template_hash = 'abc' WHERE external_id = 'trig'"
         )  # must not raise
+
+
+BULK_STATEMENT = (
+    "Apply now — your scholarship match closes 08/15/2026. "
+    "See https://scholar.example/offers/8842 . Unsubscribe to stop these."
+)
+
+
+def _settle(
+    conn: sqlite3.Connection, external_ids: list[str], *, produced: bool = False
+) -> None:
+    """Mark siblings the way the extract pass would leave them: kept, run to completion,
+    and either productive or barren.
+
+    The stamp is the REAL prompt version, not a placeholder. `pending_extraction` selects
+    on `extraction_version != <current stamp>`, so a made-up version means "extracted
+    under an older prompt" and every sibling comes back as pending — which is not the
+    state being set up, and quietly turns the assertion about call counts into an
+    assertion about re-extraction.
+    """
+    from backglass.extract import prompts
+
+    stamp = prompts.load("extract-commitments").stamp
+    for ext in external_ids:
+        conn.execute(
+            "UPDATE source_item SET triage_verdict = 'keep', triage_reason = 'forced',"
+            " extraction_version = ? WHERE external_id = ?",
+            (stamp, ext),
+        )
+        # The seeding sync really extracts, and the fake really returns a commitment.
+        # Barren means the pass ran and found NOTHING, so the records it invented are
+        # cleared — otherwise every sibling is productive and the rule can never fire.
+        row = conn.execute(
+            "SELECT id FROM source_item WHERE external_id = ?", (ext,)
+        ).fetchone()
+        conn.execute(
+            "DELETE FROM commitment_evidence WHERE source_item_id = ?", (row["id"],)
+        )
+        conn.execute("DELETE FROM commitment WHERE source_item_id = ?", (row["id"],))
+        if produced:
+            conn.execute(
+                "INSERT INTO commitment (user_id, direction, what, status, confidence,"
+                " source_item_id, created_at) VALUES (1, 'i_owe', 'a real ask', 'open',"
+                " 0.9, ?, '2026-08-07T00:00:00Z')",
+                (row["id"],),
+            )
+
+
+class TestSettledEvidence:
+    """A keep the expensive pass proved empty is evidence about the SHAPE too.
+
+    The sender rule learned this on 2026-08-05; templates carried the same defect for
+    the same reason. "One keep, ever, disqualifies" is the right instinct aimed at the
+    wrong signal: marketing mail is kept precisely because it is written to look like a
+    deadline, so the shapes costing the most could never qualify and their siblings were
+    re-triaged and re-extracted forever.
+    """
+
+    def _bulk_siblings(self, conn, settings, boundary, n: int) -> FakeModel:  # type: ignore[no-untyped-def]
+        messages = [
+            gmail_message(_statement_message(i, BULK_STATEMENT.replace("8842", f"{i}00")))
+            for i in range(n)
+        ]
+        model = FakeModel(triage={"Statement": {"keep": True, "reason": "has a deadline"}})
+        sync(conn, settings, [make_connector(messages, boundary)], model)
+        return model
+
+    def test_barren_bulk_siblings_earn_the_free_drop(
+        self, conn: sqlite3.Connection, settings: Settings, boundary
+    ) -> None:
+        model = self._bulk_siblings(conn, settings, boundary, 3)
+        _settle(conn, [f"stmt{i}" for i in range(3)])
+        before = len(model.calls)
+
+        fourth = gmail_message(_statement_message(9, BULK_STATEMENT.replace("8842", "999")))
+        report = sync(conn, settings, [make_connector([fourth], boundary)], model)
+
+        assert report.rule_dropped == 1
+        assert len(model.calls) == before, "the fourth sibling costs nothing"
+
+    def test_one_productive_sibling_disqualifies_the_shape_forever(
+        self, conn: sqlite3.Connection, settings: Settings, boundary
+    ) -> None:
+        """Volume never outvotes a real extraction. Three barren siblings and one that
+        yielded a commitment is a shape that sometimes matters."""
+        model = self._bulk_siblings(conn, settings, boundary, 4)
+        _settle(conn, [f"stmt{i}" for i in range(3)])
+        _settle(conn, ["stmt3"], produced=True)
+        before = len(model.calls)
+
+        fifth = gmail_message(_statement_message(9, BULK_STATEMENT.replace("8842", "999")))
+        report = sync(conn, settings, [make_connector([fifth], boundary)], model)
+
+        assert report.rule_dropped == 0
+        assert len(model.calls) > before, "the productive sibling forces a model read"
+
+    def test_an_unanswered_sibling_disqualifies_the_shape(
+        self, conn: sqlite3.Connection, settings: Settings, boundary
+    ) -> None:
+        """Kept and not yet extracted is an open question, not a resolved nothing — the
+        next extract pass may still turn it into a commitment."""
+        model = self._bulk_siblings(conn, settings, boundary, 4)
+        _settle(conn, [f"stmt{i}" for i in range(3)])
+        conn.execute(
+            "UPDATE source_item SET triage_verdict = 'keep', extraction_version = NULL"
+            " WHERE external_id = 'stmt3'"
+        )
+        conn.execute(
+            "DELETE FROM commitment WHERE source_item_id ="
+            " (SELECT id FROM source_item WHERE external_id = 'stmt3')"
+        )
+        before = len(model.calls)
+
+        fifth = gmail_message(_statement_message(9, BULK_STATEMENT.replace("8842", "999")))
+        report = sync(conn, settings, [make_connector([fifth], boundary)], model)
+
+        assert report.rule_dropped == 0
+        assert len(model.calls) > before
+
+    def test_a_barren_keep_without_a_broadcast_marker_is_not_evidence(
+        self, conn: sqlite3.Connection, settings: Settings, boundary
+    ) -> None:
+        """The guard that keeps this class away from human correspondents. A colleague
+        who writes the same shape of note repeatedly accumulates barren keeps too, and
+        personal mail carries no unsubscribe footer."""
+        messages = [
+            gmail_message(_statement_message(i, STATEMENT_A.replace("1,234.56", f"{i}.00")))
+            for i in range(3)
+        ]
+        model = FakeModel(triage={"Statement": {"keep": True, "reason": "might be an ask"}})
+        sync(conn, settings, [make_connector(messages, boundary)], model)
+        _settle(conn, [f"stmt{i}" for i in range(3)])
+        before = len(model.calls)
+
+        fourth = gmail_message(_statement_message(9, STATEMENT_A.replace("1,234.56", "9.00")))
+        report = sync(conn, settings, [make_connector([fourth], boundary)], model)
+
+        assert report.rule_dropped == 0
+        assert len(model.calls) > before, "no marker, no free drop"
