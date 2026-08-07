@@ -12,8 +12,9 @@
  * Spacing sits on the --sp scale (4 8 12 16 24 32 48) from design/tokens.css. The one
  * page gutter is --sp-5; every panel, banner, masthead and sidebar edge shares it so
  * content columns align across sections. Any off-scale px that remains is optical, not
- * layout: the chip's 3px vertical padding keeps it inside a 21px text line, the reel's
- * 1–2px gaps are the digit-window housing, and the checkbox tick is drawn geometry.
+ * layout: the chip's 2px vertical padding keeps it inside a 21px text line, its 5px icon
+ * gap is sized to a 10px glyph rather than to the scale, the reel's 1–2px gaps are the
+ * digit-window housing, and the checkbox tick is drawn geometry.
  *
  * design-system.md §8, the rules that are not negotiable: no shadows, no gradients outside
  * the protected hatch, every coloured fill carries a black keyline, tabular figures
@@ -342,6 +343,13 @@ button.box::before{content:"";position:absolute;inset:-6px}
   flex:0 0 11px}
 .src .nm{flex:1;font-weight:700;font-size:12px;letter-spacing:.05em;text-transform:uppercase}
 .src .ts{color:var(--ink-muted);font-size:13px}
+/* Chips in a source or person row are one cluster qualifying the text to their left, not
+ * more fields in the same series. At the row's flat 12px they were spaced exactly as far
+ * from each other as the whole cluster sat from the role and org it describes — four equal
+ * gaps, so proximity did no grouping and a tag, an open count and a going-cold warning read
+ * as three more columns. The row keeps 12px to the first chip; inside the cluster the
+ * gap-minus-margin nets 8px, which is what every other chip run in this sheet uses. */
+.src .chip + .chip{margin-left:calc(var(--sp-2) - var(--sp-3))}
 .sec{border-bottom:2px solid var(--rule)}
 /* The section's closing 2px rule needs breathing room below the last row, or the
  * content sits flush against the seam. */
@@ -438,7 +446,10 @@ button.box::before{content:"";position:absolute;inset:-6px}
  * on an empty week, where there is no grid to head. */
 .whd .wbn{font-size:15px;line-height:21px;margin-top:2px}
 .whd .wbf{display:block;color:var(--ink-muted)}
-.whd .over{display:inline-flex;align-items:center;gap:4px;margin-top:var(--sp-1);
+/* 5px, matching .chip and .dstrip .cap .over. The same badge declared 4px here and 5px in
+ * the day strip; 5px is the sheet's stated optical exception — sized to a 10px glyph, not
+ * to the space scale — so the two agree by moving this one, not by snapping both to --sp-1. */
+.whd .over{display:inline-flex;align-items:center;gap:5px;margin-top:var(--sp-1);
   background:var(--gold);border:2px solid var(--rule);border-radius:var(--radius-1);
   padding:0 5px;color:#000;font:700 11px/15px system-ui,sans-serif;letter-spacing:.04em}
 /* content-box plus a bottom gutter, on both the ruler and the day columns: the inline
@@ -521,9 +532,6 @@ input:focus,textarea:focus,select:focus{outline:3px solid var(--rule);outline-of
 a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 /* A paused source stays listed — configuration is visible even when inactive. */
 .src.paused .nm,.src.paused .ts{color:var(--ink-muted)}
-/* Failing source: vermilion keyline (docs/11 §8) with the indent refunded, so the
- * row's text stays on the panel's shared left edge. */
-.src.fail{border-left:3px solid var(--vermilion);padding-left:9px;margin-left:-12px}
 /* Long detection hints (filesystem paths) keep the panel's one-line rhythm; the
  * full string rides in the title attribute. */
 .src .ts.clip{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:46%}
@@ -872,7 +880,10 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .wbn.none{color:var(--ink-muted);font-weight:400}
 .wbc .wbf{display:block;color:var(--ink-muted)}
 /* Overflow keeps the gold warning treatment: fill, 2px keyline, glyph, label. */
-.wbc .over{display:inline-flex;align-items:center;gap:4px;margin-top:var(--sp-1);
+/* Dormant: the week band's .wbc cells render no overflow badge today (the busy branch's
+ * badge sits under .whd). Corrected with its twin above anyway, so the next template to
+ * reach for it inherits the right gap rather than the drift. */
+.wbc .over{display:inline-flex;align-items:center;gap:5px;margin-top:var(--sp-1);
   background:var(--gold);border:2px solid var(--rule);border-radius:var(--radius-1);
   padding:0 5px;color:#000;font:700 11px/15px system-ui,sans-serif;letter-spacing:.04em}
 .wverdict{margin:var(--sp-3) 0 0;font-size:15px;line-height:23px}
@@ -959,9 +970,13 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .gcard .grm{margin:var(--sp-1) 0 0;font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em}
 .gcard .grm a{color:var(--ink-muted);text-decoration:none}
 .gcard .grm a:hover{color:var(--ink);text-decoration:underline;text-underline-offset:2px}
-/* +1 is the write; the /wk buttons only declare the target. A hairline gap keeps
- * the two jobs from reading as one five-button row. */
-.gcard .acts .tickone{margin-right:var(--sp-3)}
+/* No margin between +1 and the cadence fold, and the rule that put --sp-3 here is deleted
+ * rather than reduced. It existed to keep +1 from reading as the first of five /wk buttons
+ * — but _gcard.html puts <span class="cadopts"> INSIDE <details class="cadfold">, after the
+ * <summary>. Closed, the margin only pushed +1 away from a label stating its own cadence;
+ * open, the summary already stands between them. It was defending against a layout the
+ * markup cannot produce, at a 20px sum that is on no scale. .acts's --sp-2 is the rhythm
+ * every other control row in this card uses. */
 /* ── roadmap replan ────────────────────────────────────────────────────────
  * The two roadmap surfaces reworked against the judged plan. Three ideas:
  *
@@ -1201,6 +1216,13 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .rmst .track.wee{display:inline-block;width:60px;height:8px;border:1px solid var(--rule);
   background:var(--paper)}
 .rmst .track.wee .fill{display:block}
+/* The bar is not a field of its own — it draws the count immediately to its left. At the
+ * row's flat 8px it sat as far from "0/7 steps" as from the separator dividing that whole
+ * field from the next one, so the pair did not read as a pair. 4px is the within-tile line
+ * gap, the same value the commitment card's row-gap uses, so the count and its bar bind
+ * tighter than one field binds to the next. The + combinator so a bar with no count before
+ * it is untouched. */
+.rmst .tnum + .track.wee{margin-left:calc(var(--sp-1) - var(--sp-2))}
 .rmtot{color:var(--ink-muted)}
 /* Closed paths sink: one line, neutral, under their own label. Never mixed in. */
 .rmclosed{font-size:13px;line-height:19px;color:var(--ink-muted);margin:var(--sp-2) 0 0}
@@ -1356,7 +1378,15 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .row.k-small{--tile-line:var(--turquoise)}
 .row.k-fixed{--tile-line:var(--ink)}
 .row.k-routine{--tile-line:var(--rule-hair)}
-.src.fail{border-left:3px solid var(--vermilion);padding-left:calc(var(--sp-3) - 2px);margin-left:0}
+/* A 3px alarm keyline is 1px heavier than the tile's own --border, so the padding refunds
+ * the difference and the content edge holds at the 18px every healthy row sits on. The
+ * calc() was right in shape and wrong in its base: it compensated against --sp-3, the
+ * padding a .src had BEFORE it became a tile, so a failing source's text and status square
+ * stepped 5px left of every sibling and the row went 13px on the left against 16px on the
+ * right. This is the one row the owner is meant to find fast, and the misalignment read as
+ * part of the alarm. The state should change the colour of a row and nothing else about it. */
+.src.fail{border-left:3px solid var(--vermilion);
+  padding-left:calc(var(--border) + var(--sp-4) - 3px);margin-left:0}
 
 /* Category inks, one per kind of content. Set once on the container; every tile inside
  * inherits it through the custom property rather than restating a colour.

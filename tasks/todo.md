@@ -137,6 +137,59 @@ the cascade, neither was rendered. If either looks wrong in use, that is where t
   Email cannot resolve custom properties, so the copy is deliberate; but it is an
   unregistered mirror of nothing, and `truth.py` covers values, not spacing.
 
+## Round two — the horizontal half
+
+The owner then asked to continue "between tiles and words". Read as inline horizontal
+rhythm: gaps between chips, badges, separators, labels and their values. Letter-spacing was
+ruled out as typography — the .04–.06em spread is per-size and deliberate — except where two
+elements at the same size and role disagree, and none did.
+
+A narrower workflow than round one: four auditors on disjoint surfaces (chips and badges,
+metadata lines, sources and sidebar, schedule and forms) plus a synthesis pass. Six raw
+findings against round one's forty-five, which is the honest measure of what round one fixed.
+Zero were dropped at verification.
+
+**The trap this round, stated because it nearly generated a page of churn:** a metadata line
+of literal `·` characters in a plain text run is CORRECT and self-consistent. It is a defect
+only when a line MIXES flex-gap-spaced elements with literal separators, because then the
+same mark renders at two widths on one line. That was true of exactly one line in the app
+(`.rmst`, fixed in round one) and false everywhere else. The synthesis re-checked the
+container's `display` for every candidate itself rather than taking the auditors' word:
+`.cap`, `.rmclosed`, `.src .ts`, `.b2`, `.conf` are all plain blocks. Zero separator findings
+survived, correctly.
+
+Applied, five changes:
+
+- **`.src.fail` stepped a failing source's whole content column 5px left of every sibling.**
+  Its `calc()` compensated against `--sp-3`, the padding a `.src` had *before* it became a
+  tile. This is the one row the owner is meant to find fast, and the misalignment read as
+  part of the alarm. Now `calc(var(--border) + var(--sp-4) - 3px)` — 15px of padding under a
+  3px keyline, which is the 18px every healthy row sits on. Its dead twin at the old line 527
+  went with it: same specificity, later rule, all three properties restated.
+- **The person-row badge cluster did no grouping** — chip-to-chip and text-to-cluster were
+  both 12px, four equal gaps, so a tag, an open count and a going-cold warning read as three
+  more columns. `.src .chip + .chip{margin-left:calc(var(--sp-2) - var(--sp-3))}` nets 8px
+  inside the cluster and leaves 12px to the text it qualifies.
+- **`+1` sat 20px from its own cadence label**, defending against a five-button row the
+  markup cannot produce: `.cadopts` is *inside* the closed `<details>`, after the `<summary>`.
+  Deleted rather than retuned.
+- **The roadmap steps bar** sat as far from the count it draws as from the separator dividing
+  that field from the next. Bound to 4px, the within-tile line gap.
+- **The `.over` badge declared two icon gaps for itself**, 4px in the week header and 5px in
+  the day strip. Both now 5px — the stated optical exception, sized to a 10px glyph, not
+  snapped to the scale.
+
+Proven in pixels: the status square's inset from the tile edge, measured on the rendered
+frame, is **18.0 CSS px on the failing row and 18.0 on every healthy one**. It was 13 against
+18. The badge-cluster change is 4px and was confirmed by reading the frame plus the
+arithmetic; a scan line through that row crosses letterforms and cannot resolve it.
+
+Carried forward, deliberately: `schedule.html:26`'s whitespace-strip welds the gold overflow
+badge onto the preceding word with no gap (real, but needs a markup change and no frame in
+the corpus renders an overflowing day); and `.row.k-work` and friends produce a 15px content
+edge on the same 3px-keyline pattern this round set to 18px, so the sheet now carries two
+compensation values for one idiom — worth one measured look, not worth changing blind.
+
 ## Definition of done
 
 1. `uv run pytest` green (1642), `node scripts/validate-palette.mjs` green.

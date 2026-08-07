@@ -688,3 +688,36 @@ deterministic given the id.
   rather than once at the start. The corollary that cost the most time: each check only
   catches its own failure, and a frame can pass all the ones you wrote while failing the one
   you did not — the wrong-page frame passed theme, blankness and geometry together.
+
+- 2026-08-07 | Screenshot captures kept coming back of the wrong page, and I spent two rounds
+  building checks for the symptoms — theme, blankness, window geometry — before finding the
+  cause. Safari had several windows open; `screencapture` grabs whatever sits at the capture
+  coordinates, and mcp-safari's `navigate` sets a tab's URL without raising that tab's window.
+  So the run photographed another window's tab: real content, right theme, sidebar-shaped
+  left edge, every check passing, page never seen. | When driving a GUI app whose window is
+  not guaranteed frontmost, RAISE THE WINDOW as the first step of every shot, not once per
+  run — and raise it by finding the window that already holds the target URL rather than
+  assuming "front window" is the right one. Also: three checks that each passed made the
+  corpus look verified while the one property that mattered was unchecked. Validating the
+  easy properties is not evidence about the hard one.
+
+- 2026-08-07 | The same capture pipeline then failed two more ways that produce black or
+  truncated frames with no error at the point of use: the display slept mid-run (every frame
+  came back black, and the theme probe read "dark" off a sleeping screen), and
+  `screencapture -R` began refusing a rect it had silently clamped for the whole session
+  once the window geometry changed. | For any long unattended GUI capture run, hold the
+  display awake with `caffeinate -d -i` for the duration, and prefer whole-screen capture
+  plus an in-process crop over `-R` — the crop cannot half-succeed, and a rect that has been
+  silently clamped is a latent failure that surfaces at the worst time. A capture step that
+  can fail quietly is the most expensive kind of bug in a visual audit, because its output
+  looks like evidence.
+
+- 2026-08-07 | Round two's auditors were told a rule they could have got wrong in a
+  page-of-churn way: a metadata line of literal "·" in a plain text run is correct, and mixed
+  flex-gap-plus-literal on one line is the only defect. The synthesis step then re-derived
+  it — checking `display` on `.cap`, `.rmclosed`, `.src .ts`, `.b2`, `.conf` itself — and
+  zero separator findings survived. | When a class of finding is cheap to propose and
+  expensive to verify, put the discriminating test in the prompt AND make the synthesis step
+  re-check it independently rather than trusting the finder. Round one's forty-five findings
+  became thirty-three; round two's six became six, because the surface was already clean —
+  the drop in raw count between rounds is the honest measure of what the first pass fixed.
