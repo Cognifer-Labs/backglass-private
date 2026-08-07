@@ -11,8 +11,8 @@
   --on-ink:       #FCF8EC;
 
   /* text */
-  --ink-2:        #3d3c37;   /* neutral 700 ·  9.97:1 */
-  --ink-muted:    #716f67;   /* neutral 500 ·  4.54:1 */
+  --ink-2:        #3d3c37;   /* neutral 700 · 10.41:1 */
+  --ink-muted:    #716f67;   /* neutral 500 ·  4.74:1 */
 
   /* rules */
   --rule:         #000000;
@@ -35,9 +35,9 @@
   --cobalt-wash:  #C7D2E4;
   --ink-wash:     var(--fill-mild-2);
   --verm-line:    var(--vermilion);
-  /* gold alone keeps the black keyline: §3 permits gold's 1.83:1 on paper only
+  /* gold alone keeps the black keyline: §3 permits gold's 1.91:1 on paper only
      because the black keyline + text label is the mitigation, and a gold-on-gold
-     boundary (1.83:1 around a ~1.2:1 fill) has none. */
+     boundary (1.91:1 around a ~1.3:1 fill) has none. */
   --gold-line:    var(--rule);
   --green-line:   var(--green);
   --turq-line:    var(--turquoise);
@@ -95,8 +95,8 @@
    * and the arithmetic takes care of itself.
    *
    * Three steps and no fourth. A `--radius` alias for "the default" was written and then
-   * removed: a second name for 4px is the first step toward a nine-step scale, and every
-   * box in the sheet already says which of the three it is. */
+   * removed: a second name for the control step is the first move toward a nine-step scale,
+   * and every box in the sheet already says which of the three it is. */
   /* Rescaled 2026-08-07. The original 2/4/6 was set against a 1px keyline; the tile ruling
    * put a 2px keyline on every boxed element, and a 6px arc under a 2px stroke reads as a
    * nicked corner rather than a rounded one — the heavier the stroke, the more radius it

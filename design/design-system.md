@@ -33,7 +33,7 @@ a different treatment, not a new ink.
 
 ### One ink set, both modes
 
-Paper sits at relative luminance 0.92 and black at 0. Any ink in the middle of the range
+Paper sits at relative luminance 0.94 and black at 0. Any ink in the middle of the range
 clears 3:1 against **both**. So there is one ink set, not two: light and dark use identical
 hex values and dark mode is a true inversion rather than a separately designed palette.
 
@@ -43,10 +43,19 @@ hex values and dark mode is a true inversion rather than a separately designed p
 
 | token | hex | notes |
 |---|---|---|
-| paper | `#FCF8EC` | OKLCH L 0.979, C 0.016, hue 92 |
-| ink | `#000000` | 18.95:1 against paper |
+| paper | `#FCF8EC` | OKLCH L 0.979, C 0.016, hue 91.5 |
+| ink | `#000000` | 19.78:1 against paper |
 
 Dark mode swaps them. Nothing else changes.
+
+**The figures below were all restated on 2026-08-07 and are lower than you may remember.**
+Every published `onPaper` ratio in this file and in `tokens.json` had been computed against
+`#FAF3DF`, an earlier paper — they matched that colour to the last decimal and none of them
+matched the `#FCF8EC` actually shipping. `tokens.json` still carried the old hex outright.
+Nothing regressed: the paper got *lighter*, so every real ratio is slightly **better** than
+the number that was printed, and `scripts/validate-palette.mjs` (which hard-codes `#FCF8EC`)
+had been passing against the true values the whole time. The validator is the source of
+truth here; if a figure in this file ever disagrees with it, the file is what is wrong.
 
 ### Neutral ramp (warm, hue 91)
 
@@ -55,16 +64,16 @@ different material.
 
 | step | hex | on paper | on black |
 |---|---|---|---|
-| 50 | `#f5eedb` | 1.04 | 18.14 |
-| 100 | `#e4decd` | 1.21 | 15.63 |
-| 200 | `#c9c4b5` | 1.57 | 12.05 |
-| 300 | `#aca79b` | 2.16 | 8.75 |
-| 400 | `#8e8a81` | 3.11 | 6.10 |
-| 500 | `#716f67` | 4.54 | 4.17 |
-| 600 | `#57554f` | 6.73 | 2.82 |
-| 700 | `#3d3c37` | 9.97 | 1.90 |
-| 800 | `#252421` | 14.01 | 1.35 |
-| 900 | `#0e0d0b` | 17.53 | 1.08 |
+| 50 | `#f5eedb` | 1.09 | 18.14 |
+| 100 | `#e4decd` | 1.27 | 15.63 |
+| 200 | `#c9c4b5` | 1.64 | 12.05 |
+| 300 | `#aca79b` | 2.26 | 8.75 |
+| 400 | `#8e8a81` | 3.24 | 6.10 |
+| 500 | `#716f67` | 4.74 | 4.17 |
+| 600 | `#57554f` | 7.02 | 2.82 |
+| 700 | `#3d3c37` | 10.41 | 1.90 |
+| 800 | `#252421` | 14.62 | 1.35 |
+| 900 | `#0e0d0b` | 18.29 | 1.08 |
 
 On paper: 700 for secondary text, 500 for muted. On black: 200 and 300. Neutral 500 is the
 pivot, the one step that works on both.
@@ -75,14 +84,14 @@ pivot, the one step that works on both.
 
 | role | hex | on paper | on black | black text on it |
 |---|---|---|---|---|
-| vermilion | `#D03D37` | 4.30 | 4.40 | 4.40 |
-| gold | `#E8AC1D` | 1.83 | 10.35 | 10.35 |
-| green | `#249041` | 3.69 | 5.14 | 5.14 |
-| turquoise | `#009592` | 3.32 | 5.71 | 7.20 |
-| cobalt | `#2766C0` | 5.06 | 3.75 | 3.75 |
+| vermilion | `#D03D37` | 4.49 | 4.40 | 4.40 |
+| gold | `#E8AC1D` | 1.91 | 10.35 | 10.35 |
+| green | `#249041` | 3.85 | 5.14 | 5.14 |
+| turquoise | `#009592` | 3.46 | 5.71 | 7.20 |
+| cobalt | `#2766C0` | 5.28 | 3.75 | 3.75 |
 
-Gold is the one ink below 3:1 on paper, kept at full brightness on purpose because a
-dimmed gold stops reading as gold. The black keyline plus label is the mitigation.
+Gold is the one ink below 3:1 on paper (1.91), kept at full brightness on purpose because
+a dimmed gold stops reading as gold. The black keyline plus label is the mitigation.
 
 ### The second exception, and why it stays
 
@@ -94,7 +103,7 @@ title at 15px, its metadata at 13px, its OVERDUE chip at 11px bold, and the side
 failing-source alert. The figure is not new; the table above has always recorded 4.40.
 What was wrong was the claim that nothing else fell short.
 
-It stays at 4.40, for the reason gold stays at 1.83. Reaching 4.5 means darkening
+It stays at 4.40, for the reason gold stays at 1.91. Reaching 4.5 means darkening
 vermilion, and the argument against a dimmed gold applies with more force to the alarm
 ink: an overdue mark that has been desaturated to pass a threshold is a quieter alarm,
 which is a worse outcome than a 2% contrast shortfall on text that also carries a
@@ -352,7 +361,7 @@ borrowing that token collapses all four categories into one paper outline the in
 theme flips. The five inks are identical in both modes; that is the property this needs.
 
 **Four category inks, and the two that are missing are missing on purpose.** Gold's keyline
-token is black (§3 permits gold's 1.83:1 only with the black keyline as mitigation), so a
+token is black (§3 permits gold's 1.91:1 only with the black keyline as mitigation), so a
 gold category line cannot be told from a neutral one. Vermilion means overdue, and spending
 it on a category would break the one reading the ledger exists for.
 
