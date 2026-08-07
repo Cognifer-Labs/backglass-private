@@ -673,3 +673,82 @@ deterministic given the id.
   two sides hold contradictory rulings from the same owner (seamless grid vs detached
   panels, both dated this week), that is not a resolution to pick — it is a question,
   and asking cost one message where guessing would have silently deleted a day's work.
+
+- 2026-08-07 | `border-top:0` on twelve tile selectors, plus a `:first-of-type` rule that
+  restored `border-top-WIDTH:var(--border)`, shipped a design system whose every list opened
+  with an unbounded tile. The shorthand sets `border-top-style:none` as well as the width,
+  and a used border width is forced to 0 while the style is none — so the restore could
+  never fire, on any page, in either theme. 1642 tests were green, including one written
+  specifically to assert that every content unit is a tile: it checked that the selectors
+  appear in the tile rule, which they did. | A property reset with a shorthand cannot be
+  undone by a longhand of one of its components. When retiring an idiom, delete its resets
+  rather than writing a rule to counteract them — a counteracting rule has to beat both the
+  specificity AND the other longhands the shorthand quietly set, and the second half is
+  invisible at the call site. The test that missed it asserted membership; what needed
+  asserting was the rendered result.
+
+- 2026-08-07 | `:is()` took (0,1,1) rather than the (0,1,0) its own comment claimed, because
+  `.tt li` and `.mlist li` are a class plus an element. The comment warning about exactly
+  this failure was three lines above, and the test enforcing it had `(\s+[a-z]+)?` in its
+  regex — a deliberate exemption written to let those two selectors stay in the list. The
+  state washes never broke, so nothing surfaced; what broke was `.sgoal`'s tighter sidebar
+  padding, written afterwards with a comment explaining why the 236px column needed it,
+  which had never once rendered. | An exemption written into a guard is the guard's blind
+  spot, and it will be the thing that fails. If a rule is worth asserting, assert it without
+  the carve-out and change the code to fit — here that meant moving the two element-qualified
+  selectors into their own block, which cost four lines. Also: a specificity bug does not
+  announce itself by breaking the thing the comment warns about. It breaks whatever quiet
+  declaration lost silently, which is why "the failure mode has not fired" is not evidence
+  the rule is sound.
+
+- 2026-08-07 | Ran a ten-page visual audit against screenshots, five of which were blank, four
+  in the wrong theme, one of a different page, and eight taken after the window had drifted
+  off the capture region. Every one of those failures produces a confident, specific,
+  entirely fictional finding — and a blank frame yields "no findings", which is
+  indistinguishable from a page that is genuinely fine. | A screenshot handed to an auditor
+  is an input that must be validated like any other. Check theme, non-blankness, window
+  geometry AND page identity before anyone reads it, and pin the window before every shot
+  rather than once at the start. The corollary that cost the most time: each check only
+  catches its own failure, and a frame can pass all the ones you wrote while failing the one
+  you did not — the wrong-page frame passed theme, blankness and geometry together.
+
+- 2026-08-07 | Screenshot captures kept coming back of the wrong page, and I spent two rounds
+  building checks for the symptoms — theme, blankness, window geometry — before finding the
+  cause. Safari had several windows open; `screencapture` grabs whatever sits at the capture
+  coordinates, and mcp-safari's `navigate` sets a tab's URL without raising that tab's window.
+  So the run photographed another window's tab: real content, right theme, sidebar-shaped
+  left edge, every check passing, page never seen. | When driving a GUI app whose window is
+  not guaranteed frontmost, RAISE THE WINDOW as the first step of every shot, not once per
+  run — and raise it by finding the window that already holds the target URL rather than
+  assuming "front window" is the right one. Also: three checks that each passed made the
+  corpus look verified while the one property that mattered was unchecked. Validating the
+  easy properties is not evidence about the hard one.
+
+- 2026-08-07 | The same capture pipeline then failed two more ways that produce black or
+  truncated frames with no error at the point of use: the display slept mid-run (every frame
+  came back black, and the theme probe read "dark" off a sleeping screen), and
+  `screencapture -R` began refusing a rect it had silently clamped for the whole session
+  once the window geometry changed. | For any long unattended GUI capture run, hold the
+  display awake with `caffeinate -d -i` for the duration, and prefer whole-screen capture
+  plus an in-process crop over `-R` — the crop cannot half-succeed, and a rect that has been
+  silently clamped is a latent failure that surfaces at the worst time. A capture step that
+  can fail quietly is the most expensive kind of bug in a visual audit, because its output
+  looks like evidence.
+
+- 2026-08-07 | Round two's auditors were told a rule they could have got wrong in a
+  page-of-churn way: a metadata line of literal "·" in a plain text run is correct, and mixed
+  flex-gap-plus-literal on one line is the only defect. The synthesis step then re-derived
+  it — checking `display` on `.cap`, `.rmclosed`, `.src .ts`, `.b2`, `.conf` itself — and
+  zero separator findings survived. | When a class of finding is cheap to propose and
+  expensive to verify, put the discriminating test in the prompt AND make the synthesis step
+  re-check it independently rather than trusting the finder. Round one's forty-five findings
+  became thirty-three; round two's six became six, because the surface was already clean —
+  the drop in raw count between rounds is the honest measure of what the first pass fixed.
+
+- 2026-08-07 | The rounding pass and main both rewrote `.rev`, and the branch's half deleted
+  `.rev p{margin:0}` with a correct cascade argument aimed at `.conf` — a line
+  `_review.html` had stopped rendering on the other side of the merge. Taking the newer
+  half on chronology alone would have loosened four classes to fix a fifth that is not
+  there. | When two halves of a CSS conflict each cite a rendered failure, check which
+  MARKUP each was written against before picking. A conflict in a stylesheet is resolved
+  against the templates, not against the timestamps.
