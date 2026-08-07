@@ -33,7 +33,7 @@ a different treatment, not a new ink.
 
 ### One ink set, both modes
 
-Paper sits at relative luminance 0.92 and black at 0. Any ink in the middle of the range
+Paper sits at relative luminance 0.94 and black at 0. Any ink in the middle of the range
 clears 3:1 against **both**. So there is one ink set, not two: light and dark use identical
 hex values and dark mode is a true inversion rather than a separately designed palette.
 
@@ -43,10 +43,19 @@ hex values and dark mode is a true inversion rather than a separately designed p
 
 | token | hex | notes |
 |---|---|---|
-| paper | `#FCF8EC` | OKLCH L 0.979, C 0.016, hue 92 |
-| ink | `#000000` | 18.95:1 against paper |
+| paper | `#FCF8EC` | OKLCH L 0.979, C 0.016, hue 91.5 |
+| ink | `#000000` | 19.78:1 against paper |
 
 Dark mode swaps them. Nothing else changes.
+
+**The figures below were all restated on 2026-08-07 and are lower than you may remember.**
+Every published `onPaper` ratio in this file and in `tokens.json` had been computed against
+`#FAF3DF`, an earlier paper — they matched that colour to the last decimal and none of them
+matched the `#FCF8EC` actually shipping. `tokens.json` still carried the old hex outright.
+Nothing regressed: the paper got *lighter*, so every real ratio is slightly **better** than
+the number that was printed, and `scripts/validate-palette.mjs` (which hard-codes `#FCF8EC`)
+had been passing against the true values the whole time. The validator is the source of
+truth here; if a figure in this file ever disagrees with it, the file is what is wrong.
 
 ### Neutral ramp (warm, hue 91)
 
@@ -55,16 +64,16 @@ different material.
 
 | step | hex | on paper | on black |
 |---|---|---|---|
-| 50 | `#f5eedb` | 1.04 | 18.14 |
-| 100 | `#e4decd` | 1.21 | 15.63 |
-| 200 | `#c9c4b5` | 1.57 | 12.05 |
-| 300 | `#aca79b` | 2.16 | 8.75 |
-| 400 | `#8e8a81` | 3.11 | 6.10 |
-| 500 | `#716f67` | 4.54 | 4.17 |
-| 600 | `#57554f` | 6.73 | 2.82 |
-| 700 | `#3d3c37` | 9.97 | 1.90 |
-| 800 | `#252421` | 14.01 | 1.35 |
-| 900 | `#0e0d0b` | 17.53 | 1.08 |
+| 50 | `#f5eedb` | 1.09 | 18.14 |
+| 100 | `#e4decd` | 1.27 | 15.63 |
+| 200 | `#c9c4b5` | 1.64 | 12.05 |
+| 300 | `#aca79b` | 2.26 | 8.75 |
+| 400 | `#8e8a81` | 3.24 | 6.10 |
+| 500 | `#716f67` | 4.74 | 4.17 |
+| 600 | `#57554f` | 7.02 | 2.82 |
+| 700 | `#3d3c37` | 10.41 | 1.90 |
+| 800 | `#252421` | 14.62 | 1.35 |
+| 900 | `#0e0d0b` | 18.29 | 1.08 |
 
 On paper: 700 for secondary text, 500 for muted. On black: 200 and 300. Neutral 500 is the
 pivot, the one step that works on both.
@@ -75,14 +84,14 @@ pivot, the one step that works on both.
 
 | role | hex | on paper | on black | black text on it |
 |---|---|---|---|---|
-| vermilion | `#D03D37` | 4.30 | 4.40 | 4.40 |
-| gold | `#E8AC1D` | 1.83 | 10.35 | 10.35 |
-| green | `#249041` | 3.69 | 5.14 | 5.14 |
-| turquoise | `#009592` | 3.32 | 5.71 | 7.20 |
-| cobalt | `#2766C0` | 5.06 | 3.75 | 3.75 |
+| vermilion | `#D03D37` | 4.49 | 4.40 | 4.40 |
+| gold | `#E8AC1D` | 1.91 | 10.35 | 10.35 |
+| green | `#249041` | 3.85 | 5.14 | 5.14 |
+| turquoise | `#009592` | 3.46 | 5.71 | 7.20 |
+| cobalt | `#2766C0` | 5.28 | 3.75 | 3.75 |
 
-Gold is the one ink below 3:1 on paper, kept at full brightness on purpose because a
-dimmed gold stops reading as gold. The black keyline plus label is the mitigation.
+Gold is the one ink below 3:1 on paper (1.91), kept at full brightness on purpose because
+a dimmed gold stops reading as gold. The black keyline plus label is the mitigation.
 
 ### The second exception, and why it stays
 
@@ -94,7 +103,7 @@ title at 15px, its metadata at 13px, its OVERDUE chip at 11px bold, and the side
 failing-source alert. The figure is not new; the table above has always recorded 4.40.
 What was wrong was the claim that nothing else fell short.
 
-It stays at 4.40, for the reason gold stays at 1.83. Reaching 4.5 means darkening
+It stays at 4.40, for the reason gold stays at 1.91. Reaching 4.5 means darkening
 vermilion, and the argument against a dimmed gold applies with more force to the alarm
 ink: an overdue mark that has been desaturated to pass a threshold is a quieter alarm,
 which is a worse outcome than a 2% contrast shortfall on text that also carries a
@@ -201,7 +210,7 @@ Script faces are for a wordmark only. Never for UI, never for data.
 ## 7. Structure
 
 ```
-Radius   2px marks · 4px controls and rows · 8px containers. One scale, no literals.
+Radius   2 marks · 4 controls · 6 containers. Nested radii are concentric.
 Rules    2px solid black between sections; 1px neutral 200 between rows
 Borders  2px black on chips, cards, buttons
 Space    4 8 12 16 24 32 48
@@ -209,25 +218,83 @@ Shadow   none, ever
 Targets  24px minimum, grown under the mark rather than around it
 ```
 
-**Corners follow the box (owner ruling 2026-08-07).** The system was square everywhere
-until this date, on the argument that a radius reads as a different design language. The
-owner reversed it. What survives the reversal is the reasoning underneath: a curve has to
-stay proportional to what it curves, so there are three steps and a component picks one
-rather than a number. `--radius-sm` for marks a 4px curve would swallow — reel digit
-windows, progress fills, chart bars. `--radius` for anything a hand acts on. `--radius-lg`
-for the containers those things sit in.
+**Rounding ruling, 2026-08-06 (owner).** This section previously read "Radius 0 everywhere.
+2px on reel digit windows only", and §8 rule 7 banned rounded corners outright. The owner
+re-opened it. Radius is now a three-step scale, and the reel window's 2px — the one radius
+the system already had — is the bottom of that scale rather than its exception:
 
-Two consequences the reversal forced, both structural rather than cosmetic. The panel grid
-lost its shared seams: panels used to carry a right and a bottom rule and touch, which is
-what made the page read as one ledger, and two rounded corners meeting across a shared
-seam leave a notch and nothing else. Panels now carry a keyline on all four sides and
-stand apart. And every panel's banner rounds its own top corners rather than relying on
-the panel to clip it — a `<summary>` inside a `<details>` is the one child WebKit does not
-reliably clip to its parent's radius, which made the curve real in the CSS and invisible
-on the page.
+| step | value | carries |
+|---|---|---|
+| `--radius-1` | 2px | marks under ~20px, data fills, inline windows |
+| `--radius-2` | 4px | controls — buttons, inputs, chips, alerts, badges |
+| `--radius-3` | 6px | containers — cards, grids, timelines, washed rows |
 
-Shadows and gradients did not come back with the corners. §8 rule 7 forbade three things
-for one reason each; exactly one of them was reconsidered.
+Shallow on purpose. The keyline here is a 2px black rule, and past about 6px a radius on a
+2px black border stops reading as a printed sign and starts reading as a bubble. Shadows
+and gradients are **not** re-opened by this ruling; only rounding moved.
+
+**The principle is concentric nesting, not a radius on everything.** A box sitting flush
+inside another takes the outer radius minus the inset between them, so the two curves stay
+parallel instead of running unrelated arcs. Where the child sits on the parent's edge, the
+parent clips (`overflow:hidden`) and the arithmetic is structural rather than a copied
+number — this is how `.gcard`, `.sws`, `.wk7`, `.tl` and `.track` are built.
+
+**The inset includes the border, not just the padding.** A radius is measured on the
+border box, so the padding-box arc a child actually meets is the declared radius minus the
+border width. The reel is the case worked all the way through: 2px windows inside 2px of
+padding inside a 2px keyline, so the housing is 2+2+2 = **6px**. Stopping at the padding
+and calling it 4px looks right on paper and is wrong on screen — a 4px plate has a 2px
+inner arc, identical to the window it is supposed to sit a step outside of, and the two
+curves run flat against each other instead of parallel.
+
+**What stays square**, and the reason in each case — this is the list "all elements" is
+measured against, not a set of oversights:
+
+1. **Full-bleed black section bars** — the ones still full-bleed. See the amendment below:
+   a panel's own banner left this clause on 2026-08-07.
+2. ~~**Panel cells and page seams.**~~ **Amended 2026-08-07, on the panel grid only.**
+   Page seams stand: `.mast`, `.side` and `.sec` run to a page edge and stay square. The
+   panel grid does not, because the owner ruled it detached the same week this list was
+   written, and the two rulings met in a merge.
+
+   The exemption was never that panels are large — it was the *seam*. Two rounded corners
+   meeting across a shared edge leave a notch the width of the radius and nothing else,
+   so a curve on a seamless grid is invisible on the largest boxes on the page. Panels no
+   longer share edges: each carries a 2px keyline on all four sides, sits on its own
+   ground (§7c), and stands apart. That is the layout a radius is for, so panels take
+   `--radius-3` and their banners round the two corners they share with the panel's top —
+   the banner rounds its own rather than trusting the clip, because a `<summary>` inside a
+   `<details>` is the one child WebKit does not reliably clip to its parent's radius.
+
+   What did not change is the reasoning. A bar that still runs edge to edge still stays
+   square; the panel banner stopped being that bar when the panel stopped touching its
+   neighbour.
+3. ~~**The fixed failed-write strip.**~~ Retired the same day it was written. The strip is
+   pinned to three edges and its top is free, so it rounds there. **A pinned or flush
+   element is not exempt — only its pinned edges are.** That is the same reading that gives
+   the timeline's NOW tab a left-only radius and a chart column a top-only one, and it is
+   the rule to apply to anything that meets an edge: round what is free.
+4. **Ledger inputs.** `border:0` plus one bottom hairline is a line, not a box; a radius
+   puts a curl on each end of it.
+5. **Left-keyline rows** — kind stripes, failing sources, quotes, the roadmap's next-step
+   rail. One border, no box. The test is the keyline, not the class name: a protected
+   block wears a kind class too, but its hatch closes all four sides, so it is a box and
+   it rounds.
+6. **Band fills** — a background spanning a whole row, column or cell that meets its
+   neighbours on every side: the active nav row, a hovered or selected ledger row, the
+   habit table's today column. (A chart's pace label was listed here and does not belong —
+   it is a tab hanging off the plot's right edge, meeting a neighbour on one side rather
+   than a band meeting them on every side, so it rounds its free corners.) The fill is
+   bounded by hairlines
+   it shares with its neighbours, so rounding it leaves paper wedges in a seam meant to be
+   continuous — and on a ledger row it curls the ends of the hairline that draws the row.
+7. **The wordmark.** It has its own spec below, which this ruling does not touch.
+
+Two marks are deliberately rounded *less* than their size suggests. A column in the
+monthly chart rounds its top corners only — it stands on the axis it is read against, and
+lifting its foot off that baseline would cost the measurement its zero. The roadmap
+timeline's step node stays an 8px square at 2px, never a circle: a dot reads as a bullet
+and loses its relationship to every other box on the page.
 
 **Targets are grown under the mark, not around it.** WCAG 2.5.8 asks for 24px, and
 several marks in this system are deliberately smaller than that — a week grid's day box
@@ -258,6 +325,110 @@ wheels. In dark mode it gains a paper keyline so it reads against the surface.
 
 ---
 
+## 7b. The tile register (owner ruling, 2026-08-06)
+
+> "All content should be separated in some way, each having individual tiles, highlighted a
+> different colours or outlined."
+
+Every content unit is a bounded tile. Separation is the **gap** between tiles; the hairline
+rules that used to do that job are gone. The 2px section seams stay — seams divide panels,
+tiles divide content.
+
+```
+surface   --fill-mild             neutral, both themes
+keyline   2px, --rule by default  black on paper, paper on black
+          category ink where one exists — it replaces the ink, never the weight
+radius    --radius-3
+padding   --sp-3
+gap       --sp-2
+```
+
+**Amended 2026-08-07, same owner, after looking at it:** *"every item should be separated by
+MORE than a thin line — by color, or tile, or dark outline. Choose and apply throughout."*
+The first cut used a 1px keyline, which is a thin line, so it answered the letter of the
+ruling and not its point. The tile now carries the system's own 2px border weight and
+defaults to `--rule`, so a tile with no category still separates unmistakably. "Throughout"
+is literal: every list that was a run of hairline-separated rows is a tile, including the
+four the first pass argued its way out of — the sidebar's goals, the goals page's per-goal
+rows, the roadmap's step rows, and the target and milestone rows inside a goal card. That
+density argument was mine, not the owner's, and the owner asked for the opposite twice.
+
+One nesting exception, because a 2px tile inside a goal card's own 2px frame reads as a box
+in a box: rows inside a `.gcard` keep the weight and the tile and drop to the hairline ink,
+one step quieter than the frame around them.
+
+**This re-opens two rulings and amends a third**, and the reasons they recorded are real, so
+the design answers them rather than ignoring them. 2026-08-01 returned the board to ledger
+lines because "the boxed card stack outgrew the panel". 2026-08-05 removed per-row washes
+because "eight overdue rows made a wall of vermilion boxes". §8 rule 1 says colour means
+state.
+
+**The colour rides on the keyline; the fill stays neutral.** This is the whole design, and
+it is forced by the token contract: `--*-wash` resolves to the **full saturated ink in dark
+mode**, so a coloured *fill* on every tile renders in dark as a page of solid vermilion,
+gold, green and cobalt — the 2026-08-05 wall, worse. The owner's own wording allows it:
+tiles are "highlighted a different colours **or** outlined."
+
+**Use the raw inks for a tile keyline, never the `--*-line` tokens.** In dark every
+`--*-line` resolves to `var(--rule)`, because the wash contract is "full-ink fill, keyline
+in the rule colour" — there the *fill* carries the colour. A tile's fill is neutral, so
+borrowing that token collapses all four categories into one paper outline the instant the
+theme flips. The five inks are identical in both modes; that is the property this needs.
+
+**Four category inks, and the two that are missing are missing on purpose.** Gold's keyline
+token is black (§3 permits gold's 1.91:1 only with the black keyline as mitigation), so a
+gold category line cannot be told from a neutral one. Vermilion means overdue, and spending
+it on a category would break the one reading the ledger exists for.
+
+| content | ink |
+|---|---|
+| commitments — the spine | ink |
+| plans and schedule | cobalt |
+| goals and checklist | green |
+| people, sources, awaiting | turquoise |
+| memory, decisions, review, raw source, roadmap ledgers | neutral |
+
+This is the amendment to rule 1: **a category is what a thing IS, not an ornament.** Each
+ink was chosen because its meaning already sits next to the content it marks.
+
+**Specificity, in one line: state beats kind beats category.** The wash register is declared
+after the tile register, so an overdue or going-cold tile keeps its wash and saturated line
+and still reads as state. A row's *kind* (work, small item, fixed block, routine) overrides
+its panel's category, because it is the more specific claim about the same tile — left as a
+stripe alone it collapsed, since a cobalt stripe inside a cobalt-outlined tile is invisible
+and work, small and fixed all read alike.
+
+**The sidebar keeps ledger lines.** It is a 236px column of derived state, and eleven tiles
+stacked in it read as a second page rather than a summary. The density the 2026-08-01
+ruling protected is real there even though the owner overruled it for the panels.
+
+---
+
+## 7c. Panel grounds (owner ruling, 2026-08-06)
+
+Each dashboard panel sits on a light tint of its own ink, so two panels sharing a row read
+as two surfaces rather than one field split by a rule. The banner separated them
+horizontally; nothing separated them vertically once a panel ran past its neighbour's last
+row. With the grid detached (§7 amendment) the tint and the gap now say the same thing
+twice, which is the point — a panel is a surface, not a cell.
+
+**Each panel wears the ink it already owns**, never a new assignment: awaiting is
+turquoise wherever it appears, goals go green as they complete, review is the gold of
+something waiting on a decision, and cobalt is the schedule's work-block stripe (§5),
+which is what Today is. The board and the checklist take the neutral ramp's two steps —
+the board because it is the ledger and its rows already carry vermilion and ink a coloured
+ground would fight. Sources stays on paper: it runs full width with nothing beside it to be
+told apart from, and a tint there is decoration, which §8 rule 1 does not allow.
+
+**Strength is a sixth of the wash register**, and the number differs per theme: 16% over
+paper, 18% over black. A wash fills one component and says "this row is overdue"; a tint
+sits under a whole panel and says only "this is a different thing than the one beside it".
+7% was measured in the browser and could not be seen at all, which fails the one thing a
+tint is for. Dark takes more because a tint over black gains saturation as it gains
+lightness — 30% came back a navy block.
+
+---
+
 ## 7a. Wordmark
 
 `wordmark.svg`. A beige band cut diagonally through a black plate, the name in condensed
@@ -280,7 +451,10 @@ Rules:
 
 ## 8. Rules that are not negotiable
 
-1. Color means state. Nothing decorative gets an ink.
+1. Color means state. Nothing decorative gets an ink. Amended by the 2026-08-06 tile
+   ruling: a tile's keyline may also carry its **category** — what the content IS — drawn
+   from the four inks whose meaning already sits beside that content. A category is not
+   decoration; vermilion and gold stay out of it so state keeps its two alarm inks. See §7b.
 2. Every colored fill carries a keyline. Amended by the 2026-07-31 wash ruling:
    a resting component wears the pastel wash with a keyline in its own saturated
    ink — except gold, whose keyline stays black, because §3 permits gold's
@@ -291,7 +465,11 @@ Rules:
 4. Every generated claim links to its source.
 5. Low confidence renders as a dashed outline, never as a confident statement.
 6. Three chart series maximum; a chart uses status tokens or series tokens, never both.
-7. No shadows, no gradients. Corners are rounded, from the scale in §7.
+7. No shadows, no gradients outside the protected hatch. Amended by the 2026-08-06
+   rounding ruling: corners are rounded from the §7 scale and nested radii are
+   concentric. Shadows and gradients were not re-opened — a drop shadow still reads as a
+   different design language on sight, and depth still comes from the black rule and
+   figure-ground.
 8. Tabular figures everywhere.
 9. Cobalt never carries text.
 

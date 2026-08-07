@@ -317,9 +317,10 @@ urge to build through this week is strong and wrong.
 Read-only first:
 
 - [ ] `web/app.py`, one page, panels: Today, Commitments, Awaiting, Review queue, Sources
-- [ ] `design/tokens.css` + hand-written rules. Match `design/preview.html`. No shadows, no
-      rounded corners except the 2px reel digit windows, black keyline on every fill, three
-      chart series maximum, tabular figures
+- [ ] `design/tokens.css` + hand-written rules. Match `design/preview.html`. No shadows,
+      corners rounded from the §7 scale with nested radii concentric (2026-08-06 ruling —
+      this line used to read "no rounded corners except the 2px reel digit windows"), black
+      keyline on every fill, three chart series maximum, tabular figures
 - [ ] Empty states, declarative, per `docs/06` §Empty states. Never "You're all caught up 🎉"
 - [ ] **Sources panel on day one**, not at the end: last successful sync per source, item
       counts, triage kill rate, failures with vermilion keylines that persist until fixed

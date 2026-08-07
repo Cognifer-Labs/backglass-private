@@ -28,6 +28,13 @@ from tests.conftest import panel_slice
 TODAY = date.today()
 
 
+def _strip_css_comments(css: str) -> str:
+    """The sheet documents its own rules at length, and the rounding ruling's prose quotes
+    the very declarations these tests scan for. Strip comments before matching or the
+    explanation of a rule reads as a second instance of it."""
+    return re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+
+
 @pytest.fixture
 def client(conn, settings: Settings):  # type: ignore[no-untyped-def]
     """The app opens its own connections against the same file the fixture migrated."""
@@ -572,49 +579,225 @@ def test_the_only_confirmation_is_on_drop(client: TestClient, conn, settings: Se
 
 
 def test_no_shadows_no_gradients_outside_the_hatch(client: TestClient) -> None:
-    """design-system.md §8 rule 7, minus its middle clause.
-
-    Corners were square by rule until the owner reversed it on 2026-08-07. Shadows and
-    gradients did not come back with them, and that is the point of asserting the two
-    separately: the rule forbade three things for one reason — each announces a
-    different design language — and only one of them was reconsidered. A drop shadow
-    arriving on the coat-tails of the radius change is exactly the drift this catches.
-    """
-    css = client.get("/static/dashboard.css").text
+    """design-system.md §8 rule 7. The 2026-08-06 rounding ruling amended this rule but
+    re-opened only rounding: a drop shadow still reads as a different design language on
+    sight, and the one gradient in the system is still the protected block's 45° hatch."""
+    css = _strip_css_comments(client.get("/static/dashboard.css").text)
     assert "box-shadow" not in css
     assert "text-shadow" not in css
-    # The one gradient in the system is the 45° hatch on a protected block, which
-    # design-system.md §4 specifies explicitly.
     for line in css.splitlines():
         if "gradient" in line:
             assert "repeating-linear-gradient" in line and "45deg" in line, line
 
 
-def test_every_radius_comes_from_the_scale(client: TestClient) -> None:
-    """§7, as rewritten: three steps, and a component picks one rather than a number.
+def test_every_radius_comes_from_the_token_scale(client: TestClient) -> None:
+    """The 2026-08-06 rounding ruling, §7. The scale is the point: a raw px radius is how
+    a system with three steps becomes a system with nine, and it is invisible in review
+    because each individual number looks reasonable. Every declaration therefore resolves
+    through --radius-*, and the only literal permitted is the 0 that opts the ledger
+    inputs out (exemption 4 — border:0 plus a bottom hairline is a line, not a box)."""
+    stripped = _strip_css_comments(client.get("/static/dashboard.css").text)
 
-    The rule that mattered when corners were square was "0 everywhere"; the rule that
-    matters now is that the curve stays proportional to its box. A literal radius is
-    how that erodes — one component at 6px because it looked better alone, and the
-    scale stops being a scale.
-    """
-    css = client.get("/static/dashboard.css").text
-    allowed = {
-        "var(--radius)",
-        "var(--radius-sm)",
-        "var(--radius-lg)",
-        "var(--radius-reel)",
-        # Composites, and they are still the scale: a shape curves on the sides it
-        # actually has. A progress fill curves where it starts; a panel banner curves
-        # where the panel does and stops where its body continues.
-        "var(--radius-sm) 0 0 var(--radius-sm)",
-        "var(--radius-lg) var(--radius-lg) 0 0",
-    }
-    for match in re.finditer(r"border-radius:\s*([^;}]+)", css):
-        assert match.group(1).strip() in allowed, (
-            f"border-radius: {match.group(1).strip()!r} is a literal. §7 gives three "
-            f"steps; pick the one that fits the box."
+    # Every spelling of the property, not just the shorthand: the per-corner longhands
+    # (border-top-left-radius, and the logical border-start-start-radius family) round the
+    # same corners and would slip past a scan anchored on "border-radius" alone.
+    pattern = r"border-(?:[a-z]+-){0,2}radius\s*:\s*([^;}]+)"
+    declarations = re.findall(pattern, stripped)
+    assert declarations, "the sheet should declare radii"
+    allowed = {"var(--radius-1)", "var(--radius-2)", "var(--radius-3)", "var(--radius-reel)"}
+    for value in declarations:
+        flat = " ".join(value.split())
+        if flat == "0":
+            continue
+        # A value is one or more terms: each is either a scale token, a literal 0 for a
+        # corner that stays square, or a calc() over a scale token. Checking that
+        # "var(--radius" appears SOMEWHERE would pass "calc(var(--radius-1) + 7px)" and
+        # every mixed value with a raw literal in it, which is the regression this guards.
+        # calc() nests one level here — calc(var(--radius-reel) + 4px) — so the inner
+        # paren has to be consumed or the term splits across the var()'s closing bracket.
+        terms = re.findall(r"calc\((?:[^()]|\([^()]*\))*\)|\S+", flat)
+        for term in terms:
+            if term == "0" or term in allowed:
+                continue
+            calc = re.fullmatch(r"calc\(\s*(var\(--radius-[a-z0-9]+\))\s*[-+]\s*\d+px\s*\)", term)
+            assert calc and calc.group(1) in allowed, (
+                f"radius term outside the token scale: {term!r} in {flat!r}"
+            )
+
+    zeroed = [
+        block
+        for block in stripped.split("}")
+        if re.search(r"border-(?:[a-z]+-){0,2}radius\s*:\s*0\s*(;|$)", block)
+    ]
+    for block in zeroed:
+        assert "input" in block, f"only the ledger inputs opt out of rounding: {block!r}"
+
+
+def test_the_boxed_vocabulary_is_rounded(client: TestClient) -> None:
+    """"Implement the principle of rounding to all elements" is only checkable against a
+    list, so this is the list: the components that ARE boxes. The exempt ones — the
+    full-bleed banner, the panel seams, the pinned failure strip — are asserted square in
+    test_the_full_bleed_surfaces_stay_square, and the two lists together are what "all"
+    means here."""
+    css = _strip_css_comments(client.get("/static/dashboard.css").text)
+
+    def rule(selector: str) -> str:
+        """Every block for this selector, joined. A component is declared more than once
+        in this sheet (.wev is geometry near the week grid and a later size override), so
+        matching only the first or last block asks the wrong question."""
+        found = [
+            block
+            for block in css.split("}")
+            if "{" in block and block.split("{")[0].replace("\n", " ").strip() == selector
+        ]
+        assert found, f"no rule for {selector!r}"
+        return "".join(found)
+
+    for selector in (
+        ".chip",  # controls
+        ".btn",
+        "input,textarea,select",
+        "button.toggle",
+        ".salert",
+        ".box",  # marks
+        ".sq",
+        ".legend i",
+        ".hmf",
+        ".track",
+        ".wev",
+        ".gcard",  # containers
+        ".rev",
+        ".tl",
+        ".wk7",
+        ".sws",
+    ):
+        assert "border-radius" in rule(selector), f"{selector} carries no radius"
+
+    # Concentric nesting is structural, not a copied number: a container whose children
+    # sit flush on its edge clips them rather than restating the arithmetic.
+    for selector in (".gcard", ".wk7", ".sws", ".track"):
+        assert "overflow:hidden" in rule(selector).replace(" ", ""), (
+            f"{selector} rounds but does not clip its flush children"
         )
+
+
+def test_every_content_unit_is_a_tile(client: TestClient) -> None:
+    """§7b. "All content should be separated in some way, each having individual tiles."
+    The list is the claim, so it is the test."""
+    css = _strip_css_comments(client.get("/static/dashboard.css").text)
+    tile = [b for b in css.split("}") if "--tile-line" in b and "background:var(--fill-mild)" in b]
+    assert tile, "no tile rule"
+    for selector in (
+        ".row", ".card", ".src", ".chk", ".goal", ".tt li", ".rmrow", ".tot",
+        # The four the first pass argued its way out of. The owner asked twice. Named by
+        # bare class, because a descendant selector here would outrank the state washes —
+        # see test_the_tile_rule_never_outranks_a_state_wash.
+        ".sgoal", ".goalrow", ".stepx", ".gtgt", ".mlist li",
+    ):
+        assert selector in tile[0], f"{selector} is not a tile"
+    flat = tile[0].replace(" ", "")
+    assert "border-radius:var(--radius-3)" in flat
+    # 2026-08-07: "separated by MORE than a thin line". A 1px keyline is a thin line, so
+    # the weight is the assertion — the ink may vary by category, the weight may not.
+    assert "border:var(--border)solid" in flat, "a tile keyline must carry the 2px weight"
+
+
+def test_the_tile_rule_never_outranks_a_state_wash(client: TestClient) -> None:
+    """§7b: state beats kind beats category. That ordering is enforced by nothing but
+    specificity, and :is() takes the specificity of its MOST SPECIFIC argument — so a single
+    descendant selector in the tile list (".gcard .mlist li") lifts the whole rule to (0,2,1)
+    and silently outranks `.src.cold` at (0,2,0). It did: a going-cold person lost their
+    vermilion row and rendered as an ordinary tile, in both themes, with every test green.
+    Every argument must therefore be a single class."""
+    css = _strip_css_comments(client.get("/static/dashboard.css").text)
+    tile = [b for b in css.split("}") if "--tile-line" in b and "background:var(--fill-mild)" in b]
+    assert tile, "no tile rule"
+    selector = tile[0].split("{")[0]
+    inside = selector[selector.index(":is(") + 4 : selector.rindex(")")]
+    for arg in (a.strip() for a in inside.split(",")):
+        assert arg, "empty selector argument"
+        # One class, optionally qualified by a bare element (".tt li", ".mlist li").
+        assert re.fullmatch(r"\.[\w-]+(\s+[a-z]+)?", arg), (
+            f"tile selector argument {arg!r} is more specific than one class, which lifts "
+            f"the whole :is() above the state washes"
+        )
+
+
+def test_a_tile_keyline_never_uses_a_wash_line_token(client: TestClient) -> None:
+    """The one rule the tile register rests on, and the one an edit will quietly break.
+
+    In dark mode every `--*-line` token resolves to `var(--rule)` — the wash contract is
+    "full-ink fill, keyline in the rule colour", where the FILL carries the colour. A tile's
+    fill is neutral and its keyline carries the colour, so a `--*-line` here collapses all
+    four categories into one paper outline the moment the theme flips. It looks correct in
+    light, which is exactly why it needs an assertion rather than an eye."""
+    css = _strip_css_comments(client.get("/static/dashboard.css").text)
+    for block in css.split("}"):
+        if "--tile-line:" not in block:
+            continue
+        for value in re.findall(r"--tile-line\s*:\s*([^;}]+)", block):
+            assert "-line)" not in value, (
+                f"tile keyline uses a wash line token, which is var(--rule) in dark: "
+                f"{value.strip()!r} in {block.split('{')[0].strip()!r}"
+            )
+
+
+def test_the_full_bleed_surfaces_stay_square(client: TestClient) -> None:
+    """Exemptions 1-3 of the rounding ruling. A radius on a bar that runs to both edges of
+    its panel leaves four paper nicks against the seam, and the failed-write strip is
+    pinned to three edges of the viewport — rounding either is a regression in the
+    opposite direction from the one this suite used to guard.
+
+    **`.panel` and `.banner` left this list on 2026-08-07**, when the owner ruled the
+    panel grid detached. The exemption was never about panels being large; it was about
+    the seam — two rounded corners meeting across a shared edge leave a notch and
+    nothing else. Panels no longer share edges: each carries its own keyline on four
+    sides and stands apart, which is the layout a radius is for. The banner follows it,
+    and rounds only the two corners it shares with the panel's top, because WebKit does
+    not reliably clip a `<summary>` to its parent's radius. `.mast`, `.side` and `.sec`
+    are still full-bleed against a page edge and still exempt.
+    """
+    css = _strip_css_comments(client.get("/static/dashboard.css").text)
+    for selector in (".mast", ".side", ".sec"):
+        # Every rule that TOUCHES the element, not only the one whose selector text equals
+        # it. `details.panel > summary.banner` restyles the same bar, and an exact-match
+        # check would wave a radius through there while claiming the bar stays square.
+        found = [
+            block
+            for block in css.split("}")
+            if "{" in block and re.search(rf"{re.escape(selector)}(?![\w-])", block.split("{")[0])
+        ]
+        assert found, f"no rule for {selector!r}"
+        for block in found:
+            assert "radius" not in block, f"{selector} should stay square: {block!r}"
+
+
+def test_an_element_rounds_the_edges_it_is_not_pinned_to(client: TestClient) -> None:
+    """The correction to exemption 3. A pinned element is not exempt — only its pinned
+    edges are. Each of these meets an edge on some sides and is free on others, and a
+    single-value radius on any of them would round a corner that has to stay flush."""
+    css = _strip_css_comments(client.get("/static/dashboard.css").text)
+
+    def radius_of(selector: str) -> str:
+        """The LAST declaration wins, because that is what the cascade does. Reading the
+        first match instead makes the assertion blind to exactly the edit it exists to
+        catch — a later rule overriding one of these with a single-value radius."""
+        winner: str | None = None
+        for block in css.split("}"):
+            if "{" in block and block.split("{")[0].replace("\n", " ").strip() == selector:
+                found = re.search(r"border-radius\s*:\s*([^;}]+)", block)
+                if found:
+                    winner = " ".join(found.group(1).split())
+        assert winner is not None, f"no radius on {selector!r}"
+        return winner
+
+    # bottom-pinned strip → top two corners; right-flush tabs → left two; column on an
+    # axis → top two. Each is a four-value radius with a 0 on the pinned side.
+    assert radius_of(".oops") == "var(--radius-3) var(--radius-3) 0 0"
+    assert radius_of(".tl .now span") == "var(--radius-1) 0 0 var(--radius-1)"
+    assert radius_of(".mpace span") == "var(--radius-1) 0 0 var(--radius-1)"
+    assert radius_of(".mcol > i") == "var(--radius-1) var(--radius-1) 0 0"
+    assert radius_of(".bar .b") == "0 var(--radius-1) var(--radius-1) 0"
 
 
 def test_tokens_are_served_from_the_validated_source(client: TestClient) -> None:
@@ -731,23 +914,23 @@ class TestGeometryRules:
     def test_the_controls_the_browser_rounds_have_a_floor(self) -> None:
         css = self.CSS.read_text()
         assert re.search(
-            r"button,\s*input,\s*textarea,\s*select\{border-radius:var\(--radius\)\}", css
+            r"button,\s*input,\s*textarea,\s*select\{border-radius:var\(--radius-2\)\}", css
         ), (
             "the UA-rounded controls need one rule putting them on the scale, "
             "regardless of which component classes reach them"
         )
 
     def test_the_scale_is_ordered(self) -> None:
-        """sm < md < lg, and the reel keeps the 2px §7 always allowed it. A scale whose
+        """Marks < controls < containers, and the reel keeps the mark step. A scale whose
         steps cross is three numbers, not a scale."""
         tokens = (Path(__file__).resolve().parents[1] / "design/tokens.css").read_text()
         values = {}
-        for name in ("radius-sm", "radius", "radius-lg"):
+        for name in ("radius-1", "radius-2", "radius-3"):
             match = re.search(rf"--{name}:\s*(\d+)px\s*;", tokens)
             assert match, f"--{name} is not defined"
             values[name] = int(match.group(1))
-        assert values["radius-sm"] < values["radius"] < values["radius-lg"]
-        assert re.search(r"--radius-reel:\s*var\(--radius-sm\)\s*;", tokens)
+        assert values["radius-1"] < values["radius-2"] < values["radius-3"]
+        assert re.search(r"--radius-reel:\s*var\(--radius-1\)\s*;", tokens)
 
 
 def test_the_stylesheet_closes_every_block_it_opens() -> None:

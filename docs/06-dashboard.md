@@ -67,7 +67,10 @@ Never "You're all caught up! 🎉". See `docs/05-morning-brief.md` §Tone.
 Everything visual comes from `design/design-system.md` and `design/tokens.css`. The
 constraints that most often get violated:
 
-- No shadows, no rounded corners except the 2px reel digit windows.
+- No shadows, and no gradients outside the protected hatch.
+- Corners are rounded from the §7 scale — 2px marks, 4px controls, 6px containers — and
+  nested radii are concentric (inner = outer − inset). The 2026-08-06 ruling retired
+  "radius 0 everywhere"; §7 carries the scale and the list of what stays square.
 - Section headers are solid black bars with cream uppercase condensed text.
 - Every colored fill carries a black keyline.
 - Three chart series maximum; single-series charts use black, not cobalt.

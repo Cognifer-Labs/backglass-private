@@ -15,9 +15,43 @@
  * layout: the chip's 3px vertical padding keeps it inside a 21px text line, the reel's
  * 1–2px gaps are the digit-window housing, and the checkbox tick is drawn geometry.
  *
- * design-system.md §8, the rules that are not negotiable: no shadows, no rounded corners
- * except the 2px reel windows, every coloured fill carries a black keyline, tabular
- * figures everywhere.
+ * design-system.md §8, the rules that are not negotiable: no shadows, no gradients outside
+ * the protected hatch, every coloured fill carries a black keyline, tabular figures
+ * everywhere.
+ *
+ * Rounding ruling, 2026-08-06. §8 rule 7's "no rounded corners" is retired; every boxed
+ * element takes a radius from the three-step scale in design/tokens.css — --radius-1 (2px)
+ * for marks, --radius-2 (4px) for controls, --radius-3 (6px) for containers. The rule that
+ * replaced it is concentric nesting: a box flush inside another takes the parent's radius
+ * minus the inset, and where the child sits on the parent's edge the parent clips
+ * (overflow:hidden) so the arithmetic is structural rather than copied into a number.
+ *
+ * What stays square, and why — the list any audit of "all elements" is measured against:
+ *   1. full-bleed black section bars (.banner, and the details/summary rules that restyle
+ *      it) — they run to the panel's edge, and a radius leaves four cream nicks against
+ *      the seam;
+ *   2. panel cells and page seams (.panel, .mast, .side, .sec) — rules between sections,
+ *      not boxes; rounding one breaks the continuous seam the row-locked grid exists for;
+ *   3. — retired. The failed-write strip was listed here as "pinned to the viewport", but
+ *      it is pinned to THREE edges and its top is free, so it rounds there like any other
+ *      box. A pinned element is not exempt; only its pinned edges are. Same reading gives
+ *      the NOW tab its left-only radius and a chart column its top-only one;
+ *   4. ledger inputs — border:0 plus one bottom hairline is a line, not a box;
+ *   5. left-keyline rows — one border and no box. The membership test is the keyline, not
+ *      the class name: .row.k-work/.k-small/.k-fixed/.k-routine, .src.fail, .quote and
+ *      .atl .nextstep qualify; .row.sched.k-protected does NOT, because the hatch makes it
+ *      a full four-sided box, and it takes --radius-2 like any other;
+ *   6. band fills — a background that spans a whole row, column or cell and meets its
+ *      neighbours on every side: .snav a.on/:hover, .card:hover and [data-selected],
+ *      .row.sched:hover, .wkg .today. (The chart's pace label was listed here and does not
+ *      belong: it is a tab hanging off the plot's right edge, meeting a neighbour on one
+ *      side, not a band meeting them on every side — so it rounds its free corners.) A
+ *      ledger row's fill is
+ *      bounded by hairlines it shares with the rows above and below, so rounding it leaves
+ *      paper wedges in a seam that is supposed to be continuous — and on .card and .row it
+ *      would curl the ends of the very hairline that draws the ledger;
+ *   7. the wordmark (design/wordmark.svg) — it carries its own spec, which this does not
+ *      touch. No rule in this sheet styles it; it is listed so the list is complete.
  */
 
 /* Oswald Bold — vendored display face (see static/VENDOR.md). One weight; declared
@@ -59,7 +93,8 @@ body{margin:0;background:var(--paper);color:var(--ink);
 .sblock .shd{display:block;font-size:11px;line-height:14px;letter-spacing:.06em;
   color:var(--ink-muted);margin-bottom:var(--sp-2)}
 .salert{display:block;font-size:12px;line-height:17px;color:#000;text-decoration:none;
-  border:2px solid var(--rule);padding:var(--sp-2);margin:0 0 var(--sp-2);background:var(--paper)}
+  border:2px solid var(--rule);border-radius:var(--radius-2);
+  padding:var(--sp-2);margin:0 0 var(--sp-2);background:var(--paper)}
 .salert.k-verm{background:var(--verm-wash);border-color:var(--verm-line)}
 .salert.k-gold{background:var(--gold-wash);border-color:var(--gold-line)}
 .salert.k-dash{border-style:dashed;color:var(--ink)}
@@ -113,8 +148,8 @@ body{margin:0;background:var(--paper);color:var(--ink);
 .mast .meta{font-size:11px;line-height:15px;letter-spacing:.06em;color:var(--ink-muted);margin:var(--sp-2) 0 0;
   font-weight:700;text-transform:uppercase}
 button.toggle{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
-  background:var(--ink);color:var(--on-ink);border:2px solid var(--rule);border-radius:var(--radius);
-  padding:var(--sp-2) var(--sp-4);cursor:pointer}
+  background:var(--ink);color:var(--on-ink);border:2px solid var(--rule);
+  border-radius:var(--radius-2);padding:var(--sp-2) var(--sp-4);cursor:pointer}
 button.toggle:hover{background:var(--paper);color:var(--ink)}
 /* Focus rings are ink, not vermilion: §8 rule 1 reserves vermilion for overdue and
  * destroy, and a red ring on every tabbed element wore the alarm ink decoratively.
@@ -137,7 +172,13 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
  * the width of the radius and nothing else, so the rounding was invisible on precisely
  * the largest boxes on the page. Panels now carry their own keyline on all four sides
  * and stand apart, which is the layout a radius is for. */
-.panel{min-width:0;border:2px solid var(--rule);padding:0 0 var(--sp-5)}
+.panel{min-width:0;border:2px solid var(--rule);border-radius:var(--radius-3);
+  overflow:hidden;padding:0 0 var(--sp-5)}
+/* The banner rounds its own top corners rather than trusting the clip: a <summary>
+ * inside a <details> is the one child WebKit does not reliably clip to its parent's
+ * radius, which made the panel's curve real in the CSS and invisible on the page. */
+.panel > .banner,details.panel > summary.banner{
+  border-radius:var(--radius-3) var(--radius-3) 0 0}
 
 /* ── Panel grounds (owner ruling 2026-08-06) ───────────────────────────────
  * Each panel sits on a light tint of its own ink, so two panels sharing a row
@@ -161,13 +202,16 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
 #panel-review{background:var(--tint-gold)}
 #panel-goals{background:var(--tint-green)}
 #panel-checklist{background:var(--fill-mild-2)}
-@media(max-width:840px){.panel{border-right:0}}
 .banner{background:var(--ink);color:var(--on-ink);padding:var(--sp-2) var(--sp-5);font-size:14px;line-height:18px;
   display:flex;justify-content:space-between;align-items:baseline;gap:var(--sp-3)}
 /* §6: section headers are the identity-carrying element and the spec sets them at
  * banner scale, not label scale. The count span stays 14px, subordinate. */
 .banner .bt{font-size:24px;line-height:28px}
 .inner{padding:0 var(--sp-5)}
+/* A section bar is a hard black edge and the first tile used to start 0px under it, so the
+ * two read as one welded object. One space step of air is the difference between a heading
+ * over a list and a heading stuck to it. */
+.banner + .inner{padding-top:var(--sp-3)}
 .cap{font-size:12px;line-height:17px;color:var(--ink-muted);padding:var(--sp-3) 0;
   border-bottom:1px solid var(--rule-hair);margin-bottom:0}
 .row{display:flex;gap:var(--sp-4);padding:var(--sp-3) 0;border-top:1px solid var(--rule-hair);align-items:flex-start}
@@ -196,7 +240,8 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
 .row.sched .acts{display:none;flex-basis:100%}
 .row.sched:hover .acts,.row.sched:focus-within .acts{display:flex}
 /* design-system.md §4: protected keeps its 2px keyline and 45° hatch, one row tall. */
-.row.sched.k-protected{border:2px solid var(--rule);padding:var(--sp-2) var(--sp-3);
+.row.sched.k-protected{border:2px solid var(--rule);border-radius:var(--radius-2);
+  padding:var(--sp-2) var(--sp-3);
   margin:var(--sp-2) 0;align-items:center;
   background:repeating-linear-gradient(45deg,transparent,transparent 5px,var(--rule-hair) 5px,var(--rule-hair) 6px)}
 /* Base chip is theme-aware: ink on paper in both modes. The old #000-on-paper pair
@@ -205,7 +250,8 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
  * either surface, which is what the palette validator checks. */
 .chip{display:inline-flex;align-items:center;gap:5px;flex:0 0 auto;
   font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
-  border:2px solid var(--rule);border-radius:var(--radius);padding:2px 8px;color:var(--ink);background:var(--paper);white-space:nowrap}
+  border:2px solid var(--rule);border-radius:var(--radius-2);padding:2px 8px;
+  color:var(--ink);background:var(--paper);white-space:nowrap}
 .chip svg{width:10px;height:10px;flex:0 0 10px}
 /* `nowrap` is right for a chip that is a word — OVERDUE, 3 OPEN — and wrong for
  * one that is a sentence. "87 days since last touch" is 212px that cannot break,
@@ -227,7 +273,14 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
  * warning nor a guess (a fresh staleness count). The bare .chip default's #000 text
  * assumes a filled background and goes invisible on dark paper. */
 .k-plain{background:transparent;color:var(--ink)}
-.reel{display:inline-flex;background:#000;border:2px solid #000;padding:2px;gap:1px}
+/* The housing is the concentric case worked all the way through, and the inset is 4px,
+ * not 2px: border-radius is measured on the BORDER box, so a window sitting inside 2px of
+ * padding is also inside 2px of border. Housing = window + padding + border = 2+2+2 = 6px.
+ * Taking the padding alone would leave the plate at 4px, whose padding-box arc is 2px —
+ * the same radius as the window it is supposed to be a step outside of, so the two curves
+ * would run flat against each other instead of parallel. */
+.reel{display:inline-flex;background:#000;border:2px solid #000;
+  border-radius:calc(var(--radius-reel) + 4px);padding:2px;gap:1px}
 :root[data-theme="dark"] .reel{border-color:#FCF8EC}
 @media(prefers-color-scheme:dark){:root:where(:not([data-theme="light"])) .reel{border-color:#FCF8EC}}
 .reel span{background:#FCF8EC;color:#000;font:700 22px/22px ui-monospace,"SF Mono",Menlo,monospace;
@@ -237,7 +290,11 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
 .goal .hd{display:flex;justify-content:space-between;gap:var(--sp-4);align-items:center;margin-bottom:var(--sp-1)}
 .goal .hd .nm{font-size:15px;line-height:21px}
 .tgt{font-size:12px;line-height:17px;color:var(--ink-muted);margin:0 0 var(--sp-2)}
-.track{height:14px;border:2px solid var(--rule);background:var(--paper)}
+/* The track rounds and clips; the fill inherits the curve rather than declaring one. A
+ * 2px radius over a 2px keyline leaves the inner corner at 0, which is what the fill
+ * wants — a bar that starts at 0% must still square off against the track's left edge. */
+.track{height:14px;border:2px solid var(--rule);border-radius:var(--radius-1);
+  background:var(--paper);overflow:hidden}
 .fill{height:100%;background:var(--ink)}
 /* Bar fills are data, not resting components: the wash register's pastel made a
  * 2/3 fill ~1.2:1 against paper — unreadable. Full ink both modes, per §5. */
@@ -247,7 +304,12 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
 .bar{display:flex;align-items:center;gap:var(--sp-3);font-size:13px}
 .bar .lbl{flex:0 0 96px;font-weight:700;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
   color:var(--ink-2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bar .b{height:16px;background:var(--ink);border:1px solid var(--rule)}
+/* Far end only, for the reason the chart columns round their tops only: the left edge is
+ * where every bar in the stack starts, so it is the zero the row is read against. It also
+ * keeps the bar consistent with .fill, whose left end is already squared by .track's 0px
+ * inner corner — one bar idiom, not two. */
+.bar .b{height:16px;background:var(--ink);border:1px solid var(--rule);
+  border-radius:0 var(--radius-1) var(--radius-1) 0}
 .bar .v{font-weight:700}
 .note{font-size:12px;line-height:17px;color:var(--ink-muted);margin:var(--sp-4) 0 0}
 /* An error note belongs to the failing row above it, not the row below. */
@@ -256,7 +318,7 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
  * evidence it rests on, then the decision. Padding shrank and the gap between items
  * grew — an item was separated from its own border by more space than from the next
  * item, so 164 of them read as one dense column rather than as 164 questions. */
-.rev{border:2px dashed var(--rule);padding:var(--sp-3) var(--sp-4);margin:0 0 var(--sp-4)}
+.rev{border:2px dashed var(--rule);border-radius:var(--radius-3);padding:var(--sp-3) var(--sp-4);margin:0 0 var(--sp-4)}
 .rev p{margin:0}
 .rev > .b1{margin-bottom:var(--sp-2)}
 /* The item's own dashed keyline is the low-confidence signal (§8 rule 5) and it says
@@ -279,12 +341,14 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
  * inline style repeated across five templates. */
 .row .acts,.goal .acts{margin-top:var(--sp-2)}
 .btn{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
-  border:2px solid var(--rule);border-radius:var(--radius);padding:var(--sp-2) var(--sp-4);cursor:pointer;
+  border:2px solid var(--rule);border-radius:var(--radius-2);
+  padding:var(--sp-2) var(--sp-4);cursor:pointer;
   background:var(--paper);color:var(--ink)}
 .btn:hover{background:var(--ink);color:var(--on-ink)}
 .chk{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3) 0;border-top:1px solid var(--rule-hair)}
 .chk:first-of-type{border-top:0}
-.box{width:16px;height:16px;border:2px solid var(--rule);flex:0 0 16px;position:relative}
+.box{width:16px;height:16px;border:2px solid var(--rule);border-radius:var(--radius-1);
+  flex:0 0 16px;position:relative}
 /* A 16px tick is a 28px target: the halo pads the hit area without touching the
  * drawn geometry. Interactive boxes only — spans stay inert. */
 button.box::before{content:"";position:absolute;inset:-6px}
@@ -296,7 +360,8 @@ button.box::before{content:"";position:absolute;inset:-6px}
 .chk .st{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--ink-muted)}
 .src{display:flex;align-items:center;gap:var(--sp-3);padding:var(--sp-3) 0;border-top:1px solid var(--rule-hair);font-size:14px}
 .src:first-of-type{border-top:0}
-.sq{width:11px;height:11px;border:2px solid var(--rule);flex:0 0 11px}
+.sq{width:11px;height:11px;border:2px solid var(--rule);border-radius:var(--radius-1);
+  flex:0 0 11px}
 .src .nm{flex:1;font-weight:700;font-size:12px;letter-spacing:.05em;text-transform:uppercase}
 .src .ts{color:var(--ink-muted);font-size:13px}
 .sec{border-bottom:2px solid var(--rule)}
@@ -304,7 +369,10 @@ button.box::before{content:"";position:absolute;inset:-6px}
  * content sits flush against the seam. */
 .sec .inner{padding-bottom:var(--sp-5)}
 .swrap{padding:var(--sp-5)}
-.sws{display:grid;grid-template-columns:repeat(5,1fr);gap:0;border:2px solid var(--rule)}
+/* Container clips, cells stay square: the four corner cells inherit the plate's curve
+ * and the twelve interior corners keep their seams. Same move on .wk7 and .gcard. */
+.sws{display:grid;grid-template-columns:repeat(5,1fr);gap:0;border:2px solid var(--rule);
+  border-radius:var(--radius-3);overflow:hidden}
 @media(max-width:840px){.sws{grid-template-columns:repeat(2,1fr)}}
 .sw{padding:var(--sp-4) var(--sp-3);border-right:2px solid var(--rule);color:#000}
 .sw:last-child{border-right:0}
@@ -312,7 +380,8 @@ button.box::before{content:"";position:absolute;inset:-6px}
 .sw code{font:400 11px/15px ui-monospace,monospace}
 .legend{display:flex;gap:var(--sp-4);font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;
   text-transform:uppercase;color:var(--ink-muted);margin-top:var(--sp-4);flex-wrap:wrap}
-.legend i{display:inline-block;width:11px;height:11px;border:1px solid var(--rule);margin-right:6px;vertical-align:-2px}
+.legend i{display:inline-block;width:11px;height:11px;border:1px solid var(--rule);
+  border-radius:var(--radius-1);margin-right:6px;vertical-align:-2px}
 
 /* ── HTMX ──────────────────────────────────────────────────────────────────
  * docs/06: "Optimistic UI on ticks and resolutions, with rollback on failure."
@@ -370,7 +439,8 @@ button.box::before{content:"";position:absolute;inset:-6px}
 .row.k-routine .b1{color:var(--ink-2)}
 
 /* Schedule pages. */
-.pager{display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-2) var(--sp-3);background:var(--fill-mild);border:1px solid var(--rule-hair)}
+.pager{display:flex;gap:var(--sp-2);align-items:center;padding:var(--sp-2) var(--sp-3);
+  background:var(--fill-mild);border:1px solid var(--rule-hair);border-radius:var(--radius-2)}
 .pager .btn{text-decoration:none;display:inline-block}
 /* ── Week agenda grid (Phase 9) ────────────────────────────────────────────
  * Replaced the stacked-list week view: seven proportional mini-timelines on one
@@ -378,13 +448,18 @@ button.box::before{content:"";position:absolute;inset:-6px}
  * pattern. Same kind inks as the day view; today gets the inset-keyline idiom
  * (outline, not fill — a fill erased the stripes in dark mode, Phase 8 lesson). */
 .wk7wrap{overflow-x:auto;margin-top:var(--sp-4)}
-.wk7{display:grid;grid-template-columns:44px repeat(7,minmax(96px,1fr));border:2px solid var(--rule);min-width:750px}
+.wk7{display:grid;grid-template-columns:44px repeat(7,minmax(96px,1fr));
+  border:2px solid var(--rule);border-radius:var(--radius-3);overflow:hidden;min-width:750px}
 .wk7 .corner{border-bottom:2px solid var(--rule);border-right:1px solid var(--rule-hair)}
 .whd{display:block;border-right:1px solid var(--rule-hair);border-bottom:2px solid var(--rule);
   padding:var(--sp-2);text-decoration:none;color:var(--ink)}
 .whd .dn{display:block;font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase}
 .whd .dn b{font-variant-numeric:tabular-nums}
 .whd:hover .dn{text-decoration:underline;text-underline-offset:2px}
+/* The day headers are links sitting flush on .wk7's padding-box edge, and .wk7 now clips
+ * so its corners can round — which would eat the global focus ring's 2px outset on the
+ * top row. The ring turns inward here so keyboard focus stays visible inside the clip. */
+.wk7 .whd:focus-visible{outline-offset:-3px}
 .whd.now,.wcol.now{outline:2px solid var(--rule);outline-offset:-2px}
 /* Format audit: the capacity band merged into the grid header — one set of day
  * cells carries day, free hours, and overflow. The standalone .wband renders only
@@ -392,15 +467,16 @@ button.box::before{content:"";position:absolute;inset:-6px}
 .whd .wbn{font-size:15px;line-height:21px;margin-top:2px}
 .whd .wbf{display:block;color:var(--ink-muted)}
 .whd .over{display:inline-flex;align-items:center;gap:4px;margin-top:var(--sp-1);
-  background:var(--gold);border:2px solid var(--rule);padding:0 5px;color:#000;
-  font:700 11px/15px system-ui,sans-serif;letter-spacing:.04em}
+  background:var(--gold);border:2px solid var(--rule);border-radius:var(--radius-1);
+  padding:0 5px;color:#000;font:700 11px/15px system-ui,sans-serif;letter-spacing:.04em}
 .wkhrs{position:relative;border-right:1px solid var(--rule-hair)}
 .wkhrs span{position:absolute;left:0;padding:1px var(--sp-1) 0;
   font:700 11px/14px ui-monospace,monospace;color:var(--ink-muted);font-variant-numeric:tabular-nums}
 .wcol{position:relative;border-right:1px solid var(--rule-hair);overflow:hidden}
 .wk7 > :last-child{border-right:0}
 .wcol i{position:absolute;left:0;right:0;border-top:1px solid var(--rule-hair)}
-.wev{position:absolute;left:2px;right:2px;border:1px solid var(--rule);background:var(--fill-mild);
+.wev{position:absolute;left:2px;right:2px;border:1px solid var(--rule);
+  border-radius:var(--radius-1);background:var(--fill-mild);
   font-size:11px;line-height:13px;color:var(--ink);text-decoration:none;
   overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding:0 3px}
 .wev:hover{outline:2px solid var(--rule)}
@@ -414,7 +490,7 @@ button.box::before{content:"";position:absolute;inset:-6px}
 .wnow{position:absolute;left:0;right:0;border-top:2px solid var(--ink);z-index:2}
 
 /* People page + inline forms. Inputs follow the button language: 2px keyline,
- * square corners, paper field. */
+ * the control radius, paper field. */
 .pplsearch{display:flex;gap:var(--sp-3);align-items:center;padding:var(--sp-3) 0;border-bottom:1px solid var(--rule-hair)}
 .pplsearch input[type=search]{flex:1;max-width:420px}
 /* §7 "Radius 0 everywhere. 2px on reel digit windows only." — the reel is the one
@@ -428,25 +504,26 @@ button.box::before{content:"";position:absolute;inset:-6px}
  * range): a later restyle that gives one a background inherits the rule rather than
  * rediscovering it.
  *
- * Literal 0, not `var(--radius)`. The token says 0 and routing through it would read
+ * Literal 0, not `var(--radius-2)`. The token says 0 and routing through it would read
  * tidier, but a radius that resolves through a second stylesheet is square only while
  * that stylesheet loads — and this one is the floor. The value that cannot fail is the
  * one written here. */
-button,input,textarea,select{border-radius:var(--radius)}
+button,input,textarea,select{border-radius:var(--radius-2)}
 input,textarea,select{font:600 14px/20px system-ui,sans-serif;background:var(--paper);color:var(--ink);
-  border:2px solid var(--rule);border-radius:var(--radius);padding:var(--sp-2) var(--sp-3)}
-/* The one native checkbox (People search) joins the .box language: square, 2px
- * keyline, green fill + drawn tick when checked. The UA control had rounded
- * corners and vanished in dark mode. */
+  border:2px solid var(--rule);border-radius:var(--radius-2);padding:var(--sp-2) var(--sp-3)}
+/* The one native checkbox (People search) joins the .box language: the mark radius, a
+ * 2px keyline, green fill + drawn tick when checked. Still worth overriding the UA
+ * control — its own rounding is a different curve and it vanished in dark mode. */
 input[type=checkbox]{appearance:none;-webkit-appearance:none;width:16px;height:16px;
-  padding:0;position:relative;vertical-align:-3px}
+  border-radius:var(--radius-1);padding:0;position:relative;vertical-align:-3px}
 input[type=checkbox]:checked{background:var(--green)}
 input[type=checkbox]:checked::after{content:"";position:absolute;left:3px;top:0;
   width:5px;height:10px;border:solid #000;border-width:0 2px 2px 0;transform:rotate(45deg)}
 input:focus,textarea:focus,select:focus{outline:3px solid var(--rule);outline-offset:1px}
 .lbl{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
   color:var(--ink-muted)}
-.addform{margin-top:var(--sp-4);background:var(--fill-mild);border:1px solid var(--rule-hair);padding:var(--sp-3)}
+.addform{margin-top:var(--sp-4);background:var(--fill-mild);border:1px solid var(--rule-hair);
+  border-radius:var(--radius-2);padding:var(--sp-3)}
 .addform summary{cursor:pointer}
 .addform form{display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-3)}
 /* The sentence field wants the room, so it takes the whole line and gives the
@@ -455,6 +532,15 @@ input:focus,textarea:focus,select:focus{outline:3px solid var(--rule);outline-of
  * carried the entire page off the right edge of the screen. */
 .addform form .what{flex:1 1 100%;min-width:0}
 .addform form input,.addform form select{min-width:0;max-width:100%}
+/* A select is as wide as its widest OPTION, and one option here is a commitment title —
+ * so a single long obligation stretched the "also closes" picker across the whole form,
+ * 1300px of control for a secondary field. Cap it and let it shrink: the chosen value is
+ * what has to be readable, not every candidate at once. */
+#decisions .addform form select{flex:0 1 320px}
+/* Scoped to Decisions on purpose. The board's Quick add has its own select — Direction,
+ * two options, "I owe" and "Owed to me" — and an unscoped 320px basis inflated a control
+ * whose intrinsic width is a third of that. A cap written for one long list is not a rule
+ * about selects. */
 .src .nm a,a.nm{color:var(--ink);text-decoration:none}
 a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 /* A paused source stays listed — configuration is visible even when inactive. */
@@ -477,7 +563,8 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 
 /* Overflow is a warning, not a footnote: gold fill, black keyline, black text —
  * the same mitigation the palette doc prescribes for gold on paper. */
-.cap .over{background:var(--gold);border:2px solid var(--rule);padding:0 5px;font-weight:700;color:#000}
+.cap .over{background:var(--gold);border:2px solid var(--rule);border-radius:var(--radius-1);
+  padding:0 5px;font-weight:700;color:#000}
 
 /* Review queue: docs/11 §4 — "Accept and Reject as equal-weight buttons."
  * Never make Accept primary, larger, or preselected. Both inherit .btn's size;
@@ -510,7 +597,7 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
  * panels open ~31px below their banner while full panels open at 12. */
 .empty{font-size:13px;line-height:19px;color:var(--ink-muted);padding:var(--sp-4) 0;margin:0}
 .kbd{font:700 11px/14px ui-monospace,monospace;border:1px solid var(--rule-hair);
-  padding:1px 4px;color:var(--ink-muted)}
+  border-radius:var(--radius-1);padding:1px 4px;color:var(--ink-muted)}
 /* Board register (owner ruling 2026-08-01): the boxed card stack outgrew the panel.
  * A commitment is now one ledger line — title grows, meta sits right on the same
  * line and wraps under it when narrow — and the action row exists only on the row
@@ -520,6 +607,11 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
   padding:var(--sp-2) 0;margin:0;border-top:1px solid var(--rule-hair)}
 .card:focus-visible{outline:3px solid var(--rule);outline-offset:-3px}
 .card:hover{background:var(--fill-mild)}
+/* A card inside a fold is on fill-mild already — the suspects and Stale folds are .addform
+ * boxes — so the hover paints the surface it is already sitting on and the cue disappears
+ * entirely, in both themes. Inside a fold the hover steps to the next surface up, the same
+ * one selection uses. */
+.addform .card:hover{background:var(--fill-mild-2)}
 .card[data-selected="true"]{background:var(--fill-mild-2)}
 .card .b1{flex:1 1 auto;min-width:0}
 .card .b2{flex:0 1 auto;margin:0}
@@ -543,6 +635,14 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
   text-transform:uppercase;color:var(--ink-muted);padding-top:var(--sp-3);
   border-top:1px solid var(--rule-hair)}
 .lane:first-of-type{border-top:0;padding-top:0}
+/* …except when the lane IS the first thing under a section bar, where zeroing its padding
+ * puts the group label hard against the black bar with no air at all. This fires on the
+ * board too — an earlier note here claimed a .cap sits between them there and carries the
+ * gap, which is simply not true of the board's markup; the rule is right and the reason
+ * given for it was wrong. #people-rows needs it for the same reason and is not an .inner,
+ * so it is named. */
+.banner + .inner > .lane:first-of-type,
+#people-rows > .lane:first-of-type{padding-top:var(--sp-3)}
 
 /* ── Goals page (Phase 8) ──────────────────────────────────────────────────
  * The deep view behind the dashboard's Goals + Checklist panels. Cards per
@@ -584,7 +684,10 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .wkg .off{color:var(--ink-muted)}
 .wkg td.stk,.wkg th.stk{text-align:right;padding-right:0}
 .wkg td.stk{font:700 13px/18px ui-monospace,monospace;font-variant-numeric:tabular-nums;color:var(--ink-muted)}
-.gcard{border:2px solid var(--rule);margin-top:var(--sp-4)}
+/* The card clips so .ghd's flush top edge and the closing .gtgt take the frame's curve
+ * without either declaring one — the header's own 2px bottom rule stays straight. */
+.gcard{border:2px solid var(--rule);border-radius:var(--radius-3);overflow:hidden;
+  margin-top:var(--sp-4)}
 .gcard .ghd{display:flex;justify-content:space-between;align-items:flex-start;gap:var(--sp-4);
   padding:var(--sp-3) var(--sp-4);border-bottom:2px solid var(--rule)}
 .gcard .gtitle{font-size:19px;line-height:24px;margin:0}
@@ -656,8 +759,11 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .hm td.wk,.hm th.wk{text-align:right;font:700 11px/14px ui-monospace,monospace;
   color:var(--ink-muted);font-variant-numeric:tabular-nums;padding-right:var(--sp-2)}
 .hmf{display:inline-block;width:14px;height:14px;border:1px solid var(--rule-hair);
-  position:relative;vertical-align:middle}
-.hmf::after{content:"";position:absolute;inset:0;background:var(--ink);opacity:0}
+  border-radius:var(--radius-1);position:relative;vertical-align:middle}
+/* inset:0 puts the fill against the padding edge, one hairline inside the frame — so it
+ * runs the concentric step down rather than repeating the cell's own radius. */
+.hmf::after{content:"";position:absolute;inset:0;background:var(--ink);opacity:0;
+  border-radius:calc(var(--radius-1) - 1px)}
 .hmf.b1::after{opacity:.25}
 .hmf.b2::after{opacity:.5}
 .hmf.b3::after{opacity:.75}
@@ -668,13 +774,14 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
  * One pixel per minute. Gaps are free time made visible; the hour ruler is
  * hairlines, entries carry the same kind inks as the Today rows, and "now"
  * is a solid black rule — maximum contrast, same reasoning as due-today. */
-.tl{position:relative;margin-top:var(--sp-4);border:2px solid var(--rule);overflow:hidden}
+.tl{position:relative;margin-top:var(--sp-4);border:2px solid var(--rule);
+  border-radius:var(--radius-3);overflow:hidden}
 .tl .hr{position:absolute;left:0;right:0;border-top:1px solid var(--rule-hair)}
 .tl .hlbl{position:absolute;top:-1px;left:0;width:52px;padding:2px 0 0 var(--sp-2);
   font:700 11px/14px ui-monospace,monospace;letter-spacing:.04em;color:var(--ink-muted);
   font-variant-numeric:tabular-nums}
 .tl .ev{position:absolute;left:64px;right:var(--sp-3);border:2px solid var(--rule);
-  background:var(--fill-mild);padding:3px var(--sp-2);overflow:hidden;
+  border-radius:var(--radius-2);background:var(--fill-mild);padding:3px var(--sp-2);overflow:hidden;
   display:flex;flex-direction:column;gap:1px}
 .tl .ev.lane1{left:calc(50% + 32px)}
 /* From the wash pair, not the plain muted step. tokens.css states the contract —
@@ -698,9 +805,11 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .tl .ev.k-protected{background:repeating-linear-gradient(45deg,transparent,transparent 5px,var(--rule-hair) 5px,var(--rule-hair) 6px) var(--paper)}
 .tl .ev.k-protected .en{font-size:14px}
 .tl .now{position:absolute;left:0;right:0;border-top:2px solid var(--ink);z-index:2}
+/* A tab hanging off the right edge, so it rounds on the left only — curving the two
+ * corners that sit against the timeline's own edge would show the ruler through them. */
 .tl .now span{position:absolute;right:0;top:-1px;background:var(--ink);color:var(--on-ink);
   font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
-  padding:1px 6px}
+  padding:1px 6px;border-radius:var(--radius-1) 0 0 var(--radius-1)}
 .legend .hatch{background:repeating-linear-gradient(45deg,transparent,transparent 2px,var(--rule) 2px,var(--rule) 3px)}
 
 /* ── Schedule replan ───────────────────────────────────────────────────────
@@ -765,7 +874,8 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 
 /* Week capacity band: seven equal cells, 8px gap, each owning its own space. */
 .wband{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:var(--sp-2);margin-top:var(--sp-4)}
-.wbc{display:block;border:2px solid var(--rule);padding:var(--sp-2);text-decoration:none;color:var(--ink)}
+.wbc{display:block;border:2px solid var(--rule);border-radius:var(--radius-2);
+  padding:var(--sp-2);text-decoration:none;color:var(--ink)}
 .wbc .lbl{display:block}
 .wbc:hover{background:var(--fill-mild)}
 /* Today is an outline, not a fill: maximum contrast belongs to due-today alone. */
@@ -777,8 +887,8 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .wbc .wbf{display:block;color:var(--ink-muted)}
 /* Overflow keeps the gold warning treatment: fill, 2px keyline, glyph, label. */
 .wbc .over{display:inline-flex;align-items:center;gap:4px;margin-top:var(--sp-1);
-  background:var(--gold);border:2px solid var(--rule);padding:0 5px;color:#000;
-  font:700 11px/15px system-ui,sans-serif;letter-spacing:.04em}
+  background:var(--gold);border:2px solid var(--rule);border-radius:var(--radius-1);
+  padding:0 5px;color:#000;font:700 11px/15px system-ui,sans-serif;letter-spacing:.04em}
 .wverdict{margin:var(--sp-3) 0 0;font-size:15px;line-height:23px}
 @media(max-width:840px){
   .wband{grid-template-columns:repeat(4,minmax(0,1fr))}
@@ -802,7 +912,10 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .tt li{display:flex;align-items:center;gap:var(--sp-3);
   padding:var(--sp-3) 0;border-bottom:1px solid var(--rule-hair)}
 .tt li:last-child{border-bottom:0}
-.tt .box{width:24px;height:24px;flex:0 0 24px;background:var(--paper);cursor:pointer}
+/* The one mark that grows to 24px takes the control radius with it: at that size the 2px
+ * mark step reads as a chamfer rather than a corner. */
+.tt .box{width:24px;height:24px;flex:0 0 24px;border-radius:var(--radius-2);
+  background:var(--paper);cursor:pointer}
 .tt .box.on{background:var(--green)}
 .tt .box.on:after{left:7px;top:2px;width:7px;height:13px;border-width:0 3px 3px 0}
 .tt .ttn{flex:1;min-width:0;font-size:15px;line-height:23px}
@@ -879,11 +992,12 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
  * without a keyline; label size so it sits below the copy it acts on. */
 .lnk{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;
   background:none;border:0;padding:0;color:var(--ink);cursor:pointer;
+  border-radius:var(--radius-1);
   text-decoration:underline;text-underline-offset:3px}
 .lnk:hover{background:var(--ink);color:var(--on-ink);text-decoration:none}
 /* Drop is the destructive action, demoted from a boxed danger button to a quiet
  * link. Vermilion arrives as the underline and the hover fill, not as the text
- * colour: #D03D37 on cream is 4.3:1, under AA for 11px, and the codebase already
+ * colour: #D03D37 on cream is 4.49:1, under AA for 11px, and the codebase already
  * carries destructive ink as a keyline (.btn.reject) rather than as type. The
  * word "Drop" plus the confirm dialog carry the meaning; the ink corroborates. */
 .lnk.danger{text-decoration-color:var(--vermilion);text-decoration-thickness:2px}
@@ -916,20 +1030,25 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .nextlbl{display:block;font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;
   text-transform:uppercase;color:var(--ink);margin:0 0 var(--sp-1)}
 
-/* Action timeline (roadmap steps). A hairline rail down the left, one square
- * node per step (squares, never dots — the system has no rounded corners), and
- * each step is a <details>: the summary row is the timeline entry, the click
- * opens the action panel. Done fills its node; skipped fades it. */
+/* Action timeline (roadmap steps). A hairline rail down the left, one square node per
+ * step — still a square and not a dot after the rounding ruling: an 8px node at the mark
+ * radius keeps its four corners, where a circle would read as a bullet and lose the
+ * relationship to every other box on the page. Each step is a <details>: the summary row
+ * is the timeline entry, the click opens the action panel. Done fills its node; skipped
+ * fades it. */
 .atl .stepx{border-top:1px solid var(--rule-hair)}
 .atl .stepx:first-of-type{border-top:0}
 .atl .stepx.nextstep{border-left:4px solid var(--ink)}
 .atl summary{display:flex;gap:var(--sp-4);align-items:flex-start;cursor:pointer;
   list-style:none;position:relative;padding:var(--sp-3) 0 var(--sp-3) var(--sp-5)}
 .atl summary::-webkit-details-marker{display:none}
-.atl summary::before{content:"";position:absolute;left:7px;top:0;bottom:0;
-  border-left:2px solid var(--rule-hair)}
+/* The rail is retired by the tile ruling. It ran the full height of the row to connect one
+ * step to the next, and once each step is its own bounded tile it cannot connect anything —
+ * it stops at the tile's padding and renders as a dangling 2px stub inside every row. The
+ * node stays: it still carries done and skipped. */
+.atl summary::before{content:none}
 .atl summary::after{content:"";position:absolute;left:3px;top:20px;width:8px;height:8px;
-  background:var(--paper);border:2px solid var(--ink);z-index:1}
+  background:var(--paper);border:2px solid var(--ink);border-radius:var(--radius-1);z-index:1}
 .atl .stepx.done summary::after{background:var(--ink)}
 .atl .stepx.skipped summary::after{border-color:var(--ink-muted)}
 .atl summary:hover .b1{text-decoration:underline;text-underline-offset:2px}
@@ -978,6 +1097,13 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .logform.quiet input[type=number]{width:64px;border:0;border-bottom:1px solid var(--rule-hair);
   padding:2px 0;background:none}
 
+/* Ledger inputs are a rule, not a box: border:0 plus one bottom hairline, so the control
+ * radius they inherit from the base input rule would put a curl on each end of a straight
+ * line. Exemption 4 of the rounding ruling. Declared once, after every rule that makes an
+ * input borderless, rather than repeated in each of them. */
+:is(.moreacts,.steppanel,.editform,.edfold,.logform.flow,.logform.quiet)
+  :is(input,select){border-radius:0}
+
 /* Utilities the log zone needed and the sheet did not have. `tnum` was already
  * written on four spans that had no rule behind it — a figure meant to line up
  * under the one above it, silently proportional. */
@@ -1001,7 +1127,11 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .mplot{position:relative;display:flex;align-items:flex-end;gap:2px;height:88px;
   margin-top:var(--sp-3);border-bottom:2px solid var(--rule)}
 .mcol{flex:1 1 0;display:flex;align-items:flex-end;height:100%;min-width:0}
-.mcol > i{display:block;width:100%;background:var(--ink)}
+/* Top corners only. A column is a measurement standing on the axis: rounding the foot
+ * would lift it off the baseline it is read against, which is the one edge that means
+ * something. Same reason the pace line stays a straight dashed rule. */
+.mcol > i{display:block;width:100%;background:var(--ink);
+  border-radius:var(--radius-1) var(--radius-1) 0 0}
 /* The pace line is structure, not a series: a dashed hairline across the plot at
  * the height the remaining work divided by the months left would need. It sits
  * ABOVE the columns — a reference line occluded by the bars it is a reference for
@@ -1009,7 +1139,10 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
  * on paper so it survives crossing one. */
 .mpace{position:absolute;left:0;right:0;z-index:1;border-top:1px dashed var(--rule);
   pointer-events:none}
+/* Same knockout-label idiom as the day timeline's NOW tab, so the same treatment: it
+ * hangs off the right edge, and only the two corners that are free of that edge round. */
 .mpace span{position:absolute;right:0;top:-15px;background:var(--paper);padding:0 3px;
+  border-radius:var(--radius-1) 0 0 var(--radius-1);
   font:700 10px/13px ui-monospace,"SF Mono",Menlo,monospace;color:var(--ink-muted)}
 .maxis{display:flex;gap:2px;margin-top:var(--sp-1)}
 .maxis span{flex:1 1 0;min-width:0;text-align:center;overflow:hidden;
@@ -1090,6 +1223,138 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .rmclosed{font-size:13px;line-height:19px;color:var(--ink-muted);margin:var(--sp-2) 0 0}
 .rmclosed a{color:var(--ink-muted);text-underline-offset:2px}
 
+/* ── Tile register (owner ruling 2026-08-06) ───────────────────────────────
+ * "All content should be separated in some way, each having individual tiles,
+ * highlighted a different colours or outlined."
+ *
+ * This re-opens two of the owner's own rulings and amends a third, so the reasoning
+ * they recorded is answered here rather than ignored:
+ *
+ *   - 2026-08-01 put the board back to ledger lines because "the boxed card stack
+ *     outgrew the panel";
+ *   - 2026-08-05 removed per-row washes because "eight overdue rows made a wall of
+ *     vermilion boxes", moving state into the section heading;
+ *   - §8 rule 1 says colour means state and nothing decorative gets an ink.
+ *
+ * The wall is a real failure mode and a naive tiling walks straight back into it,
+ * because --*-wash resolves to the FULL saturated ink in dark mode (tokens.css) — so
+ * "every tile gets a coloured fill" renders in dark as a page of solid vermilion,
+ * gold, green and cobalt blocks. The owner's own wording gives the way out: tiles are
+ * "highlighted a different colours OR outlined".
+ *
+ * So the colour rides on the KEYLINE and the surface stays neutral in both themes.
+ * Every content unit is a bounded tile on --fill-mild; the keyline's ink says what
+ * kind of content it is. Separation comes from the gap between tiles, which is what
+ * "separated in some way" asks for, and the hairline rules that used to do that job
+ * are gone. The 2px section seams stay — they divide panels, tiles divide content.
+ *
+ * Only four inks are category inks, and the two that are missing are missing on
+ * purpose. Gold's keyline token is BLACK (§3 permits gold's 1.83:1 only with the
+ * black keyline as mitigation), so a gold category line is indistinguishable from a
+ * neutral one; and vermilion means overdue, so spending it on a category would break
+ * the one reading the ledger exists for. Category ink is therefore drawn from the
+ * inks whose meaning is already adjacent to the content they mark — cobalt for plans,
+ * turquoise for people and awaiting, green for goals, ink for the commitment spine —
+ * which is the amendment to rule 1: a category is what a thing IS, not an ornament.
+ *
+ * State still wins. The wash register below is declared after this block on purpose,
+ * so an overdue or going-cold tile keeps its wash and its saturated line and still
+ * reads as state rather than as its category. */
+/* Amended 2026-08-07, same owner, after looking at it: "every item should be separated by
+ * MORE than a thin line — by color, or tile, or dark outline. Choose and apply throughout."
+ *
+ * The first cut used a 1px keyline, which is a thin line, so it answered the letter of the
+ * ruling and not the point of it. One treatment, chosen and applied everywhere: the tile
+ * takes the system's own 2px border weight, and the default ink is --rule — black on paper,
+ * paper on black — so a tile with no category still separates unmistakably. Category ink
+ * replaces the default where a category exists; it never replaces the weight.
+ *
+ * "Throughout" is now literal. Every list that was a run of hairline-separated rows is in
+ * this selector, including the four the first pass argued its way out of: the sidebar's
+ * goals, the goals page's per-goal rows, the roadmap's step rows, and the target and
+ * milestone rows inside a goal card. The density argument for keeping the sidebar as ledger
+ * lines was mine, not the owner's, and the owner has now twice asked for the opposite. */
+/* Bare class names on purpose, never ".atl .stepx" or ".gcard .gtgt". :is() takes the
+ * specificity of its MOST SPECIFIC argument, so one descendant selector in this list lifts
+ * the whole rule to (0,2,1) — above .src.cold, .src.warn and .rmrow.overdue at (0,2,0), and
+ * the state washes silently stop winning. That is exactly what happened: a going-cold
+ * person lost their vermilion row and rendered as an ordinary turquoise tile. State beats
+ * category is the rule; keeping every argument to one class is what enforces it. */
+:is(.row,.card,.src,.chk,.goal,.tt li,.rmrow,.tot,
+    .sgoal,.goalrow,.stepx,.gtgt,.mlist li){
+  background:var(--fill-mild);
+  border:var(--border) solid var(--tile-line,var(--rule));
+  border-radius:var(--radius-3);
+  /* Spacing pass 2026-08-07. Was 12px of padding and an 8px gap, which inverts the
+   * hierarchy: a row sat closer to its neighbours than its own frame sat to its text, so
+   * the list read as one mass with lines drawn on it rather than as separate things. The
+   * gap is now the larger reading — 16px inside the frame, 12px between frames, and the
+   * lines WITHIN a tile stay at 4px, so proximity groups content into its own tile before
+   * it groups tiles with each other. */
+  padding:var(--sp-4);
+  margin:0 0 var(--sp-3)}
+/* The hairline idiom and every :first-of-type reset that existed only to serve it.
+ * A tile is separated by the gap, so the first one needs no special case. */
+:is(.row,.card,.src,.chk,.goal,.tt li,.rmrow,.tot,
+    .sgoal,.goalrow,.stepx,.gtgt,.mlist li):first-of-type{
+  border-top-width:var(--border)}
+.tt li:last-child{border-bottom-width:var(--border)}
+/* The sidebar column is 236px and its tiles carry a 2px edge like every other, so they
+ * take the tighter padding step or the text has nowhere to go. The block's own 24px
+ * gutters come in to 12px for the same reason: at 24px the tile plus its border left 168px
+ * of measure, and a goal name clamped at two lines started truncating mid-word ("Get into
+ * a competitive med…"). The gutter was sized for text sitting directly on the page, not
+ * for text inside a box that has its own. */
+.sgoal{padding:var(--sp-2)}
+.sblock{padding-left:var(--sp-3);padding-right:var(--sp-3)}
+/* An alert and a goal are both 2px boxes of the same size in the same column, so they take
+ * the same radius. They were one step apart, which read as an accident because it was. */
+.salert{border-radius:var(--radius-3)}
+/* A goal card's own 2px frame plus a 2px tile on every row inside it reads as a box in a
+ * box. The card keeps the frame; its rows drop to the hairline ink so the nesting stays
+ * legible — still a 2px edge, still a tile, one step quieter than the frame around it. */
+.gcard :is(.gtgt,.mlist li){--tile-line:var(--rule-hair)}
+.gcard .mlist li{padding:var(--sp-2) var(--sp-3)}
+/* …and inset from the frame, which is the concentric rule doing real work rather than
+ * being quoted. A tile flush against the card's inner edge puts its own 6px corner on the
+ * card's 4px arc (6 minus the 2px frame), and the two curves collide — visibly, at every
+ * corner of every target row. Insetting by one space step means the tile never meets the
+ * frame, so no arc has to agree with any other. The milestone rows were already inset and
+ * read correctly; this is what makes the target rows match them. */
+.gcard :is(.gtgt,.mlist li){margin-left:var(--sp-2);margin-right:var(--sp-2)}
+.gcard .gtgt:last-child{margin-bottom:var(--sp-2)}
+
+/* A kind OVERRIDES its panel's category, because it is the more specific statement about
+ * the same tile: "this is a plan" is what the Today panel already says, and "this is
+ * focused work / a small item / a fixed calendar block / a routine" is what the row adds.
+ * Left as a stripe alone this collapsed — a cobalt stripe inside a cobalt-outlined tile is
+ * invisible, and work, small and fixed all read the same. So the kind takes the whole
+ * keyline and keeps the heavier left edge as its tab. */
+:is(.row.k-work,.row.k-small,.row.k-fixed,.row.k-routine){padding-left:var(--sp-3);
+  border-left-width:3px}
+.row.k-work{--tile-line:var(--cobalt)}
+.row.k-small{--tile-line:var(--turquoise)}
+.row.k-fixed{--tile-line:var(--ink)}
+.row.k-routine{--tile-line:var(--rule-hair)}
+.src.fail{border-left:3px solid var(--vermilion);padding-left:calc(var(--sp-3) - 2px);margin-left:0}
+
+/* Category inks, one per kind of content. Set once on the container; every tile inside
+ * inherits it through the custom property rather than restating a colour.
+ *
+ * The RAW inks, deliberately, not the --*-line tokens the wash register uses. In dark mode
+ * every --*-line resolves to var(--rule) — paper — because the wash contract is "full ink
+ * fill, keyline in the rule colour", and there the FILL carries the colour. A tile's fill
+ * is neutral and its line carries the colour, so borrowing that token collapsed all four
+ * categories to one paper outline the moment the theme flipped. The five inks are
+ * identical in both modes (tokens.css §inks); that is exactly the property this needs. */
+#panel-board,#panel-waiting,#panel-derived{--tile-line:var(--ink)}
+#panel-today,#panel-plans,#week-grid{--tile-line:var(--cobalt)}
+#panel-goals,#panel-checklist,#goal-cards,#today-ticks,#this-week{--tile-line:var(--green)}
+#panel-awaiting,#panel-sources,#people-rows,#panel-monitored{--tile-line:var(--turquoise)}
+/* Memory, Decisions, the review queue, raw source and the roadmap ledgers stay
+ * neutral: they are records, not one of the four kinds, and a fifth ink here would be
+ * decoration by the definition above. */
+
 /* ── Wash register (owner ruling 2026-07-31) ───────────────────────────────
  * A component that carries a colour is outlined in its saturated ink and
  * filled with its pastel wash — always through the token PAIRS in
@@ -1113,25 +1378,25 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
  * row is the carrier — turquoise pair, card geometry. The ID selector
  * outranks .row and .row:first-of-type's border-top reset. */
 #panel-awaiting .row{background:var(--turq-wash);border:1px solid var(--turq-line);
-  padding:var(--sp-3);margin:0 -13px var(--sp-2)}
+  border-radius:var(--radius-3);padding:var(--sp-3);margin:0 0 var(--sp-2)}
 #panel-awaiting .row:first-of-type{margin-top:var(--sp-3)}
 
 /* People rows whose touch level is a state: cold vermilion, warn gold. The
  * touch chip is the row's single mutually-exclusive state signal (tags and
  * the open count are facts, not states). Later source beats
  * .src:first-of-type's border-top reset. Paused sources stay neutral. */
-.src.cold{background:var(--verm-wash);border:1px solid var(--verm-line);padding:var(--sp-3);
-  margin:0 -13px}
-.src.warn{background:var(--gold-wash);border:1px solid var(--gold-line);padding:var(--sp-3);
-  margin:0 -13px}
+.src.cold{background:var(--verm-wash);border:1px solid var(--verm-line);
+  border-radius:var(--radius-3);padding:var(--sp-3);margin:0 0 var(--sp-2)}
+.src.warn{background:var(--gold-wash);border:1px solid var(--gold-line);
+  border-radius:var(--radius-3);padding:var(--sp-3);margin:0 0 var(--sp-2)}
 
 /* Roadmap list rows whose next step carries a due state — the same grammar
  * as _macros.due_state_chip. Closed rows (.rmclosed) stay neutral: inactive
  * is not a state colour. */
-.rmrow.overdue{background:var(--verm-wash);border:1px solid var(--verm-line);padding:16px;
-  margin:var(--sp-2) -17px}
-.rmrow.duetoday{background:var(--ink-wash);border:1px solid var(--ink-line);padding:16px;
-  margin:var(--sp-2) -17px}
+.rmrow.overdue{background:var(--verm-wash);border:1px solid var(--verm-line);
+  border-radius:var(--radius-3);padding:var(--sp-3);margin:0 0 var(--sp-2)}
+.rmrow.duetoday{background:var(--ink-wash);border:1px solid var(--ink-line);
+  border-radius:var(--radius-3);padding:var(--sp-3);margin:0 0 var(--sp-2)}
 
 /* Text on washed surfaces reads from the --wash-fg pair. In light this is a
  * no-op (normal ink on pastel); in dark the washes resolve to the FULL inks,
@@ -1203,12 +1468,17 @@ details.panel:not([open]){padding-bottom:0}
 /* ── The failed-write strip (audit #11 follow-up) ───────────────────────────
  * A write that the server refuses swaps nothing, so without this the click is
  * silent. Fixed to the bottom edge so it cannot push the panel grid around
- * mid-action, and built from the vocabulary already in this file: a 2px keyline,
- * square corners, the vermilion wash that §8 reserves for broken-and-overdue, and
- * black text on it in both themes (the wash resolves to the full ink in dark). */
+ * mid-action, and built from the vocabulary already in this file: a 2px keyline, the
+ * vermilion wash that §8 reserves for broken-and-overdue, and black text on it in both
+ * themes (the wash resolves to the full ink in dark). It rounds its top two corners only —
+ * left, right and bottom are pinned to the viewport, the top is free, and a pinned element
+ * is not exempt, only its pinned edges are. (This comment used to cite exemption 3, which
+ * that ruling retired; a stale comment beside a live rule is how the next reader learns
+ * the wrong rule.) */
 .oops{position:fixed;left:0;right:0;bottom:0;z-index:10;
   display:flex;align-items:center;gap:var(--sp-3);
   padding:var(--sp-3) var(--sp-5);
+  border-radius:var(--radius-3) var(--radius-3) 0 0;
   background:var(--verm-wash);border-top:2px solid var(--rule);color:#000}
 .oops[hidden]{display:none}
 .oops .oops-what{flex:1;min-width:0;font-size:14px;line-height:20px}
@@ -1248,55 +1518,6 @@ details.panel:not([open]){padding-bottom:0}
   .goalrow .gr-n,.goalrow .gr-l{white-space:normal}
   .src .ts.clip{max-width:none}
 }
-
-/* ── Corners (owner ruling 2026-08-07) ─────────────────────────────────────
- * The system was square everywhere by rule; it is curved everywhere now. One
- * grouped block rather than a radius appended to each of a hundred component
- * rules, so the scale stays visible as a scale and the next component inherits a
- * decision instead of copying a number.
- *
- * Assigned by what a box IS, not by where it sits: `--radius` for anything a hand
- * acts on, `--radius-lg` for the containers those things sit inside, `--radius-sm`
- * for marks small enough that 4px would swallow the shape. A curve reads as
- * intentional only while it stays proportional to its box.
- *
- * `overflow:hidden` on the panels is load-bearing, not tidiness: every panel opens
- * with a full-bleed black banner, and a square banner inside a rounded panel puts
- * its corners outside the curve — the exact tell that a radius was bolted on. The
- * banner keeps its own square corners and the panel clips them. */
-
-/* containers */
-.panel,.gcard,.steppanel,.rev,.addform,.salert,.wk7,.wkgwrap,.wk7wrap,.dstrip,
-.sws,.kpi,.mplot{border-radius:var(--radius-lg)}
-.panel,details.panel{overflow:hidden}
-/* And the banner rounds its own top corners rather than trusting the clip. A
- * <summary> inside a <details> is the one child WebKit does not reliably clip to its
- * parent's radius, and the banner is exactly that — so the panel's curve was there in
- * the CSS and invisible on the page, which is the same as not being there. */
-.panel > .banner,details.panel > summary.banner{
-  border-radius:var(--radius-lg) var(--radius-lg) 0 0}
-
-/* things a hand acts on */
-/* Anything with a keyline of its own is a box, and a box takes the scale. The list
- * is written from the sheet rather than from memory — every rule declaring a full
- * `border:` was checked against it, and the ones that had been missed were exactly the
- * ones nobody looks at while editing the component they belong to: the awaiting row
- * carries its state on the ROW rather than on a card class, the protected block is a
- * schedule row wearing a hatch, the timeline event is positioned rather than flowed.
- * `test_every_bordered_box_is_on_the_radius_scale` now does this checking. */
-.card,.row.card,.btn,button.toggle,.chip,.kbd,.box,.track,.tot,.src,.rmrow,
-.sgoal,.wbc,.whd,.wev,.sq,.tl,.pager,.tl .ev,.cap .over,
-#panel-awaiting .row,.row.sched.k-protected{border-radius:var(--radius)}
-
-/* marks: small enough that the default would round them away */
-.fill,.mcol > i,.bar .b,.track.mini,.track.thin,.track.wee,
-.reel,.legend i,.hmf,.atl summary::after{border-radius:var(--radius-sm)}
-
-/* A fill inside a track keeps the track's inner curve rather than its own, or the
- * two corners disagree by the width of the keyline. */
-.track > .fill{border-radius:var(--radius-sm) 0 0 var(--radius-sm)}
-.track > .fill[style*="width:100%"]{border-radius:var(--radius-sm)}
-
 /* ── Motion (design-system.md §9) ───────────────────────────────────────────
  * One layer, at the bottom, rather than a transition tucked into each component:
  * motion is a system-level decision here in the same way the ink set is, and a

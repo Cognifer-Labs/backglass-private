@@ -25,10 +25,10 @@ BASE = ROOT / "backglass" / "web" / "templates" / "base.html"
 def _sheet() -> str:
     """The stylesheet with its comments removed.
 
-    Comments in this file quote the rules they follow, and a rule that greps for
-    forbidden text finds its own explanation otherwise — which is how
-    `test_no_shadows_no_gradients_outside_the_hatch` had to be worked around by
-    rewording a paragraph rather than by fixing a declaration.
+    Comments in this file quote the rules they follow — a `transition` named in a
+    paragraph explaining why there is no transition would be read as a declaration by
+    every assertion below. `test_no_shadows_no_gradients_outside_the_hatch` learned the
+    same lesson from the other end and strips comments for the same reason.
     """
     return re.sub(r"/\*.*?\*/", "", CSS.read_text(), flags=re.S)
 
