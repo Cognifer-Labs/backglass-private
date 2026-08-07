@@ -221,6 +221,9 @@ FROZEN_CHECKSUMS = {
     "0018_commitment_distinct.sql": (
         "7055c77780a880dec1b5cbdb7d1cc8803901d65200f95618808427affbe40f94"
     ),
+    "0019_model_call.sql": (
+        "8bfe7567ee9f8ff6e1b5401862ab32d40405ec90c684799958eb627ac912ad71"
+    ),
 }
 
 

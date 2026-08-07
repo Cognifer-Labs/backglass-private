@@ -40,6 +40,7 @@ from backglass.extract import triage as tier1
 from backglass.extract.client import ModelAuthError, ModelClient, RateLimited
 from backglass.extract.schemas import CommitmentExtraction
 from backglass.ledger import USER_ID, Ledger
+from backglass.telemetry import Metered, write_calls
 
 TRIAGE_PROMPT = "triage"
 TRIAGE_BATCH_PROMPT = "triage-batch"
@@ -73,6 +74,11 @@ class SyncReport:
     review_queue: int = 0
     writes: int = 0
     spend_cents: int = 0
+    #: One record per model call this run made, written once the run row exists (the
+    #: run does not exist while its calls are being made). Phase 0 of the backend plan:
+    #: run.spend_cents is a single total over two tiers and can answer nothing about
+    #: where the time or the money actually went.
+    calls: list[Any] = field(default_factory=list)
     degraded: bool = False
     #: Why, when `degraded`. 'spend_cap' | 'rate_limit:triage' | 'rate_limit:extract'. A
     #: bare boolean made every surface assume the cap, so a rate-limited run would have
@@ -283,7 +289,7 @@ def _sync(
 
     _ingest(conn, ledger, connectors, report, dry_run=dry_run)
     _rule_pass(conn, ledger, settings, report)
-    _triage_pass(conn, ledger, settings, client, cap, report)
+    _triage_pass(conn, ledger, settings, Metered(client, "triage", report.calls), cap, report)
 
     # Learned-noise auto-promotion, default off. Runs after triage so today's verdicts
     # count as evidence; promotions take effect on the *next* run's rule pass. Domain
@@ -303,7 +309,9 @@ def _sync(
     # just refused triage, so every item would come back RateLimited and the only product
     # of the pass would be a longer error list.
     if extract and not report.rate_limited:
-        _extract_pass(conn, ledger, settings, client, cap, report)
+        _extract_pass(
+            conn, ledger, settings, Metered(client, "extract", report.calls), cap, report
+        )
 
     # Review-day tallies → checkpoints. Deterministic — the data arrives structured,
     # so this is code, not a model call, and it costs nothing on the cap. Skipped on
@@ -584,7 +592,14 @@ def _triage_pass(
     # dropped on a 500-char excerpt the model hedged about. Below the threshold the
     # per-item path runs exactly as before.
     if len(pending) >= settings.triage_batch_min:
-        pending = _batch_triage_pass(ledger, settings, client, cap, report, pending)
+        pending = _batch_triage_pass(
+            ledger,
+            settings,
+            Metered(client, "triage_batch", report.calls),
+            cap,
+            report,
+            pending,
+        )
         if not pending or report.rate_limited:
             return
 
@@ -1006,9 +1021,13 @@ def record_run(
     degraded: bool = False,
     degrade_reason: str | None = None,
     errors: list[str] | None = None,
-) -> None:
-    """One run row. Shared with batch.py so `costs`, `status`, and spend_this_month
-    see batch collections without knowing they exist."""
+) -> int:
+    """One run row, and its id. Shared with batch.py so `costs`, `status`, and
+    spend_this_month see batch collections without knowing they exist.
+
+    The id is returned because `model_call` rows are written after this: a call is made
+    before the run it belongs to exists, so the run stamps its calls rather than the
+    other way round."""
     import json
 
     conn.execute(
@@ -1031,10 +1050,11 @@ def record_run(
             json.dumps(errors) if errors else None,
         ),
     )
+    return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
 
 
 def _record_run(conn: sqlite3.Connection, report: SyncReport, started_at: str) -> None:
-    record_run(
+    run_id = record_run(
         conn,
         started_at=started_at,
         fetched=report.fetched,
@@ -1047,3 +1067,7 @@ def _record_run(conn: sqlite3.Connection, report: SyncReport, started_at: str) -
         degrade_reason=report.degrade_reason,
         errors=report.errors or None,
     )
+    # After the run row, never before: a call happens while the run does not yet exist,
+    # so the run stamps its calls. A crash between the two leaves the calls unstamped
+    # rather than lost — run_id is nullable for exactly that.
+    write_calls(conn, report.calls, run_id)

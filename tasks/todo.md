@@ -26,14 +26,16 @@ telemetry is a per-run total that mixes triage and extraction.
 
 Nothing below Phase 1 can be judged without this, and it is the smallest change here.
 
-- [ ] 0.1 A `model_call` row per completed call: tier (triage/triage_batch/extract),
+- [x] 0.1 A `model_call` row per completed call: tier (triage/triage_batch/extract),
       backend, model, item count, prompt chars, wall-clock ms, reported cost, outcome
       (ok / retry / parked / rate-limited). Written on the same seam the run's spend
       already crosses, so no new failure path.
-- [ ] 0.2 `backglass costs --calls` reads it: median and p95 wall-clock per tier, cost
+- [x] 0.2 `backglass costs calls` reads it: median and p95 wall-clock per tier, cost
       per call against payload size, and the ratio the 2026-07-30 lesson implies — how
       much of a call is session overhead rather than payload.
-- [ ] 0.3 One week of real runs before Phase 2 is designed. Phase 2's whole premise is
+- [ ] 0.3 One week of real runs before Phase 2 is designed. Filling from the next sync;
+      `backglass costs calls` says "no calls recorded" until then, which is the honest
+      answer rather than an empty table pretending to be a measurement. Phase 2's whole premise is
       that per-call overhead dominates; that premise is currently a lesson from a
       different context, not a measurement of this pipeline.
 
@@ -45,7 +47,16 @@ Nothing below Phase 1 can be judged without this, and it is the smallest change 
 The precision work. Highest measured value, lowest risk, and half of it already landed.
 
 - [x] 1.1 Barren-keep evidence in `learned_noise` (commit 2af4411). 70 → 140 candidates.
-- [ ] 1.2 **Run it.** `backglass noise suggest`, read the evidence, promote. Owner action;
+- [x] 1.2 **Ran it** against the real ledger: 142 address candidates and 4 domain
+      candidates, and running it is what found the blast-radius defect below. Nothing
+      promoted — that decision is the owner's, and the list needs their eye on the .edu
+      senders in particular.
+- [x] 1.2a **Domain blast radius.** `reply.asu.edu` was offered as a domain candidate
+      while Dean of Students, the McKenna programme and the College of Liberal Arts sat
+      on it with seven extracted records between them. The per-address disqualifier was
+      sound and the promotion it fed was one level wider than the check. A domain is now
+      offered only when every address on it qualifies. My own regression, one commit old.
+- [ ] 1.2b **Promote.** `backglass noise suggest`, read the evidence, promote. Owner action;
       needs the merge first (migration 18 is not on this branch). Until then all 417
       barren-bulk calls repeat every sync.
 - [ ] 1.3 Template-hash drops. 4,686 items already carry a `template_hash` and

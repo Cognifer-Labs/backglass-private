@@ -2181,6 +2181,38 @@ def costs_summary(ctx: typer.Context) -> None:
             )
 
 
+@costs_app.command("calls")
+def costs_calls(
+    days: Annotated[int, typer.Option("--days", help="Window")] = 7,
+) -> None:
+    """What a model call costs and takes, per tier. Phase 0 of the backend plan.
+
+    `run.spend_cents` is one total over two tiers and answers none of the questions the
+    plan turns on. This does: median and p95 wall-clock, mean payload, and cost per
+    call, so the case for batching extraction is measured rather than argued.
+    """
+    from backglass import costs as costs_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    rows = costs_mod.by_call_tier(conn, days=days)
+    if not rows:
+        typer.echo(
+            f"no calls recorded in {days}d — model_call starts filling on the next sync"
+        )
+        raise typer.Exit()
+    typer.echo(f"{'tier':<14}{'calls':>7}{'fail':>6}{'median':>9}{'p95':>9}"
+               f"{'chars':>9}{'cents':>9}{'per call':>10}")
+    for r in rows:
+        typer.echo(
+            f"{r['tier']:<14}{r['calls']:>7}{r['failures']:>6}"
+            f"{str(r['median_ms']) + 'ms':>9}{str(r['p95_ms']) + 'ms':>9}"
+            f"{int(r['mean_chars'] or 0):>9}{r['cents']:>9}{r['cents_per_call']:>10}"
+        )
+    typer.echo("cost is imputed on subscription auth — see `backglass costs`")
+
+
 @costs_app.command("runs")
 def costs_runs(
     limit: Annotated[int, typer.Option("--limit", help="How many runs")] = 15,

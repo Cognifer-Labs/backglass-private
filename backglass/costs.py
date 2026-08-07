@@ -159,3 +159,47 @@ def top_senders(
     for row in rows:
         row["approx_cents"] = round(row["items_extracted"] * month_costs.avg_cents_per_item)
     return rows
+
+
+def by_call_tier(conn: sqlite3.Connection, days: int = 7) -> list[dict[str, Any]]:
+    """What a call in each tier actually costs and takes. Phase 0 of the backend plan.
+
+    Medians and p95 rather than means: the distribution here is what the plan turns on.
+    A mean hides the difference between "every call pays a fixed session overhead" and
+    "a few big payloads dominate", and those two readings point at opposite fixes —
+    batching in the first case, truncation in the second.
+
+    Percentiles are computed in SQLite with a window function rather than in Python so
+    the whole readout stays one query; `NTILE` is avoided because it splits ties
+    arbitrarily on small samples, which is exactly the sample size this will have in its
+    first week.
+    """
+    return [
+        dict(r)
+        for r in conn.execute(
+            """
+            WITH ranked AS (
+              SELECT tier, duration_ms, cost_usd, prompt_chars, outcome,
+                     ROW_NUMBER() OVER (PARTITION BY tier ORDER BY duration_ms) AS rn,
+                     COUNT(*)     OVER (PARTITION BY tier)                      AS n
+              FROM model_call
+              WHERE user_id = :user_id AND started_at >= :since
+            )
+            SELECT tier,
+                   n                                                   AS calls,
+                   SUM(outcome != 'ok')                                AS failures,
+                   ROUND(AVG(prompt_chars))                            AS mean_chars,
+                   MAX(CASE WHEN rn = (n + 1) / 2 THEN duration_ms END) AS median_ms,
+                   MAX(CASE WHEN rn = MAX(1, CAST(n * 0.95 AS INTEGER))
+                            THEN duration_ms END)                       AS p95_ms,
+                   ROUND(SUM(cost_usd) * 100, 2)                        AS cents,
+                   ROUND(SUM(cost_usd) * 100 / n, 3)                    AS cents_per_call
+            FROM ranked GROUP BY tier ORDER BY cents DESC
+            """,
+            {"user_id": USER_ID, "since": _days_ago(days)},
+        )
+    ]
+
+
+def _days_ago(days: int) -> str:
+    return (datetime.now(UTC) - timedelta(days=days)).isoformat()

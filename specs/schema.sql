@@ -482,3 +482,20 @@ CREATE TABLE commitment_distinct (
   decided_at TEXT    NOT NULL,
   UNIQUE (user_id, low_id, high_id)
 );
+
+CREATE TABLE model_call (
+  id           INTEGER PRIMARY KEY,
+  user_id      INTEGER NOT NULL DEFAULT 1,
+  run_id       INTEGER REFERENCES run(id),
+  tier         TEXT    NOT NULL,          -- triage | triage_batch | extract
+  model        TEXT    NOT NULL,
+  prompt_chars INTEGER NOT NULL DEFAULT 0,
+  duration_ms  INTEGER NOT NULL DEFAULT 0,
+  cost_usd     REAL    NOT NULL DEFAULT 0,
+  outcome      TEXT    NOT NULL,          -- ok | error | rate_limited | auth
+  started_at   TEXT    NOT NULL
+);
+
+CREATE INDEX idx_model_call_run ON model_call (user_id, run_id);
+
+CREATE INDEX idx_model_call_tier ON model_call (user_id, tier, started_at);
