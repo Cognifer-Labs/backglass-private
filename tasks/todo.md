@@ -108,6 +108,15 @@ Proof in rendered pixels, roadmaps page, tile heights and gaps in CSS px:
 Tile 1 was 2px short (the missing top edge), the washed tile 7px short (12px padding) and
 glued to its neighbour at 8px. After: one rhythm.
 
+Commitment cards, same method: every card is exactly 12px shorter (89/112/112/133 →
+79/100/100/121), which is one wrap times the 16px→4px row-gap, while the card-to-card gap
+stays 12.0 throughout. Inside-tile 4px, between-tile 12px — the inversion is gone.
+
+**Two changes are not covered by any of that**, because a static frame cannot show them:
+the hover-revealed `.acts` row (its seam goes 24px → 12px as a declared side effect of the
+card's row-gap) and the disclosed card inside an open `.goalrow`. Both were reasoned through
+the cascade, neither was rendered. If either looks wrong in use, that is where to look.
+
 ## Found and deliberately not fixed
 
 - **Overlapping week blocks touch.** A lane-1 block starts at exactly 50% and its lane-0
