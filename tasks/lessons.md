@@ -625,3 +625,16 @@ deterministic given the id.
   that other rules are meant to override, keep every argument to a single class and assert
   it — a documented precedence order with nothing enforcing it is a comment, not a rule.
   Found by looking at dark mode, not by any test, which is why the test exists now.
+
+- 2026-08-07 | `test_brief.py` asserted `border-radius:{render.RADIUS_CHIP}` — the constant
+  checking itself. The radius scale moved to 6px, `RADIUS_CHIP` stayed at 4px, and the brief
+  shipped chips a different size from the dashboard's with the test green throughout. The
+  same shape had already appeared twice that week: `tokens.json` and design-system.md both
+  quoted contrast ratios computed against a paper colour neither of them still declared, and
+  they agreed with each other perfectly. | A checker keyed to a mirror cannot detect drift in
+  that mirror, and mutual agreement between copies is not evidence — they can be wrong
+  together, which is the normal way this fails. A test must read the value from its declared
+  authority (or recompute it from first principles) or it is testing that assignment works.
+  When a value must be copied because the medium cannot resolve the original — email has no
+  custom properties — the copy needs a machine-checked link back, not a comment naming its
+  source. `scripts/truth.py` is that link now.

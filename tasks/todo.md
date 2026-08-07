@@ -1,72 +1,104 @@
-# Rounding + tiles — shipped to main
+# One truth per fact, and a tool that enforces it
 
-**Goals, in the order they were given (2026-08-06 → 07):**
+**Goal (owner, 2026-08-07):** "resolve everything and make sure everything has a state that
+is the truth, and any conflictors will be removed if they are stale — but if a conflictor is
+more recent than the state doc then the user will be asked."
 
-1. "go through the app and implement principle of rounding to all elements … use a workflow
-   at the end for verification"
-2. "add more rounding and screenshot to find any ui problems"
-3. "all content should be separated in some way, each having individual tiles, highlighted a
-   different colors or outlined"
-4. "every item separated by MORE than a thin line — by color, or tile, or dark outline.
-   Choose and apply throughout"
-5. "update real app and check and improve rounding"
+## Why this exists
 
-## State
+Four times in two days a fact was written down in more than one place and the copies
+disagreed, silently, with a green suite:
 
-**Main is at `1989626`.** The branch fast-forwarded onto it — no force, no rewrite, nobody's
-working tree touched. 1616 tests passing.
+- `tokens.json` declared paper `#FAF3DF` while `tokens.css` shipped `#FCF8EC` — and *every*
+  published `onPaper` ratio in the repo had been computed against the old colour.
+- `tasks/plan.md` still stated the retired "no rounded corners" rule.
+- The `.oops` comment cited an exemption its own commit had retired.
+- **Live right now:** `backglass/brief/render.py` sets `RADIUS_CHIP = "4px"` against a
+  comment binding it to `--radius-2`, which the rescale moved to **6px**. So the morning
+  brief's chips render 4px while the dashboard's render 6px. `test_brief.py` asserts
+  `border-radius:{render.RADIUS_CHIP}` — the checker is keyed to the mirror, so the value
+  and its test are wrong together and green together.
 
-## What shipped
+That last one is the whole thesis. **A checker keyed to a mirror cannot detect drift in that
+mirror.** Agreement between two copies can be wrong in both at once; only a value recomputed
+or re-read from its declared authority can be trusted.
 
-**The radius scale (§7).** `--radius-1` 2px marks, `--radius-2` 4px controls, `--radius-3`
-6px containers. Nesting is concentric, and the inset is padding **plus border**, because a
-radius is measured on the border box. An element pinned on some edges rounds only the free
-ones — the failed-write strip's top, the NOW tab's left, a chart column's top.
+## Two definitions, stated because the wording could be read literally
 
-**The tile register (§7b).** Every content unit is a bounded tile: `--fill-mild` surface, 2px
-keyline, `--radius-3`, separated by a gap instead of a hairline. The colour rides on the
-**keyline**, never the fill — `--*-wash` resolves to the full saturated ink in dark, so a
-coloured fill on every tile is a wall of blocks. Use the **raw inks** for a tile keyline,
-never `--*-line`: those resolve to `var(--rule)` in dark and collapse every category into one
-paper outline. Four category inks; gold and vermilion stay out so state keeps its alarms.
+- **"Removed"** means *corrected to the authority's value*, not the file deleted. Taking it
+  literally would delete the design-system's tables, which are the documentation.
+- **"The user will be asked"** means the tool refuses to auto-fix, exits non-zero, and names
+  the conflict. In an interactive session that is a question; in CI it is a failure.
 
-Specificity: **state beats kind beats category.**
+## The mechanism
 
-## Verified
+`scripts/truth.py` — a registry plus a checker.
 
-Two adversarial workflow passes (22 + 25 agents) over the rounding work; every confirmed
-finding is fixed. The tile work was verified by eye against the real database in both themes,
-plus the suite.
+Each **fact** declares one **authority** (`file` + extractor) and N **mirrors**. An extractor
+returns `(value, line_number)`.
 
-The catches worth remembering, all of them things only looking could find:
-- A stray `}` had been deleting the base `.panel` rule since commit 8ea8ba9 — no panel seams,
-  no closing padding, the `min-width:0` overflow fix inert. Hidden because the file also
-  never closed its last `@media`, so the brace count balanced at 514/514.
-- The reel's concentric example omitted its own border (4px where 6px was right).
-- Category inks collapsed to a single colour in dark while looking correct in light.
-- Goal-card target rows sat flush against the card frame, colliding curves.
-- A card's hover cue was invisible inside the new folds — same token as the fold itself.
+For each mirror:
 
-## Open, and the owner's call
+| | |
+|---|---|
+| values agree | **OK** |
+| differ, mirror's line is **older** than the authority's | **STALE** → `--fix` rewrites it |
+| differ, mirror's line is **newer** | **ASK** → no auto-fix, non-zero exit |
 
-- **`design/tokens.json` declares paper `#FAF3DF`**; every other surface says `#FCF8EC`.
-  Nothing in the repo reads that file, so the drift is silent and permanent. Correct the
-  mirror or delete it.
-- **The desktop app is rebuilt but NOT installed.** The bundle is at
-  `desktop/src-tauri/target/release/bundle/macos/Backglass.app` (62MB), signed with the
-  stable Apple Development identity, and its frozen `dashboard.css` is byte-identical to the
-  worktree's. Copy it over `/Applications/Backglass.app` yourself — the build script
-  deliberately does not install. Signing is stable now (`8d5376a`), so the Downloads
-  permission prompt should be a one-time cost rather than per-rebuild.
-- **A goal card with only milestones and no targets** was never rendered; the inset rule
-  covers both cases but only one was seen.
+Recency is **per line**, via `git blame -L n,n`, not file mtime — a file touched for an
+unrelated reason must not read as "recent". An uncommitted mirror line counts as newest and
+therefore ASKs, which is right: an uncommitted edit is fresh human intent.
 
-## Notes for whoever is next
+**The escalation loop is the point.** If the user rules that a newer mirror is correct, the
+fix is to update the *authority* and re-run — every other mirror then goes STALE and
+auto-fixes. One decision propagates everywhere.
 
-- `--*-line` tokens are for **filled** components — the fill carries the colour and the line
-  is the rule colour. Anything relying on a coloured **line** must use the raw ink.
-- `panel_slice` is anchored on `id="panel-…"`. The tile work was pure CSS, so nothing that
-  couples a test to markup had to move.
-- Two sessions shared this repo all day. Every integration was a rebase from a worktree; the
-  shared checkout was never touched, and migration 19 was borrowed untracked to serve locally
-  and removed before committing.
+## Load-bearing constraint
+
+**A failed extraction is a loud error, never a skip.** If a pattern stops matching because a
+table was reformatted, the tool must fail rather than silently declare the fact clean. A
+checker that is green while blind is worse than no checker — that is exactly how the
+`onPaper` figures survived.
+
+## Scope fences
+
+- **Values, not prose.** Hexes, px scales, ratios extract cleanly. The exemption lists in
+  `design-system.md` vs the `dashboard.css` header are prose; regex over prose is where this
+  turns into a research project. Prose consistency stays with the adversarial workflow
+  reviews, which have caught it twice already.
+- **History is not a conflictor.** `tasks/lessons.md` and `tasks/todo.md` deliberately record
+  superseded values ("4px where 6px was right"). Excluded by design, or the tool corrects its
+  own history.
+- **Build artifacts excluded** — the desktop bundle's frozen copies are stale until rebuilt,
+  by design.
+- **Seed with the burned classes only.** A fact earns registry membership by having drifted.
+  Enumerating all truth in the repo up front is how this becomes shelfware.
+
+## Steps
+
+- [ ] 1. `scripts/truth.py`: registry, extractors, git line-recency, classify, `--fix`.
+- [ ] 2. Seed the registry: paper, the five inks, neutral-500, the three radius steps, the
+      border weight — across `tokens.css` (authority), `tokens.json`, `design-system.md`,
+      `preview.html`, `wordmark.svg`, `render.py`, `validate-palette.mjs`, `CLAUDE.md`.
+- [ ] 3. Run it on the clean tree. **It must find `RADIUS_CHIP` as STALE** — that is the
+      tool's acceptance test, and it is why the fix ships *with* the tool rather than before.
+- [ ] 4. `--fix` it, and fix `test_brief.py` to assert against the authority rather than the
+      mirror it is supposed to be checking.
+- [ ] 5. `tests/test_truth.py` so drift fails the suite like everything else.
+- [ ] 6. Prove both directions by mutation: seed a stale mirror → STALE; commit a mirror
+      change newer than the authority → ASK.
+
+## Also registering, because it claims authority it does not have
+
+`scripts/validate-palette.mjs:14` hardcodes `PAPER = '#FCF8EC'`. It is the declared source of
+truth for every contrast figure, but it is itself an unregistered mirror of `tokens.css` — if
+paper changes again, the validator will validate the wrong colour while claiming to be the
+authority.
+
+## Definition of done
+
+1. `uv run pytest` green; `node scripts/validate-palette.mjs` green.
+2. `uv run python scripts/truth.py` reports zero STALE and zero ASK on a clean tree.
+3. `RADIUS_CHIP` agrees with `--radius-2`, and `test_brief.py` checks it against the
+   authority.
+4. Both classifications proved by mutation.

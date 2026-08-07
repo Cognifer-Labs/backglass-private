@@ -48,7 +48,7 @@ FONT = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-se
 # border-radius outright and renders the chip square, which is what it looked like
 # yesterday — a graceful degrade, not a defect. The section bar keeps its square corners
 # for the same reason .banner does: it runs to both edges of the column.
-RADIUS_CHIP = "4px"
+RADIUS_CHIP = "6px"
 
 #: design-system.md §4. Every entry carries a glyph and a label as well as the ink,
 #: because rule 3 in §8 is "status ships as icon plus label, never color alone".
