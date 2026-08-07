@@ -124,6 +124,59 @@ def totals_for(conn: sqlite3.Connection, goal_id: int) -> list[dict[str, Any]]:
     return totals
 
 
+def unattributed(totals: list[dict[str, Any]]) -> dict[str, int]:
+    """How much of this goal's logged total names no activity.
+
+    The registry can say "0 of 15 slots · 0 h" while the bars above it say 54, and
+    nothing on the page connects the two — the hours are real, they are just filed
+    under no extracurricular, so `amcas-export` cannot see them. Counting it here
+    makes the gap a visible number instead of a silent one.
+
+    Summed from `totals`' own entry rows rather than from a new `activity_id IS NULL`
+    aggregate, for three reasons: it is scoped to this goal, so a second active goal's
+    "Founder/COO discovery calls" total cannot fold call counts into a figure the page
+    calls hours; it touches no timestamp, so none of the mixed-offset rules apply; and
+    it is the same rows the bars and the chart sum, so the three cannot disagree.
+    """
+    entries = [e for t in totals for e in (t.get("entries") or [])]
+    orphans = [e for e in entries if not e["activity"]]
+    return {
+        "hours": sum(int(e["delta"] or 0) for e in orphans),
+        "entries": len(orphans),
+    }
+
+
+def preselect_activity(
+    conn: sqlite3.Connection, acts: list[dict[str, Any]], goal_id: int
+) -> dict[int, int]:
+    """`{target_id: activity_id}` for every total exactly one activity can feed.
+
+    Logging costs one line, and the line the owner skips is the activity — the select
+    opens on "no activity" and an unnamed hour is the result. Where the answer is not
+    ambiguous, the form should already hold it.
+
+    Only where it is unambiguous: two clinical activities cannot both be preselected,
+    so neither is. The default is chosen by consequence rather than by likelihood — a
+    wrong attribution prints the activity's name on the entry line and comes back out
+    through the unlog control beside it, while an unattributed hour is one this page
+    could not repair at all without a date field the log form does not have.
+
+    `goal_id` is passed through deliberately: without it `total_target_for` scans every
+    active goal and picks a winner by row order, which reads deterministic and is not.
+    """
+    out: dict[int, int] = {}
+    for act in acts:
+        target = activities.total_target_for(conn, str(act["category"]), goal_id=goal_id)
+        if target is None:
+            continue
+        tid = int(target["id"])
+        # Second claimant on the same total: the answer is ambiguous, so there is no
+        # default. -1 is the tombstone; it is filtered out below rather than deleted,
+        # because a third activity must not resurrect the first one's claim.
+        out[tid] = act["id"] if tid not in out else -1
+    return {tid: aid for tid, aid in out.items() if aid != -1}
+
+
 def progress_context(
     conn: sqlite3.Connection,
     settings: Settings,
@@ -151,10 +204,17 @@ def progress_context(
     detail["hours"] = hours.monthly(
         detail["totals"], today=day, target_date=detail["r"].get("target_date")
     )
-    detail["activities"] = activities.list_with_hours(conn)
+    # Each activity carries what Work & Activities would still be missing from it, so
+    # the checklist prints where the record is made rather than in an export the owner
+    # has no reason to run until the application is due.
+    detail["activities"] = [
+        {**a, "gaps": activities.export_gaps(a)} for a in activities.list_with_hours(conn)
+    ]
     detail["categories"] = activities.CATEGORIES
     detail["amcas_slots"] = activities.AMCAS_SLOTS
     detail["amcas_meaningful"] = activities.AMCAS_MOST_MEANINGFUL
+    detail["unattributed"] = unattributed(detail["totals"])
+    detail["preselect"] = preselect_activity(conn, detail["activities"], goal_id)
     detail["today"] = day
     # Year headings only earn their rule when the timetable actually spans years —
     # a lone "2026" over every row of a quarterly path is wallpaper.

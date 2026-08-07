@@ -213,3 +213,128 @@ class TestOnThePage:
         assert "1 activity" in page
         assert "1 of 15 slots" in page
         assert "7 h" in page
+
+
+class TestUnfiledHours:
+    """Hours the bars count and the registry cannot.
+
+    The table made the gap visible by contradiction — "0 of 15 slots · 0 h" above a
+    54-hour bar — so the page now states it, and the log form stops producing more of
+    it where the answer is not ambiguous.
+    """
+
+    @pytest.fixture
+    def client(self, conn: sqlite3.Connection, settings: Settings) -> TestClient:
+        del conn
+        return TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
+
+    def _start_medical(self, client: TestClient, conn: sqlite3.Connection) -> tuple[int, int]:
+        client.post("/roadmaps/start/medical", follow_redirects=True)
+        rid = conn.execute("SELECT id FROM roadmap").fetchone()["id"]
+        tid = conn.execute(
+            "SELECT t.id FROM target t JOIN roadmap r ON r.goal_id = t.goal_id "
+            "WHERE r.id = ? AND t.kind = 'total' AND t.title LIKE 'Clinical%'",
+            (rid,),
+        ).fetchone()["id"]
+        return rid, tid
+
+    def _add(self, client: TestClient, rid: int, title: str, category: str) -> None:
+        client.post(f"/roadmaps/{rid}/activities", data={"title": title, "category": category})
+
+    def test_an_hour_naming_no_activity_is_counted_and_said(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        rid, tid = self._start_medical(client, conn)
+        page = client.post(
+            f"/roadmaps/{rid}/totals/{tid}/log", data={"amount": "6", "note": ""}
+        ).text
+        assert "6 unfiled" in page
+        assert "cannot appear in Work &amp; Activities" in page
+        # The repair named is the one that keeps the dates — the log form has no date
+        # field, so an unlog-and-relog here would move the entry to today.
+        assert "backglass log --on" in page
+
+    def test_nothing_is_said_when_every_hour_is_filed(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        rid, tid = self._start_medical(client, conn)
+        self._add(client, rid, "ED scribe", "clinical")
+        aid = conn.execute("SELECT id FROM activity").fetchone()["id"]
+        page = client.post(
+            f"/roadmaps/{rid}/totals/{tid}/log",
+            data={"amount": "6", "note": "", "activity_id": str(aid)},
+        ).text
+        assert "unfiled" not in page
+        assert "cannot appear in Work" not in page
+
+    def test_the_count_is_this_goal_s_hours_not_every_goal_s(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """A second active goal's total counts calls, not hours. A global
+        `activity_id IS NULL` sum would fold them into a figure this page calls
+        hours; summing the goal's own entry rows cannot."""
+        rid, tid = self._start_medical(client, conn)
+        # A second live goal with its own accumulator, counting calls rather than
+        # hours, and an entry on it that names no activity either.
+        conn.execute(
+            "INSERT INTO goal (user_id, title, horizon, target_date, definition_of_done,"
+            " status, created_at) VALUES (1, 'Raise a seed round', 'annual',"
+            " '2027-06-01', 'Termsheet signed', 'active', '2026-07-01T00:00:00Z')"
+        )
+        other_goal = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO target (user_id, goal_id, title, kind, total_count, active,"
+            " created_at) VALUES (1, ?, 'Investor conversations', 'total', 40, 1,"
+            " '2026-07-01T00:00:00Z')",
+            (other_goal,),
+        )
+        other_tid = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO checkpoint (user_id, target_id, occurred_at, source, delta)"
+            " VALUES (1, ?, '2026-08-02T09:00:00-07:00', 'manual', 9)",
+            (other_tid,),
+        )
+        conn.commit()
+        page = client.post(
+            f"/roadmaps/{rid}/totals/{tid}/log", data={"amount": "6", "note": ""}
+        ).text
+        assert "6 unfiled" in page
+        assert "15 unfiled" not in page
+
+    def test_the_only_activity_a_total_can_mean_is_preselected(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        rid, tid = self._start_medical(client, conn)
+        self._add(client, rid, "ED scribe", "clinical")
+        aid = conn.execute("SELECT id FROM activity").fetchone()["id"]
+        page = client.get(f"/roadmaps/{rid}").text
+        assert f'<option value="{aid}" selected>' in page
+        # ...and "no activity" gives up its selected state to it, or the browser
+        # keeps showing the first option while the form posts the second.
+        assert page.count('<option value="0" selected>no activity</option>') < 5
+
+    def test_two_claimants_on_one_total_preselect_neither(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """A wrong attribution is visible and removable; an ambiguous one guessed for
+        the owner is neither. Two clinical activities mean no default."""
+        rid, _ = self._start_medical(client, conn)
+        self._add(client, rid, "ED scribe", "clinical")
+        self._add(client, rid, "Free clinic", "clinical")
+        page = client.get(f"/roadmaps/{rid}").text
+        ids = [r["id"] for r in conn.execute("SELECT id FROM activity ORDER BY id")]
+        for aid in ids:
+            assert f'<option value="{aid}" selected>' not in page
+
+    def test_a_third_activity_does_not_resurrect_the_first_one_s_claim(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """The ambiguity tombstone has to survive later rows: with three clinical
+        activities the map must still hold no default for that total."""
+        rid, _ = self._start_medical(client, conn)
+        for title in ("ED scribe", "Free clinic", "Hospice volunteer"):
+            self._add(client, rid, title, "clinical")
+        page = client.get(f"/roadmaps/{rid}").text
+        ids = [r["id"] for r in conn.execute("SELECT id FROM activity ORDER BY id")]
+        for aid in ids:
+            assert f'<option value="{aid}" selected>' not in page

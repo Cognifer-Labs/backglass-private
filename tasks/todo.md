@@ -1,3 +1,284 @@
+# Plan: the model backend and the information processing
+
+Written 2026-08-06. Asked to plan how to improve both. Everything below is measured
+against a copy of the owner's real ledger (8,778 source items) or read out of the code —
+no figure here is an estimate, and where a number is missing that is itself a finding.
+
+## Baseline, as measured
+
+| Fact | Value | How it was measured |
+|---|---|---|
+| Triage kill rate | 86.3% | `triage_kill_rate.sql` against the live copy; docs/02 expects 90–95% |
+| Completed extractions that produced nothing | 539 of 611 | the miner's own query; 417 broadcast-marked |
+| Extraction shape | **one CLI subprocess per item**, 6 concurrent | `sync._extract_pass` + `max_concurrency=6` |
+| Triage shape | batched, 12 items per call | `triage_batch_size=12` |
+| Per-call cost/latency/tokens | **not recorded anywhere** | only `run.spend_cents` exists |
+| Imputed spend, last 14 runs | 166c | `SUM(run.spend_cents)`; imputed, never billed |
+| Open commitments | 103, mean confidence 0.68 | `commitment` |
+| Half-price batch lane | unusable here | needs an API key this machine does not have |
+| Template hashes recorded | 4,686 items | `source_item.template_hash` |
+
+Two of those lines carry the whole plan. **The expensive pass produced nothing 88% of the
+time it ran**, and **nobody can say what a single call costs or takes**, because the only
+telemetry is a per-run total that mixes triage and extraction.
+
+## Phase 0 — Instrument before optimising
+
+Nothing below Phase 1 can be judged without this, and it is the smallest change here.
+
+- [ ] 0.1 A `model_call` row per completed call: tier (triage/triage_batch/extract),
+      backend, model, item count, prompt chars, wall-clock ms, reported cost, outcome
+      (ok / retry / parked / rate-limited). Written on the same seam the run's spend
+      already crosses, so no new failure path.
+- [ ] 0.2 `backglass costs --calls` reads it: median and p95 wall-clock per tier, cost
+      per call against payload size, and the ratio the 2026-07-30 lesson implies — how
+      much of a call is session overhead rather than payload.
+- [ ] 0.3 One week of real runs before Phase 2 is designed. Phase 2's whole premise is
+      that per-call overhead dominates; that premise is currently a lesson from a
+      different context, not a measurement of this pipeline.
+
+**Proves:** whether batching extraction is worth its risk, and where the wall-clock in a
+90-second sync actually goes.
+
+## Phase 1 — Stop paying for mail nobody will ever act on
+
+The precision work. Highest measured value, lowest risk, and half of it already landed.
+
+- [x] 1.1 Barren-keep evidence in `learned_noise` (commit 2af4411). 70 → 140 candidates.
+- [ ] 1.2 **Run it.** `backglass noise suggest`, read the evidence, promote. Owner action;
+      needs the merge first (migration 18 is not on this branch). Until then all 417
+      barren-bulk calls repeat every sync.
+- [ ] 1.3 Template-hash drops. 4,686 items already carry a `template_hash` and
+      `noise templates` already reports verdict mix per shape. A shape with N sightings,
+      zero productive items and zero unresolved keeps is the same promotion argument as
+      a sender, one level up — and it catches the sender that rotates its From address,
+      which the address rule cannot.
+- [ ] 1.4 Capture the bulk headers at ingest. `List-Unsubscribe`, `List-Id`,
+      `Precedence`, `Auto-Submitted` are in the `.emlx` and are dropped on the floor: the
+      connector stores four keys and none of them is a header. A machine-intended
+      broadcast marker beats grepping the body for "unsubscribe", which is what the
+      barren rule has to do today. Only helps items ingested after it lands — the ledger
+      is immutable — so it is worth doing early or not at all. **Checked before writing
+      this:** `content_hash` is computed over author, title, stripped body and
+      `occurred_at` only, never `raw_json`, so adding header keys cannot change an
+      existing item's hash and cannot trip the 0002 immutability trigger on re-fetch.
+
+**Proves:** kill rate moving toward the 90–95% band, and the barren count falling on the
+next sync. Both are already queryable, so the check is a re-run of the same SQL.
+
+## Phase 2 — Amortise what a call costs, once Phase 0 says what that is
+
+Design after 0.3 reports. The candidate shapes, in the order I would try them:
+
+- [ ] 2.1 **Skip extraction the rules can already answer.** Cheapest possible win: an
+      item whose template hash has never produced anything does not need the expensive
+      pass at all. This is Phase 1's machinery reused at the extraction gate rather than
+      the triage gate, and it costs no new model behaviour.
+- [ ] 2.2 **Batch extraction the way triage is batched**, small (3–5) and with the same
+      escalate-on-doubt contract: anything the batch hedges on is re-read per item at
+      full context. The risk is real and specific — extraction is the pass that must
+      quote an exact source sentence (rule 1), and crowding items into one call is
+      exactly how a model starts attributing one item's sentence to another. So: a
+      fixture set that proves per-item provenance survives batching, before any of it
+      ships, and an eval rather than a unit test for the quality question.
+- [ ] 2.3 Only if 0.2 shows session overhead dominating and 2.1/2.2 are not enough:
+      a persistent CLI session. Deliberately last — the 2026-07-30 lesson is that a
+      session is exactly what made a 17-token answer cost 29,919 cache-creation tokens,
+      and `CLI_ISOLATION_FLAGS` exists to prevent it. Reopening that door needs a
+      measurement that justifies it and a test that pins the isolation that remains.
+
+**Proves:** cost per extracted record, before and after, from `model_call`.
+
+## Phase 3 — What the extraction gets wrong
+
+Quality rather than cost. Each of these is a known defect with a live count.
+
+- [ ] 3.1 **32 open commitments were already past due when they arrived.** A 120-day mail
+      window reaches back to April, so obligations met months ago land looking open. The
+      fix is a rule about the ingest window, not a model change: a deadline that predates
+      the item's own ingest by more than the window opens as `archived`, not `open`, and
+      says why. Until then the board's Overdue lane is mostly archaeology.
+- [ ] 3.2 **Six duplicate clusters, ~13 rows.** The same plan described in mail, in a
+      group chat and in a quick-add, worded differently enough that 0.85 fuzzy matching
+      misses. The engagement side already learned the answer here — ask the model
+      (`replaces_start_at`) rather than tune a threshold. The commitment side has
+      `resolves_what` and could carry the same signal for restatements.
+- [ ] 3.3 **Confidence is not calibrated.** Mean confidence on open commitments is 0.68
+      and the review threshold sits below that; nothing has ever checked whether a 0.68
+      is right two thirds of the time. This is an eval, and `evals/` is where it belongs
+      — it never gates CI (docs/10).
+
+## Rejected, with reasons
+
+- **A cheaper triage model.** Triage already runs on haiku — and that is the *effective*
+  value, not just the code default: the owner's `.env` sets `MODEL_BACKEND` and nothing
+  else, so `model_triage=haiku` / `model_extract=sonnet` stand. The waste is not the
+  model, it is the 417 calls that should never have been made.
+- **Raising the triage keep bar.** triage.md forbids it in terms, and correctly: a false
+  negative loses a commitment permanently. Every Phase 1 item improves precision without
+  touching the model's instruction to keep when in doubt.
+- **The half-price batch API lane.** Needs an API key this machine does not have, and the
+  owner's decision on 2026-08-03 was to fix imputed-spend enforcement rather than route
+  around it. Nothing here should assume that lane comes back.
+- **Reducing `max_concurrency` to save money.** It costs nothing on a subscription; it
+  only trades wall-clock. Latency is a Phase 0 question, not a cost one.
+
+## Sequencing
+
+0 → 1 → (measure) → 2 → 3. Phase 1.2 is the only item that produces a saving this week
+and it is the owner's to run. Phase 0 is a day's work and everything after it is a guess
+without it.
+
+---
+
+# The loop could not learn from its most expensive mistake
+
+Started 2026-08-06. Asked to make the information processing better on the claude_cli
+backend. The measurement came first, against a copy of the real ledger.
+
+## What the ledger said
+
+Triage kill rate 86.3% — above the 85% alarm, below docs/02's 90–95% expectation. Counted
+through the miner's own query: of 614 kept items, 611 reached a completed extraction and
+**539 of those produced no record at all** — no commitment, no engagement, no fact, no
+citation, no checkpoint. 417 of the 539 carried an unsubscribe footer. They are college marketing —
+scholarship blasts, admissions promos, "Apply in the next 48 hrs" — kept precisely
+because they are written to look like deadlines.
+
+Every one of those is a full `claude -p` subprocess. On this backend that is the
+dominant cost: the 2026-07-30 lesson measured ~30k cache-creation tokens per call.
+
+`learned_noise` exists for exactly this and held **zero rows**. Its evidence was "the
+model dropped it" and its disqualifier was "was it ever kept" — so the senders doing the
+most damage were structurally invisible to it, because their mail is *kept*.
+
+## The change
+
+- [x] 1. A second evidence class: a keep the expensive pass **settled to nothing**, on
+      mail carrying a broadcast marker. Four conditions, none removable — produced
+      nothing, extraction actually ran (`extraction_version`, unset when parked), and
+      the marker, which is what keeps this class away from human correspondents. A quiet
+      new colleague accumulates barren keeps too; personal mail has no unsubscribe link.
+- [x] 2. The disqualifier moves from "one keep, ever" to "anything ever came of it, or
+      anything is still open" — commitment, engagement, fact, citation or checkpoint
+      disqualifies forever, and an unanswered keep (pending or parked) disqualifies too.
+      The bar moves only for keeps the pass has actually answered, so this is not a
+      loosening.
+- [x] 3. `suggest` prints the two classes apart and a sample subject line. "78 barren"
+      and "78 drops" are different observations and the owner is deciding whether to
+      stop reading a sender forever.
+
+## Measured against the real ledger, old code vs new
+
+70 address candidates / 1,433 observations → **140 candidates / 3,066**. The newly
+visible half is exactly the senders whose mail was being kept and extracted for nothing:
+`webmaster@fastweb.com` alone is 62 drops and 78 barren keeps, and was previously
+disqualified by those same 78.
+
+## What this is not
+
+Tuning away triage.md's keep-bias. The model's "when in doubt, keep" is untouched; what
+changed is that its doubt, once resolved to nothing by the pass that costs real money,
+finally counts as the observation it always was. Promotion stays an explicit act, domains
+are still never auto-promoted, and `--all` still takes addresses only.
+
+## Found and not fixed
+
+Two display-metadata defects of the same shape, filed together rather than folded in.
+`_Tally.see` takes a string min/max over `occurred_at`, which carries mixed offsets —
+the shape `tasks/lessons.md` names four times — so the evidence window `suggest` prints
+can name the wrong day. And `sample_title` keeps the FIRST barren title it meets while
+the query has no ORDER BY, so "arbitrary row order wearing deterministic clothes", the
+2026-08-02 lesson exactly. Both misprint a line and change no decision: the promotion
+bar reads neither.
+
+---
+
+# What Work & Activities would still be missing
+
+Started 2026-08-06. Third pass on the log zone, and the last one the page needed.
+
+`amcas-export` has always known what each activity is short of — it prints
+"Organization: —", "Contact: — (add a supervisor entity)", "no dates logged", and a
+zero-character draft. But it only says so when it runs, and there is no reason to run it
+until the application is due, by which point the four years it summarizes are over. The
+checklist belongs on the page where the record is made.
+
+## Steps
+
+- [x] 1. `activities.export_gaps(row)` — the four fields the export renders a placeholder
+      for, named in the order it prints them. `EXPORT_FIELDS` is the one table both
+      surfaces read from. `list_with_hours` gains `note_entries` (every checkpoint
+      carrying words, not only hour-bearing ones, matching what the export concatenates).
+- [x] 2. A Needs column and a "N of M ready" rollup in the registry footer. Muted, no
+      chip, nowrap: a gap is a checklist item, not an alarm, and a wrapped two-line cell
+      made every incomplete row taller than a complete one, which reads as emphasis.
+- [x] 3. `tests/test_amcas_readiness.py` — including the anti-drift test that runs the
+      real `amcas-export` through `CliRunner` and asserts every word the page prints is
+      a placeholder the export actually emits, and that an activity the page calls ready
+      exports with none of them. Three mutations proven red (whitespace org, dates
+      requiring a hand-entered start, and a renamed gap word breaking the binding).
+
+## Why a checklist and not validation
+
+AMCAS's own caps are surfaced and never enforced — that is the module's stated rule, and
+an activity is perfectly loggable with all four gaps open. The dates rule follows the
+export exactly: `started_on` OR a logged span, so an activity with real logged hours
+never asks for a start date it does not need.
+
+---
+
+# Hours the bars count and the registry cannot
+
+Started 2026-08-06. Follows the log-zone rework. The table built there put two figures
+on one page that disagree: five bars totalling 54 hours, and an activity registry
+reading "0 of 15 slots · 0 h". Both are right. The hours are real and they name no
+activity, so `amcas-export` cannot see any of them — the page whose whole purpose is
+assembling Work & Activities from evidence had none to assemble, and said nothing.
+
+Confirmed on the live ledger before building: 54 logged hours, 54 of them unattributed,
+0 activities.
+
+## Why it kept happening
+
+The log form's activity select opens on "no activity" and the field is optional, so the
+line a person skips is exactly the one that makes the entry usable later. Nothing
+downstream complained, because nothing downstream was looking.
+
+## Steps
+
+- [x] 1. `unattributed(totals)` — summed from the same entry rows the bars and the chart
+      sum, not from a new `activity_id IS NULL` aggregate. That keeps it scoped to this
+      goal (a second live goal's "Investor conversations" total counts calls, and a
+      global sum would fold them into a figure this page calls hours), keeps it clear of
+      every timestamp rule, and makes it impossible for the three numbers to disagree.
+- [x] 2. `preselect_activity(conn, acts, goal_id)` — `{target_id: activity_id}` for every
+      total exactly one activity can feed, so the form already holds the answer where
+      there is only one. Two claimants on a total means no default, and the tombstone
+      survives a third: ambiguity is not resolved by row order. `goal_id` is passed
+      because `total_target_for` without it scans every active goal and picks by id.
+- [x] 3. The gap stated where it is discovered — in the registry, muted, only when the
+      figure is real, and with no repair button, because the web log form has no date
+      field and unlog-and-relog would move July's entries to today. `backglass log --on`
+      is the path that keeps the dates, so that is the path named.
+- [x] 4. Six tests. Three mutation-proven red: the global aggregate (folds the other
+      goal's calls in), the ambiguity tombstone (last activity wins), and both preselect
+      cases.
+
+## Verification
+
+1,601 green, ruff and mypy clean. Rendered against the seeded copy in both themes: five
+totals each opening on their one activity, "16 unfiled" in the rollup, and the line
+under it naming the consequence and the dated repair.
+
+## Deliberately not
+
+Per-entry re-attribution. Fixing the owner's 54 real hours means choosing an activity
+per entry while keeping July's dates, which is a new write route with a date field — a
+feature, not a UI pass, and the CLI already does it correctly today.
+
+---
+
 # The schedule is the day, not the shift — 12-hour clock and routines
 
 Started 2026-08-06. Two asks, verbatim: times in "am pm system, not army time", and

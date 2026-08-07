@@ -955,6 +955,15 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
  * and a rule under it instead, the same "this one is now" idiom .wkg uses. */
 .maxis .now{color:var(--ink);border-bottom:2px solid var(--rule);padding-bottom:1px}
 
+/* Hours the bars count and the registry cannot. A gap, not a failure — so it takes
+ * the muted ramp and a hairline above it, never an alarm ink (§8 rule 1 reserves
+ * vermilion for overdue and destroy, and a design test asserts a healthy page
+ * carries none). It renders only when the figure is real. */
+.unfiled{margin:0 0 var(--sp-3);padding-bottom:var(--sp-3);
+  border-bottom:1px solid var(--rule-hair)}
+.unfiled .tnum{color:var(--ink);font-weight:700}
+.unfiled code{font:400 12px/17px ui-monospace,"SF Mono",Menlo,monospace;color:var(--ink)}
+
 /* Activity registry as a database view: the columns compare down, the footer is
  * the rollup. Borrows .wkg wholesale — the app has one table idiom and this is
  * it — and only overrides what a left-reading register needs. */
@@ -970,6 +979,9 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .atbl td.nm{font:600 14px/20px system-ui,sans-serif}
 .atbl td.sub{font:400 12px/17px system-ui,sans-serif;color:var(--ink-muted)}
 .atbl td.span{white-space:nowrap}
+/* "contact · notes" wrapping to two lines made every incomplete row taller than a
+ * complete one, which reads as emphasis on the gap. It is a checklist, not an alarm. */
+.atbl td.needs,.atbl th.needs{white-space:nowrap}
 .atbl td.stk,.atbl th.stk{white-space:nowrap}
 .atbl td.stk{font:700 13px/18px ui-monospace,"SF Mono",Menlo,monospace;
   font-variant-numeric:tabular-nums;color:var(--ink)}

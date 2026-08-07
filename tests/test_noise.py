@@ -166,3 +166,130 @@ class TestUndo:
             "SELECT triage_verdict FROM source_item WHERE external_id = 'spam:rulehit'"
         ).fetchone()
         assert pending["triage_verdict"] is None
+
+
+def _settled_keep(
+    conn: sqlite3.Connection,
+    address: str,
+    external_id: str,
+    *,
+    bulk: bool = True,
+    extracted: bool = True,
+) -> int:
+    """A kept item the expensive pass has finished with, producing nothing.
+
+    `extracted` is the difference between "the pass ran and found nothing" and "the
+    pass has not run, or ran and parked" — the second is an open question and must
+    still disqualify.
+    """
+    body = "Apply now. Unsubscribe here." if bulk else "Can you send the draft?"
+    conn.execute(
+        "INSERT INTO source_item (user_id, source, external_id, fetched_at, occurred_at,"
+        " author, title, body_text, raw_json, content_hash, triage_verdict, triage_reason,"
+        " extraction_version)"
+        " VALUES (1, 'gmail:t', ?, ?, ?, ?, ?, ?, '{}', ?, 'keep', 'contains a deadline', ?)",
+        (
+            external_id,
+            "2026-07-10T09:00:00+00:00",
+            "2026-07-10T09:00:00+00:00",
+            address,
+            f"Deadline for {external_id}",
+            body,
+            f"h:{external_id}",
+            "v6" if extracted else None,
+        ),
+    )
+    return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+
+class TestBarrenKeepEvidence:
+    """The 2026-08-06 revision: a keep the expensive pass proved empty is evidence.
+
+    Before it, `learned_noise` could not learn from its most expensive mistake — the
+    disqualifier was "was it ever kept", and marketing mail is kept precisely because
+    it is written to look like a deadline.
+    """
+
+    def test_settled_barren_bulk_keeps_are_evidence(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        for i in range(5):
+            _settled_keep(conn, "webmaster@fastweb.com", f"fw{i}")
+        found = noise.candidates(conn, settings, min_evidence=5)
+        assert [c.value for c in found] == ["webmaster@fastweb.com"]
+        assert found[0].barren_bulk_keeps == 5
+        assert found[0].model_drops == 0
+        assert found[0].sample_title == "Deadline for fw0"
+
+    def test_a_barren_keep_without_a_broadcast_marker_is_not_evidence(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The guard that keeps this class away from human correspondents. A new
+        colleague whose first five mails are informational produces five barren keeps
+        too; dropping their sixth is the false negative triage.md exists to prevent.
+        Personal mail does not carry an unsubscribe footer."""
+        for i in range(5):
+            _settled_keep(conn, "newpi@lab.edu", f"pi{i}", bulk=False)
+        assert noise.candidates(conn, settings, min_evidence=5) == []
+
+    def test_an_unanswered_keep_still_disqualifies(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """Pending or parked, nobody has answered the question that keep asks, and the
+        next extract pass may turn it into a commitment. The bar moves only for keeps
+        the pass has actually settled."""
+        for i in range(6):
+            _settled_keep(conn, "maybe@x.com", f"mb{i}")
+        _settled_keep(conn, "maybe@x.com", "pending", extracted=False)
+        assert noise.candidates(conn, settings, min_evidence=5) == []
+
+    def test_the_two_evidence_classes_add_up(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        _seed_sender(conn, "mixed@z.com", model_drops=3)
+        for i in range(2):
+            _settled_keep(conn, "mixed@z.com", f"mx{i}")
+        found = noise.candidates(conn, settings, min_evidence=5)
+        assert [(c.model_drops, c.barren_bulk_keeps) for c in found] == [(3, 2)]
+        assert found[0].evidence_count == 5
+
+    def test_one_extracted_commitment_disqualifies_forever(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        for i in range(8):
+            _settled_keep(conn, "admissions@asu.edu", f"asu{i}")
+        item = _settled_keep(conn, "admissions@asu.edu", "real")
+        conn.execute(
+            "INSERT INTO commitment (user_id, direction, what, status, confidence,"
+            " source_item_id, created_at)"
+            " VALUES (1, 'owed_by_me', 'Submit the form', 'open', 0.9, ?,"
+            " '2026-07-10T00:00:00Z')",
+            (item,),
+        )
+        assert noise.candidates(conn, settings, min_evidence=5) == []
+
+    def test_a_goal_checkpoint_counts_as_something_coming_of_it(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """A sender whose mail only ever moves a goal forward would read as pure noise
+        if `produced` asked about commitments alone."""
+        for i in range(8):
+            _settled_keep(conn, "signals@lab.edu", f"sg{i}")
+        item = _settled_keep(conn, "signals@lab.edu", "signal")
+        conn.execute(
+            "INSERT INTO goal (user_id, title, horizon, definition_of_done, status,"
+            " created_at) VALUES (1, 'G', 'annual', 'done', 'active', '2026-07-01T00:00:00Z')"
+        )
+        goal_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO target (user_id, goal_id, title, kind, total_count, active,"
+            " created_at) VALUES (1, ?, 'T', 'total', 10, 1, '2026-07-01T00:00:00Z')",
+            (goal_id,),
+        )
+        target_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO checkpoint (user_id, target_id, occurred_at, source, delta,"
+            " source_item_id) VALUES (1, ?, '2026-07-10T00:00:00Z', 'extraction', 1, ?)",
+            (target_id, item),
+        )
+        assert noise.candidates(conn, settings, min_evidence=5) == []
