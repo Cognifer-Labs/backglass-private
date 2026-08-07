@@ -1,105 +1,72 @@
-# Tiles — every content unit its own bounded surface
+# Rounding + tiles — shipped to main
 
-**Goal (owner, 2026-08-06, after the rounding pass):** "all content should be seperated in
-some way, each having individual tiles, highlighted a different colors or outlined"
+**Goals, in the order they were given (2026-08-06 → 07):**
 
-## What this reverses, stated once
+1. "go through the app and implement principle of rounding to all elements … use a workflow
+   at the end for verification"
+2. "add more rounding and screenshot to find any ui problems"
+3. "all content should be separated in some way, each having individual tiles, highlighted a
+   different colors or outlined"
+4. "every item separated by MORE than a thin line — by color, or tile, or dark outline.
+   Choose and apply throughout"
+5. "update real app and check and improve rounding"
 
-Three things, all the owner's own, all re-opened by this instruction:
+## State
 
-1. **The board register ruling (2026-08-01)** — "the boxed card stack outgrew the panel. A
-   commitment is now one ledger line." Rows became hairline-separated ledger lines
-   precisely to stop being boxes.
-2. **The urgency-register ruling (2026-08-05)** — per-row washes were removed because
-   "eight overdue rows made a wall of vermilion boxes"; state moved into the section
-   heading instead.
-3. **§8 rule 1** — "Color means state. Nothing decorative gets an ink."
+**Main is at `1989626`.** The branch fast-forwarded onto it — no force, no rewrite, nobody's
+working tree touched. 1616 tests passing.
 
-The owner has asked for boxes and colour back. Fine — but the failure those rulings
-recorded is real and a naive implementation walks straight back into it, so the design has
-to answer it rather than ignore it.
+## What shipped
 
-## The constraint that decides the design
+**The radius scale (§7).** `--radius-1` 2px marks, `--radius-2` 4px controls, `--radius-3`
+6px containers. Nesting is concentric, and the inset is padding **plus border**, because a
+radius is measured on the border box. An element pinned on some edges rounds only the free
+ones — the failed-write strip's top, the NOW tab's left, a chart column's top.
 
-`--*-wash` tokens resolve to the **full saturated inks in dark mode** (tokens.css:130-135;
-this is deliberate — it reproduces the pre-wash rendering with no per-component theme
-fork). So "every tile gets a coloured fill" renders in dark as a page of solid vermilion /
-gold / green / turquoise / cobalt blocks. That is the 2026-08-05 wall, worse.
+**The tile register (§7b).** Every content unit is a bounded tile: `--fill-mild` surface, 2px
+keyline, `--radius-3`, separated by a gap instead of a hairline. The colour rides on the
+**keyline**, never the fill — `--*-wash` resolves to the full saturated ink in dark, so a
+coloured fill on every tile is a wall of blocks. Use the **raw inks** for a tile keyline,
+never `--*-line`: those resolve to `var(--rule)` in dark and collapse every category into one
+paper outline. Four category inks; gold and vermilion stay out so state keeps its alarms.
 
-The owner's own wording gives the way out: *"highlighted a different colors **or**
-outlined."*
+Specificity: **state beats kind beats category.**
 
-**So: the colour rides on the keyline, and the surface stays neutral in both themes.**
-Every tile is outlined; the outline's ink says what kind of content the tile holds. Full
-washes stay reserved for genuine state (overdue, awaiting, going cold), exactly as now, so
-a state tile still outranks its category tile and is still legible against it.
+## Verified
 
-## The design
+Two adversarial workflow passes (22 + 25 agents) over the rounding work; every confirmed
+finding is fixed. The tile work was verified by eye against the real database in both themes,
+plus the suite.
 
-**One tile treatment**, generalised from `#panel-awaiting .row`, which already does this
-and is the proof it works:
+The catches worth remembering, all of them things only looking could find:
+- A stray `}` had been deleting the base `.panel` rule since commit 8ea8ba9 — no panel seams,
+  no closing padding, the `min-width:0` overflow fix inert. Hidden because the file also
+  never closed its last `@media`, so the brace count balanced at 514/514.
+- The reel's concentric example omitted its own border (4px where 6px was right).
+- Category inks collapsed to a single colour in dark while looking correct in light.
+- Goal-card target rows sat flush against the card frame, colliding curves.
+- A card's hover cue was invisible inside the new folds — same token as the fold itself.
 
-```
-surface   var(--fill-mild)        — neutral, both themes
-keyline   1px, category ink       — the "different colour"
-radius    var(--radius-3)         — from the rounding scale
-padding   var(--sp-3)
-gap       var(--sp-2) between tiles
-```
+## Open, and the owner's call
 
-The hairline rules between rows go away — separation is now the gap, which is what
-"separated in some way" asks for. Section seams (2px) stay: they divide *panels*, and the
-tiles divide *content*.
+- **`design/tokens.json` declares paper `#FAF3DF`**; every other surface says `#FCF8EC`.
+  Nothing in the repo reads that file, so the drift is silent and permanent. Correct the
+  mirror or delete it.
+- **The desktop app is rebuilt but NOT installed.** The bundle is at
+  `desktop/src-tauri/target/release/bundle/macos/Backglass.app` (62MB), signed with the
+  stable Apple Development identity, and its frozen `dashboard.css` is byte-identical to the
+  worktree's. Copy it over `/Applications/Backglass.app` yourself — the build script
+  deliberately does not install. Signing is stable now (`8d5376a`), so the Downloads
+  permission prompt should be a one-time cost rather than per-rebuild.
+- **A goal card with only milestones and no targets** was never rendered; the inset rule
+  covers both cases but only one was seen.
 
-**Category inks**, one per kind of content, assigned by meaning rather than by decoration —
-this is the amendment to §8 rule 1, and it is a category, not an ornament:
+## Notes for whoever is next
 
-| content | ink |
-|---|---|
-| commitments | ink (neutral-strong) |
-| schedule / plans | cobalt |
-| goals + checklist | green |
-| people / sources | turquoise |
-| roadmap steps | gold |
-| memory / decisions | ink-2 |
-
-**State still wins.** `.src.cold`, `#panel-awaiting .row`, `.rmrow.overdue` and friends keep
-their wash + saturated line, declared later in the sheet, so an overdue tile still reads as
-overdue rather than as its category.
-
-## Steps
-
-- [ ] 1. `.tile` base in dashboard.css + a `--tile-line` custom property so a panel sets its
-      category ink once instead of every row restating it.
-- [ ] 2. Apply across every content surface: `.row`, `.card`, `.src`, `.chk`, `.goal`,
-      `.sgoal`, `.tt li`, `.rmrow`, `.goalrow`, `.tot`, `.atl .stepx`, memory + decisions
-      rows. Remove the hairline `border-top` idiom those carry today.
-- [ ] 3. Kill the `:first-of-type{border-top:0}` resets that exist only to serve hairlines,
-      and the negative-margin refunds on the washed rows (a tile no longer needs to bleed
-      into the gutter — every row is inset now).
-- [ ] 4. Check every fold/summary that wraps rows (`.wkfold`, `.goalrow`, `.atl summary`,
-      `.more`, `.edfold`) still reads once its children are tiles.
-- [ ] 5. `design/preview.html` mirrors it.
-- [ ] 6. Docs: a new design-system section for the tile register + the §8 rule 1 amendment,
-      and the CLAUDE.md decisions row.
-- [ ] 7. Tests: the panel-slice tests couple to markup — grep for structural couplings
-      first (CLAUDE.md testing expectations say to do this *before* restructuring shared
-      markup). Add a test that every content surface carries a tile keyline.
-- [ ] 8. Screenshot every page in both themes. This is a change whose correctness is almost
-      entirely optical: density, and whether six inks on one screen reads as a system or as
-      confetti. Expect to tune.
-- [ ] 9. Workflow verification at the end.
-
-## Definition of done
-
-1. `uv run pytest` green.
-2. Every content unit on every page is a bounded tile with a category keyline.
-3. Dark mode checked on every page — no wall of saturated blocks.
-4. State tiles still outrank category tiles and still read as state.
-5. Docs no longer state a rule the CSS breaks.
-
-## Carried over, not done
-
-- `design/tokens.json` paper `#FAF3DF` vs `#FCF8EC` — flagged for the owner, untouched.
-- Desktop `.app` bundles its own CSS copy; needs a rebuild to show any of this.
-- Merge to main is the owner's step (worktree branch, shared checkout not mine to merge on).
+- `--*-line` tokens are for **filled** components — the fill carries the colour and the line
+  is the rule colour. Anything relying on a coloured **line** must use the raw ink.
+- `panel_slice` is anchored on `id="panel-…"`. The tile work was pure CSS, so nothing that
+  couples a test to markup had to move.
+- Two sessions shared this repo all day. Every integration was a rebase from a worktree; the
+  shared checkout was never touched, and migration 19 was borrowed untracked to serve locally
+  and removed before committing.
