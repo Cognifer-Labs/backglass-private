@@ -195,10 +195,28 @@ def candidates(
 
     # Domain candidates are reported, never auto-promoted: promoting a whole domain is
     # always an explicit CLI act because the blast radius is every future sender on it.
+    #
+    # And that blast radius is exactly why a domain is offered only when EVERY address
+    # on it qualifies. The rollup is assembled from qualifying members, but the promoted
+    # value covers the domain — so a domain with three qualifying senders and one that
+    # has produced would silence the producer, permanently, while the list showed only
+    # the three. `reply.asu.edu` was the live instance: three marketing addresses
+    # qualified, and Dean of Students, the McKenna programme and the College of Liberal
+    # Arts sat on the same domain with seven extracted records between them, including
+    # the owner's ASU acceptance. The per-address disqualifier was sound; the promotion
+    # it fed was one level wider than the check. A guard on one door, in the shape
+    # tasks/lessons.md keeps describing.
+    disqualified_domains = {
+        address.partition("@")[2]
+        for address, tally in stats.items()
+        if tally.productive > 0 or tally.unresolved_keeps > 0
+    }
     by_domain: dict[str, list[Candidate]] = {}
     for c in out:
         by_domain.setdefault(c.value.partition("@")[2], []).append(c)
     for domain, members in sorted(by_domain.items()):
+        if domain in disqualified_domains:
+            continue
         if len(members) >= 3 and not _covered(domain, settings, already):
             out.append(
                 Candidate(

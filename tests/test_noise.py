@@ -293,3 +293,49 @@ class TestBarrenKeepEvidence:
             (target_id, item),
         )
         assert noise.candidates(conn, settings, min_evidence=5) == []
+
+
+class TestDomainBlastRadius:
+    """A domain is offered only when every address on it qualifies.
+
+    The rollup is built from qualifying members but the promoted value covers the
+    domain, so a domain with three qualifying senders and one that has produced would
+    silence the producer while the list showed only the three. `reply.asu.edu` was the
+    live instance: three marketing addresses qualified, and Dean of Students, the
+    McKenna programme and the College of Liberal Arts sat on the same domain with the
+    owner's ASU acceptance between them.
+    """
+
+    def _three_qualifying(self, conn: sqlite3.Connection, domain: str) -> None:
+        for name in ("recruit", "orientation", "barrett"):
+            _seed_sender(conn, f"{name}@{domain}", model_drops=5)
+
+    # The positive case is already pinned by
+    # TestMining::test_three_qualifying_addresses_surface_their_domain — these two
+    # cover only what withdraws it.
+
+    def test_one_producing_sibling_withdraws_the_whole_domain(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        self._three_qualifying(conn, "reply.example")
+        item = _settled_keep(conn, "deanofstudents@reply.example", "real")
+        conn.execute(
+            "INSERT INTO commitment (user_id, direction, what, status, confidence,"
+            " source_item_id, created_at)"
+            " VALUES (1, 'owed_by_me', 'Complete ASU Ready', 'open', 0.9, ?,"
+            " '2026-07-10T00:00:00Z')",
+            (item,),
+        )
+        found = noise.candidates(conn, settings, min_evidence=5)
+        assert [c.value for c in found if c.kind == "domain"] == []
+        # The three marketing addresses are still offered individually — the fix
+        # withdraws the blanket, not the evidence under it.
+        assert len([c for c in found if c.kind == "address"]) == 3
+
+    def test_an_unanswered_keep_on_a_sibling_also_withdraws_it(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        self._three_qualifying(conn, "pending.example")
+        _settled_keep(conn, "someone@pending.example", "waiting", extracted=False)
+        found = noise.candidates(conn, settings, min_evidence=5)
+        assert [c.value for c in found if c.kind == "domain"] == []
