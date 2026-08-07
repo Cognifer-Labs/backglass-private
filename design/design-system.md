@@ -301,6 +301,70 @@ wheels. In dark mode it gains a paper keyline so it reads against the surface.
 
 ---
 
+## 7b. The tile register (owner ruling, 2026-08-06)
+
+> "All content should be separated in some way, each having individual tiles, highlighted a
+> different colours or outlined."
+
+Every content unit is a bounded tile. Separation is the **gap** between tiles; the hairline
+rules that used to do that job are gone. The 2px section seams stay — seams divide panels,
+tiles divide content.
+
+```
+surface   --fill-mild        neutral, both themes
+keyline   1px, category ink  the "different colour"
+radius    --radius-3
+padding   --sp-3
+gap       --sp-2
+```
+
+**This re-opens two rulings and amends a third**, and the reasons they recorded are real, so
+the design answers them rather than ignoring them. 2026-08-01 returned the board to ledger
+lines because "the boxed card stack outgrew the panel". 2026-08-05 removed per-row washes
+because "eight overdue rows made a wall of vermilion boxes". §8 rule 1 says colour means
+state.
+
+**The colour rides on the keyline; the fill stays neutral.** This is the whole design, and
+it is forced by the token contract: `--*-wash` resolves to the **full saturated ink in dark
+mode**, so a coloured *fill* on every tile renders in dark as a page of solid vermilion,
+gold, green and cobalt — the 2026-08-05 wall, worse. The owner's own wording allows it:
+tiles are "highlighted a different colours **or** outlined."
+
+**Use the raw inks for a tile keyline, never the `--*-line` tokens.** In dark every
+`--*-line` resolves to `var(--rule)`, because the wash contract is "full-ink fill, keyline
+in the rule colour" — there the *fill* carries the colour. A tile's fill is neutral, so
+borrowing that token collapses all four categories into one paper outline the instant the
+theme flips. The five inks are identical in both modes; that is the property this needs.
+
+**Four category inks, and the two that are missing are missing on purpose.** Gold's keyline
+token is black (§3 permits gold's 1.83:1 only with the black keyline as mitigation), so a
+gold category line cannot be told from a neutral one. Vermilion means overdue, and spending
+it on a category would break the one reading the ledger exists for.
+
+| content | ink |
+|---|---|
+| commitments — the spine | ink |
+| plans and schedule | cobalt |
+| goals and checklist | green |
+| people, sources, awaiting | turquoise |
+| memory, decisions, review, raw source, roadmap ledgers | neutral |
+
+This is the amendment to rule 1: **a category is what a thing IS, not an ornament.** Each
+ink was chosen because its meaning already sits next to the content it marks.
+
+**Specificity, in one line: state beats kind beats category.** The wash register is declared
+after the tile register, so an overdue or going-cold tile keeps its wash and saturated line
+and still reads as state. A row's *kind* (work, small item, fixed block, routine) overrides
+its panel's category, because it is the more specific claim about the same tile — left as a
+stripe alone it collapsed, since a cobalt stripe inside a cobalt-outlined tile is invisible
+and work, small and fixed all read alike.
+
+**The sidebar keeps ledger lines.** It is a 236px column of derived state, and eleven tiles
+stacked in it read as a second page rather than a summary. The density the 2026-08-01
+ruling protected is real there even though the owner overruled it for the panels.
+
+---
+
 ## 7a. Wordmark
 
 `wordmark.svg`. A beige band cut diagonally through a black plate, the name in condensed
@@ -323,7 +387,10 @@ Rules:
 
 ## 8. Rules that are not negotiable
 
-1. Color means state. Nothing decorative gets an ink.
+1. Color means state. Nothing decorative gets an ink. Amended by the 2026-08-06 tile
+   ruling: a tile's keyline may also carry its **category** — what the content IS — drawn
+   from the four inks whose meaning already sits beside that content. A category is not
+   decoration; vermilion and gold stay out of it so state keeps its two alarm inks. See §7b.
 2. Every colored fill carries a keyline. Amended by the 2026-07-31 wash ruling:
    a resting component wears the pastel wash with a keyline in its own saturated
    ink — except gold, whose keyline stays black, because §3 permits gold's

@@ -39,6 +39,7 @@ architecture. See `docs/02-architecture.md`.
 | Cream `#FCF8EC` and black, five reserved inks | `design/design-system.md` |
 | No shadows, no gradients | `design/design-system.md` |
 | Rounding: 2/4/6 scale, nested radii concentric (2026-08-06 ruling) | `design/design-system.md` |
+| Tiles: every content unit outlined, colour on the keyline not the fill (2026-08-06) | `design/design-system.md` §7b |
 | Three chart series maximum | `design/design-system.md` |
 | Python + uv, SQLite + raw SQL, FastAPI + Jinja2 + HTMX | `docs/10-tech-stack.md` |
 | launchd for scheduling, never an in-process scheduler | `docs/10-tech-stack.md` |

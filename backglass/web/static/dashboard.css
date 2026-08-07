@@ -1126,6 +1126,89 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .rmclosed{font-size:13px;line-height:19px;color:var(--ink-muted);margin:var(--sp-2) 0 0}
 .rmclosed a{color:var(--ink-muted);text-underline-offset:2px}
 
+/* ── Tile register (owner ruling 2026-08-06) ───────────────────────────────
+ * "All content should be separated in some way, each having individual tiles,
+ * highlighted a different colours or outlined."
+ *
+ * This re-opens two of the owner's own rulings and amends a third, so the reasoning
+ * they recorded is answered here rather than ignored:
+ *
+ *   - 2026-08-01 put the board back to ledger lines because "the boxed card stack
+ *     outgrew the panel";
+ *   - 2026-08-05 removed per-row washes because "eight overdue rows made a wall of
+ *     vermilion boxes", moving state into the section heading;
+ *   - §8 rule 1 says colour means state and nothing decorative gets an ink.
+ *
+ * The wall is a real failure mode and a naive tiling walks straight back into it,
+ * because --*-wash resolves to the FULL saturated ink in dark mode (tokens.css) — so
+ * "every tile gets a coloured fill" renders in dark as a page of solid vermilion,
+ * gold, green and cobalt blocks. The owner's own wording gives the way out: tiles are
+ * "highlighted a different colours OR outlined".
+ *
+ * So the colour rides on the KEYLINE and the surface stays neutral in both themes.
+ * Every content unit is a bounded tile on --fill-mild; the keyline's ink says what
+ * kind of content it is. Separation comes from the gap between tiles, which is what
+ * "separated in some way" asks for, and the hairline rules that used to do that job
+ * are gone. The 2px section seams stay — they divide panels, tiles divide content.
+ *
+ * Only four inks are category inks, and the two that are missing are missing on
+ * purpose. Gold's keyline token is BLACK (§3 permits gold's 1.83:1 only with the
+ * black keyline as mitigation), so a gold category line is indistinguishable from a
+ * neutral one; and vermilion means overdue, so spending it on a category would break
+ * the one reading the ledger exists for. Category ink is therefore drawn from the
+ * inks whose meaning is already adjacent to the content they mark — cobalt for plans,
+ * turquoise for people and awaiting, green for goals, ink for the commitment spine —
+ * which is the amendment to rule 1: a category is what a thing IS, not an ornament.
+ *
+ * State still wins. The wash register below is declared after this block on purpose,
+ * so an overdue or going-cold tile keeps its wash and its saturated line and still
+ * reads as state rather than as its category. */
+:is(.row,.card,.src,.chk,.goal,.tt li,.rmrow,.tot){
+  background:var(--fill-mild);
+  border:1px solid var(--tile-line,var(--rule-hair));
+  border-radius:var(--radius-3);
+  padding:var(--sp-3);
+  margin:0 0 var(--sp-2)}
+/* The hairline idiom and every :first-of-type reset that existed only to serve it.
+ * A tile is separated by the gap, so the first one needs no special case. */
+:is(.row,.card,.src,.chk,.goal,.tt li,.rmrow,.tot):first-of-type{border-top-width:1px}
+.tt li:last-child{border-bottom-width:1px}
+/* The sidebar keeps ledger lines. It is a 236px column of derived state, and eleven
+ * tiles stacked in it read as a second page rather than a summary — the density the
+ * 2026-08-01 ruling was protecting is real here even though the owner overruled it
+ * for the panels. */
+
+/* A kind OVERRIDES its panel's category, because it is the more specific statement about
+ * the same tile: "this is a plan" is what the Today panel already says, and "this is
+ * focused work / a small item / a fixed calendar block / a routine" is what the row adds.
+ * Left as a stripe alone this collapsed — a cobalt stripe inside a cobalt-outlined tile is
+ * invisible, and work, small and fixed all read the same. So the kind takes the whole
+ * keyline and keeps the heavier left edge as its tab. */
+:is(.row.k-work,.row.k-small,.row.k-fixed,.row.k-routine){padding-left:var(--sp-3);
+  border-left-width:3px}
+.row.k-work{--tile-line:var(--cobalt)}
+.row.k-small{--tile-line:var(--turquoise)}
+.row.k-fixed{--tile-line:var(--ink)}
+.row.k-routine{--tile-line:var(--rule-hair)}
+.src.fail{border-left:3px solid var(--vermilion);padding-left:calc(var(--sp-3) - 2px);margin-left:0}
+
+/* Category inks, one per kind of content. Set once on the container; every tile inside
+ * inherits it through the custom property rather than restating a colour.
+ *
+ * The RAW inks, deliberately, not the --*-line tokens the wash register uses. In dark mode
+ * every --*-line resolves to var(--rule) — paper — because the wash contract is "full ink
+ * fill, keyline in the rule colour", and there the FILL carries the colour. A tile's fill
+ * is neutral and its line carries the colour, so borrowing that token collapsed all four
+ * categories to one paper outline the moment the theme flipped. The five inks are
+ * identical in both modes (tokens.css §inks); that is exactly the property this needs. */
+#panel-board,#panel-waiting,#panel-derived{--tile-line:var(--ink)}
+#panel-today,#panel-plans,#week-grid{--tile-line:var(--cobalt)}
+#panel-goals,#panel-checklist,#goal-cards,#today-ticks,#this-week{--tile-line:var(--green)}
+#panel-awaiting,#panel-sources,#people-rows,#panel-monitored{--tile-line:var(--turquoise)}
+/* Memory, Decisions, the review queue, raw source and the roadmap ledgers stay
+ * neutral: they are records, not one of the four kinds, and a fifth ink here would be
+ * decoration by the definition above. */
+
 /* ── Wash register (owner ruling 2026-07-31) ───────────────────────────────
  * A component that carries a colour is outlined in its saturated ink and
  * filled with its pastel wash — always through the token PAIRS in
@@ -1149,7 +1232,7 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
  * row is the carrier — turquoise pair, card geometry. The ID selector
  * outranks .row and .row:first-of-type's border-top reset. */
 #panel-awaiting .row{background:var(--turq-wash);border:1px solid var(--turq-line);
-  border-radius:var(--radius-3);padding:var(--sp-3);margin:0 -13px var(--sp-2)}
+  border-radius:var(--radius-3);padding:var(--sp-3);margin:0 0 var(--sp-2)}
 #panel-awaiting .row:first-of-type{margin-top:var(--sp-3)}
 
 /* People rows whose touch level is a state: cold vermilion, warn gold. The
@@ -1157,17 +1240,17 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
  * the open count are facts, not states). Later source beats
  * .src:first-of-type's border-top reset. Paused sources stay neutral. */
 .src.cold{background:var(--verm-wash);border:1px solid var(--verm-line);
-  border-radius:var(--radius-3);padding:var(--sp-3);margin:0 -13px}
+  border-radius:var(--radius-3);padding:var(--sp-3);margin:0 0 var(--sp-2)}
 .src.warn{background:var(--gold-wash);border:1px solid var(--gold-line);
-  border-radius:var(--radius-3);padding:var(--sp-3);margin:0 -13px}
+  border-radius:var(--radius-3);padding:var(--sp-3);margin:0 0 var(--sp-2)}
 
 /* Roadmap list rows whose next step carries a due state — the same grammar
  * as _macros.due_state_chip. Closed rows (.rmclosed) stay neutral: inactive
  * is not a state colour. */
 .rmrow.overdue{background:var(--verm-wash);border:1px solid var(--verm-line);
-  border-radius:var(--radius-3);padding:16px;margin:var(--sp-2) -17px}
+  border-radius:var(--radius-3);padding:var(--sp-3);margin:0 0 var(--sp-2)}
 .rmrow.duetoday{background:var(--ink-wash);border:1px solid var(--ink-line);
-  border-radius:var(--radius-3);padding:16px;margin:var(--sp-2) -17px}
+  border-radius:var(--radius-3);padding:var(--sp-3);margin:0 0 var(--sp-2)}
 
 /* Text on washed surfaces reads from the --wash-fg pair. In light this is a
  * no-op (normal ink on pastel); in dark the washes resolve to the FULL inks,

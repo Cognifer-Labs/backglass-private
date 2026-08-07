@@ -680,6 +680,36 @@ def test_the_boxed_vocabulary_is_rounded(client: TestClient) -> None:
         )
 
 
+def test_every_content_unit_is_a_tile(client: TestClient) -> None:
+    """§7b. "All content should be separated in some way, each having individual tiles."
+    The list is the claim, so it is the test."""
+    css = _strip_css_comments(client.get("/static/dashboard.css").text)
+    tile = [b for b in css.split("}") if "--tile-line" in b and "background:var(--fill-mild)" in b]
+    assert tile, "no tile rule"
+    for selector in (".row", ".card", ".src", ".chk", ".goal", ".tt li", ".rmrow", ".tot"):
+        assert selector in tile[0], f"{selector} is not a tile"
+    assert "border-radius:var(--radius-3)" in tile[0].replace(" ", "")
+
+
+def test_a_tile_keyline_never_uses_a_wash_line_token(client: TestClient) -> None:
+    """The one rule the tile register rests on, and the one an edit will quietly break.
+
+    In dark mode every `--*-line` token resolves to `var(--rule)` — the wash contract is
+    "full-ink fill, keyline in the rule colour", where the FILL carries the colour. A tile's
+    fill is neutral and its keyline carries the colour, so a `--*-line` here collapses all
+    four categories into one paper outline the moment the theme flips. It looks correct in
+    light, which is exactly why it needs an assertion rather than an eye."""
+    css = _strip_css_comments(client.get("/static/dashboard.css").text)
+    for block in css.split("}"):
+        if "--tile-line:" not in block:
+            continue
+        for value in re.findall(r"--tile-line\s*:\s*([^;}]+)", block):
+            assert "-line)" not in value, (
+                f"tile keyline uses a wash line token, which is var(--rule) in dark: "
+                f"{value.strip()!r} in {block.split('{')[0].strip()!r}"
+            )
+
+
 def test_the_full_bleed_surfaces_stay_square(client: TestClient) -> None:
     """Exemptions 1-3 of the rounding ruling. A radius on a bar that runs to both edges of
     its panel leaves four paper nicks against the seam, and the failed-write strip is
