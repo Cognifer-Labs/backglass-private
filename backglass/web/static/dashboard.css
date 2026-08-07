@@ -43,7 +43,10 @@
  *      a full four-sided box, and it takes --radius-2 like any other;
  *   6. band fills — a background that spans a whole row, column or cell and meets its
  *      neighbours on every side: .snav a.on/:hover, .card:hover and [data-selected],
- *      .row.sched:hover, .wkg .today, .mpace's knockout label. A ledger row's fill is
+ *      .row.sched:hover, .wkg .today. (The chart's pace label was listed here and does not
+ *      belong: it is a tab hanging off the plot's right edge, meeting a neighbour on one
+ *      side, not a band meeting them on every side — so it rounds its free corners.) A
+ *      ledger row's fill is
  *      bounded by hairlines it shares with the rows above and below, so rounding it leaves
  *      paper wedges in a seam that is supposed to be continuous — and on .card and .row it
  *      would curl the ends of the very hairline that draws the ledger;
@@ -462,7 +465,11 @@ input:focus,textarea:focus,select:focus{outline:3px solid var(--rule);outline-of
  * so a single long obligation stretched the "also closes" picker across the whole form,
  * 1300px of control for a secondary field. Cap it and let it shrink: the chosen value is
  * what has to be readable, not every candidate at once. */
-.addform form select{flex:0 1 320px}
+#decisions .addform form select{flex:0 1 320px}
+/* Scoped to Decisions on purpose. The board's Quick add has its own select — Direction,
+ * two options, "I owe" and "Owed to me" — and an unscoped 320px basis inflated a control
+ * whose intrinsic width is a third of that. A cap written for one long list is not a rule
+ * about selects. */
 .src .nm a,a.nm{color:var(--ink);text-decoration:none}
 a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 /* A paused source stays listed — configuration is visible even when inactive. */
@@ -518,6 +525,11 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
   padding:var(--sp-2) 0;margin:0;border-top:1px solid var(--rule-hair)}
 .card:focus-visible{outline:3px solid var(--rule);outline-offset:-3px}
 .card:hover{background:var(--fill-mild)}
+/* A card inside a fold is on fill-mild already — the suspects and Stale folds are .addform
+ * boxes — so the hover paints the surface it is already sitting on and the cue disappears
+ * entirely, in both themes. Inside a fold the hover steps to the next surface up, the same
+ * one selection uses. */
+.addform .card:hover{background:var(--fill-mild-2)}
 .card[data-selected="true"]{background:var(--fill-mild-2)}
 .card .b1{flex:1 1 auto;min-width:0}
 .card .b2{flex:0 1 auto;margin:0}
@@ -541,10 +553,14 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
   text-transform:uppercase;color:var(--ink-muted);padding-top:var(--sp-3);
   border-top:1px solid var(--rule-hair)}
 .lane:first-of-type{border-top:0;padding-top:0}
-/* …except when the lane IS the first thing under a section bar. On the board a .cap sits
- * between them and carries the gap; on Memory and Decisions the lane opens the section, so
- * zeroing its padding put the group label hard against the black bar with no air at all. */
-.banner + .inner > .lane:first-of-type{padding-top:var(--sp-3)}
+/* …except when the lane IS the first thing under a section bar, where zeroing its padding
+ * puts the group label hard against the black bar with no air at all. This fires on the
+ * board too — an earlier note here claimed a .cap sits between them there and carries the
+ * gap, which is simply not true of the board's markup; the rule is right and the reason
+ * given for it was wrong. #people-rows needs it for the same reason and is not an .inner,
+ * so it is named. */
+.banner + .inner > .lane:first-of-type,
+#people-rows > .lane:first-of-type{padding-top:var(--sp-3)}
 
 /* ── Goals page (Phase 8) ──────────────────────────────────────────────────
  * The deep view behind the dashboard's Goals + Checklist panels. Cards per
@@ -1223,10 +1239,13 @@ details.panel:not([open]){padding-bottom:0}
 /* ── The failed-write strip (audit #11 follow-up) ───────────────────────────
  * A write that the server refuses swaps nothing, so without this the click is
  * silent. Fixed to the bottom edge so it cannot push the panel grid around
- * mid-action, and built from the vocabulary already in this file: a 2px keyline, square
- * corners (exemption 3 — it is pinned to three edges of the viewport, and a radius would
- * float it off them), the vermilion wash that §8 reserves for broken-and-overdue, and
- * black text on it in both themes (the wash resolves to the full ink in dark). */
+ * mid-action, and built from the vocabulary already in this file: a 2px keyline, the
+ * vermilion wash that §8 reserves for broken-and-overdue, and black text on it in both
+ * themes (the wash resolves to the full ink in dark). It rounds its top two corners only —
+ * left, right and bottom are pinned to the viewport, the top is free, and a pinned element
+ * is not exempt, only its pinned edges are. (This comment used to cite exemption 3, which
+ * that ruling retired; a stale comment beside a live rule is how the next reader learns
+ * the wrong rule.) */
 .oops{position:fixed;left:0;right:0;bottom:0;z-index:10;
   display:flex;align-items:center;gap:var(--sp-3);
   padding:var(--sp-3) var(--sp-5);

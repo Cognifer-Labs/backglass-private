@@ -258,7 +258,10 @@ measured against, not a set of oversights:
    it rounds.
 6. **Band fills** — a background spanning a whole row, column or cell that meets its
    neighbours on every side: the active nav row, a hovered or selected ledger row, the
-   habit table's today column, a chart's knockout label. The fill is bounded by hairlines
+   habit table's today column. (A chart's pace label was listed here and does not belong —
+   it is a tab hanging off the plot's right edge, meeting a neighbour on one side rather
+   than a band meeting them on every side, so it rounds its free corners.) The fill is
+   bounded by hairlines
    it shares with its neighbours, so rounding it leaves paper wedges in a seam meant to be
    continuous — and on a ledger row it curls the ends of the hairline that draws the row.
 7. **The wordmark.** It has its own spec below, which this ruling does not touch.

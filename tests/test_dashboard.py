@@ -707,12 +707,17 @@ def test_an_element_rounds_the_edges_it_is_not_pinned_to(client: TestClient) -> 
     css = _strip_css_comments(client.get("/static/dashboard.css").text)
 
     def radius_of(selector: str) -> str:
+        """The LAST declaration wins, because that is what the cascade does. Reading the
+        first match instead makes the assertion blind to exactly the edit it exists to
+        catch — a later rule overriding one of these with a single-value radius."""
+        winner: str | None = None
         for block in css.split("}"):
             if "{" in block and block.split("{")[0].replace("\n", " ").strip() == selector:
                 found = re.search(r"border-radius\s*:\s*([^;}]+)", block)
                 if found:
-                    return " ".join(found.group(1).split())
-        raise AssertionError(f"no radius on {selector!r}")
+                    winner = " ".join(found.group(1).split())
+        assert winner is not None, f"no radius on {selector!r}"
+        return winner
 
     # bottom-pinned strip → top two corners; right-flush tabs → left two; column on an
     # axis → top two. Each is a four-value radius with a 0 on the pinned side.
