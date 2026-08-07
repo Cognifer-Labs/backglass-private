@@ -777,3 +777,55 @@ def test_the_stylesheet_closes_every_block_it_opens() -> None:
         f"dashboard.css leaves {depth} block(s) open; the next rule appended "
         f"below them will not apply"
     )
+
+
+def test_every_bordered_box_is_on_the_radius_scale() -> None:
+    """A keyline makes something a box, and a box takes a corner.
+
+    The corner scale was applied component by component, from memory, and it missed
+    exactly the boxes nobody thinks of while editing the component they belong to: the
+    awaiting row carries its state on the ROW rather than on a card class, the protected
+    block is a schedule row wearing a hatch, the timeline event is positioned rather than
+    flowed. Each was reported by eye, one at a time, after shipping.
+
+    So the sheet is asked instead: every rule that declares a full `border:` must have a
+    radius somewhere, and a box that genuinely wants square corners has to say so here
+    rather than by omission — which is indistinguishable from having been forgotten.
+    """
+    import re as _re
+
+    sheet = Path(__file__).resolve().parents[1] / "backglass/web/static/dashboard.css"
+    css = _re.sub(r"/\*.*?\*/", "", sheet.read_text(), flags=_re.S)
+
+    #: Selectors whose squareness is deliberate. Empty on purpose — every entry needs a
+    #: reason, and "it looked fine" is not one now that the system is curved.
+    SQUARE_BY_DESIGN: set[str] = set()
+
+    rounded, bordered = set(), {}
+    for block in _re.finditer(r"([^{}]+)\{([^{}]*)\}", css):
+        body = block.group(2)
+        for selector in (s.strip() for s in block.group(1).split(",")):
+            if not selector or selector.startswith("@"):
+                continue
+            if "border-radius" in body:
+                rounded.add(selector)
+            if _re.search(r"border:\s*\d+px\s+(solid|dashed)", body):
+                bordered[selector] = block.group(0)[:70]
+
+    def final(selector: str) -> str:
+        """The compound that actually names the box, ignoring its ancestors."""
+        return _re.split(r"[\s>+~]+", selector.strip())[-1]
+
+    # A box inherits a corner from the rule that styles the same compound: `.src.cold`
+    # is a `.src`, and `.rmst .track.wee` is a `.track.wee` wherever it happens to sit.
+    covered = {final(r) for r in rounded}
+    missing = {
+        sel: rule
+        for sel, rule in bordered.items()
+        if sel not in rounded and sel not in SQUARE_BY_DESIGN
+        and not any(final(sel).startswith(c) for c in covered)
+    }
+    assert not missing, (
+        "these draw a keyline and no corner — put them on the scale in the corners "
+        f"block, or name them in SQUARE_BY_DESIGN with a reason: {sorted(missing)}"
+    )

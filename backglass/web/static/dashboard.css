@@ -1271,11 +1271,20 @@ details.panel:not([open]){padding-bottom:0}
   border-radius:var(--radius-lg) var(--radius-lg) 0 0}
 
 /* things a hand acts on */
+/* Anything with a keyline of its own is a box, and a box takes the scale. The list
+ * is written from the sheet rather than from memory — every rule declaring a full
+ * `border:` was checked against it, and the ones that had been missed were exactly the
+ * ones nobody looks at while editing the component they belong to: the awaiting row
+ * carries its state on the ROW rather than on a card class, the protected block is a
+ * schedule row wearing a hatch, the timeline event is positioned rather than flowed.
+ * `test_every_bordered_box_is_on_the_radius_scale` now does this checking. */
 .card,.row.card,.btn,button.toggle,.chip,.kbd,.box,.track,.tot,.src,.rmrow,
-.sgoal,.wbc,.whd,.wev,.sq,.tl{border-radius:var(--radius)}
+.sgoal,.wbc,.whd,.wev,.sq,.tl,.pager,.tl .ev,.cap .over,
+#panel-awaiting .row,.row.sched.k-protected{border-radius:var(--radius)}
 
 /* marks: small enough that the default would round them away */
-.fill,.mcol > i,.bar .b,.track.mini,.track.thin,.track.wee{border-radius:var(--radius-sm)}
+.fill,.mcol > i,.bar .b,.track.mini,.track.thin,.track.wee,
+.reel,.legend i,.hmf,.atl summary::after{border-radius:var(--radius-sm)}
 
 /* A fill inside a track keeps the track's inner curve rather than its own, or the
  * two corners disagree by the width of the keyline. */
