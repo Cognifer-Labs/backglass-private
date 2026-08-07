@@ -1,3 +1,136 @@
+# Plan: the model backend and the information processing
+
+Written 2026-08-06. Asked to plan how to improve both. Everything below is measured
+against a copy of the owner's real ledger (8,778 source items) or read out of the code —
+no figure here is an estimate, and where a number is missing that is itself a finding.
+
+## Baseline, as measured
+
+| Fact | Value | How it was measured |
+|---|---|---|
+| Triage kill rate | 86.3% | `triage_kill_rate.sql` against the live copy; docs/02 expects 90–95% |
+| Completed extractions that produced nothing | 539 of 611 | the miner's own query; 417 broadcast-marked |
+| Extraction shape | **one CLI subprocess per item**, 6 concurrent | `sync._extract_pass` + `max_concurrency=6` |
+| Triage shape | batched, 12 items per call | `triage_batch_size=12` |
+| Per-call cost/latency/tokens | **not recorded anywhere** | only `run.spend_cents` exists |
+| Imputed spend, last 14 runs | 166c | `SUM(run.spend_cents)`; imputed, never billed |
+| Open commitments | 103, mean confidence 0.68 | `commitment` |
+| Half-price batch lane | unusable here | needs an API key this machine does not have |
+| Template hashes recorded | 4,686 items | `source_item.template_hash` |
+
+Two of those lines carry the whole plan. **The expensive pass produced nothing 88% of the
+time it ran**, and **nobody can say what a single call costs or takes**, because the only
+telemetry is a per-run total that mixes triage and extraction.
+
+## Phase 0 — Instrument before optimising
+
+Nothing below Phase 1 can be judged without this, and it is the smallest change here.
+
+- [ ] 0.1 A `model_call` row per completed call: tier (triage/triage_batch/extract),
+      backend, model, item count, prompt chars, wall-clock ms, reported cost, outcome
+      (ok / retry / parked / rate-limited). Written on the same seam the run's spend
+      already crosses, so no new failure path.
+- [ ] 0.2 `backglass costs --calls` reads it: median and p95 wall-clock per tier, cost
+      per call against payload size, and the ratio the 2026-07-30 lesson implies — how
+      much of a call is session overhead rather than payload.
+- [ ] 0.3 One week of real runs before Phase 2 is designed. Phase 2's whole premise is
+      that per-call overhead dominates; that premise is currently a lesson from a
+      different context, not a measurement of this pipeline.
+
+**Proves:** whether batching extraction is worth its risk, and where the wall-clock in a
+90-second sync actually goes.
+
+## Phase 1 — Stop paying for mail nobody will ever act on
+
+The precision work. Highest measured value, lowest risk, and half of it already landed.
+
+- [x] 1.1 Barren-keep evidence in `learned_noise` (commit 2af4411). 70 → 140 candidates.
+- [ ] 1.2 **Run it.** `backglass noise suggest`, read the evidence, promote. Owner action;
+      needs the merge first (migration 18 is not on this branch). Until then all 417
+      barren-bulk calls repeat every sync.
+- [ ] 1.3 Template-hash drops. 4,686 items already carry a `template_hash` and
+      `noise templates` already reports verdict mix per shape. A shape with N sightings,
+      zero productive items and zero unresolved keeps is the same promotion argument as
+      a sender, one level up — and it catches the sender that rotates its From address,
+      which the address rule cannot.
+- [ ] 1.4 Capture the bulk headers at ingest. `List-Unsubscribe`, `List-Id`,
+      `Precedence`, `Auto-Submitted` are in the `.emlx` and are dropped on the floor: the
+      connector stores four keys and none of them is a header. A machine-intended
+      broadcast marker beats grepping the body for "unsubscribe", which is what the
+      barren rule has to do today. Only helps items ingested after it lands — the ledger
+      is immutable — so it is worth doing early or not at all. **Checked before writing
+      this:** `content_hash` is computed over author, title, stripped body and
+      `occurred_at` only, never `raw_json`, so adding header keys cannot change an
+      existing item's hash and cannot trip the 0002 immutability trigger on re-fetch.
+
+**Proves:** kill rate moving toward the 90–95% band, and the barren count falling on the
+next sync. Both are already queryable, so the check is a re-run of the same SQL.
+
+## Phase 2 — Amortise what a call costs, once Phase 0 says what that is
+
+Design after 0.3 reports. The candidate shapes, in the order I would try them:
+
+- [ ] 2.1 **Skip extraction the rules can already answer.** Cheapest possible win: an
+      item whose template hash has never produced anything does not need the expensive
+      pass at all. This is Phase 1's machinery reused at the extraction gate rather than
+      the triage gate, and it costs no new model behaviour.
+- [ ] 2.2 **Batch extraction the way triage is batched**, small (3–5) and with the same
+      escalate-on-doubt contract: anything the batch hedges on is re-read per item at
+      full context. The risk is real and specific — extraction is the pass that must
+      quote an exact source sentence (rule 1), and crowding items into one call is
+      exactly how a model starts attributing one item's sentence to another. So: a
+      fixture set that proves per-item provenance survives batching, before any of it
+      ships, and an eval rather than a unit test for the quality question.
+- [ ] 2.3 Only if 0.2 shows session overhead dominating and 2.1/2.2 are not enough:
+      a persistent CLI session. Deliberately last — the 2026-07-30 lesson is that a
+      session is exactly what made a 17-token answer cost 29,919 cache-creation tokens,
+      and `CLI_ISOLATION_FLAGS` exists to prevent it. Reopening that door needs a
+      measurement that justifies it and a test that pins the isolation that remains.
+
+**Proves:** cost per extracted record, before and after, from `model_call`.
+
+## Phase 3 — What the extraction gets wrong
+
+Quality rather than cost. Each of these is a known defect with a live count.
+
+- [ ] 3.1 **32 open commitments were already past due when they arrived.** A 120-day mail
+      window reaches back to April, so obligations met months ago land looking open. The
+      fix is a rule about the ingest window, not a model change: a deadline that predates
+      the item's own ingest by more than the window opens as `archived`, not `open`, and
+      says why. Until then the board's Overdue lane is mostly archaeology.
+- [ ] 3.2 **Six duplicate clusters, ~13 rows.** The same plan described in mail, in a
+      group chat and in a quick-add, worded differently enough that 0.85 fuzzy matching
+      misses. The engagement side already learned the answer here — ask the model
+      (`replaces_start_at`) rather than tune a threshold. The commitment side has
+      `resolves_what` and could carry the same signal for restatements.
+- [ ] 3.3 **Confidence is not calibrated.** Mean confidence on open commitments is 0.68
+      and the review threshold sits below that; nothing has ever checked whether a 0.68
+      is right two thirds of the time. This is an eval, and `evals/` is where it belongs
+      — it never gates CI (docs/10).
+
+## Rejected, with reasons
+
+- **A cheaper triage model.** Triage already runs on haiku — and that is the *effective*
+  value, not just the code default: the owner's `.env` sets `MODEL_BACKEND` and nothing
+  else, so `model_triage=haiku` / `model_extract=sonnet` stand. The waste is not the
+  model, it is the 417 calls that should never have been made.
+- **Raising the triage keep bar.** triage.md forbids it in terms, and correctly: a false
+  negative loses a commitment permanently. Every Phase 1 item improves precision without
+  touching the model's instruction to keep when in doubt.
+- **The half-price batch API lane.** Needs an API key this machine does not have, and the
+  owner's decision on 2026-08-03 was to fix imputed-spend enforcement rather than route
+  around it. Nothing here should assume that lane comes back.
+- **Reducing `max_concurrency` to save money.** It costs nothing on a subscription; it
+  only trades wall-clock. Latency is a Phase 0 question, not a cost one.
+
+## Sequencing
+
+0 → 1 → (measure) → 2 → 3. Phase 1.2 is the only item that produces a saving this week
+and it is the owner's to run. Phase 0 is a day's work and everything after it is a guess
+without it.
+
+---
+
 # The loop could not learn from its most expensive mistake
 
 Started 2026-08-06. Asked to make the information processing better on the claude_cli
