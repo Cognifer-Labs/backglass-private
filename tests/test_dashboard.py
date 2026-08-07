@@ -689,3 +689,32 @@ class TestPanelGrounds:
         """Sources runs below the grid with nothing beside it to be told apart from,
         so a tint there would be decoration rather than structure."""
         assert "#panel-sources{background" not in self.CSS.read_text()
+
+
+class TestGeometryRules:
+    """§7 "Radius 0 everywhere. 2px on reel digit windows only."
+
+    The rule itself is already pinned by
+    `test_no_shadows_no_radius_no_gradients_outside_the_hatch`, which reads the served
+    sheet and allows a non-zero radius inside `.reel span` alone. This covers the case
+    that test cannot see: a control with no rule of its own at all. WebKit rounds
+    buttons and text fields by default, so a component that simply never mentions
+    radius is round — the violation is an omission, and an omission leaves nothing in
+    the CSS to assert against.
+    """
+
+    CSS = Path(__file__).resolve().parents[1] / "backglass/web/static/dashboard.css"
+
+    def test_the_controls_the_browser_rounds_have_a_floor(self) -> None:
+        css = self.CSS.read_text()
+        assert re.search(r"button,\s*input,\s*textarea,\s*select\{border-radius:0\}", css), (
+            "the UA-rounded controls need one rule that squares them regardless of "
+            "which component classes reach them"
+        )
+
+    def test_the_floor_is_a_literal_not_a_token(self) -> None:
+        """`--radius` says 0 and reads tidier, but a radius resolved through a second
+        stylesheet is square only while that stylesheet loads. This rule is the floor;
+        the value that cannot fail is the one written into it."""
+        css = self.CSS.read_text()
+        assert "border-radius:var(--radius)" not in css

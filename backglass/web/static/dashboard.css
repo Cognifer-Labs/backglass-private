@@ -395,6 +395,22 @@ button.box::before{content:"";position:absolute;inset:-6px}
  * square corners, paper field. */
 .pplsearch{display:flex;gap:var(--sp-3);align-items:center;padding:var(--sp-3) 0;border-bottom:1px solid var(--rule-hair)}
 .pplsearch input[type=search]{flex:1;max-width:420px}
+/* §7 "Radius 0 everywhere. 2px on reel digit windows only." — the reel is the one
+ * exception and it names itself. This is the floor under the rule: WebKit rounds
+ * buttons and every text-shaped control by default, so squareness here is not the
+ * absence of a decision, it is a decision that has to be re-made on every control the
+ * UA styles. Written once, through the token, so the rule has one home instead of a
+ * literal repeated at each component that happened to remember it.
+ *
+ * `input` deliberately includes the types with no visible box (checkbox, radio,
+ * range): a later restyle that gives one a background inherits the rule rather than
+ * rediscovering it.
+ *
+ * Literal 0, not `var(--radius)`. The token says 0 and routing through it would read
+ * tidier, but a radius that resolves through a second stylesheet is square only while
+ * that stylesheet loads — and this one is the floor. The value that cannot fail is the
+ * one written here. */
+button,input,textarea,select{border-radius:0}
 input,textarea,select{font:600 14px/20px system-ui,sans-serif;background:var(--paper);color:var(--ink);
   border:2px solid var(--rule);border-radius:0;padding:var(--sp-2) var(--sp-3)}
 /* The one native checkbox (People search) joins the .box language: square, 2px
