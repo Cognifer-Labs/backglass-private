@@ -2859,6 +2859,12 @@ def doctor() -> None:
           "set OWNER_EMAILS in .env")
     check("brief recipient configured", bool(settings.brief_to),
           "set BRIEF_TO (and RESEND_API_KEY) for delivery")
+    # The knowledge base restates two values the pipeline actually runs on. They agree
+    # today and nothing would notice if they stopped — see facts.config_drift.
+    from backglass import facts as facts_mod
+
+    drift = facts_mod.config_drift(conn, settings)
+    check("owner facts agree with config", not drift, "; ".join(drift))
     # Google is one way to reach mail and calendar, and on a Mac that syncs both locally
     # it is not the only one — `apple-mail` and `calendar:apple` read the same accounts
     # with no OAuth client at all. Failing here regardless left the doctor permanently

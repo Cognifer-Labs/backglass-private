@@ -15,6 +15,7 @@ subject so near-duplicate keys stay visible rather than silently forking.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from dataclasses import dataclass
 from typing import Any
@@ -117,6 +118,43 @@ def forget(conn: sqlite3.Connection, fact_id: int) -> None:
     )
     if cur.rowcount == 0:
         raise FactError(f"no active fact {fact_id}")
+
+
+def config_drift(conn: sqlite3.Connection, settings: Any) -> list[str]:
+    """Where the knowledge base and the effective config disagree about the owner.
+
+    Two of these facts restate values the pipeline actually runs on: `identity.emails`
+    against `OWNER_EMAILS`, and `identity.timezones` against `DEFAULT_TZ`/`ALT_TZ`. They
+    agree today. Nothing would notice if they stopped, and this repo has already learned
+    what that costs — "a documented invariant with no test is a comment" (2026-08-02,
+    after `user_id on every table` had been false for eight tables for months).
+
+    Config is canonical, because it is what the code reads; the fact is the human-legible
+    copy that carries the annotations config cannot ("(personal)", "when in India"), so
+    it is checked rather than generated. Drift is reported in both directions: a
+    configured address missing from the KB means the record of the owner is stale, and a
+    KB address the config has never heard of means mail from it is not being recognised
+    as the owner's own.
+    """
+    facts = {f.key: f.value for f in recall(conn, "identity")}
+    out: list[str] = []
+
+    emails = facts.get("emails")
+    if emails is not None:
+        text = emails.lower()
+        for address in settings.owner_emails:
+            if address.lower() not in text:
+                out.append(f"OWNER_EMAILS has {address}, identity.emails does not")
+        for token in re.findall(r"[\w.+-]+@[\w.-]+", text):
+            if not any(token == a.lower() for a in settings.owner_emails):
+                out.append(f"identity.emails has {token}, OWNER_EMAILS does not")
+
+    zones = facts.get("timezones")
+    if zones is not None:
+        for label, zone in (("DEFAULT_TZ", settings.default_tz), ("ALT_TZ", settings.alt_tz)):
+            if zone and zone not in zones:
+                out.append(f"{label} is {zone}, identity.timezones does not mention it")
+    return out
 
 
 def export_markdown(conn: sqlite3.Connection) -> str:

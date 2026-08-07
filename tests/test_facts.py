@@ -142,3 +142,80 @@ class TestMemoryPage:
             "/memory", data={"subject": "x", "key": " ", "value": "v", "note": ""}
         )
         assert response.status_code == 422
+
+
+class TestConfigDrift:
+    """The knowledge base restates two values the pipeline actually runs on.
+
+    `identity.emails` against `OWNER_EMAILS`, `identity.timezones` against the two
+    timezone settings. They agree on the owner's ledger today, and nothing would have
+    noticed if they stopped — the shape of the 2026-08-02 lesson, where an invariant
+    CLAUDE.md called settled had been false for eight tables for months because no check
+    read it.
+
+    Both branches are exercised, because a check nobody has seen fail is a check nobody
+    has seen work.
+    """
+
+    def _identity(
+        self, conn: sqlite3.Connection, settings: Settings, emails: str, zones: str
+    ) -> None:
+        facts.remember(conn, settings, "identity", "emails", emails)
+        facts.remember(conn, settings, "identity", "timezones", zones)
+
+    def test_agreement_is_silent(self, conn: sqlite3.Connection, settings: Settings) -> None:
+        cfg = settings.model_copy(
+            update={
+                "owner_emails": ["me@example.com", "me@example.edu"],
+                "default_tz": "America/Phoenix",
+                "alt_tz": "Asia/Kolkata",
+            }
+        )
+        self._identity(
+            conn,
+            cfg,
+            "me@example.com (personal) · me@example.edu (school)",
+            "America/Phoenix home · Asia/Kolkata when travelling",
+        )
+        assert facts.config_drift(conn, cfg) == []
+
+    def test_an_address_the_knowledge_base_has_never_heard_of(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """A configured address missing from the KB means the record of the owner is
+        stale — a second mailbox was connected and nobody wrote it down."""
+        cfg = settings.model_copy(
+            update={"owner_emails": ["me@example.com", "new@example.edu"]}
+        )
+        self._identity(conn, cfg, "me@example.com (personal)", "America/Phoenix home")
+        drift = facts.config_drift(conn, cfg)
+        assert any("new@example.edu" in line and "identity.emails does not" in line
+                   for line in drift)
+
+    def test_an_address_the_config_has_never_heard_of(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The other direction, and the more dangerous one: mail from an address the
+        owner considers theirs is not being recognised as their own."""
+        cfg = settings.model_copy(update={"owner_emails": ["me@example.com"]})
+        self._identity(conn, cfg, "me@example.com · old@example.org", "America/Phoenix home")
+        drift = facts.config_drift(conn, cfg)
+        assert any("old@example.org" in line and "OWNER_EMAILS does not" in line
+                   for line in drift)
+
+    def test_a_timezone_the_knowledge_base_does_not_mention(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        cfg = settings.model_copy(
+            update={"owner_emails": ["me@example.com"],
+                    "default_tz": "Europe/Berlin", "alt_tz": None}
+        )
+        self._identity(conn, cfg, "me@example.com", "America/Phoenix home")
+        assert any("Europe/Berlin" in line for line in facts.config_drift(conn, cfg))
+
+    def test_a_knowledge_base_with_no_identity_facts_is_not_drift(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """Absence is not disagreement. A ledger whose owner has written nothing down
+        yet must not fail a preflight check for it."""
+        assert facts.config_drift(conn, settings) == []
