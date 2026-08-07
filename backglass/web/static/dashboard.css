@@ -1328,13 +1328,22 @@ details.panel:not([open]){padding-bottom:0}
  * which is why "tab changes" needs no separate mechanism.
  *
  * The resting state deliberately declares no transform, so a panel that has finished
- * arriving is not a containing block for anything positioned inside it. */
-#content,.panel,
-#people-rows,#today-ticks,#goal-cards,#roadmap-totals,#roadmap-steps,#roadmap-masthead{
+ * arriving is not a containing block for anything positioned inside it.
+ *
+ * Classes first, ids only where no class exists. The first draft of this list was ids
+ * alone and it silently missed three swap targets — the decisions ledger, the memory
+ * ledger and the week grid — which is a failure mode a stylesheet cannot report: the
+ * page still works, one fragment simply snaps while its neighbour fades. `.panel` and
+ * `.sec` are what a swappable region already is here, so a fragment added next year
+ * inherits the animation instead of having to be remembered. The remaining five ids
+ * are the regions that wear no such class; `test_every_swap_target_arrives` compares
+ * this list against the templates so the next omission is a failing test. */
+#content,.panel,.sec,
+#people-rows,#roadmap-totals,#roadmap-steps,#roadmap-masthead,#week-grid{
   transition:opacity var(--motion) var(--ease-out),transform var(--motion) var(--ease-out)}
 @starting-style{
-  #content,.panel,
-  #people-rows,#today-ticks,#goal-cards,#roadmap-totals,#roadmap-steps,#roadmap-masthead{
+  #content,.panel,.sec,
+  #people-rows,#roadmap-totals,#roadmap-steps,#roadmap-masthead,#week-grid{
     opacity:0;transform:translateY(var(--motion-travel))}
 }
 /* The week-pace readout is an inline span mid-sentence — a transform would not apply
@@ -1353,7 +1362,7 @@ details.panel:not([open]){padding-bottom:0}
  * No transform on hover anywhere in this file, so none of it needs a `(hover: hover)`
  * gate: a colour crossfade that fires from a phantom touch-hover is invisible, a
  * scale that does is a glitch. */
-.btn,button.toggle,button.box,.snav a,a.nm,.card,.row.sched,.wbc,.salert,.wev,.pager a{
+.btn,.lnk,button.toggle,button.box,.snav a,a.nm,.card,.row.sched,.wbc,.salert,.wev,.pager a{
   transition:background-color var(--motion-fast) ease,
              border-color var(--motion-fast) ease,
              color var(--motion-fast) ease,
@@ -1363,8 +1372,11 @@ details.panel:not([open]){padding-bottom:0}
  * excluded: a summary the width of the grid dipping three percent reads as the layout
  * breaking, not as a button being pressed. Checkbox spans in the week grid are
  * excluded for the same reason the CSS already gives them `cursor:default` — they are
- * a readout, and only `button.box` is a control. */
-.btn:active,button.toggle:active,button.box:active{transform:scale(var(--motion-press))}
+ * a readout, and only `button.box` is a control. `.lnk` is both a button and a
+ * `<summary>` depending on where it is used, so only the button form dips; both take
+ * the colour cross-fade above, which is what the summary form actually needs. */
+.btn:active,button.lnk:active,button.toggle:active,button.box:active{
+  transform:scale(var(--motion-press))}
 
 /* 3 — the theme flip.
  * Every token changes in one frame, so this is all-or-nothing: transitioning the few

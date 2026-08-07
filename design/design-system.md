@@ -339,7 +339,19 @@ is looking at, and a 200ms ease-in feels slower than a 200ms ease-out.
    "elements newly inserted into the document", which is what `@starting-style`
    selects. The nine-page sidebar therefore animates without any page-transition
    machinery.
-2. **A pressed control** dips to 0.97 over 90ms, on buttons only.
+
+   The regions are named **by class, not by id**, and that distinction cost something
+   to learn: the first version of this rule listed ids from memory and missed three
+   swap targets. Nothing broke — the page rendered, the write landed, and one fragment
+   snapped while the fragment beside it faded, which is the same incoherence the theme
+   flip goes to some trouble to avoid. `.panel` and `.sec` are what a swappable region
+   already is here, so a fragment added later inherits the animation. Ids remain only
+   for the regions that wear no such class, and `test_every_swap_target_arrives` reads
+   the templates and the stylesheet together so the next omission fails a test rather
+   than shipping.
+2. **A pressed control** dips to 0.97 over 90ms, on buttons only — including `.lnk`,
+   which is a button in most places and a `<summary>` in a few; only the button form
+   dips, and both take the colour cross-fade.
 3. **A colour that changes** cross-fades over 90ms — hover, selection, the enabled
    state of a source, and the 0.55 dim htmx puts on a control mid-write.
 4. **The failed-write strip** slides eight pixels up from the bottom edge over 240ms.

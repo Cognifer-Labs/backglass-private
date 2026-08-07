@@ -2042,3 +2042,17 @@ run. `defaultSettleDelay` is `20`. `design-system.md` has no motion section at a
   every rule.
 - Look at it in Safari, cache-busted, both themes (2026-08-06 lesson: a screenshot is
   a cache, not an observation).
+
+## Motion: what the verifier caught
+
+A fresh-context verifier refuted the first version of this. Three swap targets reached
+no arrival rule — `#decisions`, `#memory` (both `.sec` sections) and `#week-grid`, the
+region a checklist tick repaints out of band — and `.lnk`, which is the control the
+whole roadmap surface is built from, was in no rule at all. The selector list had been
+written from an id inventory, and an id inventory is a list that is correct on the day
+it is written.
+
+Fixed by selecting on `.panel`/`.sec` instead, and by adding the test that compares
+every `hx-target` and `hx-swap-oob` region in the templates against the arrival rule.
+Both the fix and the test were proven against a mutation: removing `.sec` lists five
+regions by name.

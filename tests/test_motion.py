@@ -163,6 +163,79 @@ def test_content_arrives_by_starting_style_not_by_an_htmx_class() -> None:
         )
 
 
+def _swap_targets() -> dict[str, tuple[str, str]]:
+    """Every region a write replaces, mapped to the classes its root element carries.
+
+    Both halves of htmx's vocabulary count: `hx-target` names the region a click
+    replaces, and `hx-swap-oob` marks a region replaced by a write aimed somewhere
+    else entirely — a checklist tick repaints the week grid without ever naming it.
+    """
+    found: dict[str, tuple[str, str]] = {}
+    templates = sorted((ROOT / "backglass" / "web" / "templates").glob("*.html"))
+
+    ids: set[str] = set()
+    for path in templates:
+        text = path.read_text()
+        ids |= set(re.findall(r'hx-target="#([\w-]+)"', text))
+        for match in re.finditer(r'hx-swap-oob="', text):
+            # The oob marker sits on the element it replaces, so its id is that
+            # element's own — scan back to the opening angle bracket for it.
+            head = text.rfind("<", 0, match.start())
+            tag = text[head : match.start()]
+            own = re.search(r'id="([\w-]+)"', tag)
+            if own:
+                ids.add(own.group(1))
+
+    for target in ids:
+        for path in templates:
+            text = path.read_text()
+            where = text.find(f'id="{target}"')
+            if where < 0:
+                continue
+            head = text.rfind("<", 0, where)
+            tail = text.find(">", where)
+            tag = text[head : tail + 1]
+            classes = re.search(r'class="([^"]*)"', tag)
+            found[target] = (path.name, classes.group(1) if classes else "")
+            break
+    return found
+
+
+def test_every_swap_target_arrives() -> None:
+    """§9's one mechanism, checked against the templates rather than asserted.
+
+    This is the test the first draft of the motion layer needed and did not have. That
+    draft listed swap targets by id, from memory, and missed three of them — the
+    decisions ledger, the memory ledger and the week grid. Nothing failed: the page
+    rendered, the write landed, and one fragment simply snapped into place while the
+    fragment beside it faded. A stylesheet cannot report that, and neither can a test
+    that only reads the stylesheet, which is why this one reads both.
+
+    A region qualifies by id or by any class on its root element. Classes are the
+    better answer — `.panel` and `.sec` are what a swappable region already is here, so
+    a fragment added later inherits the animation — and the ids are for the handful
+    that wear no such class.
+    """
+    # Every `@starting-style` block, not the first: an inline region takes a fade
+    # without a translate — a transform does not apply to it, and making it a block to
+    # earn one would move the text around it — so it carries its own rule.
+    blocks = re.findall(r"@starting-style\s*\{\s*([^{]+)\{", _sheet())
+    assert blocks, "the arrival rule is gone"
+    selectors = {s.strip() for block in blocks for s in block.split(",") if s.strip()}
+
+    unreached = []
+    for target, (template, classes) in sorted(_swap_targets().items()):
+        by_id = f"#{target}" in selectors
+        by_class = any(f".{c}" in selectors for c in classes.split())
+        if not (by_id or by_class):
+            unreached.append(f"#{target} ({template}, class={classes!r})")
+
+    assert not unreached, (
+        "these regions are replaced by a write and reach no arrival rule, so they "
+        "snap in beside fragments that fade:\n  " + "\n  ".join(unreached)
+    )
+
+
 def test_nothing_animates_on_the_way_out() -> None:
     """§9's first omission: only arrivals are free.
 
