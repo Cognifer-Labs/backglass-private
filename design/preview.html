@@ -15,7 +15,7 @@
   --turquoise:#009592; --cobalt:#2766C0;
   --s1:#2766C0; --s2:#D03D37; --s3:#009592;
   /* Rounding ruling 2026-08-06 — mirrors design/tokens.css. */
-  --radius-1:2px; --radius-2:4px; --radius-3:6px; --radius-reel:var(--radius-1);
+  --radius-1:3px; --radius-2:6px; --radius-3:10px; --radius-reel:var(--radius-1);
   --fill-mild:#f5eedb; --fill-mild-2:#e4decd;
 }
 @media (prefers-color-scheme:dark){:root:where(:not([data-theme="light"])){
@@ -147,8 +147,8 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
   background:var(--fill-mild);
   border:2px solid var(--tile-line,var(--rule));
   border-radius:var(--radius-3);
-  padding:12px;
-  margin:0 0 8px}
+  padding:16px;
+  margin:0 0 12px}
 :is(.row,.src,.chk,.goal):first-of-type{border-top-width:1px}
 .legend i{display:inline-block;width:11px;height:11px;border:1px solid var(--rule);
   border-radius:var(--radius-1);margin-right:6px;vertical-align:-2px}

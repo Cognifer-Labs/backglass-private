@@ -688,8 +688,10 @@ def test_every_content_unit_is_a_tile(client: TestClient) -> None:
     assert tile, "no tile rule"
     for selector in (
         ".row", ".card", ".src", ".chk", ".goal", ".tt li", ".rmrow", ".tot",
-        # The four the first pass argued its way out of. The owner asked twice.
-        ".sgoal", ".goalrow", ".atl .stepx", ".gcard .gtgt", ".gcard .mlist li",
+        # The four the first pass argued its way out of. The owner asked twice. Named by
+        # bare class, because a descendant selector here would outrank the state washes —
+        # see test_the_tile_rule_never_outranks_a_state_wash.
+        ".sgoal", ".goalrow", ".stepx", ".gtgt", ".mlist li",
     ):
         assert selector in tile[0], f"{selector} is not a tile"
     flat = tile[0].replace(" ", "")
@@ -697,6 +699,27 @@ def test_every_content_unit_is_a_tile(client: TestClient) -> None:
     # 2026-08-07: "separated by MORE than a thin line". A 1px keyline is a thin line, so
     # the weight is the assertion — the ink may vary by category, the weight may not.
     assert "border:var(--border)solid" in flat, "a tile keyline must carry the 2px weight"
+
+
+def test_the_tile_rule_never_outranks_a_state_wash(client: TestClient) -> None:
+    """§7b: state beats kind beats category. That ordering is enforced by nothing but
+    specificity, and :is() takes the specificity of its MOST SPECIFIC argument — so a single
+    descendant selector in the tile list (".gcard .mlist li") lifts the whole rule to (0,2,1)
+    and silently outranks `.src.cold` at (0,2,0). It did: a going-cold person lost their
+    vermilion row and rendered as an ordinary tile, in both themes, with every test green.
+    Every argument must therefore be a single class."""
+    css = _strip_css_comments(client.get("/static/dashboard.css").text)
+    tile = [b for b in css.split("}") if "--tile-line" in b and "background:var(--fill-mild)" in b]
+    assert tile, "no tile rule"
+    selector = tile[0].split("{")[0]
+    inside = selector[selector.index(":is(") + 4 : selector.rindex(")")]
+    for arg in (a.strip() for a in inside.split(",")):
+        assert arg, "empty selector argument"
+        # One class, optionally qualified by a bare element (".tt li", ".mlist li").
+        assert re.fullmatch(r"\.[\w-]+(\s+[a-z]+)?", arg), (
+            f"tile selector argument {arg!r} is more specific than one class, which lifts "
+            f"the whole :is() above the state washes"
+        )
 
 
 def test_a_tile_keyline_never_uses_a_wash_line_token(client: TestClient) -> None:

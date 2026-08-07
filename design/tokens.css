@@ -97,9 +97,15 @@
    * Three steps and no fourth. A `--radius` alias for "the default" was written and then
    * removed: a second name for 4px is the first step toward a nine-step scale, and every
    * box in the sheet already says which of the three it is. */
-  --radius-1:    2px;   /* marks under ~20px, data fills, inline windows */
-  --radius-2:    4px;   /* controls — buttons, inputs, chips, alerts, badges */
-  --radius-3:    6px;   /* containers — cards, grids, timelines, washed rows */
+  /* Rescaled 2026-08-07. The original 2/4/6 was set against a 1px keyline; the tile ruling
+   * put a 2px keyline on every boxed element, and a 6px arc under a 2px stroke reads as a
+   * nicked corner rather than a rounded one — the heavier the stroke, the more radius it
+   * takes to read as deliberate. 2/4/6 was also too compressed to tell apart: a 4px chip
+   * beside a 6px tile is one step of difference nobody can see. 3/6/10 doubles the visible
+   * distance between steps while keeping the marks small enough to still read as squares. */
+  --radius-1:    3px;   /* marks under ~20px, data fills, inline windows */
+  --radius-2:    6px;   /* controls — buttons, inputs, chips, alerts, badges */
+  --radius-3:    10px;  /* containers and tiles — cards, grids, timelines, rows */
   --radius-reel: var(--radius-1);
   --border:      2px;
   --hair:        1px;

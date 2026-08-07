@@ -173,6 +173,10 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
  * banner scale, not label scale. The count span stays 14px, subordinate. */
 .banner .bt{font-size:24px;line-height:28px}
 .inner{padding:0 var(--sp-5)}
+/* A section bar is a hard black edge and the first tile used to start 0px under it, so the
+ * two read as one welded object. One space step of air is the difference between a heading
+ * over a list and a heading stuck to it. */
+.banner + .inner{padding-top:var(--sp-3)}
 .cap{font-size:12px;line-height:17px;color:var(--ink-muted);padding:var(--sp-3) 0;
   border-bottom:1px solid var(--rule-hair);margin-bottom:0}
 .row{display:flex;gap:var(--sp-4);padding:var(--sp-3) 0;border-top:1px solid var(--rule-hair);align-items:flex-start}
@@ -1180,17 +1184,29 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
  * goals, the goals page's per-goal rows, the roadmap's step rows, and the target and
  * milestone rows inside a goal card. The density argument for keeping the sidebar as ledger
  * lines was mine, not the owner's, and the owner has now twice asked for the opposite. */
+/* Bare class names on purpose, never ".atl .stepx" or ".gcard .gtgt". :is() takes the
+ * specificity of its MOST SPECIFIC argument, so one descendant selector in this list lifts
+ * the whole rule to (0,2,1) — above .src.cold, .src.warn and .rmrow.overdue at (0,2,0), and
+ * the state washes silently stop winning. That is exactly what happened: a going-cold
+ * person lost their vermilion row and rendered as an ordinary turquoise tile. State beats
+ * category is the rule; keeping every argument to one class is what enforces it. */
 :is(.row,.card,.src,.chk,.goal,.tt li,.rmrow,.tot,
-    .sgoal,.goalrow,.atl .stepx,.gcard .gtgt,.gcard .mlist li){
+    .sgoal,.goalrow,.stepx,.gtgt,.mlist li){
   background:var(--fill-mild);
   border:var(--border) solid var(--tile-line,var(--rule));
   border-radius:var(--radius-3);
-  padding:var(--sp-3);
-  margin:0 0 var(--sp-2)}
+  /* Spacing pass 2026-08-07. Was 12px of padding and an 8px gap, which inverts the
+   * hierarchy: a row sat closer to its neighbours than its own frame sat to its text, so
+   * the list read as one mass with lines drawn on it rather than as separate things. The
+   * gap is now the larger reading — 16px inside the frame, 12px between frames, and the
+   * lines WITHIN a tile stay at 4px, so proximity groups content into its own tile before
+   * it groups tiles with each other. */
+  padding:var(--sp-4);
+  margin:0 0 var(--sp-3)}
 /* The hairline idiom and every :first-of-type reset that existed only to serve it.
  * A tile is separated by the gap, so the first one needs no special case. */
 :is(.row,.card,.src,.chk,.goal,.tt li,.rmrow,.tot,
-    .sgoal,.goalrow,.atl .stepx,.gcard .gtgt,.gcard .mlist li):first-of-type{
+    .sgoal,.goalrow,.stepx,.gtgt,.mlist li):first-of-type{
   border-top-width:var(--border)}
 .tt li:last-child{border-bottom-width:var(--border)}
 /* The sidebar column is 236px and its tiles carry a 2px edge like every other, so they

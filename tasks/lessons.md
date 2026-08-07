@@ -604,3 +604,24 @@ deterministic given the id.
   everyone copies; getting it wrong propagates further than getting a single rule wrong.
   Here the inset is padding + border, and any rule phrased as "minus the inset" has to say
   so or it will be read as padding alone.
+
+- 2026-08-07 | Changed the radius scale and tile spacing, reloaded the same localhost port,
+  saw a pixel-identical page, and nearly concluded the edit was a no-op. Safari had cached
+  the stylesheet; `curl` against the same URL showed the new values the whole time. Several
+  earlier "verified by screenshot" passes in this session ran against the same origin after
+  a CSS edit, so some of them may have been reading stale paint. | A screenshot after a CSS
+  edit proves nothing until the bytes are proven fresh. Either `curl` the stylesheet and
+  match it against disk before believing the render, or serve on a NEW PORT — the HTTP cache
+  is keyed by origin, so a different port is a guaranteed cold cache. Reload is not enough
+  and a hard reload is not reachable through the automation.
+
+- 2026-08-07 | Added `.gcard .mlist li` to the `:is(...)` list that styles every tile, and
+  silently broke the rule the whole design rests on. `:is()` takes the specificity of its
+  MOST SPECIFIC argument, so one descendant selector lifted the entire tile rule from (0,1,0)
+  to (0,2,1) — above `.src.cold` and `.rmrow.overdue` at (0,2,0). A going-cold person stopped
+  rendering vermilion and became an ordinary tile, in both themes, with 1616 tests green. |
+  `:is()` is not specificity-neutral, and its cost is invisible at the call site: the
+  selector that breaks the cascade is not the one that changed behaviour. In a grouped rule
+  that other rules are meant to override, keep every argument to a single class and assert
+  it — a documented precedence order with nothing enforcing it is a comment, not a rule.
+  Found by looking at dark mode, not by any test, which is why the test exists now.
