@@ -212,3 +212,95 @@ class TestTheOwnersOwnWordsAreACompleteAnswer:
 
         assert questions.open_questions(conn) == []
         assert decisions.active(conn) == []
+
+
+class TestTheAskPage:
+    """One question, the whole screen, and a box that is not labelled "other"."""
+
+    @pytest.fixture
+    def client(self, conn: sqlite3.Connection, sett: Settings):  # type: ignore[no-untyped-def]
+        from fastapi.testclient import TestClient
+
+        from backglass.web.app import create_app
+
+        del conn
+        return TestClient(create_app(sett), base_url="http://127.0.0.1:8765")
+
+    def _a_conflict(self, conn: sqlite3.Connection) -> None:
+        a_class(conn, MONDAY, "10:10", "11:00", "LIA 101")
+        a_class(conn, MONDAY, "10:30", "11:45", "BIO 181")
+
+    def test_it_shows_one_question_and_nothing_to_navigate_away_to(
+        self, client, conn: sqlite3.Connection
+    ) -> None:  # type: ignore[no-untyped-def]
+        """No shell, no sidebar. A question competing with nine navigation targets is a
+        question that loses, which is how the review queue reached 303 open rows."""
+        self._a_conflict(conn)
+        body = client.get("/ask").text
+
+        assert "Two things at once" in body
+        assert "Attending LIA 101" in body
+        assert 'class="side"' not in body  # the sidebar is deliberately absent
+        assert body.count("askq") == 1  # exactly one question on screen
+
+    def test_the_owners_own_words_are_offered_as_an_equal(
+        self, client, conn: sqlite3.Connection
+    ) -> None:  # type: ignore[no-untyped-def]
+        self._a_conflict(conn)
+        body = client.get("/ask").text
+
+        assert 'name="text"' in body
+        assert "answer in your own words" in body
+        # Never "other", which would rank the owner's answer below the guesses.
+        assert ">other<" not in body.lower()
+
+    def test_free_text_is_saved_and_becomes_a_decision(
+        self, client, conn: sqlite3.Connection
+    ) -> None:  # type: ignore[no-untyped-def]
+        self._a_conflict(conn)
+        client.get("/ask")
+        qid = int(conn.execute("SELECT id FROM open_question LIMIT 1").fetchone()["id"])
+
+        client.post(
+            f"/ask/{qid}/answer",
+            data={"text": "LIA 101 is online, no clash"},
+            follow_redirects=False,
+        )
+
+        assert decisions.active(conn)[0].choice == "LIA 101 is online, no clash"
+        assert questions.open_questions(conn) == []
+
+    def test_words_beat_a_button_when_both_arrive(
+        self, client, conn: sqlite3.Connection
+    ) -> None:  # type: ignore[no-untyped-def]
+        """Pressing an option and also typing means the owner had more to say than the
+        button carried. Keeping the button would throw away the part they bothered with."""
+        self._a_conflict(conn)
+        client.get("/ask")
+        qid = int(conn.execute("SELECT id FROM open_question LIMIT 1").fetchone()["id"])
+
+        client.post(
+            f"/ask/{qid}/answer",
+            data={"option": "Attending LIA 101", "text": "actually I dropped both"},
+            follow_redirects=False,
+        )
+
+        assert decisions.active(conn)[0].choice == "actually I dropped both"
+
+    def test_with_nothing_to_ask_it_says_so_rather_than_inventing_one(
+        self, client
+    ) -> None:  # type: ignore[no-untyped-def]
+        body = client.get("/ask").text
+        assert "no questions for you" in body
+        assert "askopt" not in body
+
+    def test_the_dashboard_offers_the_way_in(
+        self, client, conn: sqlite3.Connection
+    ) -> None:  # type: ignore[no-untyped-def]
+        """Unreachable is the same as absent. The alert is the only route to the page."""
+        self._a_conflict(conn)
+        client.get("/ask")  # detection runs on arrival
+        body = client.get("/").text
+
+        assert 'href="/ask"' in body
+        assert "only you can answer" in body

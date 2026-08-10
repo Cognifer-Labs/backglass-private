@@ -1805,3 +1805,47 @@ details.panel:not([open]){padding-bottom:0}
  * arrives unbidden at the edge of vision and has to be seen to do its job. */
 @keyframes oops-in{from{opacity:0;transform:translateY(calc(var(--motion-travel) * 2))}}
 .oops:not([hidden]){animation:oops-in var(--motion-slow) var(--ease-out)}
+
+/* ── Ask: one question, the whole screen ──────────────────────────────────
+ *
+ * Deliberately outside `.shell`. Every other surface here is something the owner reads
+ * past, and a question that scrolls past does not get answered — the review queue reached
+ * 303 open rows proving it. No sidebar, no nav, one card: the cost of a decision is mostly
+ * the cost of choosing which decision to make, and this page removes that cost by removing
+ * the alternatives.
+ *
+ * design-system.md holds: cream paper, black ink, 2px keylines, no shadow and no gradient.
+ * It is bigger, not louder. */
+.askbody{background:var(--paper);color:var(--ink);min-height:100vh}
+.askwrap{min-height:100vh;display:flex;align-items:center;justify-content:center;
+  padding:var(--sp-5)}
+.askcard,.askdone{width:100%;max-width:720px;border:2px solid var(--rule);
+  border-radius:var(--radius-3);background:var(--paper);padding:var(--sp-5)}
+.askcount{display:flex;align-items:baseline;justify-content:space-between;
+  color:var(--ink-muted);margin-bottom:var(--sp-4)}
+.askkind{border:2px solid var(--rule);border-radius:var(--radius-1);
+  padding:1px var(--sp-2);color:var(--ink)}
+/* The question is the largest type on the page because it is the only thing being asked. */
+.askq{font-size:28px;line-height:34px;margin:0 0 var(--sp-4)}
+.askdetail{font:400 13px/19px ui-monospace,monospace;white-space:pre-wrap;
+  border-left:4px solid var(--rule);padding:var(--sp-3) var(--sp-4);
+  background:var(--fill-mild);border-radius:0 var(--radius-2) var(--radius-2) 0;
+  margin:0 0 var(--sp-5)}
+.askopts{display:flex;flex-direction:column;gap:var(--sp-2);margin-bottom:var(--sp-5)}
+/* Left-aligned and full width: these are sentences, not toolbar buttons, and centring
+ * them would make a four-option question read as a row of controls. */
+.askopt{text-align:left;text-transform:none;letter-spacing:0;
+  font:400 15px/21px system-ui,sans-serif;padding:var(--sp-3) var(--sp-4)}
+/* Same weight as the buttons above it on purpose. The options are the cases a detector
+ * thought of; the owner's fifth case is usually the true one, so their words are not a
+ * lesser kind of answer and the field does not look like a fallback. */
+.askown{display:block;color:var(--ink-muted);margin-bottom:var(--sp-2)}
+.askinput{width:100%;box-sizing:border-box;border:2px solid var(--rule);
+  border-radius:var(--radius-2);background:var(--paper);color:var(--ink);
+  font:400 15px/21px system-ui,sans-serif;padding:var(--sp-3) var(--sp-4);resize:vertical}
+.askinput:focus{outline:2px solid var(--rule);outline-offset:2px}
+.askactions{display:flex;align-items:center;gap:var(--sp-3);margin-top:var(--sp-4);
+  flex-wrap:wrap}
+.asklater{margin-left:auto}
+.askdone .askq{font-size:24px;line-height:30px}
+.askdone .btn{margin-top:var(--sp-4);display:inline-block;text-decoration:none}

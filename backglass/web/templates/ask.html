@@ -1,0 +1,69 @@
+{% import "_macros.html" as m %}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backglass — {{ 'A question' if question else 'Nothing to ask' }}</title>
+<script>
+  document.documentElement.setAttribute(
+    'data-theme', localStorage.getItem('bg-theme') || 'light');
+</script>
+<link rel="stylesheet" href="/design/tokens.css">
+<link rel="stylesheet" href="/static/dashboard.css">
+</head>
+{# No shell, no sidebar, no nav. The whole point is that there is one thing on screen and
+   nothing to click away to — a question competing with nine navigation targets is a
+   question that loses. #}
+<body class="askbody">
+<main class="askwrap">
+  {% if not question %}
+    <div class="askdone">
+      <p class="lbl">Nothing unresolved</p>
+      <h1 class="cond askq">Backglass has no questions for you.</h1>
+      <p class="b2">Everything it holds, it can account for. Detectors run again on each
+        sync; anything new will be waiting here.</p>
+      <a class="btn" href="/">Back to the dashboard</a>
+    </div>
+  {% else %}
+    <div class="askcard">
+      <p class="lbl askcount">
+        {{ remaining }} question{{ '' if remaining == 1 else 's' }} waiting
+        <span class="askkind">{{ question['kind']|replace('_', ' ') }}</span>
+      </p>
+
+      <h1 class="cond askq">{{ question['question'] }}</h1>
+
+      {% if question['detail'] %}
+        {# The evidence, verbatim. CLAUDE.md rule 1: a claim without its source does not
+           ship, and a question is a claim that something is unresolved. #}
+        <pre class="askdetail">{{ question['detail'] }}</pre>
+      {% endif %}
+
+      <form method="post" action="/ask/{{ question['id'] }}/answer" class="askform">
+        {% if question['options'] %}
+          <div class="askopts">
+            {% for opt in question['options'] %}
+              <button class="btn askopt" type="submit" name="option" value="{{ opt }}">{{ opt }}</button>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        {# Never labelled "other". The options are the cases a detector thought of; the
+           owner routinely knows a fifth, and the box is the same size and weight as the
+           buttons because their answer is not a lesser kind of answer. #}
+        <label class="lbl askown" for="answer-text">or answer in your own words</label>
+        <textarea id="answer-text" name="text" class="askinput" rows="3"
+                  placeholder="What is actually true here?"></textarea>
+        <div class="askactions">
+          <button class="btn accept" type="submit">Save my answer</button>
+          <button class="btn defer" type="submit" formaction="/ask/{{ question['id'] }}/dismiss"
+                  formnovalidate>Not now</button>
+          <a class="quiet asklater" href="/">Back to the dashboard</a>
+        </div>
+      </form>
+    </div>
+  {% endif %}
+</main>
+</body>
+</html>

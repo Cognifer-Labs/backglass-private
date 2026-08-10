@@ -758,6 +758,25 @@ def sidebar(
              "href": "/schedule"}
         )
 
+    # An unresolved confusion is abnormal, actionable and names its subject, which is the
+    # alert test exactly. It is also the only alert here whose subject the owner can
+    # settle in a sentence — a timetable clash or an unnamed hour degrades the plan
+    # silently until somebody says which is true, so /ask is where it points.
+    waiting = int(
+        conn.execute(
+            "SELECT COUNT(*) AS n FROM open_question WHERE user_id = ? AND status = 'open'",
+            (USER_ID,),
+        ).fetchone()["n"]
+    )
+    if waiting:
+        alerts.append(
+            {
+                "level": "gold",
+                "text": f"{waiting} question{'' if waiting == 1 else 's'} only you can answer",
+                "href": "/ask",
+            }
+        )
+
     for s in sources.rows:
         if s["status"] != "ok" and s["enabled"]:
             # docs/11 §Cross-cutting rule 4: failures are louder than successes —
