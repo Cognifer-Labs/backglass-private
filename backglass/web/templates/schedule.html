@@ -29,7 +29,9 @@
         </div>
         {# P3 and P9 in the planner's own words, as plain sentences. P9 especially is
            the product: seeing it three days running is what changes meeting habits. #}
-        {% if notes.fully_booked %}
+        {% if notes.off_day %}
+          <p class="dnote">Not a working day — only due items listed.</p>
+        {% elif notes.fully_booked %}
           <p class="dnote">Fully booked — only due items listed.</p>
         {% endif %}
         {% if notes.fragmented %}

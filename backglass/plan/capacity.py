@@ -102,6 +102,19 @@ class Capacity:
         """P3. "If capacity is under 60 minutes, do not propose a plan."."""
         return self.capacity_minutes >= self._min_capacity
 
+    @property
+    def no_window(self) -> bool:
+        """True when the day has no working window at all, rather than a consumed one.
+
+        Both end at zero capacity and they are opposite facts. "Fully booked" tells the
+        owner their meetings ate the day and the fix is to decline one; a day that is
+        simply not in `working_days` is not booked at all, and telling them it is booked
+        sends them looking for meetings that do not exist. Derived rather than stored:
+        the non-working branch of `compute` is the only one that returns a zero window,
+        so the distinction cannot drift out of sync with the thing it describes.
+        """
+        return self.window_minutes == 0
+
     _min_capacity: int = 60
 
     def longest_slot(self) -> Slot | None:

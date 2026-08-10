@@ -203,9 +203,17 @@ def failure_section(
         overflow = int(plan["overflow_count"] or 0)
         plural = "s" if overflow != 1 else ""
         tail = f" {overflow} item{plural} did not fit." if overflow else ""
+        # Same distinction the planner and the schedule page draw: a day with no window
+        # is not a booked one, and telling the owner it is sends them hunting meetings
+        # that do not exist. `day_plan` keeps no window, so ask the configuration.
+        head = (
+            f"{today.strftime('%A')} is not a working day"
+            if not timezones.is_working_day(settings, today)
+            else "Fully booked — no deep work slot today"
+        )
         section.lines.append(
             Line(
-                text=f"Fully booked — no deep work slot today.{tail}",
+                text=f"{head}.{tail}",
                 provenance=LedgerRef(
                     "plans", str(plan["local_date"]), f"day plan · {plan['local_date']}"
                 ),

@@ -69,6 +69,12 @@ class Proposal:
     overflow: list[Candidate] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     protected_placed: bool = False
+    #: P3's "list only what is due", as a list rather than as an adjective on a pile of
+    #: forty-eight. On a day the planner declines to plan, this is the subset a reader
+    #: must not miss: overdue, or due today. It is a view of `overflow`, never a second
+    #: source of truth — every item here is also there, so a renderer that ignores it
+    #: still shows everything.
+    due_now: list[Candidate] = field(default_factory=list)
 
     @property
     def planned_minutes(self) -> int:
@@ -260,11 +266,27 @@ def propose(
 
     if not cap.plannable:
         # P3. "Say the day is fully booked and list only what is due."
-        proposal.notes.append(
-            f"Fully booked — {cap.capacity_minutes}m of capacity, under the "
-            f"{settings.min_capacity_minutes}m floor. No plan proposed."
-        )
         proposal.overflow = order(candidates(conn, settings, day, at_risk_goals or set()))
+        proposal.due_now = [c for c in proposal.overflow if c.priority <= PRIORITY_DUE_TODAY]
+        if cap.no_window:
+            # Not booked — not a working day. Saying "fully booked" here sends the owner
+            # looking for meetings that are not there, and it is what hid a move-in.
+            proposal.notes.append(
+                f"{day.strftime('%A')} is not a working day — no plan proposed."
+            )
+        else:
+            proposal.notes.append(
+                f"Fully booked — {cap.capacity_minutes}m of capacity, under the "
+                f"{settings.min_capacity_minutes}m floor. No plan proposed."
+            )
+        if proposal.due_now:
+            # The whole point of P3's "list only what is due": one obligation due today
+            # must not arrive as item thirty-one of a list nobody reads to the end.
+            proposal.notes.append(
+                f"{len(proposal.due_now)} due or overdue: "
+                + "; ".join(c.what for c in proposal.due_now[:3])
+                + ("…" if len(proposal.due_now) > 3 else "")
+            )
         return proposal
 
     pool = candidates(conn, settings, day, at_risk_goals or set())

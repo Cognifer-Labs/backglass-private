@@ -334,6 +334,11 @@ class DayNotes:
 
     fully_booked: bool
     fragmented: bool
+    #: A day with no working window at all, which reaches zero capacity by a different
+    #: road than P3's. Kept apart from `fully_booked` because the two sentences send the
+    #: owner in opposite directions — one to decline a meeting, the other to notice that
+    #: Saturday is not in `working_days`.
+    off_day: bool = False
 
 
 def now_next(view: DayView, *, today: date) -> NowNext | None:
@@ -376,9 +381,13 @@ def day_notes(view: DayView, settings: Settings) -> DayNotes:
     if not view.blocks:
         return DayNotes(fully_booked=False, fragmented=False)
     capacity_minutes = int(view.blocks[0]["capacity_minutes"])
-    fully_booked = capacity_minutes < settings.min_capacity_minutes
-    fragmented = not fully_booked and not any(b["kind"] == "protected" for b in view.blocks)
-    return DayNotes(fully_booked=fully_booked, fragmented=fragmented)
+    under_floor = capacity_minutes < settings.min_capacity_minutes
+    # `day_plan` stores capacity but not the window it came from, so the page asks the
+    # configuration the same question `compute` did rather than inferring from the zero.
+    off_day = under_floor and not timezones.is_working_day(settings, view.day)
+    fully_booked = under_floor and not off_day
+    fragmented = not under_floor and not any(b["kind"] == "protected" for b in view.blocks)
+    return DayNotes(fully_booked=fully_booked, fragmented=fragmented, off_day=off_day)
 
 
 # ── the week agenda grid ──────────────────────────────────────────────────

@@ -1161,3 +1161,73 @@ def test_a_malformed_window_fails_at_startup(sett: Settings) -> None:
     # And the weekday one goes through the same door, which it did not before.
     with pytest.raises(pydantic.ValidationError, match="expected HH:MM-HH:MM"):
         Settings(owner_name="K", db_path=sett.db_path, working_window="all day")
+
+
+# ── zero capacity has two causes, and they are opposite facts ───────────────────
+
+
+def test_an_off_day_is_not_described_as_fully_booked(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """"Fully booked — 0m of capacity" was what the owner was told about the Sunday they
+    moved house. Nothing was booked. The sentence sends a reader hunting for meetings
+    that are not there, when the fact to act on is that Sunday has no window."""
+    add_commitment(conn, sett, "Move-in: Willow Hall 502, 8:00am", minutes=180, due=SUNDAY)
+    proposal = planner.propose(conn, sett, SUNDAY, events=[])
+
+    assert proposal.capacity.no_window is True
+    assert any("Sunday is not a working day" in note for note in proposal.notes)
+    assert not any("Fully booked" in note for note in proposal.notes)
+
+
+def test_a_genuinely_booked_weekday_still_says_fully_booked(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """The other half of the distinction. A window that exists and got eaten is the
+    case P3 was written for, and it must keep its own sentence."""
+    proposal = planner.propose(
+        conn, sett, THURSDAY, events=[meeting(THURSDAY, "09:00", "18:00", "All-day workshop")]
+    )
+
+    assert proposal.capacity.no_window is False
+    assert any("Fully booked" in note for note in proposal.notes)
+    assert not any("not a working day" in note for note in proposal.notes)
+
+
+def test_what_is_due_leads_instead_of_sitting_at_position_thirty(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """P3 says "list only what is due". The implementation handed back the whole ordered
+    pool, so a 1.0-confidence obligation due today arrived somewhere inside forty-eight
+    rows with nothing marking it. `due_now` is that subset, and it is a view of
+    `overflow` rather than a second list — everything in it is still in there."""
+    add_commitment(conn, sett, "Move-in: Willow Hall 502", minutes=180, due=SUNDAY, n=1)
+    add_commitment(conn, sett, "overdue thing", minutes=30, due=date(2026, 8, 1), n=2)
+    for i in range(3, 12):
+        add_commitment(conn, sett, f"someday item {i}", minutes=30, n=i)
+
+    proposal = planner.propose(conn, sett, SUNDAY, events=[])
+
+    assert len(proposal.overflow) == 11
+    assert {c.what for c in proposal.due_now} == {
+        "Move-in: Willow Hall 502",
+        "overdue thing",
+    }
+    assert all(c in proposal.overflow for c in proposal.due_now)
+    assert any("2 due or overdue" in note for note in proposal.notes)
+    assert any("Move-in: Willow Hall 502" in note for note in proposal.notes)
+
+
+def test_a_day_with_nothing_due_gets_no_due_line(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """The note is earned, not decorative — an off day with only someday work says so
+    once and stops talking."""
+    add_commitment(conn, sett, "someday item", minutes=30)
+    proposal = planner.propose(conn, sett, SUNDAY, events=[])
+
+    assert proposal.overflow
+    assert proposal.due_now == []
+    assert not any("due or overdue" in note for note in proposal.notes)
+
+
+def test_a_planned_day_leaves_due_now_empty(conn, weekends: Settings) -> None:  # type: ignore[no-untyped-def]
+    """`due_now` belongs to the no-plan path. On a day that got planned, the due item is
+    a block on the schedule and repeating it as "due" would be noise."""
+    add_commitment(conn, weekends, "Move-in: Willow Hall 502", minutes=180, due=SUNDAY)
+    proposal = planner.propose(conn, weekends, SUNDAY, events=[])
+
+    assert proposal.capacity.plannable
+    assert proposal.due_now == []

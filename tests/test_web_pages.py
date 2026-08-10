@@ -873,6 +873,28 @@ class TestScheduleTimeline:
         # A sentence, not a chip: no new ink is spent on a verdict.
         assert "chip k-black" not in page
 
+    def test_a_day_with_no_working_window_says_that_instead(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """2026-08-09 is a Sunday, and the default `working_days` is mon–fri. Zero
+        capacity by a different road than the test above: nothing is booked, the day
+        simply has no window. Telling the owner it is "fully booked" sends them looking
+        for meetings that do not exist — which is what happened on the Sunday they moved
+        into their dorm."""
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, generated_at, status)"
+            " VALUES ('2026-08-09', 'America/Phoenix', 0, '2026-08-09T05:50:00', 'proposed')"
+        )
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, '2026-08-09T19:15:00-07:00', '2026-08-09T20:00:00-07:00',"
+            " 'routine', 'Dinner')"
+        )
+        conn.commit()
+        page = client.get("/schedule?date=2026-08-09").text
+        assert "Not a working day — only due items listed" in page
+        assert "Fully booked" not in page
+
 
 def _cadence_goal(
     conn: sqlite3.Connection, title: str = "Write daily", weekly: int = 3
