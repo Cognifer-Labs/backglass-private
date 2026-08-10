@@ -96,11 +96,17 @@
         <details class="addform">
           <summary class="lbl">Looks the same ({{ d.board.meta.suspects|length }})</summary>
           {% for s in d.board.meta.suspects %}
+            {# The counterparty is on the row because without it the question cannot be
+               answered: one mail asking for an intro to three instructors produces three
+               rows reading "Send instructor intro email from ASU address", and Same/
+               Different over two identical sentences is a coin toss. "One message, two
+               people" is the fact that decides it, so it is said rather than acted on —
+               the same mail read twice looks identical from here. #}
             <div class="row">
               <div class="grow">
-                <p class="b1">{{ s['a_what'] }}</p>
-                <p class="b1">{{ s['b_what'] }}</p>
-                <p class="b2">{{ '%.0f'|format(s['score'] * 100) }}% alike</p>
+                <p class="b1">{{ s['a_what'] }}{% if s['a_who'] %} <span class="b2i">— {{ s['a_who'] }}</span>{% endif %}</p>
+                <p class="b1">{{ s['b_what'] }}{% if s['b_who'] %} <span class="b2i">— {{ s['b_who'] }}</span>{% endif %}</p>
+                <p class="b2">{{ '%.0f'|format(s['score'] * 100) }}% alike{% if s['one_message'] %} · one message, two people{% endif %}</p>
               </div>
               <div class="acts" style="display:flex">
                 <button class="btn ok" hx-post="/commitments/{{ s['a_id'] }}/same/{{ s['b_id'] }}"

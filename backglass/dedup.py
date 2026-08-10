@@ -25,6 +25,27 @@ from backglass.ledger import USER_ID
 SUSPECT_FLOOR = 0.6
 
 
+def _fan_out(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """One message that produced a promise to each of several people.
+
+    Nineteen of the owner's 75 suspect pairs are this, and three of them read
+    identically: source item 8763 asked for an intro email to Suriyampola, Hossain and
+    Pedram, and extraction wrote all three as "Send instructor intro email from ASU
+    address". Presented as two identical sentences and a percentage, that is not a
+    question anybody can answer — which is why the queue has 75 open pairs in it.
+
+    Not a reason to hide the pair, and emphatically not a reason to merge it: the same
+    shape covers "Complete the Math Placement Test" attributed to two different senders,
+    where one task really was read twice. Same source, different person is a fact that
+    decides the question, so the owner is told it and still answers.
+    """
+    return (
+        a["source_item_id"] is not None
+        and a["source_item_id"] == b["source_item_id"]
+        and a["counterparty_entity_id"] != b["counterparty_entity_id"]
+    )
+
+
 def suspects(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Open same-direction pairs scoring in [SUSPECT_FLOOR, 1.0], strongest first.
 
@@ -38,8 +59,11 @@ def suspects(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = [
         dict(r)
         for r in conn.execute(
-            "SELECT id, direction, what FROM commitment"
-            " WHERE user_id = ? AND status = 'open' ORDER BY id",
+            "SELECT c.id, c.direction, c.what, c.source_item_id,"
+            "       c.counterparty_entity_id, e.canonical_name AS who"
+            " FROM commitment c"
+            " LEFT JOIN entity e ON e.id = c.counterparty_entity_id"
+            " WHERE c.user_id = ? AND c.status = 'open' ORDER BY c.id",
             (USER_ID,),
         )
     ]
@@ -66,7 +90,10 @@ def suspects(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                         "b_id": pair[1],
                         "a_what": str(a["what"]),
                         "b_what": str(b["what"]),
+                        "a_who": str(a["who"]) if a["who"] else "",
+                        "b_who": str(b["who"]) if b["who"] else "",
                         "score": score,
+                        "one_message": _fan_out(a, b),
                     }
                 )
     out.sort(key=lambda p: -p["score"])
