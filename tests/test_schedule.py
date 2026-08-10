@@ -193,8 +193,28 @@ def test_real_run_writes_and_loads_each_job(monkeypatch, tmp_path) -> None:
     written_dir = tmp_path / "LaunchAgents"
     for filename in rendered:
         assert (written_dir / filename).read_text() == rendered[filename]
-    assert len(loads) == 8
-    assert all(cmd[:2] == ["launchctl", "load"] for cmd in loads)
+    assert len(loads) == 16  # unload then load, per job
+    assert all(cmd[:2] in (["launchctl", "unload"], ["launchctl", "load"]) for cmd in loads)
+
+
+def test_every_job_is_unloaded_before_it_is_loaded(monkeypatch, tmp_path) -> None:
+    """Otherwise installing a changed schedule changes only the file.
+
+    `launchctl load` does not reload a job that is already loaded: it fails with
+    "Load failed: 5: Input/output error" and leaves the old definition registered. Every
+    machine that would run this command has already installed these jobs, so moving the
+    shutdown hour to 22:00 wrote 22 to disk while `launchctl print` kept reporting 18 —
+    and `installed com.backglass.shutdown.plist` printed either way.
+    """
+    monkeypatch.setattr(schedule, "LAUNCH_AGENTS_DIR", tmp_path / "LaunchAgents")
+    calls: list[list[str]] = []
+    monkeypatch.setattr(schedule.subprocess, "run", lambda cmd, **k: calls.append(cmd))
+
+    schedule.install(dry_run=False, uv_bin="/fake/uv")
+
+    for job in {cmd[2] for cmd in calls}:
+        actions = [cmd[1] for cmd in calls if cmd[2] == job]
+        assert actions == ["unload", "load"], f"{job} was not reloaded, only loaded"
 
 
 def test_no_api_key_skips_the_batch_jobs() -> None:

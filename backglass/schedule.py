@@ -127,6 +127,20 @@ def install(
     for filename, text in rendered.items():
         target = LAUNCH_AGENTS_DIR / filename
         target.write_text(text)
+        # Unload first, always. `launchctl load` on a job that is already loaded does
+        # not reload it — it fails with "Load failed: 5: Input/output error" and leaves
+        # the previously registered definition running. So on any machine that has ever
+        # installed these jobs, which is every machine that would run this command,
+        # writing a new plist changed the file and nothing else.
+        #
+        # Found by moving the shutdown hour to 22:00: the file on disk said 22, and
+        # `launchctl print` said the live job was still firing at 18. A schedule command
+        # whose only observable effect is on a file nobody reads is worse than none,
+        # because `installed …` printed for every job either way.
+        #
+        # `check=False` on the unload because not-loaded is the ordinary first-run case
+        # and not an error.
+        subprocess.run(["launchctl", "unload", str(target)], check=False)
         subprocess.run(["launchctl", "load", str(target)], check=False)
     for filename in skipped:
         target = LAUNCH_AGENTS_DIR / filename
