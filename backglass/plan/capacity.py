@@ -227,7 +227,7 @@ def engagement_events(
     # characters are the local day the message named, under every one of the three
     # shapes, and comparing them converts nothing.
     rows = conn.execute(
-        "SELECT what, starts_at, ends_at, location FROM engagement "
+        "SELECT what, starts_at, ends_at, location, confidence FROM engagement "
         "WHERE user_id = ? AND status = 'confirmed' AND starts_at IS NOT NULL "
         "  AND confidence >= ? AND substr(starts_at, 1, 10) = ?",
         (USER_ID, min_confidence, day.isoformat()),
@@ -237,7 +237,7 @@ def engagement_events(
     # appears on the Sunday and vanishes for the rest of the week.
     rows = list(rows) + list(
         conn.execute(
-            "SELECT what, starts_at, ends_at, location FROM engagement "
+            "SELECT what, starts_at, ends_at, location, confidence FROM engagement "
             "WHERE user_id = ? AND status = 'confirmed' AND confidence >= ? "
             "  AND starts_at IS NOT NULL AND ends_at IS NOT NULL "
             "  AND substr(starts_at, 1, 10) < ? AND substr(ends_at, 1, 10) >= ? "
@@ -247,10 +247,15 @@ def engagement_events(
     )
 
     events: list[FixedEvent] = []
+    #: Confidence keyed by identity rather than carried on `FixedEvent`: it is what
+    #: settles a tie between two readings of one plan and means nothing to anything
+    #: downstream, so it stays local to the function that needs it.
+    confidences: dict[int, float] = {}
     for row in rows:
         raw_start = str(row["starts_at"])
         if "T" not in raw_start and " " not in raw_start:
             events.append(_allday(row, day, tz))
+            confidences[id(events[-1])] = float(row["confidence"] or 0.0)
             continue
         try:
             begins = _aware(raw_start, tz)
@@ -267,7 +272,72 @@ def engagement_events(
         if row["location"]:
             title = f"{title} — {row['location']}"
         events.append(FixedEvent(starts_at=begins, ends_at=ends, title=title))
-    return sorted(events, key=lambda e: e.starts_at)
+        confidences[id(events[-1])] = float(row["confidence"] or 0.0)
+    return sorted(_one_plan_per_plan(events, confidences), key=lambda e: e.starts_at)
+
+
+#: Words too short to identify anything. Five characters is not a rule about English, it
+#: is where "with", "and", "at" and the rest stop being evidence — "lunch with Sarah" and
+#: "lunch with Tom" share two four-letter tokens and are two different lunches.
+_MIN_TOKEN = 5
+
+#: How many distinctive words two titles must share before they are believed to be one
+#: plan. One is not enough: "dinner" alone would fold a family dinner into a work dinner.
+_SHARED_TOKENS = 2
+
+
+def _tokens(title: str) -> set[str]:
+    return {
+        word
+        for word in "".join(c.lower() if c.isalnum() else " " for c in title).split()
+        if len(word) >= _MIN_TOKEN
+    }
+
+
+def _one_plan_per_plan(
+    events: list[FixedEvent], confidences: dict[int, float]
+) -> list[FixedEvent]:
+    """Collapse several extractions of the SAME plan into the one the model believed most.
+
+    The owner's day held "McKenna Program Welcome Dinner" 18:00–20:00, "McKenna Summer
+    Program kickoff dinner" 18:30–19:30 and "college dinner appointment" 18:30–19:30 —
+    three rows, three renderings, one meal. `_distinct` cannot help: it collapses exact
+    (title, start, end) triples, which is right for two calendars describing one meeting
+    and useless against three readings of one invitation.
+
+    Two conditions, and both are needed. The intervals must overlap, and the titles must
+    share at least two words of five or more characters. Overlap alone would merge a real
+    double-booking, which is the one thing the owner most needs to see; shared words alone
+    would merge next Tuesday's standup into this one.
+
+    Deliberately conservative in the direction that costs less. A duplicate that survives
+    is visible and can be dismissed; a genuine conflict that gets merged is a meeting
+    silently deleted, and the owner never learns it was there. So "college dinner
+    appointment" above stays separate — it shares only "dinner" with the other two — and
+    that is the correct failure.
+
+    An all-day banner is never merged with a timed plan, whatever the words say. It
+    spans midnight to midnight, so it overlaps everything on the day by construction —
+    without this guard a "BioBridge Early Start Program" banner would swallow a
+    "BioBridge Early Start orientation" at 9am and delete a real hour from the schedule.
+    Same kind only: a banner can absorb a banner, an hour can absorb an hour.
+
+    Nothing is written. The ledger keeps every row, so a merge here changes what the day
+    renders, never what the owner can go and look at.
+    """
+    kept: list[FixedEvent] = []
+    for event in sorted(events, key=lambda e: -confidences.get(id(e), 0.0)):
+        tokens = _tokens(event.title)
+        duplicate = any(
+            event.allday == winner.allday
+            and event.starts_at < winner.ends_at
+            and winner.starts_at < event.ends_at
+            and len(tokens & _tokens(winner.title)) >= _SHARED_TOKENS
+            for winner in kept
+        )
+        if not duplicate:
+            kept.append(event)
+    return kept
 
 
 def _allday(row: sqlite3.Row, day: date, tz: str) -> FixedEvent:

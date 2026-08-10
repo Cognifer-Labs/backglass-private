@@ -1352,3 +1352,179 @@ class TestAllDayPlans:
         # reaching the arithmetic, so nothing in `capacity.fixed` is the banner.
         assert not any(e.allday for e in proposal.capacity.fixed)
         assert proposal.capacity.plannable
+
+
+# ── three readings of one dinner ───────────────────────────────────────────────
+#
+# The owner's plan for 2026-08-09 drew the same meal three times: "McKenna Program
+# Welcome Dinner" 18:00–20:00, "McKenna Summer Program kickoff dinner" 18:30–19:30 and
+# "college dinner appointment" 18:30–19:30 — engagement rows 195, 183 and 184, three
+# extractions of one invitation. `_distinct` cannot help: it collapses exact
+# (title, start, end) triples, which is right for two calendars describing one meeting
+# and useless here.
+
+
+class TestNearDuplicateEngagements:
+    def test_three_readings_of_one_dinner_render_once(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        add_engagement(
+            conn,
+            what="McKenna Program Welcome Dinner",
+            starts_at=f"{THURSDAY.isoformat()}T18:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T20:00:00-07:00",
+        )
+        add_engagement(
+            conn,
+            what="McKenna Summer Program kickoff dinner",
+            starts_at=f"{THURSDAY.isoformat()}T18:30:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T19:30:00-07:00",
+        )
+        events = capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)
+        assert len(events) == 1
+        assert "McKenna" in events[0].title
+
+    def test_a_weaker_reading_loses_to_the_one_the_model_believed(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings
+    ) -> None:
+        """The survivor is chosen by confidence, not by insertion order — the row the
+        model was surest of is the one whose hours the day should be built on."""
+        conn.execute(
+            "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at, "
+            " when_is_explicit, location, status, confidence, source_item_id, created_at) "
+            "VALUES (?, 'social', 'McKenna Program dinner guess', ?, ?, 1, NULL, "
+            " 'confirmed', 0.72, ?, ?)",
+            (
+                USER_ID,
+                f"{THURSDAY.isoformat()}T18:30:00-07:00",
+                f"{THURSDAY.isoformat()}T19:30:00-07:00",
+                _any_source_item(conn),
+                now_iso(),
+            ),
+        )
+        conn.execute(
+            "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at, "
+            " when_is_explicit, location, status, confidence, source_item_id, created_at) "
+            "VALUES (?, 'social', 'McKenna Program Welcome Dinner', ?, ?, 1, NULL, "
+            " 'confirmed', 0.94, ?, ?)",
+            (
+                USER_ID,
+                f"{THURSDAY.isoformat()}T18:00:00-07:00",
+                f"{THURSDAY.isoformat()}T20:00:00-07:00",
+                _any_source_item(conn),
+                now_iso(),
+            ),
+        )
+        (event,) = capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)
+        assert event.title == "McKenna Program Welcome Dinner"
+        assert event.minutes == 120
+
+    def test_a_real_double_booking_is_never_merged(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """The failure that would cost the most. Two different plans at one hour is a
+        conflict the owner has to see; merging it deletes a meeting and says nothing."""
+        add_engagement(
+            conn,
+            what="dentist appointment",
+            starts_at=f"{THURSDAY.isoformat()}T14:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T15:00:00-07:00",
+        )
+        add_engagement(
+            conn,
+            what="advising call with Abby",
+            starts_at=f"{THURSDAY.isoformat()}T14:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T15:00:00-07:00",
+        )
+        assert len(capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)) == 2
+
+    def test_two_lunches_with_different_people_stay_two(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """Why the token floor is five characters and not four: "lunch with Sarah" and
+        "lunch with Tom" share `lunch` and `with`, and are two different lunches."""
+        add_engagement(
+            conn,
+            what="lunch with Sarah",
+            starts_at=f"{THURSDAY.isoformat()}T12:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T13:00:00-07:00",
+        )
+        add_engagement(
+            conn,
+            what="lunch with Tom",
+            starts_at=f"{THURSDAY.isoformat()}T12:30:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T13:30:00-07:00",
+        )
+        assert len(capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)) == 2
+
+    def test_the_same_plan_at_a_different_hour_stays_two(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """Words alone are not evidence. This week's standup does not absorb next
+        Tuesday's, and two sittings of one seminar are two things to be at."""
+        add_engagement(
+            conn,
+            what="McKenna Program seminar",
+            starts_at=f"{THURSDAY.isoformat()}T09:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T10:00:00-07:00",
+        )
+        add_engagement(
+            conn,
+            what="McKenna Program seminar",
+            starts_at=f"{THURSDAY.isoformat()}T15:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T16:00:00-07:00",
+        )
+        assert len(capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)) == 2
+
+    def test_a_banner_never_swallows_a_timed_plan(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """An all-day banner spans midnight to midnight, so it overlaps everything on the
+        day by construction. Without the same-kind guard the words alone would merge these
+        two and a real hour would vanish from the schedule."""
+        add_engagement(
+            conn,
+            what="BioBridge Early Start Program",
+            starts_at=THURSDAY.isoformat(),
+            ends_at=FRIDAY.isoformat(),
+        )
+        add_engagement(
+            conn,
+            what="BioBridge Early Start orientation",
+            starts_at=f"{THURSDAY.isoformat()}T09:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T10:00:00-07:00",
+        )
+        events = capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)
+        assert len(events) == 2
+        assert sorted(e.allday for e in events) == [False, True]
+
+    def test_nothing_is_written_when_a_duplicate_is_dropped(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """A merge changes what the day renders, never what the owner can go and look at.
+        Both rows stay in the ledger, reachable from the Engagements page."""
+        add_engagement(
+            conn,
+            what="McKenna Program Welcome Dinner",
+            starts_at=f"{THURSDAY.isoformat()}T18:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T20:00:00-07:00",
+        )
+        add_engagement(
+            conn,
+            what="McKenna Summer Program kickoff dinner",
+            starts_at=f"{THURSDAY.isoformat()}T18:30:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T19:30:00-07:00",
+        )
+        capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)
+        assert conn.execute("SELECT COUNT(*) AS n FROM engagement").fetchone()["n"] == 2
+
+    def test_the_day_is_charged_for_one_dinner_not_three(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """The point of all of it. Three readings of one 90-minute meal inside the window
+        used to subtract three meals' worth of capacity from an evening that held one."""
+        evening = sett.model_copy(update={"working_window": "09:00-22:00"})
+        alone = capacity_mod.compute(conn, evening, THURSDAY).capacity_minutes
+        add_engagement(
+            conn,
+            what="McKenna Program Welcome Dinner",
+            starts_at=f"{THURSDAY.isoformat()}T18:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T20:00:00-07:00",
+        )
+        one = capacity_mod.compute(conn, evening, THURSDAY).capacity_minutes
+        add_engagement(
+            conn,
+            what="McKenna Summer Program kickoff dinner",
+            starts_at=f"{THURSDAY.isoformat()}T18:30:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T19:30:00-07:00",
+        )
+        still_one = capacity_mod.compute(conn, evening, THURSDAY).capacity_minutes
+
+        assert one < alone, "the dinner must cost the evening something"
+        assert still_one == one, "the second reading of it must cost nothing more"
