@@ -307,6 +307,7 @@ def settings(tmp_path: Path) -> Settings:
         model_backend="claude_cli",
         max_concurrency=1,
         working_window="09:00-18:00",
+        weekend_window="",
         peak_window="09:00-12:00",
         default_tz="America/Phoenix",
         alt_tz="Asia/Kolkata",

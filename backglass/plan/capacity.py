@@ -59,9 +59,21 @@ class FixedEvent:
     title: str = ""
     travel: bool = False
     #: `fixed` for calendar events and confirmed plans; `routine` for the configured
-    #: daily anchors (breakfast, gym). The distinction matters twice: routines get no
-    #: meeting buffer, and the schedule draws them in their own quiet register.
+    #: daily anchors (breakfast, gym); `allday` for a confirmed plan that named a day
+    #: and no hour. The distinction matters three times: routines get no meeting buffer,
+    #: an all-day banner spends no capacity at all, and the schedule draws each in its
+    #: own register.
     kind: str = "fixed"
+
+    @property
+    def allday(self) -> bool:
+        """Spans a day rather than occupying an hour of it.
+
+        Kept as a property rather than as a second flag beside `kind` so there is one
+        place to be wrong. Everything that subtracts time checks this; nothing else has
+        to know the string.
+        """
+        return self.kind == "allday"
 
     @property
     def minutes(self) -> int:
@@ -101,6 +113,19 @@ class Capacity:
     def plannable(self) -> bool:
         """P3. "If capacity is under 60 minutes, do not propose a plan."."""
         return self.capacity_minutes >= self._min_capacity
+
+    @property
+    def no_window(self) -> bool:
+        """True when the day has no working window at all, rather than a consumed one.
+
+        Both end at zero capacity and they are opposite facts. "Fully booked" tells the
+        owner their meetings ate the day and the fix is to decline one; a day that is
+        simply not in `working_days` is not booked at all, and telling them it is booked
+        sends them looking for meetings that do not exist. Derived rather than stored:
+        the non-working branch of `compute` is the only one that returns a zero window,
+        so the distinction cannot drift out of sync with the thing it describes.
+        """
+        return self.window_minutes == 0
 
     _min_capacity: int = 60
 
@@ -179,10 +204,16 @@ def engagement_events(
         reserving the evening for an invitation the owner has not answered would let
         anyone who emails them delete an evening from their week. Proposals reach the
         owner through the brief, which asks for a reply instead of assuming one.
-      * A plan with a date but no clock time ("lunch on Friday") is not placed. There is
-        no honest hour to give it, and midnight — what an ISO date parses to — would
+      * A plan with a date but no clock time ("lunch on Friday") is not *placed*. There
+        is no honest hour to give it, and midnight — what an ISO date parses to — would
         either sit outside the window silently or block the start of the day for
-        something nobody said was in the morning. It stays visible in the brief.
+        something nobody said was in the morning.
+
+        It is still returned, as an `allday` event that spends no capacity. That rule was
+        always about refusing to delete time on a guess; dropping the plan from the day
+        entirely was a side effect nobody chose, and it cost the owner six days of a
+        summer programme the schedule never mentioned. A banner states the fact without
+        pretending to know the hour.
     """
     # Selected on the local date prefix, NOT with datetime() against day bounds the way
     # fixed_events() reads the calendar. The two columns are different things: the
@@ -196,17 +227,40 @@ def engagement_events(
     # characters are the local day the message named, under every one of the three
     # shapes, and comparing them converts nothing.
     rows = conn.execute(
-        "SELECT what, starts_at, ends_at, location FROM engagement "
+        "SELECT what, starts_at, ends_at, location, confidence FROM engagement "
         "WHERE user_id = ? AND status = 'confirmed' AND starts_at IS NOT NULL "
         "  AND confidence >= ? AND substr(starts_at, 1, 10) = ?",
         (USER_ID, min_confidence, day.isoformat()),
     ).fetchall()
+    # A multi-day plan is only selected on the day it starts by the query above, so the
+    # days in the middle of it are found separately — otherwise a six-day programme
+    # appears on the Sunday and vanishes for the rest of the week. Deliberately not
+    # restricted to date-only starts: a run of days written with a clock on its first
+    # ("2026-08-10T09:00" through "2026-08-14") is still a run of days, and excluding it
+    # left the plan visible on day one as a 5220-minute block that ate the whole window
+    # and absent from the four days after.
+    rows = list(rows) + list(
+        conn.execute(
+            "SELECT what, starts_at, ends_at, location, confidence FROM engagement "
+            "WHERE user_id = ? AND status = 'confirmed' AND confidence >= ? "
+            "  AND starts_at IS NOT NULL AND ends_at IS NOT NULL "
+            "  AND substr(starts_at, 1, 10) < ? AND substr(ends_at, 1, 10) >= ?",
+            (USER_ID, min_confidence, day.isoformat(), day.isoformat()),
+        ).fetchall()
+    )
 
-    events: list[FixedEvent] = []
+    candidates: list[Candidate] = []
     for row in rows:
         raw_start = str(row["starts_at"])
-        if "T" not in raw_start and " " not in raw_start:
-            continue  # a day, not an hour — see the docstring
+        span = _span(row)
+        if "T" not in raw_start and " " not in raw_start or span[1] > span[0]:
+            # A day and no hour, or a run of days however it was written. A plan that
+            # spans more than one day cannot be an hour on any of them: read literally,
+            # "2026-08-10T09:00" to "2026-08-14" is a 5220-minute event that swallows
+            # the whole of the 10th's window and appears on none of the four days after
+            # it. A banner is the only honest reading.
+            candidates.append(Candidate(_allday(row, day, tz), row, span))
+            continue
         try:
             begins = _aware(raw_start, tz)
         except ValueError:
@@ -221,8 +275,162 @@ def engagement_events(
         title = str(row["what"])
         if row["location"]:
             title = f"{title} — {row['location']}"
-        events.append(FixedEvent(starts_at=begins, ends_at=ends, title=title))
-    return sorted(events, key=lambda e: e.starts_at)
+        candidates.append(
+            Candidate(FixedEvent(starts_at=begins, ends_at=ends, title=title), row, span)
+        )
+    return sorted(_one_plan_per_plan(candidates), key=lambda e: e.starts_at)
+
+
+def _span(row: sqlite3.Row) -> tuple[date, date]:
+    """The run of local days a plan covers, as (first, last). One day means first == last."""
+    start = date.fromisoformat(str(row["starts_at"])[:10])
+    raw_end = row["ends_at"]
+    try:
+        end = date.fromisoformat(str(raw_end)[:10]) if raw_end else start
+    except ValueError:
+        end = start
+    return (start, max(start, end))
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """One engagement row on its way to becoming a day's event.
+
+    Carries the two things the collapse below needs and nothing downstream wants: the
+    row it came from, and the run of days it covers. Keeping them here rather than on
+    `FixedEvent` is what stops a rendering concern from leaking into the type every
+    consumer of the module reads.
+    """
+
+    event: FixedEvent
+    row: sqlite3.Row
+    span: tuple[date, date]
+
+    @property
+    def confidence(self) -> float:
+        return float(self.row["confidence"] or 0.0)
+
+    @property
+    def tokens(self) -> set[str]:
+        """Words from what the plan IS — never from where it is.
+
+        `engagement_events` appends " — {location}" to the title before this runs, and
+        a venue is not evidence of identity: two different plans at "Armstrong Hall
+        Rotunda, 1100 S McAllister Ave, Tempe" share five long words and are two
+        different plans. Reading `what` alone is what keeps a room from merging the
+        meetings held in it.
+        """
+        return _tokens(str(self.row["what"]))
+
+
+#: Words too short to identify anything. Five characters is not a rule about English, it
+#: is where "with", "and", "at" and the rest stop being evidence — "lunch with Sarah" and
+#: "lunch with Tom" share two four-letter tokens and are two different lunches.
+_MIN_TOKEN = 5
+
+#: How many distinctive words two titles must share before they are believed to be one
+#: plan. One is not enough: "dinner" alone would fold a family dinner into a work dinner.
+_SHARED_TOKENS = 2
+
+
+def _tokens(title: str) -> set[str]:
+    return {
+        word
+        for word in "".join(c.lower() if c.isalnum() else " " for c in title).split()
+        if len(word) >= _MIN_TOKEN
+    }
+
+
+def _one_plan_per_plan(candidates: list[Candidate]) -> list[FixedEvent]:
+    """Collapse several extractions of the SAME plan into the one the model believed most.
+
+    The owner's day held "McKenna Program Welcome Dinner" 18:00–20:00, "McKenna Summer
+    Program kickoff dinner" 18:30–19:30 and "college dinner appointment" 18:30–19:30 —
+    three rows, three renderings, one meal. `_distinct` cannot help: it collapses exact
+    (title, start, end) triples, which is right for two calendars describing one meeting
+    and useless against three readings of one invitation.
+
+    Two conditions, and both are needed. The intervals must overlap, and the titles must
+    share at least two words of five or more characters. Overlap alone would merge a real
+    double-booking, which is the one thing the owner most needs to see; shared words alone
+    would merge next Tuesday's standup into this one.
+
+    Deliberately conservative in the direction that costs less. A duplicate that survives
+    is visible and can be dismissed; a genuine conflict that gets merged is a meeting
+    silently deleted, and the owner never learns it was there. So "college dinner
+    appointment" above stays separate — it shares only "dinner" with the other two — and
+    that is the correct failure.
+
+    An all-day banner is never merged with a timed plan, whatever the words say. It
+    spans midnight to midnight, so it overlaps everything on the day by construction —
+    without this guard a "BioBridge Early Start Program" banner would swallow a
+    "BioBridge Early Start orientation" at 9am and delete a real hour from the schedule.
+    Same kind only: a banner can absorb a banner, an hour can absorb an hour.
+
+    And between two banners, overlap carries no information for the same reason, so they
+    are compared on the run of days they cover instead. "McKenna Summer Program"
+    (9th–14th) and "McKenna Research Program" (10th–12th) share two long words and every
+    day of the shorter one; matched on overlap they would delete each other on alternate
+    days and leave a six-day banner with a hole in the middle. Identical spans are one
+    programme described twice; different spans are two programmes.
+
+    Nothing is written. The ledger keeps every row, so a merge here changes what the day
+    renders, never what the owner can go and look at.
+    """
+    kept: list[Candidate] = []
+    for candidate in sorted(candidates, key=lambda c: -c.confidence):
+        event, tokens = candidate.event, candidate.tokens
+        duplicate = False
+        for winner in kept:
+            if event.allday != winner.event.allday:
+                continue
+            same_occasion = (
+                candidate.span == winner.span
+                if event.allday
+                else event.starts_at < winner.event.ends_at
+                and winner.event.starts_at < event.ends_at
+            )
+            if same_occasion and len(tokens & winner.tokens) >= _SHARED_TOKENS:
+                duplicate = True
+                break
+        if not duplicate:
+            kept.append(candidate)
+    return [c.event for c in kept]
+
+
+def _allday(row: sqlite3.Row, day: date, tz: str) -> FixedEvent:
+    """One confirmed plan that named a day and no hour, as a banner over `day`.
+
+    Spans local midnight to local midnight so it sorts to the top of the day and cannot
+    be mistaken for an hour. It never reaches capacity arithmetic — `compute` drops
+    every `allday` before subtracting anything — which is what lets the span be a full
+    1440 minutes without deleting the day it describes.
+
+    A run of days is numbered ("day 2 of 6") because the position is the useful part: on
+    Wednesday of a six-day programme, "McKenna Summer Program" alone says nothing that
+    Monday did not.
+    """
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo(tz)
+    midnight = datetime.combine(day, datetime.min.time(), tzinfo=zone)
+
+    title = str(row["what"])
+    if row["location"]:
+        title = f"{title} — {row['location']}"
+    start_day = date.fromisoformat(str(row["starts_at"])[:10])
+    end_raw = row["ends_at"]
+    end_day = date.fromisoformat(str(end_raw)[:10]) if end_raw else start_day
+    span = (end_day - start_day).days + 1
+    if span > 1:
+        title = f"{title} (day {(day - start_day).days + 1} of {span})"
+
+    return FixedEvent(
+        starts_at=midnight,
+        ends_at=midnight + timedelta(days=1),
+        title=title,
+        kind="allday",
+    )
 
 
 def routine_events(settings: Settings, day: date, tz: str) -> list[FixedEvent]:
@@ -365,6 +573,11 @@ def compute(
     # "how much work fits between nine and six", so an evening dinner is correctly not
     # subtracted from it. The Schedule page asks a different question and calls the
     # reader without this line.
+    # An all-day banner is a fact about the day, not an hour of it. It spans midnight to
+    # midnight, so leaving it in would swallow the entire window and every day of a
+    # six-day programme would report zero capacity. Dropped here rather than at the
+    # reader, so nothing downstream of `compute` has to remember.
+    fixed = [e for e in fixed if not e.allday]
     fixed = [e for e in fixed if e.ends_at > window_start and e.starts_at < window_end]
     fixed.sort(key=lambda e: e.starts_at)
 

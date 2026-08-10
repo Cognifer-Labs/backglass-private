@@ -203,9 +203,17 @@ def failure_section(
         overflow = int(plan["overflow_count"] or 0)
         plural = "s" if overflow != 1 else ""
         tail = f" {overflow} item{plural} did not fit." if overflow else ""
+        # Same distinction the planner and the schedule page draw: a day with no window
+        # is not a booked one, and telling the owner it is sends them hunting meetings
+        # that do not exist. `day_plan` keeps no window, so ask the configuration.
+        head = (
+            f"{today.strftime('%A')} is not a working day"
+            if not timezones.is_working_day(settings, today)
+            else "Fully booked — no deep work slot today"
+        )
         section.lines.append(
             Line(
-                text=f"Fully booked — no deep work slot today.{tail}",
+                text=f"{head}.{tail}",
                 provenance=LedgerRef(
                     "plans", str(plan["local_date"]), f"day plan · {plan['local_date']}"
                 ),
@@ -254,7 +262,7 @@ def timezone_section(conn: sqlite3.Connection, today: date, settings: Settings) 
         return section
 
     now_tz, was_tz = str(rows[0]["tz"]), str(rows[1]["tz"])
-    window = settings.working_window
+    window = timezones.window_for(settings, today)
     section.lines.append(
         Line(
             text=f"Timezone changed {was_tz} → {now_tz}. Working window {window} {now_tz}.",
@@ -277,6 +285,20 @@ def plan_section(conn: sqlite3.Connection, today: date) -> Section:
         (USER_ID, today.isoformat()),
     ).fetchall()
     for row in rows:
+        if row["kind"] == "allday":
+            # A plan that named a day and no hour. Printing "12:00am–12:00am" would
+            # assert a time nobody stated, which is the failure the all-day kind exists
+            # to avoid; it leads the section because it frames every hour under it.
+            section.lines.insert(
+                0,
+                Line(
+                    text=f"All day · {row['title']}",
+                    provenance=LedgerRef(
+                        "plans", str(row["local_date"]), f"day plan · {row['local_date']}"
+                    ),
+                ),
+            )
+            continue
         mark = " (protected)" if row["kind"] == "protected" else ""
         start, end = timezones.t12(row["starts_at"]), timezones.t12(row["ends_at"])
         section.lines.append(

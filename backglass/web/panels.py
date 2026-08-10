@@ -20,6 +20,7 @@ from backglass import dedup
 from backglass.config import Settings
 from backglass.db import query
 from backglass.ledger import USER_ID
+from backglass.plan import timezones
 
 #: How far back the plan review queue looks; see `_review_floor`.
 REVIEW_FLOOR_DAYS = 60
@@ -171,7 +172,7 @@ def relative(timestamp: Any, now: datetime | None = None) -> str:
 # ── the seven panels ──────────────────────────────────────────────────────
 
 
-def today_panel(conn: sqlite3.Connection, today: date) -> Panel:
+def today_panel(conn: sqlite3.Connection, settings: Settings, today: date) -> Panel:
     rows = _rows(conn, "dashboard_today", {"user_id": USER_ID, "local_date": today.isoformat()})
     panel = Panel(
         title="Today",
@@ -186,6 +187,10 @@ def today_panel(conn: sqlite3.Connection, today: date) -> Panel:
             "overflow_count": first["overflow_count"],
             "tz": first["tz"],
             "has_protected": any(r["kind"] == "protected" for r in rows),
+            # The same distinction the planner, the brief and the schedule page draw:
+            # a day with no working window is not a day that got booked, and telling
+            # the owner it is sends them hunting meetings that do not exist.
+            "off_day": not timezones.is_working_day(settings, today),
         }
     return panel
 
@@ -761,7 +766,7 @@ def everything(conn: sqlite3.Connection, settings: Settings, today: date) -> Das
     board = board_panel(conn, settings, today)
     return Dashboard(
         today=today,
-        today_panel=today_panel(conn, today),
+        today_panel=today_panel(conn, settings, today),
         board=board,
         awaiting=awaiting_panel(conn, settings, today),
         goals=goals_panel(conn, settings, today),

@@ -514,6 +514,17 @@ button.box::before{content:"";position:absolute;inset:-6px}
   font:700 11px/14px ui-monospace,monospace;color:var(--ink-muted);font-variant-numeric:tabular-nums}
 .wcol{position:relative;border-right:1px solid var(--rule-hair);overflow:hidden;
   box-sizing:content-box;padding-bottom:var(--sp-4)}
+/* All-day strip: one row of the same eight-column grid, above the hour ruler. It sits
+ * outside the timeline because a plan with no hour has nowhere to be drawn on one —
+ * §7b, so each title is its own outlined tile rather than a tinted band. */
+.wadl{align-self:center;padding-right:var(--sp-2);text-align:right;color:var(--ink-muted)}
+.wad{display:flex;flex-direction:column;gap:2px;min-width:0;
+  padding:0 2px var(--sp-2);border-right:1px solid var(--rule-hair)}
+.wk7 .wad:last-of-type{border-right:0}
+.wadi{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  border:var(--hair) solid var(--ink);border-radius:var(--radius-1);
+  padding:1px var(--sp-1);font:700 10px/14px system-ui,sans-serif;
+  color:var(--ink);text-decoration:none}
 .wk7 > :last-child{border-right:0}
 .wcol i{position:absolute;left:0;right:0;border-top:1px solid var(--rule-hair)}
 /* 4px gutters, on the scale. At 2px a day boundary — the grid's strongest division —
@@ -935,6 +946,19 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 .gaplist{margin:var(--sp-2) 0 0;padding:0;list-style:none;
   font-size:13px;line-height:19px;color:var(--ink-muted);font-variant-numeric:tabular-nums}
 .gaplist li{padding:1px 0}
+
+/* All-day banners: a plan that named a day and no hour. §7b — a content unit is
+   outlined, so each is its own tile rather than a tinted strip. Above the ruler and
+   never on it: they span midnight to midnight, and a 24-hour block would paint over
+   every real block on the canvas. */
+.adlist{margin:var(--sp-3) 0 0;padding:0;list-style:none;display:flex;
+  flex-direction:column;gap:var(--sp-2)}
+.ad{display:flex;align-items:baseline;gap:var(--sp-2);min-width:0;
+  border:var(--border) solid var(--ink);border-radius:var(--radius-3);
+  padding:var(--sp-2) var(--sp-3)}
+.ad .lbl{flex:0 0 auto}
+.ad .adt{font-size:15px;line-height:23px;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
 
 /* Pager: navigation is not the subject of the page. Text links, no boxes. */
 .pager.quiet{display:block;background:none;border:0;padding:var(--sp-3) 0;margin:0;

@@ -1,7 +1,7 @@
 """The fixture set required at the bottom of extract-commitments.md.
 
     "Every change to this prompt requires the fixture set in tests/fixtures/commitments/
-    to pass. The fixtures must include, at minimum: ..." — seven cases, all present.
+    to pass. The fixtures must include, at minimum: ..." — nine cases, all present.
 
 These are pipeline tests, not evals. The model response is canned, so what is under test
 is §Post-processing steps 1 through 5 — entity resolution, estimates, the confidence
@@ -19,12 +19,13 @@ import pytest
 
 from backglass.config import Settings
 from backglass.extract.commitments import apply
+from backglass.extract.engagements import apply as apply_engagements
 from backglass.extract.schemas import CommitmentExtraction
 from backglass.ledger import Ledger
 from tests.conftest import FIXTURES, gmail_message, make_connector
 
 CASES = sorted((FIXTURES / "commitments").glob("*.json"))
-assert len(CASES) == 7, f"extract-commitments.md requires seven cases, found {len(CASES)}"
+assert len(CASES) == 9, f"extract-commitments.md requires nine cases, found {len(CASES)}"
 
 
 def load(path: Path) -> dict[str, Any]:
@@ -40,15 +41,30 @@ def ingest(case: dict[str, Any], ledger: Ledger, boundary: Any) -> tuple[int, st
 
 
 def run_case(case: dict[str, Any], ledger: Ledger, settings: Settings, boundary: Any):  # type: ignore[no-untyped-def]
+    """One response, both record types — the pairing `sync.py` applies in one transaction.
+
+    The fixtures used to apply only the commitment half, which made a fixture structurally
+    incapable of asking the question v8 of the prompt turns on: whether a stated hour
+    became an engagement the planner can place, or a commitment with the time stranded in
+    `what`. A case that cannot express the wrong answer cannot catch it.
+    """
     item_id, occurred_at = ingest(case, ledger, boundary)
     extraction = CommitmentExtraction.model_validate(case["model_response"])
-    return apply(
+    report = apply(
         extraction,
         source_item_id=item_id,
         occurred_at=occurred_at,
         ledger=ledger,
         settings=settings,
     )
+    plans = apply_engagements(
+        extraction,
+        source_item_id=item_id,
+        occurred_at=occurred_at,
+        ledger=ledger,
+        settings=settings,
+    )
+    return report, plans
 
 
 @pytest.mark.parametrize("path", CASES, ids=[p.stem for p in CASES])
@@ -60,13 +76,27 @@ def test_fixture(path: Path, conn, settings: Settings, boundary) -> None:  # typ
     if case.get("requires"):
         run_case(load(FIXTURES / "commitments" / case["requires"]), ledger, settings, boundary)
 
-    report = run_case(case, ledger, settings, boundary)
+    report, plans = run_case(case, ledger, settings, boundary)
     expect = case["expect"]
 
     assert report.inserted == expect["inserted"], case["name"]
     assert report.deduped == expect["deduped"], case["name"]
     assert report.superseded == expect["superseded"], case["name"]
     assert report.review_queue == expect["review_queue"], case["name"]
+
+    # v8 of the prompt turns on this pairing: an hour the owner must BE somewhere is an
+    # engagement the planner can place, and an hour something is DUE by is a commitment.
+    # Absent keys mean "no engagements", which is what the first seven cases expect.
+    assert plans.inserted == expect.get("engagements_inserted", 0), case["name"]
+    starts = [
+        str(row["starts_at"])
+        for row in conn.execute(
+            "SELECT starts_at FROM engagement WHERE source_item_id = "
+            "(SELECT id FROM source_item WHERE external_id = ?) ORDER BY id",
+            (case["message"]["id"],),
+        )
+    ]
+    assert starts == expect.get("engagement_starts_at", []), case["name"]
 
     rows = list(
         conn.execute(

@@ -919,12 +919,25 @@ class TestEngagementsOnTheDay:
     ) -> None:
         """"Lunch on Thursday" has no honest hour. Parsed as an ISO date it would land at
         midnight and either vanish outside the window or block the top of the morning for
-        something nobody said was in the morning."""
+        something nobody said was in the morning.
+
+        It is still *returned*, as an all-day banner. The assertion here used to be
+        `engagement_events(...) == []`, which pinned the mechanism rather than the
+        property: what the rule protects is that no capacity is deleted on a guess, and
+        that is the line below that still holds. Dropping the plan from the day as well
+        was a side effect nobody chose, and it hid six days of a summer programme.
+        """
         before = capacity_mod.compute(conn, sett, THURSDAY).capacity_minutes
         add_engagement(conn, what="lunch sometime", starts_at=THURSDAY.isoformat())
         after = capacity_mod.compute(conn, sett, THURSDAY).capacity_minutes
-        assert after == before
-        assert capacity_mod.engagement_events(conn, THURSDAY, PHOENIX) == []
+
+        assert after == before, "no honest hour means no capacity spent"
+        (event,) = capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)
+        assert event.allday is True
+        assert event.kind == "allday"
+        # Never at an hour: midnight to midnight is the span of a day, not a time in it.
+        assert (event.starts_at.hour, event.starts_at.minute) == (0, 0)
+        assert event.ends_at - event.starts_at == timedelta(days=1)
 
     def test_a_plan_with_no_stated_end_runs_an_hour(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
         add_engagement(
@@ -1070,3 +1083,574 @@ class TestEngagementsOnTheDay:
 
         assert event.starts_at.strftime("%H:%M") == "10:30"
         assert event.ends_at.strftime("%H:%M") == "11:45"
+
+
+# ── the weekend is a day too ────────────────────────────────────────────────────
+#
+# 2026-08-09 is a Sunday, and it is the day the owner moved into Willow Hall 502. The
+# plan that morning held breakfast, lunch, gym, shower, dinner — and nothing else, with
+# a 1.0-confidence commitment due that very day sitting at position N of a 48-item
+# overflow. Three separate mechanisms produced that, and the tests below pin each.
+SUNDAY = date(2026, 8, 9)
+SATURDAY = date(2026, 8, 8)
+
+
+@pytest.fixture
+def weekends(sett: Settings) -> Settings:
+    """The owner's real configuration after this change: seven planned days, and a
+    weekend priced as a weekend rather than as a twelve-hour workday."""
+    return sett.model_copy(
+        update={
+            "working_days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+            "working_window": "10:00-22:00",
+            "weekend_window": "10:00-18:00",
+        }
+    )
+
+
+def test_a_weekend_off_the_working_days_list_has_no_window(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """The regression itself. Sunday is absent from the default `working_days`, so the
+    day had no window, capacity was zero, and `propose` placed nothing at all."""
+    assert timezones.is_working_day(sett, SUNDAY) is False
+
+    add_commitment(conn, sett, "Move-in: Willow Hall 502, 8:00am", minutes=180, due=SUNDAY)
+    proposal = planner.propose(conn, sett, SUNDAY, events=[])
+
+    assert proposal.capacity.capacity_minutes == 0
+    assert not [b for b in proposal.blocks if b["kind"] in ("work", "protected", "small")]
+    assert len(proposal.overflow) == 1
+
+
+def test_the_weekend_window_makes_sunday_plannable(conn, weekends: Settings) -> None:  # type: ignore[no-untyped-def]
+    """And the fix. The same day, the same commitment, with the weekend planned."""
+    assert timezones.is_working_day(weekends, SUNDAY) is True
+
+    add_commitment(conn, weekends, "Move-in: Willow Hall 502, 8:00am", minutes=180, due=SUNDAY)
+    proposal = planner.propose(conn, weekends, SUNDAY, events=[])
+
+    assert proposal.capacity.capacity_minutes > 0
+    placed = [b for b in proposal.blocks if b["kind"] in ("work", "protected")]
+    assert [b["title"] for b in placed] == ["Move-in: Willow Hall 502, 8:00am"]
+    assert proposal.overflow == []
+
+
+def test_the_weekend_window_is_shorter_than_the_weekday_one(weekends: Settings) -> None:
+    """P13 still holds — this narrows the window, it does not detach it from the zone."""
+    assert timezones.window_for(weekends, SUNDAY) == "10:00-18:00"
+    assert timezones.window_for(weekends, SATURDAY) == "10:00-18:00"
+    assert timezones.window_for(weekends, THURSDAY) == "10:00-22:00"
+
+    start, end = timezones.window_on(weekends, SUNDAY)
+    assert (start.strftime("%H:%M"), end.strftime("%H:%M")) == ("10:00", "18:00")
+    assert str(start.tzinfo) == PHOENIX
+
+    weekday_start, weekday_end = timezones.window_on(weekends, THURSDAY)
+    assert (weekday_end - weekday_start) > (end - start)
+
+
+def test_a_blank_weekend_window_means_the_weekday_one(sett: Settings) -> None:
+    """Blank is "same as the weekday window", never "no window" — a day with no window
+    is expressed by leaving it out of `working_days`, and two ways to say one thing is
+    how one of them ends up wrong."""
+    seven = sett.model_copy(
+        update={
+            "working_days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+            "working_window": "09:00-18:00",
+            "weekend_window": "",
+        }
+    )
+    assert timezones.window_for(seven, SUNDAY) == "09:00-18:00"
+    assert timezones.window_for(seven, THURSDAY) == "09:00-18:00"
+
+
+def test_a_malformed_window_fails_at_startup(sett: Settings) -> None:
+    """Same contract as `routines`: bad configuration raises when Settings is built,
+    not at 05:45 inside the planner."""
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError, match="expected HH:MM-HH:MM"):
+        Settings(owner_name="K", db_path=sett.db_path, weekend_window="10am-6pm")
+
+    # And the weekday one goes through the same door, which it did not before.
+    with pytest.raises(pydantic.ValidationError, match="expected HH:MM-HH:MM"):
+        Settings(owner_name="K", db_path=sett.db_path, working_window="all day")
+
+
+# ── zero capacity has two causes, and they are opposite facts ───────────────────
+
+
+def test_an_off_day_is_not_described_as_fully_booked(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """"Fully booked — 0m of capacity" was what the owner was told about the Sunday they
+    moved house. Nothing was booked. The sentence sends a reader hunting for meetings
+    that are not there, when the fact to act on is that Sunday has no window."""
+    add_commitment(conn, sett, "Move-in: Willow Hall 502, 8:00am", minutes=180, due=SUNDAY)
+    proposal = planner.propose(conn, sett, SUNDAY, events=[])
+
+    assert proposal.capacity.no_window is True
+    assert any("Sunday is not a working day" in note for note in proposal.notes)
+    assert not any("Fully booked" in note for note in proposal.notes)
+
+
+def test_a_genuinely_booked_weekday_still_says_fully_booked(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """The other half of the distinction. A window that exists and got eaten is the
+    case P3 was written for, and it must keep its own sentence."""
+    proposal = planner.propose(
+        conn, sett, THURSDAY, events=[meeting(THURSDAY, "09:00", "18:00", "All-day workshop")]
+    )
+
+    assert proposal.capacity.no_window is False
+    assert any("Fully booked" in note for note in proposal.notes)
+    assert not any("not a working day" in note for note in proposal.notes)
+
+
+def test_what_is_due_leads_instead_of_sitting_at_position_thirty(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """P3 says "list only what is due". The implementation handed back the whole ordered
+    pool, so a 1.0-confidence obligation due today arrived somewhere inside forty-eight
+    rows with nothing marking it. `due_now` is that subset, and it is a view of
+    `overflow` rather than a second list — everything in it is still in there."""
+    add_commitment(conn, sett, "Move-in: Willow Hall 502", minutes=180, due=SUNDAY, n=1)
+    add_commitment(conn, sett, "overdue thing", minutes=30, due=date(2026, 8, 1), n=2)
+    for i in range(3, 12):
+        add_commitment(conn, sett, f"someday item {i}", minutes=30, n=i)
+
+    proposal = planner.propose(conn, sett, SUNDAY, events=[])
+
+    assert len(proposal.overflow) == 11
+    assert {c.what for c in proposal.due_now} == {
+        "Move-in: Willow Hall 502",
+        "overdue thing",
+    }
+    assert all(c in proposal.overflow for c in proposal.due_now)
+    assert any("2 due or overdue" in note for note in proposal.notes)
+    assert any("Move-in: Willow Hall 502" in note for note in proposal.notes)
+
+
+def test_a_day_with_nothing_due_gets_no_due_line(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """The note is earned, not decorative — an off day with only someday work says so
+    once and stops talking."""
+    add_commitment(conn, sett, "someday item", minutes=30)
+    proposal = planner.propose(conn, sett, SUNDAY, events=[])
+
+    assert proposal.overflow
+    assert proposal.due_now == []
+    assert not any("due or overdue" in note for note in proposal.notes)
+
+
+def test_a_planned_day_leaves_due_now_empty(conn, weekends: Settings) -> None:  # type: ignore[no-untyped-def]
+    """`due_now` belongs to the no-plan path. On a day that got planned, the due item is
+    a block on the schedule and repeating it as "due" would be noise."""
+    add_commitment(conn, weekends, "Move-in: Willow Hall 502", minutes=180, due=SUNDAY)
+    proposal = planner.propose(conn, weekends, SUNDAY, events=[])
+
+    assert proposal.capacity.plannable
+    assert proposal.due_now == []
+
+
+# ── all-day plans are visible and cost nothing ─────────────────────────────────
+#
+# `engagement` #8 in the owner's ledger is "McKenna Summer Program", 2026-08-09 to
+# 2026-08-14, confirmed. It rendered on no day at all: `engagement_events` skipped every
+# row with a date and no hour, and the rule it was obeying is about not deleting capacity
+# on a guess — never about hiding the plan. Six days inside a programme the schedule
+# never mentioned.
+PROGRAMME_START = date(2026, 8, 9)
+PROGRAMME_END = date(2026, 8, 14)
+
+
+class TestAllDayPlans:
+    def test_a_multi_day_plan_appears_on_every_day_it_covers(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings
+    ) -> None:
+        add_engagement(
+            conn,
+            what="McKenna Summer Program",
+            starts_at=PROGRAMME_START.isoformat(),
+            ends_at=PROGRAMME_END.isoformat(),
+        )
+        seen = {}
+        for offset in range((PROGRAMME_END - PROGRAMME_START).days + 1):
+            day = PROGRAMME_START + timedelta(days=offset)
+            (event,) = capacity_mod.engagement_events(conn, day, PHOENIX)
+            seen[day] = event.title
+
+        assert len(seen) == 6
+        assert seen[PROGRAMME_START] == "McKenna Summer Program (day 1 of 6)"
+        assert seen[PROGRAMME_END] == "McKenna Summer Program (day 6 of 6)"
+        assert seen[date(2026, 8, 11)] == "McKenna Summer Program (day 3 of 6)"
+
+    def test_the_day_after_it_ends_is_clear(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """The window query is inclusive at both ends and stops there — an unbounded one
+        would put a finished programme on every day for the rest of the ledger."""
+        add_engagement(
+            conn,
+            what="McKenna Summer Program",
+            starts_at=PROGRAMME_START.isoformat(),
+            ends_at=PROGRAMME_END.isoformat(),
+        )
+        after = PROGRAMME_END + timedelta(days=1)
+        assert capacity_mod.engagement_events(conn, after, PHOENIX) == []
+        before = PROGRAMME_START - timedelta(days=1)
+        assert capacity_mod.engagement_events(conn, before, PHOENIX) == []
+
+    def test_an_all_day_plan_spends_no_capacity_on_any_of_its_days(  # type: ignore[no-untyped-def]
+        self, conn, weekends: Settings
+    ) -> None:
+        """The load-bearing assertion. An all-day banner spans midnight to midnight, so
+        leaving it in the capacity arithmetic would swallow the entire window and report
+        a fully booked day for six days running."""
+        # Compared against the same day without the plan, not against zero: the routines
+        # (lunch, gym) legitimately sit inside the window and spend their own minutes.
+        # What is under test is the delta the banner adds, which must be none of it.
+        baseline = {}
+        for n in range(6):
+            day = PROGRAMME_START + timedelta(days=n)
+            cap = capacity_mod.compute(conn, weekends, day)
+            baseline[day] = (cap.capacity_minutes, cap.fixed_minutes, cap.buffer_minutes)
+
+        add_engagement(
+            conn,
+            what="McKenna Summer Program",
+            starts_at=PROGRAMME_START.isoformat(),
+            ends_at=PROGRAMME_END.isoformat(),
+        )
+        for day, before in baseline.items():
+            cap = capacity_mod.compute(conn, weekends, day)
+            assert (cap.capacity_minutes, cap.fixed_minutes, cap.buffer_minutes) == before, day
+            assert before[0] > 0, "the day must have had capacity to lose in the first place"
+
+    def test_a_single_day_plan_is_not_numbered(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """"day 1 of 1" is noise. The numbering earns its place only across a run."""
+        add_engagement(conn, what="orientation", starts_at=THURSDAY.isoformat())
+        (event,) = capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)
+        assert event.title == "orientation"
+
+    def test_a_proposed_all_day_plan_is_still_invisible(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """The exclusion that had a reason. Someone suggesting a week is not a week, and
+        making all-day plans visible must not smuggle proposals onto the day."""
+        add_engagement(
+            conn,
+            what="maybe a retreat",
+            starts_at=THURSDAY.isoformat(),
+            ends_at=FRIDAY.isoformat(),
+            status="proposed",
+        )
+        assert capacity_mod.engagement_events(conn, THURSDAY, PHOENIX) == []
+
+    def test_the_plan_carries_the_banner_as_a_block(self, conn, weekends: Settings) -> None:  # type: ignore[no-untyped-def]
+        """End to end: it reaches `propose`, so it is persisted and every reader sees it."""
+        add_engagement(
+            conn,
+            what="McKenna Summer Program",
+            starts_at=PROGRAMME_START.isoformat(),
+            ends_at=PROGRAMME_END.isoformat(),
+        )
+        proposal = planner.propose(conn, weekends, PROGRAMME_START)
+
+        banners = [b for b in proposal.blocks if b["kind"] == "allday"]
+        assert [b["title"] for b in banners] == ["McKenna Summer Program (day 1 of 6)"]
+        # It is a fact about the day, not time spent in it: it reaches the plan without
+        # reaching the arithmetic, so nothing in `capacity.fixed` is the banner.
+        assert not any(e.allday for e in proposal.capacity.fixed)
+        assert proposal.capacity.plannable
+
+
+# ── three readings of one dinner ───────────────────────────────────────────────
+#
+# The owner's plan for 2026-08-09 drew the same meal three times: "McKenna Program
+# Welcome Dinner" 18:00–20:00, "McKenna Summer Program kickoff dinner" 18:30–19:30 and
+# "college dinner appointment" 18:30–19:30 — engagement rows 195, 183 and 184, three
+# extractions of one invitation. `_distinct` cannot help: it collapses exact
+# (title, start, end) triples, which is right for two calendars describing one meeting
+# and useless here.
+
+
+class TestNearDuplicateEngagements:
+    def test_three_readings_of_one_dinner_render_once(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        add_engagement(
+            conn,
+            what="McKenna Program Welcome Dinner",
+            starts_at=f"{THURSDAY.isoformat()}T18:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T20:00:00-07:00",
+        )
+        add_engagement(
+            conn,
+            what="McKenna Summer Program kickoff dinner",
+            starts_at=f"{THURSDAY.isoformat()}T18:30:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T19:30:00-07:00",
+        )
+        events = capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)
+        assert len(events) == 1
+        assert "McKenna" in events[0].title
+
+    def test_a_weaker_reading_loses_to_the_one_the_model_believed(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings
+    ) -> None:
+        """The survivor is chosen by confidence, not by insertion order — the row the
+        model was surest of is the one whose hours the day should be built on."""
+        conn.execute(
+            "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at, "
+            " when_is_explicit, location, status, confidence, source_item_id, created_at) "
+            "VALUES (?, 'social', 'McKenna Program dinner guess', ?, ?, 1, NULL, "
+            " 'confirmed', 0.72, ?, ?)",
+            (
+                USER_ID,
+                f"{THURSDAY.isoformat()}T18:30:00-07:00",
+                f"{THURSDAY.isoformat()}T19:30:00-07:00",
+                _any_source_item(conn),
+                now_iso(),
+            ),
+        )
+        conn.execute(
+            "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at, "
+            " when_is_explicit, location, status, confidence, source_item_id, created_at) "
+            "VALUES (?, 'social', 'McKenna Program Welcome Dinner', ?, ?, 1, NULL, "
+            " 'confirmed', 0.94, ?, ?)",
+            (
+                USER_ID,
+                f"{THURSDAY.isoformat()}T18:00:00-07:00",
+                f"{THURSDAY.isoformat()}T20:00:00-07:00",
+                _any_source_item(conn),
+                now_iso(),
+            ),
+        )
+        (event,) = capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)
+        assert event.title == "McKenna Program Welcome Dinner"
+        assert event.minutes == 120
+
+    def test_a_real_double_booking_is_never_merged(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """The failure that would cost the most. Two different plans at one hour is a
+        conflict the owner has to see; merging it deletes a meeting and says nothing."""
+        add_engagement(
+            conn,
+            what="dentist appointment",
+            starts_at=f"{THURSDAY.isoformat()}T14:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T15:00:00-07:00",
+        )
+        add_engagement(
+            conn,
+            what="advising call with Abby",
+            starts_at=f"{THURSDAY.isoformat()}T14:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T15:00:00-07:00",
+        )
+        assert len(capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)) == 2
+
+    def test_two_lunches_with_different_people_stay_two(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """Why the token floor is five characters and not four: "lunch with Sarah" and
+        "lunch with Tom" share `lunch` and `with`, and are two different lunches."""
+        add_engagement(
+            conn,
+            what="lunch with Sarah",
+            starts_at=f"{THURSDAY.isoformat()}T12:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T13:00:00-07:00",
+        )
+        add_engagement(
+            conn,
+            what="lunch with Tom",
+            starts_at=f"{THURSDAY.isoformat()}T12:30:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T13:30:00-07:00",
+        )
+        assert len(capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)) == 2
+
+    def test_the_same_plan_at_a_different_hour_stays_two(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """Words alone are not evidence. This week's standup does not absorb next
+        Tuesday's, and two sittings of one seminar are two things to be at."""
+        add_engagement(
+            conn,
+            what="McKenna Program seminar",
+            starts_at=f"{THURSDAY.isoformat()}T09:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T10:00:00-07:00",
+        )
+        add_engagement(
+            conn,
+            what="McKenna Program seminar",
+            starts_at=f"{THURSDAY.isoformat()}T15:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T16:00:00-07:00",
+        )
+        assert len(capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)) == 2
+
+    def test_a_banner_never_swallows_a_timed_plan(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """An all-day banner spans midnight to midnight, so it overlaps everything on the
+        day by construction. Without the same-kind guard the words alone would merge these
+        two and a real hour would vanish from the schedule."""
+        add_engagement(
+            conn,
+            what="BioBridge Early Start Program",
+            starts_at=THURSDAY.isoformat(),
+            ends_at=FRIDAY.isoformat(),
+        )
+        add_engagement(
+            conn,
+            what="BioBridge Early Start orientation",
+            starts_at=f"{THURSDAY.isoformat()}T09:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T10:00:00-07:00",
+        )
+        events = capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)
+        assert len(events) == 2
+        assert sorted(e.allday for e in events) == [False, True]
+
+    def test_nothing_is_written_when_a_duplicate_is_dropped(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """A merge changes what the day renders, never what the owner can go and look at.
+        Both rows stay in the ledger, reachable from the Engagements page."""
+        add_engagement(
+            conn,
+            what="McKenna Program Welcome Dinner",
+            starts_at=f"{THURSDAY.isoformat()}T18:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T20:00:00-07:00",
+        )
+        add_engagement(
+            conn,
+            what="McKenna Summer Program kickoff dinner",
+            starts_at=f"{THURSDAY.isoformat()}T18:30:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T19:30:00-07:00",
+        )
+        capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)
+        assert conn.execute("SELECT COUNT(*) AS n FROM engagement").fetchone()["n"] == 2
+
+    def test_the_day_is_charged_for_one_dinner_not_three(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """The point of all of it. Three readings of one 90-minute meal inside the window
+        used to subtract three meals' worth of capacity from an evening that held one."""
+        evening = sett.model_copy(update={"working_window": "09:00-22:00"})
+        alone = capacity_mod.compute(conn, evening, THURSDAY).capacity_minutes
+        add_engagement(
+            conn,
+            what="McKenna Program Welcome Dinner",
+            starts_at=f"{THURSDAY.isoformat()}T18:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T20:00:00-07:00",
+        )
+        one = capacity_mod.compute(conn, evening, THURSDAY).capacity_minutes
+        add_engagement(
+            conn,
+            what="McKenna Summer Program kickoff dinner",
+            starts_at=f"{THURSDAY.isoformat()}T18:30:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T19:30:00-07:00",
+        )
+        still_one = capacity_mod.compute(conn, evening, THURSDAY).capacity_minutes
+
+        assert one < alone, "the dinner must cost the evening something"
+        assert still_one == one, "the second reading of it must cost nothing more"
+
+
+class TestDedupDefectsFoundInReview:
+    """Six cases an adversarial review produced that the first pass missed.
+
+    Every one is a silent deletion: an event the owner has, that the day stops showing,
+    with nothing anywhere saying it was dropped. That is the failure mode this collapse
+    is most dangerous for, so each gets its own name.
+    """
+
+    VENUE = "Armstrong Hall Rotunda, 1100 S McAllister Ave, Tempe, AZ 85281"
+
+    def test_one_venue_does_not_merge_the_meetings_held_in_it(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings
+    ) -> None:
+        """`engagement_events` appends " — {location}" to the title before the collapse
+        runs, so a shared address used to supply every token identity needed. Two
+        unrelated plans in one campus building overlapped, shared five long words of
+        street address, and one of them disappeared — taking its minutes out of the
+        capacity subtraction too, so the day reported MORE free time than it had."""
+        add_engagement(
+            conn,
+            what="Law school info session",
+            starts_at=f"{THURSDAY.isoformat()}T14:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T15:00:00-07:00",
+            location=self.VENUE,
+        )
+        add_engagement(
+            conn,
+            what="Barrett honors reception",
+            starts_at=f"{THURSDAY.isoformat()}T14:30:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T16:00:00-07:00",
+            location=self.VENUE,
+        )
+        events = capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)
+        assert len(events) == 2, "a room is not evidence that two meetings are one"
+        assert {e.title.split(" — ")[0] for e in events} == {
+            "Law school info session",
+            "Barrett honors reception",
+        }
+
+    def test_two_different_programmes_do_not_annihilate_each_other(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings
+    ) -> None:
+        """All-day banners span midnight to midnight, so overlap is guaranteed and
+        carries no information. Matched on it, a six-day programme and a three-day one
+        sharing two words deleted each other on alternate days — leaving the longer one
+        with a hole in its middle and the winner flipping day to day."""
+        add_engagement(
+            conn,
+            what="McKenna Summer Program",
+            starts_at="2026-08-09",
+            ends_at="2026-08-14",
+        )
+        add_engagement(
+            conn,
+            what="McKenna Research Program",
+            starts_at="2026-08-10",
+            ends_at="2026-08-12",
+        )
+        for day in (date(2026, 8, 10), date(2026, 8, 11), date(2026, 8, 12)):
+            titles = {
+                e.title.split(" (")[0]
+                for e in capacity_mod.engagement_events(conn, day, PHOENIX)
+            }
+            assert titles == {"McKenna Summer Program", "McKenna Research Program"}, day
+        # And the longer one still runs its whole length, unbroken.
+        for offset in range(6):
+            day = date(2026, 8, 9) + timedelta(days=offset)
+            assert any(
+                e.title.startswith("McKenna Summer Program")
+                for e in capacity_mod.engagement_events(conn, day, PHOENIX)
+            ), day
+
+    def test_two_readings_of_one_programme_still_collapse(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """The fix above must not cost the case it was built for: two extractions of one
+        programme name the same run of days, and are one banner."""
+        add_engagement(
+            conn,
+            what="BioBridge 2026 Early Start Program",
+            starts_at="2026-08-05",
+            ends_at="2026-08-15",
+        )
+        add_engagement(
+            conn,
+            what="Biomedical Sciences Early Start program",
+            starts_at="2026-08-05",
+            ends_at="2026-08-15",
+        )
+        events = capacity_mod.engagement_events(conn, date(2026, 8, 9), PHOENIX)
+        assert len(events) == 1
+
+    def test_a_run_of_days_written_with_a_clock_is_still_a_run_of_days(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings
+    ) -> None:
+        """Read literally, "2026-08-10T09:00" to "2026-08-14" is a single 5220-minute
+        event: it swallowed the whole of the 10th's window — capacity zero — and then
+        appeared on none of the four days after it."""
+        add_engagement(
+            conn,
+            what="BioBridge Early Start",
+            starts_at="2026-08-10T09:00:00-07:00",
+            ends_at="2026-08-14",
+        )
+        for offset in range(5):
+            day = date(2026, 8, 10) + timedelta(days=offset)
+            (event,) = capacity_mod.engagement_events(conn, day, PHOENIX)
+            assert event.allday is True, day
+            assert event.minutes == 1440, day
+
+        weekday = date(2026, 8, 11)  # a Tuesday, inside the default working days
+        before = capacity_mod.compute(conn, sett, weekday).capacity_minutes
+        assert before > 0, "a five-day programme must not zero the days it spans"
+
+    def test_a_degenerate_window_is_refused_rather_than_reported_two_ways(  # type: ignore[no-untyped-def]
+        self, sett: Settings
+    ) -> None:
+        """"09:00-09:00" parsed, made `window_minutes` zero on a day `is_working_day`
+        called a working day, and the planner then said "not a working day" while the
+        schedule page said "fully booked" about the same Thursday."""
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError, match="ends at or before it starts"):
+            Settings(owner_name="K", db_path=sett.db_path, working_window="09:00-09:00")
+        with pytest.raises(pydantic.ValidationError, match="ends at or before it starts"):
+            Settings(owner_name="K", db_path=sett.db_path, weekend_window="18:00-10:00")

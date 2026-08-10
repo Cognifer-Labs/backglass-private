@@ -14,15 +14,31 @@
       </p>
       {% if not meta.has_protected %}
         {# docs/05 §Failure states: say the day is fully booked rather than showing an
-           empty plan. The absence of a deep-work slot is the news, not the schedule. #}
-        <p class="note">Fully booked — no deep work slot today.</p>
+           empty plan. The absence of a deep-work slot is the news, not the schedule.
+           On a day with no working window nothing is booked, so that sentence would send
+           the owner looking for meetings that are not there — the same split the brief
+           and the schedule page draw. #}
+        {% if meta.off_day %}
+          <p class="note">{{ d.today.strftime('%A') }} is not a working day.</p>
+        {% else %}
+          <p class="note">Fully booked — no deep work slot today.</p>
+        {% endif %}
       {% endif %}
       {# Timetable form (owner ruling 2026-08-05): one line per block — time and title
          at rest, nothing else. Kind moved off the row into its keyline colour plus the
          shared legend (the week view's grammar), and the outcome buttons surface only
          on the row under the cursor or holding focus — the board register's reveal. #}
       {% for b in d.today_panel.rows %}
-        {% if b['kind'] == 'protected' %}
+        {% if b['kind'] == 'allday' %}
+          {# A plan that named a day and no hour. It sorts first because it spans the
+             whole day, and it must not print its span: "12:00am–12:00am" asserts a time
+             nobody stated, which is the reason the kind exists. No verbs either — a
+             six-day programme is not a thing to tick off this morning. #}
+          <div class="row sched k-allday">
+            <span class="time">All day</span>
+            <p class="b1"><span>{{ b['title'] }}</span></p>
+          </div>
+        {% elif b['kind'] == 'protected' %}
           {# design-system.md §4: 2px keyline plus 45° hatch — now one row tall. #}
           <div class="row sched k-protected">
             <span class="time">{{ b['starts_at']|t12 }}–{{ b['ends_at']|t12 }}</span>

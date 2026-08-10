@@ -13,6 +13,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import date, datetime, timedelta
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
@@ -212,9 +213,29 @@ def _collapse(raw: list[RawEntry]) -> list[RawEntry]:
     return list(kept.values())
 
 
+def allday(view: DayView) -> list[str]:
+    """The day's all-day banners, as titles — plans that named a day and no hour.
+
+    Kept off the timeline on purpose. They span midnight to midnight, so drawing one
+    would paint over every real block on the canvas and stretch the shared week ruler to
+    24 hours; and the whole reason they are all-day is that nobody said when. A banner
+    states the fact without asserting an hour.
+    """
+    seen: dict[str, None] = {}
+    for e in view.fixed:
+        if e.allday:
+            seen.setdefault(e.title or "Busy", None)
+    for b in view.blocks:
+        if str(b["kind"]) == "allday":
+            seen.setdefault(str(b["title"]), None)
+    return list(seen)
+
+
 def _raw_entries(view: DayView) -> list[RawEntry]:
     raw: list[RawEntry] = []
     for e in view.fixed:
+        if e.allday:
+            continue  # a banner, not an hour — see `allday` above
         raw.append(
             (
                 e.starts_at.hour * 60 + e.starts_at.minute,
@@ -226,6 +247,8 @@ def _raw_entries(view: DayView) -> list[RawEntry]:
             )
         )
     for b in view.blocks:
+        if str(b["kind"]) == "allday":
+            continue
         start = _minutes(str(b["starts_at"])[11:16])
         end = _minutes(str(b["ends_at"])[11:16])
         if start is None or end is None:
@@ -387,6 +410,11 @@ class DayNotes:
 
     fully_booked: bool
     fragmented: bool
+    #: A day with no working window at all, which reaches zero capacity by a different
+    #: road than P3's. Kept apart from `fully_booked` because the two sentences send the
+    #: owner in opposite directions — one to decline a meeting, the other to notice that
+    #: Saturday is not in `working_days`.
+    off_day: bool = False
 
 
 def now_next(view: DayView, *, today: date) -> NowNext | None:
@@ -429,9 +457,13 @@ def day_notes(view: DayView, settings: Settings) -> DayNotes:
     if not view.blocks:
         return DayNotes(fully_booked=False, fragmented=False)
     capacity_minutes = int(view.blocks[0]["capacity_minutes"])
-    fully_booked = capacity_minutes < settings.min_capacity_minutes
-    fragmented = not fully_booked and not any(b["kind"] == "protected" for b in view.blocks)
-    return DayNotes(fully_booked=fully_booked, fragmented=fragmented)
+    under_floor = capacity_minutes < settings.min_capacity_minutes
+    # `day_plan` stores capacity but not the window it came from, so the page asks the
+    # configuration the same question `compute` did rather than inferring from the zero.
+    off_day = under_floor and not timezones.is_working_day(settings, view.day)
+    fully_booked = under_floor and not off_day
+    fragmented = not under_floor and not any(b["kind"] == "protected" for b in view.blocks)
+    return DayNotes(fully_booked=fully_booked, fragmented=fragmented, off_day=off_day)
 
 
 # ── the week agenda grid ──────────────────────────────────────────────────
@@ -451,13 +483,21 @@ class WeekCol:
     entries: list[Entry]
     now_top: int | None
     cap: dict[str, Any] | None
+    #: Titles of the day's all-day plans. They are not entries — nothing on the ruler
+    #: can express "all day" — so the column carries them beside it and the grid draws
+    #: them above its own hours.
+    allday: list[str] = dataclass_field(default_factory=list)
 
     @property
     def busy(self) -> bool:
         """Something beyond the routine template is on this day. Routines repeat on
         all seven columns by construction, so they alone cannot earn the grid its
-        ink — an empty week stays a sentence, not a framed void of breakfasts."""
-        return any(e.kind != "routine" for e in self.entries)
+        ink — an empty week stays a sentence, not a framed void of breakfasts.
+
+        An all-day plan counts. A day whose only non-routine content is a six-day
+        programme has no entries at all, so without this the week reads as quiet and
+        can collapse to the "nothing on" sentence while the owner is at the programme."""
+        return bool(self.allday) or any(e.kind != "routine" for e in self.entries)
 
     @property
     def free_minutes(self) -> int | None:
@@ -505,6 +545,7 @@ def week_timeline(views: list[DayView], *, today: date) -> WeekTimeline:
             now_top=_now_top(v, today, start_min, end_min, WEEK_PX),
             # Day-level capacity fields ride on every block row of dashboard_today.
             cap=v.blocks[0] if v.blocks else None,
+            allday=allday(v),
         )
         for v, raw in zip(views, raws, strict=True)
     ]
@@ -545,6 +586,7 @@ def build_router(
                 "cap": view.blocks[0] if view.blocks else None,
                 "now_next": now_next(view, today=today()),
                 "gaps": gaps(view),
+                "allday": allday(view),
                 "notes": day_notes(view, settings),
                 "prev": (day - timedelta(days=1)).isoformat(),
                 "next": (day + timedelta(days=1)).isoformat(),

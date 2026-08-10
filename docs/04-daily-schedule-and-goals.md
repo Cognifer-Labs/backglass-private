@@ -29,7 +29,8 @@ into a day that has five hours of meetings. So capacity is computed first, and i
 hard constraint rather than a display value.
 
 ```
-working_window    = configured per weekday (default 09:00–18:00 local)
+working_window    = configured per weekday (default 09:00–18:00 local);
+                    `weekend_window` overrides it on Sat/Sun when set
 fixed             = calendar events marked busy, minus declined,
                     plus confirmed engagements with a stated hour
 buffer            = 10 min after any meeting ≥ 30 min, 5 min otherwise

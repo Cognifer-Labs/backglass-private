@@ -110,6 +110,13 @@ class Settings(BaseSettings):
     default_tz: str = "America/Phoenix"
     alt_tz: str = "Asia/Kolkata"
     working_window: str = "09:00-18:00"
+    #: The window on Saturday and Sunday, for owners who plan their weekends. Blank means
+    #: "same as `working_window`" rather than "none" — a day with no window is expressed
+    #: by leaving it out of `working_days`, and having two ways to say that is how one of
+    #: them ends up wrong. It exists because a weekend that is plannable at all should not
+    #: have to be plannable on weekday hours: the alternative is a Saturday that either
+    #: does not exist or claims twelve hours of it.
+    weekend_window: str = ""
     peak_window: str = "09:00-12:00"
     week_start: str = "monday"
     daily_reserve_minutes: int = 45
@@ -423,6 +430,31 @@ class Settings(BaseSettings):
     @classmethod
     def _check_routines(cls, value: str) -> str:
         parse_routines(value)  # fail at startup, not at 05:45
+        return value
+
+    @field_validator("working_window", "weekend_window", "peak_window")
+    @classmethod
+    def _check_window(cls, value: str) -> str:
+        """Fail at startup, not at 05:45 — same reason as `routines` above.
+
+        A blank `weekend_window` is the documented "same as the weekday one", so it is
+        the one value that skips the check rather than raising on an empty string.
+
+        An empty span is rejected outright. "09:00-09:00" parses, and produces a day
+        that `is_working_day` calls a working day while `window_minutes` is zero — so
+        the planner said "not a working day" and the schedule page said "fully booked"
+        about the same Thursday. A day with no hours is expressed by leaving it out of
+        `working_days`; this field cannot be a second way to say it.
+        """
+        if value:
+            from backglass.plan.timezones import parse_window
+
+            start, end = parse_window(value)
+            if end <= start:
+                raise ValueError(
+                    f"window {value!r} ends at or before it starts; a day with no hours "
+                    f"is one left out of WORKING_DAYS"
+                )
         return value
 
     # .env.example ships these four blank ("APPLE_TRIAGE=", "REVIEWS_TARGET_ID=") so a
