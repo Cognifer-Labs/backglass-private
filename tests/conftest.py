@@ -295,11 +295,29 @@ class FakeModel:
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
-    # Behavior-shaping knobs are pinned to the documented defaults so the suite does
-    # not inherit the owner's live .env — personalizing WORKING_WINDOW must not move
-    # planner fixtures. Env *parsing* stays covered by tests/test_config.py, which
-    # reads the environment on purpose (the 2026-07-30 lesson).
+    return build_settings(tmp_path)
+
+
+def build_settings(tmp_path: Path) -> Settings:
+    """The `settings` fixture's body, callable, so a test can prove it ignores a `.env`.
+
+    See tests/test_config.py::test_the_shared_fixture_cannot_inherit_a_live_env.
+    """
+    # `_env_file=None` is the load-bearing argument: it stops pydantic-settings reading
+    # the owner's real `.env`, so no personal value can reach a fixture at all.
+    #
+    # Pinning the knobs one at a time was the old defence and it failed the way a list
+    # nobody re-reads fails. `WORKING_DAYS=mon,…,sun` in the live file made Sunday a
+    # working day, and the test asserting a Sunday is *not* one passed everywhere except
+    # the owner's own checkout — CI, a fresh clone and a worktree all lack a `.env`, so
+    # the suite was green in every place that could not reproduce it. The explicit values
+    # below stay because several differ from the class defaults on purpose; they are no
+    # longer what keeps the environment out.
+    #
+    # Env *parsing* stays covered by tests/test_config.py, which reads the environment
+    # deliberately (the 2026-07-30 lesson).
     return Settings(
+        _env_file=None,
         owner_name="K",
         owner_emails=["alex.rivera@example.com", "arivera@example.edu"],
         boundary_mode="full_scope",
@@ -309,6 +327,13 @@ def settings(tmp_path: Path) -> Settings:
         working_window="09:00-18:00",
         weekend_window="",
         peak_window="09:00-12:00",
+        # Pinned for the same reason as the windows above, and missed when the
+        # no-window work landed: the owner's live .env carries all seven days, so
+        # `test_a_day_off_the_working_days_list_is_not_called_fully_booked` asserted
+        # Sunday was not a working day while Settings said it was. The suite passed in
+        # any checkout without a .env — CI, a fresh clone, a worktree — and failed only
+        # in the one place the owner actually runs it.
+        working_days=["mon", "tue", "wed", "thu", "fri"],
         default_tz="America/Phoenix",
         alt_tz="Asia/Kolkata",
         tz_ranges=[],
