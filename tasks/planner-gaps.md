@@ -254,7 +254,20 @@ owner's own move-in still has its hour trapped in a title, and will until the ro
 re-read.
 
 - **Implement**: `backglass extract` re-runs against the new prompt without re-fetching.
-  Scope: **1,041 kept items still on `@7`** (224 are already `@8`), not all 9,067.
+  Scope, **re-counted 2026-08-10 after prompt v9**: every kept item is now on `@8` and v9
+  supersedes all of them, so it is **1,275 items**, not the 1,041 written here first. v9
+  is a reordering with no reworded instruction, so this is cheaper per item than the
+  figures below — but it is not zero items, and the count only ever grows while the
+  decision waits.
+- **Verify before committing to the full run**: v9 moved where the model learns who the
+  owner is (which decides `direction`) and changed the date rule from an interpolated
+  value to a reference to the `Date:` line. The test suite cannot catch a regression in
+  either — `conftest.FakeModel` returns canned responses, so the fixtures exercise
+  post-processing and never the prompt. This file's own v2 changelog records the model
+  returning zero commitments because one rule sat above another, so instruction order
+  demonstrably matters here. Re-extract ~20 items first and diff `due_at` and `direction`
+  against the rows they replace. If dates drift, re-inlining `{{occurred_at}}` is one line
+  and costs back roughly a third of the saving.
 - **Test**: none new. The extraction fixtures are the coverage; this is an operation.
 
 **Priced, because rule 7 makes the cap a code-enforced constraint and this is the only
