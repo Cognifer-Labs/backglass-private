@@ -13,7 +13,7 @@
 > | 4. Duplicates never merge | **done, differently** — `35f7414`. The merge would have been wrong; see the revised item. |
 > | 5. Half the ledger invisible | open |
 > | 6. Goal linkage dead | open — the largest remaining item |
-> | 7. Estimates are guesses | open |
+> | 7. Estimates are guesses | **unblocked by 3** — starved of input, not broken; no code |
 > | 8. Routines have no weekday | **done** — `58c5f93` |
 > | 9. `state` misses templates | **done** — `078b301` |
 > | 10. "46 did not fit" | **done** — `34b48dd` |
@@ -179,10 +179,27 @@ do not create commitments, so nothing in the ledger already knows the answer.
 ### 7. Estimates are guesses, so the packing is a guess
 
 112 of 132 estimates are the 45-minute type default; 3 are extracted, 17 manual.
-`plan/estimates.py` can already report estimated-vs-actual after 30 completed items —
-it has no actuals to read.
 
-- **Implement**: `backglass log` writes `actual_minutes` back against the block.
+**No code needed, and the original proposal here was wrong.** `estimates.ratio_report`
+does not want a new writer: it already derives actual from a completed block's own span,
+joined to the commitment's estimate. It is starved, not broken.
+
+```
+plan_block outcomes: {'pending': 172, 'rolled': 4}
+ratio_report sample: 0 of the 30 §1.3 requires
+```
+
+Not one block has ever been marked done. Which is item 3, arriving from the other end:
+the evening pass — the surface that asks what got done, prefilled and one tap to confirm
+— ran at 18:00 while the owner's own gym routine starts at 17:30. It asked an empty desk
+every night for the life of the ledger, so nothing was ever confirmed, so the estimates
+never calibrated and the rollover counts stayed near zero too.
+
+- **Implement**: nothing. `141eba6` moves the pass to 22:00; the sample accrues from
+  there. Revisit after 30 completed blocks, which is the first time the report can say
+  anything at all.
+- **Depends on**: re-running `backglass schedule install` from the real checkout, or the
+  job keeps its old 18:00 plist.
 
 ---
 
@@ -281,4 +298,4 @@ extra, and doing them separately means paying the 6 hours twice.
 | a weekday-scoped routine costs no capacity on other days | done, `58c5f93` |
 | the overflow partitions into named and counted, losing nothing | done, `34b48dd` |
 | an at-risk goal pulls its linked work up the order | **open** (item 6) |
-| a logged actual reaches `estimates` and moves the type default | **open** (item 7) |
+| a logged actual reaches `estimates` and moves the type default | not needed — `ratio_report` already derives it (item 7) |
