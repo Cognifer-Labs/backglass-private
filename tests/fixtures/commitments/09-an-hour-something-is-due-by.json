@@ -1,0 +1,43 @@
+{
+  "name": "a stated hour something is due by stays a commitment",
+  "why": "The other side of the same rule, and the reason it is stated as a discriminator rather than as 'times become engagements'. A 5pm cutoff is not a place to be at 5pm: the owner can do it any time before, so it takes a due date and no block. Loosening the engagement rule without this case would turn every deadline into a meeting.",
+  "message": {
+    "id": "c09",
+    "from": "ASU University Housing <housing@example.edu>",
+    "to": "alex.rivera@example.com",
+    "subject": "Housing agreement outstanding",
+    "date": "Mon, 03 Aug 2026 09:05:00 -0700",
+    "body": "One item left: please submit your signed housing agreement by 5pm Friday."
+  },
+  "model_response": {
+    "commitments": [
+      {
+        "direction": "i_owe",
+        "counterparty": "ASU University Housing <housing@example.edu>",
+        "what": "submit signed housing agreement",
+        "due_at": "2026-08-07",
+        "due_is_explicit": true,
+        "estimated_minutes": null,
+        "confidence": 0.9,
+        "evidence": "please submit your signed housing agreement by 5pm Friday.",
+        "resolves": false,
+        "resolves_what": null
+      }
+    ],
+    "engagements": []
+  },
+  "expect": {
+    "inserted": 1,
+    "deduped": 0,
+    "superseded": 0,
+    "review_queue": 0,
+    "due_at": [
+      "2026-08-07"
+    ],
+    "estimate_source": [
+      null
+    ],
+    "engagements_inserted": 0,
+    "engagement_starts_at": []
+  }
+}

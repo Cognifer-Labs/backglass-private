@@ -1,0 +1,37 @@
+{
+  "name": "a stated hour the owner must be somewhere is an engagement, not a commitment",
+  "why": "The Sunday the owner moved into Willow Hall 502, the day plan listed breakfast, lunch, gym, shower and dinner. Move-in was in the ledger as a commitment reading 'Move-in: Willow Hall 502, 8:00am' — and `commitment` carries a due date and no clock, so 08:00 survived only as words inside `what`, where the planner cannot read it. An hour on the wrong record is an hour thrown away.",
+  "message": {
+    "id": "c08",
+    "from": "ASU University Housing <housing@example.edu>",
+    "to": "alex.rivera@example.com",
+    "subject": "Your move-in appointment",
+    "date": "Sun, 02 Aug 2026 11:26:43 -0700",
+    "body": "Your assigned move-in time is Sunday, August 9 at 8:00am at Willow Hall 502. Please arrive within your window."
+  },
+  "model_response": {
+    "commitments": [],
+    "engagements": [
+      {
+        "kind": "professional",
+        "what": "move-in at Willow Hall 502",
+        "people": [],
+        "starts_at": "2026-08-09T08:00:00",
+        "ends_at": null,
+        "when_is_explicit": true,
+        "location": "Willow Hall 502",
+        "status": "confirmed",
+        "replaces_earlier": false,
+        "replaces_start_at": null,
+        "confidence": 0.95,
+        "evidence": "Your assigned move-in time is Sunday, August 9 at 8:00am at Willow Hall 502."
+      }
+    ]
+  },
+  "expect": {
+    "inserted": 0, "deduped": 0, "superseded": 0, "review_queue": 0,
+    "due_at": [], "estimate_source": [],
+    "engagements_inserted": 1,
+    "engagement_starts_at": ["2026-08-09T08:00:00"]
+  }
+}

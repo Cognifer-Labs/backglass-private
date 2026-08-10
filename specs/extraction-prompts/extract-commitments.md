@@ -1,6 +1,6 @@
 ---
 id: extract-commitments
-version: 7
+version: 8
 model: careful
 output: strict JSON, schema-validated, one retry on malformed
 ---
@@ -25,6 +25,15 @@ output: strict JSON, schema-validated, one retry on malformed
      pass: a separate careful read to ask a second question would double extraction cost
      per item for the life of the system. -->
 
+<!-- v8 (2026-08-09): engagements said "somewhere with someone", so an obligation to be
+     at a place alone at a stated hour — a move-in slot, a lab check-in, an appointment —
+     had nowhere to go and landed as a commitment with the time stranded in `what`.
+     `commitment` carries a due date and no clock, so the planner could not place it and
+     the owner spent the morning of their move-in looking at a day plan that listed only
+     dinner. Engagements are now "somewhere at a time", the clock is stated as the
+     discriminator (be there at 8:00 → engagement; done by 5pm → commitment), and the
+     mass-invitation exclusion is carved out for a time that is the user's own. -->
+
 # Tier 2 commitment extraction
 
 Runs only on items where triage returned `keep=true`. This is where money is spent and it
@@ -39,9 +48,11 @@ A commitment is a specific obligation with an owner. Two directions:
   i_owe        the user promised to do or provide something
   owed_to_me   someone promised the user something
 
-An engagement is a plan to be somewhere with someone — dinner with a friend,
-a conference, an interview, office hours, a call. Nobody owes anybody an
-artifact; the substance is the meeting itself.
+An engagement is a plan to be somewhere at a time — dinner with a friend, a
+conference, an interview, office hours, a call, a move-in slot, a lab check-in.
+Nobody owes anybody an artifact; the substance is being there. Other people are
+usual but not required: an appointment the user must keep alone is still an
+engagement, because what it occupies is an hour of their day.
 
 The user is {{owner_name}} <{{owner_email}}>.
 
@@ -108,18 +119,37 @@ COMMITMENT OR ENGAGEMENT — do not return the same thing as both.
 Ask what the message is actually about. If it is about producing or sending
 something, it is a commitment, even when a meeting is mentioned as the
 deadline ("I'll have the slides ready before we meet Tuesday" is a
-commitment). If it is about being somewhere with someone, it is an
-engagement, even when the user promised to attend ("I'll be at your defence
-Tuesday" is an engagement). A message can legitimately produce one of each
-when it contains both ("I'll send the draft Thursday, and are you free for
-lunch Friday?") — that is two records about two different things, not a
-double count.
+commitment). If it is about being somewhere at a time, it is an engagement,
+even when the user promised to attend ("I'll be at your defence Tuesday" is
+an engagement). A message can legitimately produce one of each when it
+contains both ("I'll send the draft Thursday, and are you free for lunch
+Friday?") — that is two records about two different things, not a double
+count.
+
+The clock is the tell, and it decides the hard cases. A stated time the user
+must BE somewhere is an engagement; a stated time by which something must be
+DONE is a commitment with that deadline. "Move-in is 8:00am at Willow Hall
+502" is an engagement at 08:00 — the user has to be there, and the hour is
+the substance. "Submit the housing form by 5pm Friday" is a commitment due
+Friday — the hour is only a cutoff and the user can do it at any time before
+it. When a message gives both ("check in at 8:00am, bring the signed form"),
+return the arrival as an engagement and the form as a commitment.
+
+Get this one right and the day planner can place the block; get it wrong and
+the hour survives only as words inside `what`, where nothing can read it. A
+commitment carries no clock time — only a due date — so an hour put on the
+wrong record is an hour thrown away.
 
 Do not return an engagement for:
   - a meeting between other people that does not involve the user
   - a mass invitation with no personal element (a newsletter's webinar, a
     building-wide fire drill, a marketing event blast)
   - something already over, unless the message is arranging the next one
+
+A message sent to thousands is still personal when it carries a time that is
+the user's own: an assigned move-in slot, a registered session, a scheduled
+appointment. Mass-sent is about the mailing, not about whether the user has
+somewhere to be. Ask whether missing it would cost the user something.
 
 DATE RESOLUTION — this is the most important rule here.
 It applies to `due_at` and to `starts_at`/`ends_at` alike.
@@ -262,3 +292,6 @@ pass. The fixtures must include, at minimum:
 - a message that resolves an earlier commitment
 - a message with commitments between two third parties, which must extract nothing
 - a message in which the owner is in Cc rather than To
+- a stated hour the owner must BE somewhere, which is an engagement and not a
+  commitment with the time stranded in `what`
+- a stated hour by which something is DUE, which stays a commitment
