@@ -294,6 +294,20 @@ def parse_window(window: str) -> tuple[time, time]:
         raise TimezoneError(f"bad window {window!r}; expected HH:MM-HH:MM") from exc
 
 
+def window_for(settings: Settings, day: date) -> str:
+    """The configured window that governs `day` — weekend or weekday.
+
+    Saturday and Sunday take `weekend_window` when one is set. A weekend is a different
+    shape of day, not a shorter workday, and pricing it at weekday hours is what makes a
+    planner propose eight hours of reading on a day the owner meant to spend outdoors.
+    Blank falls back to `working_window`; whether the day is plannable *at all* remains
+    `working_days`'s question, not this one's.
+    """
+    if day.weekday() >= 5 and settings.weekend_window:
+        return settings.weekend_window
+    return settings.working_window
+
+
 def window_on(
     settings: Settings, day: date, window: str | None = None
 ) -> tuple[datetime, datetime]:
@@ -303,7 +317,7 @@ def window_on(
     owner's working day to 21:30; it moves the underlying UTC instants.
     """
     zone = ZoneInfo(active_tz(settings, day))
-    start, end = parse_window(window or settings.working_window)
+    start, end = parse_window(window or window_for(settings, day))
     return (
         datetime.combine(day, start, tzinfo=zone),
         datetime.combine(day, end, tzinfo=zone),

@@ -1070,3 +1070,94 @@ class TestEngagementsOnTheDay:
 
         assert event.starts_at.strftime("%H:%M") == "10:30"
         assert event.ends_at.strftime("%H:%M") == "11:45"
+
+
+# ── the weekend is a day too ────────────────────────────────────────────────────
+#
+# 2026-08-09 is a Sunday, and it is the day the owner moved into Willow Hall 502. The
+# plan that morning held breakfast, lunch, gym, shower, dinner — and nothing else, with
+# a 1.0-confidence commitment due that very day sitting at position N of a 48-item
+# overflow. Three separate mechanisms produced that, and the tests below pin each.
+SUNDAY = date(2026, 8, 9)
+SATURDAY = date(2026, 8, 8)
+
+
+@pytest.fixture
+def weekends(sett: Settings) -> Settings:
+    """The owner's real configuration after this change: seven planned days, and a
+    weekend priced as a weekend rather than as a twelve-hour workday."""
+    return sett.model_copy(
+        update={
+            "working_days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+            "working_window": "10:00-22:00",
+            "weekend_window": "10:00-18:00",
+        }
+    )
+
+
+def test_a_weekend_off_the_working_days_list_has_no_window(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """The regression itself. Sunday is absent from the default `working_days`, so the
+    day had no window, capacity was zero, and `propose` placed nothing at all."""
+    assert timezones.is_working_day(sett, SUNDAY) is False
+
+    add_commitment(conn, sett, "Move-in: Willow Hall 502, 8:00am", minutes=180, due=SUNDAY)
+    proposal = planner.propose(conn, sett, SUNDAY, events=[])
+
+    assert proposal.capacity.capacity_minutes == 0
+    assert not [b for b in proposal.blocks if b["kind"] in ("work", "protected", "small")]
+    assert len(proposal.overflow) == 1
+
+
+def test_the_weekend_window_makes_sunday_plannable(conn, weekends: Settings) -> None:  # type: ignore[no-untyped-def]
+    """And the fix. The same day, the same commitment, with the weekend planned."""
+    assert timezones.is_working_day(weekends, SUNDAY) is True
+
+    add_commitment(conn, weekends, "Move-in: Willow Hall 502, 8:00am", minutes=180, due=SUNDAY)
+    proposal = planner.propose(conn, weekends, SUNDAY, events=[])
+
+    assert proposal.capacity.capacity_minutes > 0
+    placed = [b for b in proposal.blocks if b["kind"] in ("work", "protected")]
+    assert [b["title"] for b in placed] == ["Move-in: Willow Hall 502, 8:00am"]
+    assert proposal.overflow == []
+
+
+def test_the_weekend_window_is_shorter_than_the_weekday_one(weekends: Settings) -> None:
+    """P13 still holds — this narrows the window, it does not detach it from the zone."""
+    assert timezones.window_for(weekends, SUNDAY) == "10:00-18:00"
+    assert timezones.window_for(weekends, SATURDAY) == "10:00-18:00"
+    assert timezones.window_for(weekends, THURSDAY) == "10:00-22:00"
+
+    start, end = timezones.window_on(weekends, SUNDAY)
+    assert (start.strftime("%H:%M"), end.strftime("%H:%M")) == ("10:00", "18:00")
+    assert str(start.tzinfo) == PHOENIX
+
+    weekday_start, weekday_end = timezones.window_on(weekends, THURSDAY)
+    assert (weekday_end - weekday_start) > (end - start)
+
+
+def test_a_blank_weekend_window_means_the_weekday_one(sett: Settings) -> None:
+    """Blank is "same as the weekday window", never "no window" — a day with no window
+    is expressed by leaving it out of `working_days`, and two ways to say one thing is
+    how one of them ends up wrong."""
+    seven = sett.model_copy(
+        update={
+            "working_days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+            "working_window": "09:00-18:00",
+            "weekend_window": "",
+        }
+    )
+    assert timezones.window_for(seven, SUNDAY) == "09:00-18:00"
+    assert timezones.window_for(seven, THURSDAY) == "09:00-18:00"
+
+
+def test_a_malformed_window_fails_at_startup(sett: Settings) -> None:
+    """Same contract as `routines`: bad configuration raises when Settings is built,
+    not at 05:45 inside the planner."""
+    import pydantic
+
+    with pytest.raises(pydantic.ValidationError, match="expected HH:MM-HH:MM"):
+        Settings(owner_name="K", db_path=sett.db_path, weekend_window="10am-6pm")
+
+    # And the weekday one goes through the same door, which it did not before.
+    with pytest.raises(pydantic.ValidationError, match="expected HH:MM-HH:MM"):
+        Settings(owner_name="K", db_path=sett.db_path, working_window="all day")

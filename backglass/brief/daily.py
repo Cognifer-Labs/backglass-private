@@ -254,7 +254,7 @@ def timezone_section(conn: sqlite3.Connection, today: date, settings: Settings) 
         return section
 
     now_tz, was_tz = str(rows[0]["tz"]), str(rows[1]["tz"])
-    window = settings.working_window
+    window = timezones.window_for(settings, today)
     section.lines.append(
         Line(
             text=f"Timezone changed {was_tz} → {now_tz}. Working window {window} {now_tz}.",
