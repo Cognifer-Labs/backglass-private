@@ -227,6 +227,9 @@ FROZEN_CHECKSUMS = {
     "0020_open_question.sql": (
         "ef2e1137b477277938bc082fab0874d04f4df8a024ae4572d8fa20ef33adbebf"
     ),
+    "0021_embedding.sql": (
+        "4b066a7f133f4417f4798dfd31b4be6b2fa934115ac19add1ff8457a7136abbc"
+    ),
 }
 
 

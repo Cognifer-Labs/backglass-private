@@ -3364,3 +3364,101 @@ def decisions_revisit(decision_id: int) -> None:
 
 if __name__ == "__main__":
     main()
+
+
+#: Two explicit subcommands rather than a bare positional query. With
+#: `invoke_without_command` and an optional argument on the callback, `search index` is
+#: parsed as a search *for* the word "index" and the flags after it become an unknown
+#: command — a parser ambiguity that reads to the owner as a broken CLI.
+search_app = typer.Typer(
+    help="Find a document by what it was about. Owner's ruling 2026-08-10; docs/02.",
+)
+app.add_typer(search_app, name="search")
+
+
+@search_app.command("find")
+def search_run(
+    query: Annotated[str | None, typer.Argument(help="What the document was about")] = None,
+    limit: Annotated[int, typer.Option("--limit")] = 10,
+) -> None:
+    """Rank kept documents against a question, best first.
+
+    Reports coverage on every run. A search over a tenth of the ledger looks exactly like
+    a search over all of it right up until the answer is the part that was missing, so the
+    proportion is stated rather than left to be inferred from results that looked fine.
+    """
+    from backglass import search as search_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    stats = search_mod.coverage(conn, settings)
+    if not query:
+        typer.echo(
+            f"{stats['indexed']} of {stats['indexable']} documents indexed "
+            f"({stats['model']}); {stats['pending']} pending"
+        )
+        typer.echo('run `backglass search index`, then `backglass search find "..."`')
+        return
+    if stats["indexed"] == 0:
+        typer.echo("nothing indexed yet — run `backglass search index`", err=True)
+        raise typer.Exit(code=1)
+
+    try:
+        hits = search_mod.search(conn, settings, query, limit=limit)
+    except search_mod.SearchError as exc:
+        typer.echo(f"search failed: {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+
+    for hit in hits:
+        typer.echo(
+            f"  {hit.score:.3f}  {hit.occurred_at[:10]}  {hit.title[:64]}"
+            f"   [{hit.source} #{hit.source_item_id}]"
+        )
+    if stats["pending"]:
+        # Not a warning about the results shown; a statement about the ones that could not
+        # be. Silence here is how a partial index reads as a complete answer.
+        typer.echo(
+            f"  · {stats['pending']} document(s) not indexed and therefore not searched",
+            err=True,
+        )
+
+
+@search_app.command("index")
+def search_index(
+    limit: Annotated[int, typer.Option("--limit", help="Documents per run")] = 200,
+    all_pending: Annotated[
+        bool, typer.Option("--all", help="Keep going until nothing is pending")
+    ] = False,
+) -> None:
+    """Embed kept documents that have no vector yet.
+
+    Resumable by construction — the unique index is the watermark — so interrupting this
+    costs nothing and re-running continues rather than restarting.
+    """
+    from backglass import search as search_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+
+    total = 0
+    while True:
+        try:
+            added = search_mod.index(conn, settings, limit=limit)
+        except search_mod.SearchError as exc:
+            conn.commit()
+            typer.echo(f"indexing stopped after {total}: {exc}", err=True)
+            raise typer.Exit(code=2) from exc
+        conn.commit()
+        total += added
+        if added:
+            typer.echo(f"indexed {total}…")
+        if not added or not all_pending:
+            break
+
+    stats = search_mod.coverage(conn, settings)
+    typer.echo(
+        f"{stats['indexed']} of {stats['indexable']} indexed ({stats['model']}); "
+        f"{stats['pending']} pending"
+    )

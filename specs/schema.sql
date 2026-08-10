@@ -517,3 +517,20 @@ CREATE TABLE open_question (
 );
 
 CREATE INDEX idx_open_question_open ON open_question(user_id, status) WHERE status = 'open';
+
+CREATE TABLE embedding (
+  id             INTEGER PRIMARY KEY,
+  user_id        INTEGER NOT NULL DEFAULT 1,
+  source_item_id INTEGER NOT NULL REFERENCES source_item(id) ON DELETE CASCADE,
+  model          TEXT    NOT NULL,
+  dim            INTEGER NOT NULL,
+  vector         BLOB    NOT NULL,
+  -- What was embedded, so a later reader can tell a title-only vector from a full-text
+  -- one without re-deriving it, and so re-indexing can skip unchanged text.
+  text_hash      TEXT    NOT NULL,
+  chars          INTEGER NOT NULL,
+  created_at     TEXT    NOT NULL,
+  UNIQUE (user_id, source_item_id, model)
+);
+
+CREATE INDEX idx_embedding_model ON embedding(user_id, model);

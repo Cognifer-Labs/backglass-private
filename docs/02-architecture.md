@@ -35,7 +35,30 @@ handle queries you could not anticipate. Here there are none, so paying embeddin
 at ingest and similarity cost at read buys nothing and adds a failure mode where the
 brief silently omits something because it ranked poorly.
 
-If a chat interface is ever added, revisit this. Until then, do not build it.
+**Revisited 2026-08-10, owner's ruling: retrieval is permitted, and the reasoning above
+still holds for everything it says.**
+
+The five queries listed are still `WHERE` clauses and must stay that way. What the list
+omits is the drop folder, which arrived after this was written: a signed contract, a
+scanned letter, a set of meeting notes. "Which letter mentioned the deposit deadline" is
+not a typed column and never becomes one, because no schema anticipates every question
+about a document that has not been received yet.
+
+So the failure mode this section names — "the brief silently omits something because it
+ranked poorly" — is prevented by rule rather than by absence:
+
+| | Ranked retrieval | Typed records |
+|---|---|---|
+| Brief, planner, dashboard, goals | never | always |
+| Finding a document by what it was about | yes | no |
+
+Retrieval is additive. Nothing that decides, schedules or reports may read a similarity
+score, and if the index were deleted every existing surface must still be correct. That
+is the whole of the concession: the ledger did not become a search tool, it gained a way
+to reach the evidence underneath it.
+
+Embedding cost, the section's other objection, is answered by `openai_compatible` — a
+local model indexes the drop folder for nothing, and nothing leaves the machine.
 
 ## Immutable source items
 

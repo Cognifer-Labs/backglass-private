@@ -257,6 +257,14 @@ class Settings(BaseSettings):
     #: existing config keeps working; `http://127.0.0.1:11434/v1` is Ollama, and any
     #: OpenAI-shaped server is a URL away.
     model_base_url: str = ""
+    #: Retrieval over the drop folder (owner's ruling 2026-08-10; docs/02 revised). Reads
+    #: `/v1/embeddings` at `model_base_url`, so a local model indexes signed contracts and
+    #: scanned letters without any of it leaving the machine. Changing this model
+    #: re-indexes rather than mixing vector spaces — the identity in `embedding` enforces
+    #: it, because ranking two models' vectors against each other returns plausible
+    #: nonsense instead of an error.
+    embedding_model: str = "nomic-embed-text"
+    embedding_timeout_seconds: int = 120
     model_triage: str = "haiku"
     model_extract: str = "sonnet"
     model_api_key: str = ""

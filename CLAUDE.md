@@ -23,9 +23,30 @@ once, at ingest, by a model that extracts typed records: commitments, deadlines,
 schedule blocks, goal checkpoints. The brief and dashboard are reports over those
 records.
 
-Consequence: **do not build a vector store, embeddings, or RAG.** The queries are known
-in advance. If you find yourself reaching for semantic search, you have misread the
-architecture. See `docs/02-architecture.md`.
+Consequence: the ledger stays primary. Every incoming item is still read once at ingest
+and still becomes typed records; the brief and dashboard are still reports over those
+records, and no surface may be reimplemented as a search box over raw text.
+
+**Semantic search over the document pile is permitted as of 2026-08-10 — owner's ruling,
+overriding the previous "do not build a vector store, embeddings, or RAG."** The old rule
+argued that the queries are known in advance. That is true of the brief, the schedule and
+the dashboard, and it is not true of the drop folder: a signed contract, a scanned letter
+and a set of meeting notes are evidence the owner needs to find later by what they were
+about, and no typed record anticipates every such question.
+
+The boundary that replaces the ban, so this does not become the search tool the paragraph
+above rejects:
+
+- **It is additive, never load-bearing.** Nothing in the brief, the planner or the
+  dashboard may depend on a similarity score. If retrieval vanished, every existing
+  surface must still be correct.
+- **Retrieval finds documents; extraction still states facts.** A `fact` still comes from
+  the extraction path with a source sentence behind it. Search is how the owner reaches
+  evidence, not how the system forms beliefs — CLAUDE.md rule 1 is untouched.
+- **Local by default.** Embedding runs through `openai_compatible`, so the drop folder's
+  contracts and letters can be indexed with nothing leaving the machine (docs/08).
+
+See `docs/02-architecture.md` and `tasks/file-knowledge-base.md`.
 
 ## Decisions already made — do not re-open
 

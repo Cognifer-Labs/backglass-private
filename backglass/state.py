@@ -324,6 +324,32 @@ def _open_questions(conn: sqlite3.Connection, state: State) -> None:
     )
 
 
+def _retrieval(conn: sqlite3.Connection, settings: Settings, state: State) -> None:
+    """How much of the corpus a search can actually reach.
+
+    The number that makes the feature honest. A search over a fifth of the ledger returns
+    results that look exactly like a search over all of it, and the difference only shows
+    when the answer was in the part that was not indexed — so the proportion belongs in
+    the ground-truth report rather than being inferrable from results that came back fine.
+
+    Zero indexed is a legitimate state, not a fault: retrieval is additive, and an
+    installation that never runs `search index` is fully correct without it.
+    """
+    from backglass import search as search_mod
+
+    stats = search_mod.coverage(conn, settings)
+    state.add(
+        "retrieval", "indexed",
+        Claim(f"{stats['indexed']} of {stats['indexable']}",
+              "COUNT over embedding vs kept source_item with body text"),
+    )
+    state.add("retrieval", "model", Claim(stats["model"], "settings.embedding_model"))
+    state.add(
+        "retrieval", "pending",
+        Claim(stats["pending"], "indexable minus indexed — documents a search cannot reach"),
+    )
+
+
 def collect(conn: sqlite3.Connection, settings: Settings) -> State:
     """Everything, read fresh. Each probe is independent: one failing must not blank
     the rest, because a partial truth that says which part is missing beats a total
@@ -338,6 +364,7 @@ def collect(conn: sqlite3.Connection, settings: Settings) -> State:
         ("pipeline", lambda: _pipeline(conn, state)),
         ("knowledge_base", lambda: _knowledge_base(conn, settings, state)),
         ("open_questions", lambda: _open_questions(conn, state)),
+        ("retrieval", lambda: _retrieval(conn, settings, state)),
     ]
     for name, probe in probes:
         try:
