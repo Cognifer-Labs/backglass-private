@@ -15,7 +15,9 @@
     <string>brief</string><string>--send</string>
   </array>
 
-  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>0</integer></dict>
+  <!-- BRIEF_AT, filled in by render(). Two places claiming the delivery hour is one
+       place too many; this one used to be right only by coincidence. -->
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>{{BRIEF_HOUR}}</integer><key>Minute</key><integer>{{BRIEF_MINUTE}}</integer></dict>
 
   <!-- docs/02 §Failure policy: the process exits non-zero at the end so a scheduled run
        reports failure. These logs are where that lands. -->

@@ -14,7 +14,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from backglass.config import REPO_ROOT
+from backglass.config import REPO_ROOT, Settings
 
 TEMPLATE_DIR = REPO_ROOT / "launchd" / "templates"
 LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
@@ -24,16 +24,54 @@ class ScheduleError(Exception):
     """A precondition for rendering or installing the launchd jobs was not met."""
 
 
-def render(repo_dir: Path, uv_bin: str, home: Path) -> dict[str, str]:
+def _hhmm(value: str) -> tuple[int, int]:
+    hour, _, minute = value.partition(":")
+    return int(hour), int(minute)
+
+
+def shutdown_time(settings: Settings) -> tuple[int, int]:
+    """When the evening pass should run: the end of the working window.
+
+    docs/04 §1.8 calls shutdown "a second, much smaller pass at the end of the working
+    window", and the template had 18:00 frozen into it from the 09:00–18:00 default.
+    The owner's window is 10:00–22:00, so the job was asking what got done with a third
+    of the day still ahead of it — and, since the gym routine starts at 17:30, asking it
+    of an empty chair. A time the owner configures in one place should not need to be
+    remembered in a second.
+
+    No clamp for a midnight end, because `Settings` cannot hold one: the
+    `working_window` validator rejects anything but `HH:MM-HH:MM` with a real hour, so
+    "10:00-24:00" never reaches here and a branch guarding against it would be a branch
+    no test could reach.
+    """
+    _, _, end = settings.working_window.partition("-")
+    return _hhmm(end)
+
+
+def render(
+    repo_dir: Path, uv_bin: str, home: Path, settings: Settings | None = None
+) -> dict[str, str]:
     """Filename -> rendered plist XML, one entry per `launchd/templates/*.plist.tmpl`.
 
     Pure and side-effect free: no filesystem writes, no `launchctl` calls. `install()`
     is the only caller that turns this into real files.
+
+    The two owner-facing fire times come from settings rather than the templates. A
+    schedule is a claim about when things happen, and a claim frozen in a file the
+    owner never edits stops being true the first time they change `BRIEF_AT` or
+    `WORKING_WINDOW` — silently, because nothing compares the two.
     """
+    settings = settings or Settings()
+    brief_hour, brief_minute = _hhmm(settings.brief_at)
+    shutdown_hour, shutdown_minute = shutdown_time(settings)
     tokens = {
         "{{REPO_DIR}}": str(repo_dir),
         "{{UV_BIN}}": uv_bin,
         "{{HOME}}": str(home),
+        "{{BRIEF_HOUR}}": str(brief_hour),
+        "{{BRIEF_MINUTE}}": str(brief_minute),
+        "{{SHUTDOWN_HOUR}}": str(shutdown_hour),
+        "{{SHUTDOWN_MINUTE}}": str(shutdown_minute),
     }
     templates = sorted(TEMPLATE_DIR.glob("*.plist.tmpl"))
     if not templates:

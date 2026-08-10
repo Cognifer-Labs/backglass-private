@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from backglass import schedule
+from backglass.config import Settings
 from backglass.plan import capacity
 from backglass.web.routes import schedule as schedule_page
 
@@ -94,6 +95,58 @@ def test_every_rendered_label_is_com_backglass() -> None:
     rendered = schedule.render(Path("/r"), "/u", Path("/h"))
     for filename in rendered:
         assert filename.startswith("com.backglass.")
+
+
+class TestTheJobsFireWhenTheSettingsSayTheyDo:
+    """A time the owner configures once must not need remembering in a second place.
+
+    The shutdown template carried 18:00 from the 09:00–18:00 default. The owner's window
+    is 10:00–22:00, so docs/04 §1.8's "second, much smaller pass at the end of the working
+    window" ran with four hours of that window left — and, since the gym routine starts
+    at 17:30, ran it at an empty desk. Nothing on either side said the two disagreed,
+    which is the property these tests exist to make impossible.
+    """
+
+    def _job(self, name: str, **overrides: object) -> dict[str, object]:
+        import plistlib
+
+        settings = Settings(**overrides)  # type: ignore[arg-type]
+        rendered = schedule.render(Path("/r"), "/u", Path("/h"), settings)
+        return plistlib.loads(rendered[name].encode())
+
+    def test_the_evening_pass_runs_when_the_working_day_ends(self) -> None:
+        job = self._job("com.backglass.shutdown.plist", working_window="10:00-22:00")
+        assert job["StartCalendarInterval"] == {"Hour": 22, "Minute": 0}
+
+    def test_moving_the_window_moves_the_evening_pass_with_it(self) -> None:
+        job = self._job("com.backglass.shutdown.plist", working_window="09:00-18:30")
+        assert job["StartCalendarInterval"] == {"Hour": 18, "Minute": 30}
+
+    def test_the_latest_window_the_config_allows_still_renders_a_real_hour(self) -> None:
+        """`shutdown_time` carries no midnight clamp because it cannot need one: the
+        `working_window` validator refuses "10:00-24:00" outright. This pins the reason,
+        so a later loosening of that validator fails here rather than silently rendering
+        `<integer>24</integer>` into a plist launchd will not load."""
+        assert schedule.shutdown_time(Settings(working_window="10:00-23:59")) == (23, 59)
+        with pytest.raises(ValueError):
+            Settings(working_window="10:00-24:00")
+
+    def test_the_brief_job_fires_at_brief_at(self) -> None:
+        job = self._job("com.backglass.brief.plist", brief_at="05:30")
+        assert job["StartCalendarInterval"] == {"Hour": 5, "Minute": 30}
+
+    def test_the_planner_still_runs_before_the_brief_it_feeds(self) -> None:
+        """Not derived from settings, so this is the assertion that keeps the pair sane:
+        a brief generated before the plan it reports is a brief about yesterday."""
+        import plistlib
+
+        settings = Settings(brief_at="06:00")
+        rendered = schedule.render(Path("/r"), "/u", Path("/h"), settings)
+        plan = plistlib.loads(rendered["com.backglass.plan.plist"].encode())
+        brief = plistlib.loads(rendered["com.backglass.brief.plist"].encode())
+        plan_at = (plan["StartCalendarInterval"]["Hour"], plan["StartCalendarInterval"]["Minute"])
+        brief_at = (brief["StartCalendarInterval"]["Hour"], brief["StartCalendarInterval"]["Minute"])
+        assert plan_at < brief_at
 
 
 def test_raises_when_the_template_directory_is_empty(tmp_path, monkeypatch) -> None:

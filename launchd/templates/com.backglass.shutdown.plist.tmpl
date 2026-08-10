@@ -15,7 +15,10 @@
     <string>shutdown</string>
   </array>
 
-  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>0</integer></dict>
+  <!-- The end of WORKING_WINDOW, filled in by schedule.shutdown_time. docs/04 §1.8:
+       the evening pass closes the working day, so it cannot be a constant here while
+       the window it closes is configurable there. -->
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>{{SHUTDOWN_HOUR}}</integer><key>Minute</key><integer>{{SHUTDOWN_MINUTE}}</integer></dict>
 
   <!-- docs/02 §Failure policy: the process exits non-zero at the end so a scheduled run
        reports failure. These logs are where that lands. -->
