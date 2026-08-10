@@ -103,7 +103,7 @@ class TestTheDeployedComparison:
         from backglass.config import REPO_ROOT
 
         internal = root / "Contents/Resources/sidecar/backglass-server/_internal"
-        for relative in state_mod.FROZEN_SURFACES:
+        for relative in state_mod.frozen_surfaces():
             target = internal / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             body = (REPO_ROOT / relative).read_text()
@@ -126,7 +126,47 @@ class TestTheDeployedComparison:
         monkeypatch.setattr(state_mod, "INSTALLED_APP", self._bundle(tmp_path, False))
         deployed = state_mod.collect(conn, settings).sections["deployed"]
         assert deployed["matches_source"].value is False
-        assert set(deployed["stale_surfaces"].value) == set(state_mod.FROZEN_SURFACES)
+        assert set(deployed["stale_surfaces"].value) == set(state_mod.frozen_surfaces())
+
+    def test_a_stale_template_is_reported_and_not_only_the_stylesheets(
+        self, conn: sqlite3.Connection, settings: Settings, tmp_path, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        """The gap that let the 2026-08-09 timeline fix look deployed when it was not.
+
+        `FROZEN_SURFACES` named two stylesheets. That change also touched two templates,
+        equally frozen and equally stale, and `state` said `dashboard.css` alone — so the
+        one command CLAUDE.md says to trust before blaming the app under-reported exactly
+        the surfaces the app was serving. Here the stylesheets match and only a template
+        differs, which is the case the old list could not see at all.
+        """
+        from backglass.config import REPO_ROOT
+
+        root = self._bundle(tmp_path, True)
+        template = (
+            root
+            / "Contents/Resources/sidecar/backglass-server/_internal"
+            / "backglass/web/templates/schedule.html"
+        )
+        template.write_text((REPO_ROOT / "backglass/web/templates/schedule.html").read_text()
+                            + "\n{# older build #}\n")
+        monkeypatch.setattr(state_mod, "INSTALLED_APP", root)
+
+        deployed = state_mod.collect(conn, settings).sections["deployed"]
+        assert deployed["matches_source"].value is False
+        assert deployed["stale_surfaces"].value == ["backglass/web/templates/schedule.html"]
+
+    def test_every_template_on_disk_is_a_surface_that_gets_checked(self) -> None:
+        """Globbed, not listed, so a template added later is covered without anyone
+        deciding to cover it — the property the hardcoded tuple could not hold."""
+        from backglass.config import REPO_ROOT
+
+        surfaces = set(state_mod.frozen_surfaces())
+        on_disk = {
+            str(p.relative_to(REPO_ROOT))
+            for p in (REPO_ROOT / state_mod.FROZEN_TEMPLATE_DIR).glob("*.html")
+        }
+        assert on_disk and on_disk <= surfaces
+        assert set(state_mod.FROZEN_STYLESHEETS) <= surfaces
 
 
 def _missing_path():  # type: ignore[no-untyped-def]

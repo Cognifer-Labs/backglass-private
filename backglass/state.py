@@ -42,9 +42,33 @@ from backglass.ledger import USER_ID
 #: which is a legitimate state and reports as such rather than as a failure.
 INSTALLED_APP = Path("/Applications/Backglass.app")
 
-#: The files the sidecar freezes. If these differ, the running app renders different
-#: markup from the checkout, whatever the version numbers say.
-FROZEN_SURFACES = ("backglass/web/static/dashboard.css", "design/tokens.css")
+#: The stylesheets the sidecar freezes. If these differ, the running app renders
+#: different markup from the checkout, whatever the version numbers say.
+FROZEN_STYLESHEETS = ("backglass/web/static/dashboard.css", "design/tokens.css")
+
+#: The templates are frozen too, and enumerating them by hand is what this check is
+#: for — a list nobody remembers to extend reports "matches_source: True" about a
+#: surface it never looked at.
+FROZEN_TEMPLATE_DIR = "backglass/web/templates"
+
+
+def frozen_surfaces() -> tuple[str, ...]:
+    """Every repo-relative path the sidecar bundles, found rather than remembered.
+
+    On 2026-08-09 the day timeline was fixed, the app kept drawing the old one, and
+    `state` named `dashboard.css` alone — the two templates in the same change were
+    equally stale and equally frozen, and nothing said so. A hardcoded tuple is a claim
+    that someone updated it; globbing the template directory is a claim the filesystem
+    can keep. A template added tomorrow is covered without anyone deciding to cover it.
+
+    Sorted so the reported order is stable between runs, because a list that reorders
+    reads like a change.
+    """
+    templates = sorted(
+        str(path.relative_to(REPO_ROOT))
+        for path in (REPO_ROOT / FROZEN_TEMPLATE_DIR).glob("*.html")
+    )
+    return (*FROZEN_STYLESHEETS, *templates)
 
 
 @dataclass
@@ -137,9 +161,10 @@ def _deployed(state: State) -> None:
         return
     state.add("deployed", "app", Claim(str(INSTALLED_APP), "path exists"))
     frozen_root = INSTALLED_APP / "Contents/Resources/sidecar/backglass-server/_internal"
+    surfaces = frozen_surfaces()
     stale: list[str] = []
     missing: list[str] = []
-    for relative in FROZEN_SURFACES:
+    for relative in surfaces:
         # tokens.css is frozen under its repo-relative path inside _internal.
         theirs = _sha256(frozen_root / relative)
         ours = _sha256(REPO_ROOT / relative)
@@ -150,7 +175,7 @@ def _deployed(state: State) -> None:
     state.add(
         "deployed", "matches_source",
         Claim(not stale and not missing,
-              f"sha256 of {len(FROZEN_SURFACES)} frozen surfaces vs the checkout",
+              f"sha256 of {len(surfaces)} frozen surfaces vs the checkout",
               "; ".join(f"{p} not found in the bundle" for p in missing) or None),
     )
     state.add("deployed", "stale_surfaces", Claim(stale, "sha256 mismatch vs the checkout"))
