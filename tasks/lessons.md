@@ -752,3 +752,88 @@ deterministic given the id.
   there. | When two halves of a CSS conflict each cite a rendered failure, check which
   MARKUP each was written against before picking. A conflict in a stylesheet is resolved
   against the templates, not against the timestamps.
+
+- 2026-08-09 | Calendar.app's scripting bridge reported success on deletes that never
+  happened. `app.delete(event)` on a recurring event returns without raising, the
+  per-calendar delete loop reported `deleted: 76, errors: []`, and 26 recurring events
+  were still there afterwards. Assigning `recurrence = ""` to detach the series does not
+  stick either — a re-read shows the original RRULE — and `delete calendar` raises
+  "AppleEvent handler failed". Same behaviour in JXA and in AppleScript, before and
+  after restarting Calendar.app. Only EventKit can remove them. | An Apple Events write
+  is a request, not a transaction: re-query the object after any scripted delete or
+  property set and compare, rather than trusting the absence of an error. Where a
+  bridge's writes are known-unreliable, reach for EventKit/the framework first — and
+  budget for the TCC grant that comes with it, because a CLI-launched process is denied
+  without a prompt and the responsible process is the terminal app, not the binary.
+
+- 2026-08-09 | The first delete pass collected `evs[i]` element references into an array
+  and then deleted them in order, which silently skipped roughly half the collection.
+  JXA `whose()` results are specifiers that resolve *by index at access time*, so every
+  deletion renumbers the ones still queued. | Never delete while holding positional
+  references. Collect stable identifiers (`uid()`) first, then delete each by
+  `whose({uid: u})`, or walk the collection in reverse. This failure mode is silent —
+  no error, a plausible non-zero count — so it hides behind the same lesson above.
+
+- 2026-08-09 | A cleanup tool built to purge every writable calendar was one command away
+  from deleting the 200 verified schedule events that the same session had just created;
+  its target list included the calendar they had been written to, and the handoff note
+  told the owner to run it. | When a tool's job is deletion and something in range must
+  survive, give it two independent guards — exclude the container AND skip records
+  carrying the provenance stamp. Provenance is not only for audit; it is what makes
+  "everything except what I made" expressible. Write the guard before writing the
+  instruction that tells someone to run it.
+
+- 2026-08-09 | EventKit's `remove(span: .futureEvents)` on a recurring event does not
+  delete the series — it rewrites the rule to `UNTIL == the occurrence's own start`,
+  leaving the first occurrence behind. Worse, the occurrence-range predicate then stops
+  returning that leftover, so the tool reported a clean sweep while two events sat in
+  the store, visible to Calendar.app's scripting bridge and to a direct read of
+  `Calendar.sqlitedb`. Two independent readers disagreeing is what surfaced it. |
+  `.futureEvents` means *from this occurrence forward*, not *the whole series*: fetch
+  the master and remove that, or verify against a reader that does not share the first
+  one's occurrence-expansion logic. And when a deletion tool claims done, re-read
+  through a different path before believing it.
+
+- 2026-08-09 | Rebuilding the ad-hoc-signed helper to add one mode silently revoked its
+  Calendar permission — TCC binds the grant to the code signature, so a new cdhash is a
+  new principal, and three relaunches timed out waiting on a prompt that had already
+  been answered for the old build. | For a TCC-gated helper, get the feature set right
+  before asking for the grant; each rebuild costs another prompt. And prefer building it
+  as a launchable `.app`: a CLI child inherits the terminal as its responsible process,
+  which cannot prompt at all. Also stamp the deployment target explicitly
+  (`-target arm64-apple-macosNN`) — on a pre-release OS, swiftc defaulted `minos` to a
+  version *newer than the host*, and the only symptom was Finder's "You can't use this
+  version of the app" with no mention of why.
+
+- 2026-08-09 | Five separate mechanisms had to line up to hide one obligation, and only
+  one of them looked like a bug. Move-in day was a Sunday, absent from `working_days`, so
+  the window was empty, capacity was zero, and `propose` took its "fully booked" early
+  return — which was also the wrong sentence, since nothing was booked. The commitment
+  itself was real, 1.0 confidence, due that day, and sat at position N of a forty-eight
+  item overflow list with nothing marking it. Its hour lived in prose inside `what`,
+  because `commitment` has a due date and no clock. | When a system silently omits
+  something it plainly knew, look for the CHAIN, not the bug: each link here was locally
+  defensible and the failure was their product. And check what a zero means before
+  describing it — two causes reaching the same number deserve two sentences, or the
+  message sends the reader to look for a problem that is not there.
+
+- 2026-08-09 | An adversarial reviewer with fresh context found seven defects in code
+  that had eight passing tests written specifically for it. The worst: a dedup rule
+  compared titles that its own caller had decorated with the venue four lines earlier, so
+  two unrelated meetings in one building merged — and because the loser's minutes were
+  then never subtracted, the day reported MORE free time than it had. Not one of my tests
+  had passed `location=`, though the helper supported it. | Tests written by whoever wrote
+  the code inherit its blind spots: mine all exercised the arguments I was thinking about.
+  Before trusting a suite, ask which parameters of the helper it never uses. And for any
+  function that merges or deletes, read the callers' mutations of the input — identity
+  computed from a string somebody else assembled is identity you do not control.
+
+- 2026-08-09 | `git stash push <paths>` in the shared checkout grabbed a concurrent
+  session's uncommitted work, and `git stash list` was what revealed HEAD was on THEIR
+  branch (`fix/timeline-lane-packing`), not main — the session-start snapshot had said
+  main and was hours stale. Restored with `stash pop`, then merged by
+  `git push . branch:main` from the worktree, which updates the ref and touches no
+  working tree. | Re-read `git branch --show-current` in a shared checkout immediately
+  before any operation that writes to it; a branch is not a fact you learn once. And when
+  main is not checked out anywhere, `git push . <branch>:main` is the merge that cannot
+  disturb a neighbour — no checkout, no stash, no race.

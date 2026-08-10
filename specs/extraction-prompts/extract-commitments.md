@@ -1,9 +1,22 @@
 ---
 id: extract-commitments
-version: 8
+version: 9
 model: careful
 output: strict JSON, schema-validated, one retry on malformed
 ---
+
+<!-- v9 (2026-08-10): three placeholders moved, no instruction reworded. `Prompt.split`
+     marks everything before the first placeholder as cacheable, and the owner line sat at
+     the top — so 8,116 characters of rules were re-sent uncached on all 1,335 extraction
+     calls, 94% of this ledger's model spend. The owner identity is constant for a
+     single-user installation and now sits with the MESSAGE it describes, and the date
+     rule points at the `Date:` already printed in that block instead of interpolating the
+     same value a second time. Cacheable prefix: 632 chars to 8,116.
+
+     `split()`'s docstring argued the other way — "honesty over restructuring", because a
+     version bump costs a re-extraction. That was right while nothing else forced one.
+     It stopped being right the week the ledger needed re-extracting anyway for v8, which
+     is the only reason this is cheap now. -->
 
 <!-- v2 (2026-07-30): the live eval showed the model returning zero commitments for a
      resolving message — "do not extract completed things" appeared before the resolves
@@ -53,8 +66,6 @@ conference, an interview, office hours, a call, a move-in slot, a lab check-in.
 Nobody owes anybody an artifact; the substance is being there. Other people are
 usual but not required: an appointment the user must keep alone is still an
 engagement, because what it occupies is an hour of their day.
-
-The user is {{owner_name}} <{{owner_email}}>.
 
 For each commitment, return:
   direction          i_owe | owed_to_me
@@ -153,8 +164,8 @@ somewhere to be. Ask whether missing it would cost the user something.
 
 DATE RESOLUTION — this is the most important rule here.
 It applies to `due_at` and to `starts_at`/`ends_at` alike.
-Resolve all relative dates against the message date {{occurred_at}}, never
-against today. "By Friday" in a message sent 2026-07-10 means 2026-07-17,
+Resolve all relative dates against the `Date:` given in the MESSAGE block below,
+never against today. "By Friday" in a message sent 2026-07-10 means 2026-07-17,
 even if today is 2026-08-30. Getting this wrong produces confidently wrong
 briefs, which is the worst outcome this system has.
 
@@ -186,6 +197,8 @@ Do not extract:
     then return them with resolves=true as above
   - commitments between two other people that do not involve the user
   - restatements of a commitment already made in an earlier quoted message
+
+The user is {{owner_name}} <{{owner_email}}>.
 
 EARLIER IN THIS CONVERSATION (context only, oldest first)
 {{context}}

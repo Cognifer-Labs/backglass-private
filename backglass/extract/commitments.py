@@ -88,8 +88,15 @@ def render_parts(
     for prompt caching (prompts.Prompt.split). Shared with the batch path
     (backglass/batch.py) so live and batched extraction cannot drift.
 
-    The owner line early in the prompt file shortens the cacheable prefix — accepted,
-    because restructuring the file would bump its version and re-extract everything.
+    The static half becomes the system prompt, which is what both backends cache on: the
+    API one marks it `cache_control`, and the CLI keys its own session cache on the same
+    text. So the boundary `split()` finds is the boundary the bill is drawn at.
+
+    v9 moved the owner line and one duplicated date below the rules, growing that half
+    from 632 characters to 8,116 and cutting input cost per call by roughly two thirds.
+    This docstring used to explain why the file was left alone — a version bump means
+    re-extracting everything — which was true until the week a re-extraction was already
+    due.
     """
     static, _ = prompt.split()
     system = f"{SYSTEM}\n\n{static}" if static else SYSTEM

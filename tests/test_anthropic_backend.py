@@ -153,3 +153,40 @@ class TestPromptSplit:
         static, _ = prompt.split()
         assert "You are triaging one message" in static
         assert SYSTEM  # and the backend-level system prompt still exists to prefix it
+
+
+class TestInstructionsSitAbovePlaceholdersSoTheyAreCached:
+    """Placeholder position is a cost decision, not a formatting one.
+
+    `split()` marks everything before the first placeholder as cacheable, so a rule
+    written above a placeholder is paid for once and a rule written below it is paid for
+    on every call forever. extract-commitments had the owner line at the top and 8,116
+    characters of rules beneath it: 1,335 calls, 94% of this ledger's model spend, all
+    re-sending the same instructions uncached.
+
+    This is a floor rather than an exact figure — the prompts will grow — and it exists
+    because the defect is invisible. Nothing about a prompt with a placeholder on line 57
+    looks wrong, and the bill does not itemise it.
+    """
+
+    #: The tiers that run per item, and therefore the ones where position compounds. The
+    #: interview prompts are excluded on purpose: they run a handful of times ever, and
+    #: their placeholder is the first thing the model needs.
+    PER_ITEM = ("triage", "triage-batch", "extract-commitments", "extract-goal-signal")
+
+    @pytest.mark.parametrize("name", PER_ITEM)
+    def test_most_of_the_prompt_is_cacheable(self, name: str) -> None:
+        prompt = prompts.load(name)
+        static, dynamic = prompt.split()
+        share = len(static) / max(len(static) + len(dynamic), 1)
+        assert share >= 0.75, (
+            f"{name}: only {share:.0%} of the prompt is cacheable. A placeholder above "
+            f"the instructions pushes them into the per-call half — move it below."
+        )
+
+    def test_the_dynamic_half_is_the_item_and_not_the_rules(self) -> None:
+        """The sharpest version of the same check: what varies should be roughly the size
+        of a message header, not of a rulebook."""
+        static, dynamic = prompts.load("extract-commitments").split()
+        assert len(static) > 4000, "the rules belong in the cached half"
+        assert len(dynamic) < 2000, f"{len(dynamic)} chars re-sent per call"

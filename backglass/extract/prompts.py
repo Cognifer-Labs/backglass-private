@@ -60,11 +60,19 @@ class Prompt:
         """(static prefix, dynamic remainder), split before the first placeholder line.
 
         The static half is byte-identical across every item, so a caching backend can
-        mark it `cache_control` and pay for those tokens once instead of per call. The
-        prompt files are NOT edited for this — content and order are unchanged, so no
-        version bump and no re-extraction. A placeholder early in the file (the owner
-        line in extract-commitments.md) simply shortens the cacheable prefix; honesty
-        over restructuring.
+        mark it `cache_control` and pay for those tokens once instead of per call.
+
+        Which makes placeholder *position* a cost decision, not a formatting one. This
+        docstring used to say the prompt files were deliberately not edited for it —
+        "honesty over restructuring" — and that held while a version bump would have
+        forced a re-extraction nobody wanted. extract-commitments v9 (2026-08-10) took the
+        edit during a re-extraction that was already scheduled: moving the owner line and
+        one duplicated date grew its cacheable prefix from 632 characters to 8,116, on the
+        tier carrying 94% of this ledger's model spend.
+
+        The lesson for the next prompt, since it is cheaper to obey than to fix: put every
+        placeholder after every instruction. A rule written above a placeholder is a rule
+        paid for on every call forever.
         """
         lines = self.text.split("\n")
         for i, line in enumerate(lines):

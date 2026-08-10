@@ -1,6 +1,6 @@
 ---
 id: extract-goal-signal
-version: 2
+version: 3
 model: careful
 output: strict JSON
 ---
@@ -24,14 +24,8 @@ not the bottleneck.
 ## Prompt
 
 ```
-The user has these active goals:
-
-{{#goals}}
-  [{{id}}] {{title}} — done when: {{definition_of_done}}
-     targets: {{#targets}}({{id}}) {{title}}{{/targets}}
-{{/goals}}
-
-Decide whether this message is evidence that work happened on any of them.
+Decide whether this message is evidence that work happened on any of the user's
+active goals, which are listed below the rules.
 
 Evidence means the work actually occurred or shipped. It is not:
   - a plan to do the work later (that is a commitment, already captured)
@@ -50,6 +44,12 @@ For each signal:
                to review instead of the ledger
   confidence   0.0 to 1.0
   evidence     the exact sentence, verbatim
+
+ACTIVE GOALS
+{{#goals}}
+  [{{id}}] {{title}} — done when: {{definition_of_done}}
+     targets: {{#targets}}({{id}}) {{title}}{{/targets}}
+{{/goals}}
 
 MESSAGE
 Date: {{occurred_at}}
