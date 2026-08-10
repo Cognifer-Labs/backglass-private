@@ -1164,3 +1164,35 @@ def test_a_realistic_target_mix_does_not_evict_the_rest_of_monday(
     assert brief.word_count() <= 400
     assert "Aging" in titles, "the lowest-priority section survives a roadmap's milestones"
     assert "Ship something: 0/2 missed." in text, "a cadence target still gets its verdict"
+
+
+def test_an_all_day_plan_leads_the_plan_section_without_asserting_an_hour(
+    conn, settings: Settings
+) -> None:  # type: ignore[no-untyped-def]
+    """docs/04's rule was that a plan with a day and no hour gets no honest time. Printing
+    it as "12:00am–12:00am" would assert the very thing the rule refuses to guess, so the
+    brief says "All day" — and puts it first, because it frames every hour under it."""
+    conn.execute(
+        "INSERT INTO day_plan (user_id, local_date, tz, capacity_minutes, planned_minutes, "
+        " overflow_count, generated_at) VALUES (?, ?, 'America/Phoenix', 300, 60, 0, ?)",
+        (USER_ID, TODAY.isoformat(), now_iso()),
+    )
+    plan_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    conn.execute(
+        "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title) "
+        "VALUES (?, ?, ?, 'work', 'Read two papers')",
+        (plan_id, f"{TODAY}T09:00:00-07:00", f"{TODAY}T10:00:00-07:00"),
+    )
+    conn.execute(
+        "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title) "
+        "VALUES (?, ?, ?, 'allday', 'McKenna Summer Program (day 1 of 6)')",
+        (plan_id, f"{TODAY}T00:00:00-07:00", f"{TODAY + timedelta(days=1)}T00:00:00-07:00"),
+    )
+    brief = daily.build(conn, settings, TODAY)
+
+    plan = next(s for s in brief.ordered() if s.title == "Today")
+    assert plan.lines[0].text == "All day · McKenna Summer Program (day 1 of 6)"
+    assert "12:00am" not in plan.lines[0].text
+    assert any("Read two papers" in line.text for line in plan.lines[1:])
+    # CLAUDE.md rule 1: no line ships without provenance, banners included.
+    assert plan.lines[0].provenance is not None

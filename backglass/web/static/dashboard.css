@@ -926,6 +926,19 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
   font-size:13px;line-height:19px;color:var(--ink-muted);font-variant-numeric:tabular-nums}
 .gaplist li{padding:1px 0}
 
+/* All-day banners: a plan that named a day and no hour. §7b — a content unit is
+   outlined, so each is its own tile rather than a tinted strip. Above the ruler and
+   never on it: they span midnight to midnight, and a 24-hour block would paint over
+   every real block on the canvas. */
+.adlist{margin:var(--sp-3) 0 0;padding:0;list-style:none;display:flex;
+  flex-direction:column;gap:var(--sp-2)}
+.ad{display:flex;align-items:baseline;gap:var(--sp-2);min-width:0;
+  border:var(--border) solid var(--ink);border-radius:var(--radius-3);
+  padding:var(--sp-2) var(--sp-3)}
+.ad .lbl{flex:0 0 auto}
+.ad .adt{font-size:15px;line-height:23px;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+
 /* Pager: navigation is not the subject of the page. Text links, no boxes. */
 .pager.quiet{display:block;background:none;border:0;padding:var(--sp-3) 0;margin:0;
   font-size:13px;line-height:19px;color:var(--ink-muted)}

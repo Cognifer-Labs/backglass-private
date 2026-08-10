@@ -895,6 +895,38 @@ class TestScheduleTimeline:
         assert "Not a working day — only due items listed" in page
         assert "Fully booked" not in page
 
+    def test_an_all_day_plan_is_a_banner_and_never_a_block(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """A plan that named a day and no hour spans midnight to midnight. Drawn on the
+        ruler it would paint over every real block and stretch the shared week ruler to
+        24 hours, so it renders above the canvas instead — and the reason it is all-day
+        is that nobody said when, which no position on a timeline can express."""
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, generated_at, status)"
+            " VALUES ('2026-07-28', 'America/Phoenix', 300, '2026-07-28T05:50:00', 'proposed')"
+        )
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, '2026-07-28T00:00:00-07:00', '2026-07-29T00:00:00-07:00',"
+            " 'allday', 'McKenna Summer Program (day 1 of 6)')"
+        )
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, '2026-07-28T09:00:00-07:00', '2026-07-28T10:00:00-07:00',"
+            " 'work', 'Read two papers')"
+        )
+        conn.commit()
+        page = client.get("/schedule?date=2026-07-28").text
+
+        banner = panel_slice(page, "panel-allday")
+        assert "McKenna Summer Program (day 1 of 6)" in banner
+        assert "All day" in banner
+        # Not on the ruler: no positioned event carries the all-day kind.
+        assert 'class="ev k-allday' not in page
+        # And the real block is still drawn.
+        assert "Read two papers" in page
+
 
 def _cadence_goal(
     conn: sqlite3.Connection, title: str = "Write daily", weekly: int = 3

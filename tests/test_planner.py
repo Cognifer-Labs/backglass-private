@@ -919,12 +919,25 @@ class TestEngagementsOnTheDay:
     ) -> None:
         """"Lunch on Thursday" has no honest hour. Parsed as an ISO date it would land at
         midnight and either vanish outside the window or block the top of the morning for
-        something nobody said was in the morning."""
+        something nobody said was in the morning.
+
+        It is still *returned*, as an all-day banner. The assertion here used to be
+        `engagement_events(...) == []`, which pinned the mechanism rather than the
+        property: what the rule protects is that no capacity is deleted on a guess, and
+        that is the line below that still holds. Dropping the plan from the day as well
+        was a side effect nobody chose, and it hid six days of a summer programme.
+        """
         before = capacity_mod.compute(conn, sett, THURSDAY).capacity_minutes
         add_engagement(conn, what="lunch sometime", starts_at=THURSDAY.isoformat())
         after = capacity_mod.compute(conn, sett, THURSDAY).capacity_minutes
-        assert after == before
-        assert capacity_mod.engagement_events(conn, THURSDAY, PHOENIX) == []
+
+        assert after == before, "no honest hour means no capacity spent"
+        (event,) = capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)
+        assert event.allday is True
+        assert event.kind == "allday"
+        # Never at an hour: midnight to midnight is the span of a day, not a time in it.
+        assert (event.starts_at.hour, event.starts_at.minute) == (0, 0)
+        assert event.ends_at - event.starts_at == timedelta(days=1)
 
     def test_a_plan_with_no_stated_end_runs_an_hour(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
         add_engagement(
@@ -1231,3 +1244,111 @@ def test_a_planned_day_leaves_due_now_empty(conn, weekends: Settings) -> None:  
 
     assert proposal.capacity.plannable
     assert proposal.due_now == []
+
+
+# ── all-day plans are visible and cost nothing ─────────────────────────────────
+#
+# `engagement` #8 in the owner's ledger is "McKenna Summer Program", 2026-08-09 to
+# 2026-08-14, confirmed. It rendered on no day at all: `engagement_events` skipped every
+# row with a date and no hour, and the rule it was obeying is about not deleting capacity
+# on a guess — never about hiding the plan. Six days inside a programme the schedule
+# never mentioned.
+PROGRAMME_START = date(2026, 8, 9)
+PROGRAMME_END = date(2026, 8, 14)
+
+
+class TestAllDayPlans:
+    def test_a_multi_day_plan_appears_on_every_day_it_covers(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings
+    ) -> None:
+        add_engagement(
+            conn,
+            what="McKenna Summer Program",
+            starts_at=PROGRAMME_START.isoformat(),
+            ends_at=PROGRAMME_END.isoformat(),
+        )
+        seen = {}
+        for offset in range((PROGRAMME_END - PROGRAMME_START).days + 1):
+            day = PROGRAMME_START + timedelta(days=offset)
+            (event,) = capacity_mod.engagement_events(conn, day, PHOENIX)
+            seen[day] = event.title
+
+        assert len(seen) == 6
+        assert seen[PROGRAMME_START] == "McKenna Summer Program (day 1 of 6)"
+        assert seen[PROGRAMME_END] == "McKenna Summer Program (day 6 of 6)"
+        assert seen[date(2026, 8, 11)] == "McKenna Summer Program (day 3 of 6)"
+
+    def test_the_day_after_it_ends_is_clear(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """The window query is inclusive at both ends and stops there — an unbounded one
+        would put a finished programme on every day for the rest of the ledger."""
+        add_engagement(
+            conn,
+            what="McKenna Summer Program",
+            starts_at=PROGRAMME_START.isoformat(),
+            ends_at=PROGRAMME_END.isoformat(),
+        )
+        after = PROGRAMME_END + timedelta(days=1)
+        assert capacity_mod.engagement_events(conn, after, PHOENIX) == []
+        before = PROGRAMME_START - timedelta(days=1)
+        assert capacity_mod.engagement_events(conn, before, PHOENIX) == []
+
+    def test_an_all_day_plan_spends_no_capacity_on_any_of_its_days(  # type: ignore[no-untyped-def]
+        self, conn, weekends: Settings
+    ) -> None:
+        """The load-bearing assertion. An all-day banner spans midnight to midnight, so
+        leaving it in the capacity arithmetic would swallow the entire window and report
+        a fully booked day for six days running."""
+        # Compared against the same day without the plan, not against zero: the routines
+        # (lunch, gym) legitimately sit inside the window and spend their own minutes.
+        # What is under test is the delta the banner adds, which must be none of it.
+        baseline = {}
+        for n in range(6):
+            day = PROGRAMME_START + timedelta(days=n)
+            cap = capacity_mod.compute(conn, weekends, day)
+            baseline[day] = (cap.capacity_minutes, cap.fixed_minutes, cap.buffer_minutes)
+
+        add_engagement(
+            conn,
+            what="McKenna Summer Program",
+            starts_at=PROGRAMME_START.isoformat(),
+            ends_at=PROGRAMME_END.isoformat(),
+        )
+        for day, before in baseline.items():
+            cap = capacity_mod.compute(conn, weekends, day)
+            assert (cap.capacity_minutes, cap.fixed_minutes, cap.buffer_minutes) == before, day
+            assert before[0] > 0, "the day must have had capacity to lose in the first place"
+
+    def test_a_single_day_plan_is_not_numbered(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """"day 1 of 1" is noise. The numbering earns its place only across a run."""
+        add_engagement(conn, what="orientation", starts_at=THURSDAY.isoformat())
+        (event,) = capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)
+        assert event.title == "orientation"
+
+    def test_a_proposed_all_day_plan_is_still_invisible(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """The exclusion that had a reason. Someone suggesting a week is not a week, and
+        making all-day plans visible must not smuggle proposals onto the day."""
+        add_engagement(
+            conn,
+            what="maybe a retreat",
+            starts_at=THURSDAY.isoformat(),
+            ends_at=FRIDAY.isoformat(),
+            status="proposed",
+        )
+        assert capacity_mod.engagement_events(conn, THURSDAY, PHOENIX) == []
+
+    def test_the_plan_carries_the_banner_as_a_block(self, conn, weekends: Settings) -> None:  # type: ignore[no-untyped-def]
+        """End to end: it reaches `propose`, so it is persisted and every reader sees it."""
+        add_engagement(
+            conn,
+            what="McKenna Summer Program",
+            starts_at=PROGRAMME_START.isoformat(),
+            ends_at=PROGRAMME_END.isoformat(),
+        )
+        proposal = planner.propose(conn, weekends, PROGRAMME_START)
+
+        banners = [b for b in proposal.blocks if b["kind"] == "allday"]
+        assert [b["title"] for b in banners] == ["McKenna Summer Program (day 1 of 6)"]
+        # It is a fact about the day, not time spent in it: it reaches the plan without
+        # reaching the arithmetic, so nothing in `capacity.fixed` is the banner.
+        assert not any(e.allday for e in proposal.capacity.fixed)
+        assert proposal.capacity.plannable

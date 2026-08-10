@@ -40,6 +40,17 @@
       </div>
     {% endif %}
 
+    {# Plans that named a day and no hour. Above the ruler, never on it: they span the
+       whole day, so drawn as blocks they would paint over everything real, and the
+       reason they are all-day is that nobody said when. #}
+    {% if allday %}
+      <ul class="adlist" id="panel-allday">
+        {% for title in allday %}
+          <li class="ad"><span class="lbl">All day</span> <span class="adt">{{ title }}</span></li>
+        {% endfor %}
+      </ul>
+    {% endif %}
+
     {% if gaps %}
       {# Free time readable as fact, not as inference from whitespace. #}
       <details class="fold">

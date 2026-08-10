@@ -285,6 +285,20 @@ def plan_section(conn: sqlite3.Connection, today: date) -> Section:
         (USER_ID, today.isoformat()),
     ).fetchall()
     for row in rows:
+        if row["kind"] == "allday":
+            # A plan that named a day and no hour. Printing "12:00am–12:00am" would
+            # assert a time nobody stated, which is the failure the all-day kind exists
+            # to avoid; it leads the section because it frames every hour under it.
+            section.lines.insert(
+                0,
+                Line(
+                    text=f"All day · {row['title']}",
+                    provenance=LedgerRef(
+                        "plans", str(row["local_date"]), f"day plan · {row['local_date']}"
+                    ),
+                ),
+            )
+            continue
         mark = " (protected)" if row["kind"] == "protected" else ""
         start, end = timezones.t12(row["starts_at"]), timezones.t12(row["ends_at"])
         section.lines.append(

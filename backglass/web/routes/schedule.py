@@ -207,9 +207,29 @@ def _collapse(raw: list[RawEntry]) -> list[RawEntry]:
     return list(kept.values())
 
 
+def allday(view: DayView) -> list[str]:
+    """The day's all-day banners, as titles — plans that named a day and no hour.
+
+    Kept off the timeline on purpose. They span midnight to midnight, so drawing one
+    would paint over every real block on the canvas and stretch the shared week ruler to
+    24 hours; and the whole reason they are all-day is that nobody said when. A banner
+    states the fact without asserting an hour.
+    """
+    seen: dict[str, None] = {}
+    for e in view.fixed:
+        if e.allday:
+            seen.setdefault(e.title or "Busy", None)
+    for b in view.blocks:
+        if str(b["kind"]) == "allday":
+            seen.setdefault(str(b["title"]), None)
+    return list(seen)
+
+
 def _raw_entries(view: DayView) -> list[RawEntry]:
     raw: list[RawEntry] = []
     for e in view.fixed:
+        if e.allday:
+            continue  # a banner, not an hour — see `allday` above
         raw.append(
             (
                 e.starts_at.hour * 60 + e.starts_at.minute,
@@ -221,6 +241,8 @@ def _raw_entries(view: DayView) -> list[RawEntry]:
             )
         )
     for b in view.blocks:
+        if str(b["kind"]) == "allday":
+            continue
         start = _minutes(str(b["starts_at"])[11:16])
         end = _minutes(str(b["ends_at"])[11:16])
         if start is None or end is None:
@@ -501,6 +523,7 @@ def build_router(
                 "cap": view.blocks[0] if view.blocks else None,
                 "now_next": now_next(view, today=today()),
                 "gaps": gaps(view),
+                "allday": allday(view),
                 "notes": day_notes(view, settings),
                 "prev": (day - timedelta(days=1)).isoformat(),
                 "next": (day + timedelta(days=1)).isoformat(),

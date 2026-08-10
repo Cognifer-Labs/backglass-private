@@ -59,9 +59,21 @@ class FixedEvent:
     title: str = ""
     travel: bool = False
     #: `fixed` for calendar events and confirmed plans; `routine` for the configured
-    #: daily anchors (breakfast, gym). The distinction matters twice: routines get no
-    #: meeting buffer, and the schedule draws them in their own quiet register.
+    #: daily anchors (breakfast, gym); `allday` for a confirmed plan that named a day
+    #: and no hour. The distinction matters three times: routines get no meeting buffer,
+    #: an all-day banner spends no capacity at all, and the schedule draws each in its
+    #: own register.
     kind: str = "fixed"
+
+    @property
+    def allday(self) -> bool:
+        """Spans a day rather than occupying an hour of it.
+
+        Kept as a property rather than as a second flag beside `kind` so there is one
+        place to be wrong. Everything that subtracts time checks this; nothing else has
+        to know the string.
+        """
+        return self.kind == "allday"
 
     @property
     def minutes(self) -> int:
@@ -192,10 +204,16 @@ def engagement_events(
         reserving the evening for an invitation the owner has not answered would let
         anyone who emails them delete an evening from their week. Proposals reach the
         owner through the brief, which asks for a reply instead of assuming one.
-      * A plan with a date but no clock time ("lunch on Friday") is not placed. There is
-        no honest hour to give it, and midnight — what an ISO date parses to — would
+      * A plan with a date but no clock time ("lunch on Friday") is not *placed*. There
+        is no honest hour to give it, and midnight — what an ISO date parses to — would
         either sit outside the window silently or block the start of the day for
-        something nobody said was in the morning. It stays visible in the brief.
+        something nobody said was in the morning.
+
+        It is still returned, as an `allday` event that spends no capacity. That rule was
+        always about refusing to delete time on a guess; dropping the plan from the day
+        entirely was a side effect nobody chose, and it cost the owner six days of a
+        summer programme the schedule never mentioned. A banner states the fact without
+        pretending to know the hour.
     """
     # Selected on the local date prefix, NOT with datetime() against day bounds the way
     # fixed_events() reads the calendar. The two columns are different things: the
@@ -214,12 +232,26 @@ def engagement_events(
         "  AND confidence >= ? AND substr(starts_at, 1, 10) = ?",
         (USER_ID, min_confidence, day.isoformat()),
     ).fetchall()
+    # A multi-day plan is only selected on the day it starts by the query above, so the
+    # days in the middle of it are found separately — otherwise a six-day programme
+    # appears on the Sunday and vanishes for the rest of the week.
+    rows = list(rows) + list(
+        conn.execute(
+            "SELECT what, starts_at, ends_at, location FROM engagement "
+            "WHERE user_id = ? AND status = 'confirmed' AND confidence >= ? "
+            "  AND starts_at IS NOT NULL AND ends_at IS NOT NULL "
+            "  AND substr(starts_at, 1, 10) < ? AND substr(ends_at, 1, 10) >= ? "
+            "  AND length(starts_at) = 10",
+            (USER_ID, min_confidence, day.isoformat(), day.isoformat()),
+        ).fetchall()
+    )
 
     events: list[FixedEvent] = []
     for row in rows:
         raw_start = str(row["starts_at"])
         if "T" not in raw_start and " " not in raw_start:
-            continue  # a day, not an hour — see the docstring
+            events.append(_allday(row, day, tz))
+            continue
         try:
             begins = _aware(raw_start, tz)
         except ValueError:
@@ -236,6 +268,41 @@ def engagement_events(
             title = f"{title} — {row['location']}"
         events.append(FixedEvent(starts_at=begins, ends_at=ends, title=title))
     return sorted(events, key=lambda e: e.starts_at)
+
+
+def _allday(row: sqlite3.Row, day: date, tz: str) -> FixedEvent:
+    """One confirmed plan that named a day and no hour, as a banner over `day`.
+
+    Spans local midnight to local midnight so it sorts to the top of the day and cannot
+    be mistaken for an hour. It never reaches capacity arithmetic — `compute` drops
+    every `allday` before subtracting anything — which is what lets the span be a full
+    1440 minutes without deleting the day it describes.
+
+    A run of days is numbered ("day 2 of 6") because the position is the useful part: on
+    Wednesday of a six-day programme, "McKenna Summer Program" alone says nothing that
+    Monday did not.
+    """
+    from zoneinfo import ZoneInfo
+
+    zone = ZoneInfo(tz)
+    midnight = datetime.combine(day, datetime.min.time(), tzinfo=zone)
+
+    title = str(row["what"])
+    if row["location"]:
+        title = f"{title} — {row['location']}"
+    start_day = date.fromisoformat(str(row["starts_at"])[:10])
+    end_raw = row["ends_at"]
+    end_day = date.fromisoformat(str(end_raw)[:10]) if end_raw else start_day
+    span = (end_day - start_day).days + 1
+    if span > 1:
+        title = f"{title} (day {(day - start_day).days + 1} of {span})"
+
+    return FixedEvent(
+        starts_at=midnight,
+        ends_at=midnight + timedelta(days=1),
+        title=title,
+        kind="allday",
+    )
 
 
 def routine_events(settings: Settings, day: date, tz: str) -> list[FixedEvent]:
@@ -378,6 +445,11 @@ def compute(
     # "how much work fits between nine and six", so an evening dinner is correctly not
     # subtracted from it. The Schedule page asks a different question and calls the
     # reader without this line.
+    # An all-day banner is a fact about the day, not an hour of it. It spans midnight to
+    # midnight, so leaving it in would swallow the entire window and every day of a
+    # six-day programme would report zero capacity. Dropped here rather than at the
+    # reader, so nothing downstream of `compute` has to remember.
+    fixed = [e for e in fixed if not e.allday]
     fixed = [e for e in fixed if e.ends_at > window_start and e.starts_at < window_end]
     fixed.sort(key=lambda e: e.starts_at)
 
