@@ -1719,3 +1719,95 @@ class TestDedupDefectsFoundInReview:
             Settings(owner_name="K", db_path=sett.db_path, working_window="09:00-09:00")
         with pytest.raises(pydantic.ValidationError, match="ends at or before it starts"):
             Settings(owner_name="K", db_path=sett.db_path, weekend_window="18:00-10:00")
+
+
+class TestAnHourTwoThingsCoverIsOneHour:
+    """Capacity summed each fixed event's length instead of unioning them.
+
+    Found on the owner's own semester, which starts 2026-08-20 and overlaps constantly:
+    CIS 236 09:00–10:15 against BIO 181 10:30–11:45 against CHM 113 (Lab) 10:00–11:50 on
+    one Wednesday. Reported 545 minutes of fixed time where the union is 415, so the
+    planner believed an 80-minute day was all that remained of one holding three and a
+    half free hours.
+
+    It failed quietly, which is why it survived: a short day looks like a busy day, not
+    like a bug, and P3's "under 60 minutes, do not propose a plan" would eventually have
+    declined a perfectly plannable Wednesday. `_free_slots` had always merged before
+    measuring, so the two halves of the capacity formula disagreed exactly when events
+    overlapped — and `min` took the wrong one every time.
+    """
+
+    def test_two_overlapping_meetings_cost_their_union_not_their_sum(
+        self, conn, sett: Settings
+    ) -> None:  # type: ignore[no-untyped-def]
+        both = capacity_mod.compute(
+            conn, sett, THURSDAY,
+            events=[meeting(THURSDAY, "10:00", "11:00"), meeting(THURSDAY, "10:30", "11:30")],
+        )
+        one = capacity_mod.compute(
+            conn, sett, THURSDAY, events=[meeting(THURSDAY, "10:00", "11:30")],
+        )
+        # 10:00–11:30 covered either way. The sum would have said 120 minutes.
+        assert both.fixed_minutes == 90
+        assert both.fixed_minutes == one.fixed_minutes
+        assert both.capacity_minutes == one.capacity_minutes
+
+    def test_a_three_way_overlap_is_still_one_span(
+        self, conn, sett: Settings
+    ) -> None:  # type: ignore[no-untyped-def]
+        """The Wednesday shape. Summing gives 205 minutes for 110 minutes of clock."""
+        cap = capacity_mod.compute(
+            conn, sett, THURSDAY,
+            events=[
+                meeting(THURSDAY, "10:00", "11:15", "CIS 236"),
+                meeting(THURSDAY, "10:00", "11:50", "CHM 113 (Lab)"),
+                meeting(THURSDAY, "10:30", "11:45", "BIO 181"),
+            ],
+        )
+        assert cap.fixed_minutes == 110
+
+    def test_back_to_back_meetings_are_unchanged(
+        self, conn, sett: Settings
+    ) -> None:  # type: ignore[no-untyped-def]
+        """Touching is not overlapping. The fix must not quietly discount a real day."""
+        cap = capacity_mod.compute(
+            conn, sett, THURSDAY,
+            events=[meeting(THURSDAY, "10:00", "11:00"), meeting(THURSDAY, "11:00", "12:00")],
+        )
+        assert cap.fixed_minutes == 120
+
+    def test_the_reported_parts_add_up_to_the_time_actually_occupied(
+        self, conn, sett: Settings
+    ) -> None:  # type: ignore[no-untyped-def]
+        """The capacity line is read as arithmetic — "480m of 720m (fixed 415m, buffer
+        50m…)" — so the parts have to be disjoint. Buffer is now what the buffers added
+        beyond the events, which is what a reader means by it: a buffer that lands inside
+        the next meeting costs nothing and says so."""
+        cap = capacity_mod.compute(
+            conn, sett, THURSDAY,
+            events=[
+                meeting(THURSDAY, "10:00", "11:00"),
+                meeting(THURSDAY, "10:30", "11:30"),
+                meeting(THURSDAY, "14:00", "15:00", travel=True),
+            ],
+        )
+        occupied = cap.window_minutes - (cap.capacity_minutes + cap.reserve_minutes
+                                         + cap.review_minutes)
+        assert cap.fixed_minutes + cap.buffer_minutes + cap.travel_minutes <= occupied
+        assert cap.buffer_minutes >= 0
+        assert cap.fixed_minutes == 90 and cap.travel_minutes == 60
+
+    def test_travel_and_a_meeting_over_one_minute_charge_it_once(
+        self, conn, sett: Settings
+    ) -> None:  # type: ignore[no-untyped-def]
+        """Attributed to travel, so the two categories stay disjoint rather than both
+        claiming the overlap and reinstating the bug inside the breakdown."""
+        cap = capacity_mod.compute(
+            conn, sett, THURSDAY,
+            events=[
+                meeting(THURSDAY, "10:00", "11:00", travel=True),
+                meeting(THURSDAY, "10:30", "11:30"),
+            ],
+        )
+        assert cap.travel_minutes == 60
+        assert cap.fixed_minutes == 30

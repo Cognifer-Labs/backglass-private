@@ -588,23 +588,38 @@ def compute(
     fixed = [e for e in fixed if e.ends_at > window_start and e.starts_at < window_end]
     fixed.sort(key=lambda e: e.starts_at)
 
-    fixed_minutes = 0
-    travel_minutes = 0
-    buffer_minutes = 0
     #: Each event occupies its own span plus the buffer that follows it, and the two are
     #: subtracted together so a back-to-back pair cannot claim the same minute twice.
     occupied: list[tuple[datetime, datetime]] = []
+    travel_spans: list[tuple[datetime, datetime]] = []
+    event_spans: list[tuple[datetime, datetime]] = []
     for event in fixed:
         start = max(event.starts_at, window_start)
         end = min(event.ends_at, window_end)
-        minutes = max(0, int((end - start).total_seconds() // 60))
-        if event.travel:
-            travel_minutes += minutes
-        else:
-            fixed_minutes += minutes
+        (travel_spans if event.travel else event_spans).append((start, end))
         pad = buffer_for(event, settings)
-        buffer_minutes += pad
         occupied.append((start, min(end + timedelta(minutes=pad), window_end)))
+
+    # Counted as spans, not as a running total. The old code summed each event's length,
+    # which charges the day twice for any minute two events both cover — and the owner's
+    # class schedule overlaps constantly. On 2026-08-26 it reported 545 minutes of fixed
+    # time where the union is 415, leaving the planner to believe an eighty-minute day
+    # was all that remained of one holding three and a half free hours. It failed the
+    # quiet way: a short day looks like a busy day, not like a bug, and P3 would
+    # eventually decline to plan a day that was perfectly plannable.
+    #
+    # `_free_slots` had it right all along — it merges before measuring — so the two
+    # halves of the formula below disagreed only when events overlapped, and `min` took
+    # the wrong one every time.
+    travel_minutes = _span_minutes(travel_spans)
+    # Travel first, so a minute covered by both is charged once and to the more specific
+    # of the two. The parts are therefore disjoint and sum to `occupied_minutes`.
+    fixed_minutes = _span_minutes(event_spans + travel_spans) - travel_minutes
+    occupied_minutes = _span_minutes(occupied)
+    # What the buffers added beyond the events themselves, which is what a reader of the
+    # capacity line means by it. A buffer landing inside the next event costs nothing and
+    # now says so, instead of being added and then silently double-counted.
+    buffer_minutes = occupied_minutes - fixed_minutes - travel_minutes
 
     slots = _free_slots(window_start, window_end, occupied, settings.min_block_minutes)
     reserve = max(1, settings.daily_reserve_minutes)  # "never zero"
@@ -618,7 +633,7 @@ def compute(
 
     capacity_minutes = max(
         0,
-        min(free_minutes, window_minutes - fixed_minutes - travel_minutes - buffer_minutes)
+        min(free_minutes, window_minutes - occupied_minutes)
         - reserve
         - review_minutes,
     )
@@ -639,6 +654,29 @@ def compute(
     )
 
 
+def _merge(spans: list[tuple[datetime, datetime]]) -> list[tuple[datetime, datetime]]:
+    """Overlapping spans collapsed into disjoint ones, in order.
+
+    An hour two things both cover is one hour. That is obvious stated this way and was
+    not obvious in `compute`, which summed each event's length and so charged the day
+    twice for it — see `_span_minutes`.
+    """
+    merged: list[tuple[datetime, datetime]] = []
+    for start, end in sorted(spans):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
+def _span_minutes(spans: list[tuple[datetime, datetime]]) -> int:
+    """How many minutes a set of spans actually covers, counting each minute once."""
+    return sum(
+        max(0, int((end - start).total_seconds() // 60)) for start, end in _merge(spans)
+    )
+
+
 def _free_slots(
     window_start: datetime,
     window_end: datetime,
@@ -651,12 +689,7 @@ def _free_slots(
     slots rather than a single minute count is what makes that structural — the planner
     can only ever place work inside one of these.
     """
-    merged: list[tuple[datetime, datetime]] = []
-    for start, end in sorted(occupied):
-        if merged and start <= merged[-1][1]:
-            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-        else:
-            merged.append((start, end))
+    merged = _merge(occupied)
 
     slots: list[Slot] = []
     cursor = window_start
