@@ -1025,3 +1025,121 @@ def test_every_bordered_box_is_on_the_radius_scale() -> None:
         "these draw a keyline and no corner — put them on the scale in the corners "
         f"block, or name them in SQUARE_BY_DESIGN with a reason: {sorted(missing)}"
     )
+
+
+class TestTheReviewQueueLeadsWithWhatADecisionChanges:
+    """158 questions is a queue nobody finishes; 34 is one somebody might.
+
+    The ordering was `confidence DESC` — a fact about how sure the extraction was, which
+    is not a fact about the owner's day. Measured on the real store: of 158 rows awaiting
+    review, 47 were `owed_to_me`, which `planner.candidates` never schedules, so answering
+    one cannot change any plan ever; 77 more carried no date and would land in the
+    overflow tail. Thirty-four bore on the coming week, scattered anywhere in the list.
+
+    This orders the questions and touches nothing about the answers: docs/11 §4's
+    equal-weight Accept and Reject are unchanged, because the rubber-stamp risk is in
+    nudging which button gets pressed, not in which card is read first.
+    """
+
+    def _queue(self, conn, settings: Settings):  # type: ignore[no-untyped-def]
+        return panels.review_panel(conn, settings)
+
+    def test_what_bears_on_the_week_comes_before_what_does_not(
+        self, conn, settings: Settings
+    ) -> None:  # type: ignore[no-untyped-def]
+        commitment(conn, settings, n=1, what="owed to me, very sure",
+                   direction="owed_to_me", confidence=0.69, due_at=TODAY.isoformat())
+        commitment(conn, settings, n=2, what="undated, quite sure",
+                   confidence=0.65, due_at=None)
+        commitment(conn, settings, n=3, what="due this week, least sure",
+                   confidence=0.31, due_at=TODAY.isoformat())
+
+        order = [r["what"] for r in self._queue(conn, settings).rows]
+
+        # Least confident of the three, and first, because it is the only one whose
+        # answer reaches a plan. Under the old ordering it was last.
+        assert order[0] == "due this week, least sure"
+        assert order.index("undated, quite sure") < order.index("owed to me, very sure")
+
+    def test_work_owed_to_the_owner_sinks_below_undated_promises(
+        self, conn, settings: Settings
+    ) -> None:
+        """`owed_to_me_is_never_scheduled` is a tested planner invariant, so these are
+        the only rows in the queue whose answer provably cannot move a plan — not now
+        and not later. An undated promise at least becomes schedulable if it is dated."""
+        commitment(conn, settings, n=1, what="owed to me", direction="owed_to_me",
+                   confidence=0.6, due_at=TODAY.isoformat())
+        commitment(conn, settings, n=2, what="undated promise", confidence=0.6, due_at=None)
+
+        order = [r["what"] for r in self._queue(conn, settings).rows]
+        assert order == ["undated promise", "owed to me"]
+
+    def test_the_header_counts_the_pressing_ones_not_the_pile(
+        self, conn, settings: Settings
+    ) -> None:
+        commitment(conn, settings, n=1, what="due this week", confidence=0.5,
+                   due_at=TODAY.isoformat())
+        for i in range(2, 6):
+            commitment(conn, settings, n=i, what=f"undated {i}", confidence=0.5, due_at=None)
+
+        panel = self._queue(conn, settings)
+        assert panel.meta["pressing"] == 1
+        assert panel.meta["total"] == 5
+
+    def test_the_divider_marks_where_the_answers_stop_mattering(
+        self, client: TestClient, conn, settings: Settings
+    ) -> None:  # type: ignore[no-untyped-def]
+        commitment(conn, settings, n=1, what="due this week", confidence=0.5,
+                   due_at=TODAY.isoformat())
+        commitment(conn, settings, n=2, what="undated one", confidence=0.5, due_at=None)
+
+        review = panel_slice(client.get("/").text, "panel-review")
+
+        assert "a decision changes no plan this week" in review
+        # Said, not hidden: every row is still rendered and still answerable.
+        assert "due this week" in review and "undated one" in review
+        assert review.index("due this week") < review.index("a decision changes no plan")
+        assert review.index("a decision changes no plan") < review.index("undated one")
+
+    def test_accept_and_reject_stay_equal_weight(
+        self, client: TestClient, conn, settings: Settings
+    ) -> None:  # type: ignore[no-untyped-def]
+        """docs/11 §4, re-asserted here because this change touches the queue's shape:
+        ordering the questions must not become a nudge toward one answer."""
+        commitment(conn, settings, n=1, what="a guess", confidence=0.3)
+        review = panel_slice(client.get("/").text, "panel-review")
+
+        assert 'class="btn accept"' in review
+        assert 'class="btn reject"' in review
+        assert "primary" not in review
+        assert "checked" not in review
+
+    def test_a_plan_months_out_is_not_counted_as_pressing(
+        self, conn, settings: Settings
+    ) -> None:  # type: ignore[no-untyped-def]
+        """Every low-confidence plan used to count toward the header because a plan is
+        an hour on a day. So is an hour in October. Counting them all put 150 of 303 in
+        the number — the same pile wearing a smaller label."""
+        cid = commitment(conn, settings, n=1, what="due this week", confidence=0.5,
+                         due_at=TODAY.isoformat())
+        source_id = int(
+            conn.execute(
+                "SELECT source_item_id AS s FROM commitment WHERE id = ?", (cid,)
+            ).fetchone()["s"]
+        )
+        for what, starts_at in (
+            ("dinner this week", f"{TODAY.isoformat()}T19:00:00-07:00"),
+            ("something in October", "2026-10-14T19:00:00-07:00"),
+        ):
+            conn.execute(
+                "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at,"
+                " when_is_explicit, location, status, confidence, source_item_id, created_at)"
+                " VALUES (?, 'social', ?, ?, NULL, 1, NULL, 'proposed', 0.5, ?, ?)",
+                (USER_ID, what, starts_at, source_id, now_iso()),
+            )
+
+        panel = panels.review_panel(conn, settings)
+
+        assert panel.meta["total"] == 3
+        # The commitment due this week and the plan this week; not October.
+        assert panel.meta["pressing"] == 2

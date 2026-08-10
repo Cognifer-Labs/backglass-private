@@ -728,10 +728,19 @@ def review_section(conn: sqlite3.Connection, today: date, settings: Settings) ->
     gives them a dashed keyline and no fill so that reads visually too.
     """
     section = Section(priority=10, title="Needs review")
+    # The brief reads the same ordering as the dashboard: whatever a decision would
+    # actually change comes first, so the questions that matter survive a two-minute read.
+    week_end = (today + timedelta(days=(6 - today.weekday()))).isoformat()
+    stale_floor = (today - timedelta(days=settings.stale_after_days)).isoformat()
     for row in _rows(
         conn,
         "brief_needs_review",
-        {"user_id": USER_ID, "confidence_threshold": settings.confidence_threshold},
+        {
+            "user_id": USER_ID,
+            "confidence_threshold": settings.confidence_threshold,
+            "week_end": week_end,
+            "stale_floor": stale_floor,
+        },
     ):
         who = f" — {row['counterparty']}" if row["counterparty"] else ""
         direction = "you owe" if row["direction"] == "i_owe" else "owed to you"

@@ -356,14 +356,73 @@ def review_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:
     engagement rows already use for social/professional.
     """
     params = {"user_id": USER_ID, "confidence_threshold": settings.confidence_threshold}
-    rows = [dict(row, record="commitment") for row in _rows(conn, "brief_needs_review", params)]
+    rows = [
+        dict(row, record="commitment")
+        for row in _rows(
+            conn,
+            "brief_needs_review",
+            {
+                **params,
+                "week_end": _review_week_end(settings),
+                "stale_floor": _review_stale_floor(settings),
+            },
+        )
+    ]
     rows += [
         dict(row, record="plan")
         for row in _rows(
             conn, "brief_needs_review_plans", {**params, "floor": _review_floor(settings)}
         )
     ]
-    return Panel(title="Review queue", empty_text="Nothing to review.", rows=rows)
+    # What the header says instead of a bare total. A plan counts when it falls inside
+    # the same week the commitments are measured against — an accepted engagement in
+    # October changes nothing about now, and counting every plan as pressing put 150 of
+    # 303 in the number, which is the pile again wearing a smaller label.
+    week_end = _review_week_end(settings)
+    pressing = sum(
+        1
+        for r in rows
+        if (r.get("plan_impact") == 0)
+        or (
+            r["record"] == "plan"
+            and r["starts_at"]
+            and str(r["starts_at"])[:10] <= week_end
+        )
+    )
+    return Panel(
+        title="Review queue",
+        empty_text="Nothing to review.",
+        rows=rows,
+        meta={"pressing": pressing, "total": len(rows)},
+    )
+
+
+def _review_stale_floor(settings: Settings) -> str:
+    """How overdue a guess can be and still count as pressing.
+
+    The board's own line, reused: past `stale_after_days` an overdue row folds into
+    Stale rather than crowding the lane a person scans. A deadline that passed in
+    January is not made urgent by having passed, and treating it as urgent put 178 of
+    303 rows in the top band — the pile the ordering exists to break up.
+    """
+    from backglass.brief.daily import today_in
+
+    today = today_in(settings.default_tz)
+    return (today - timedelta(days=settings.stale_after_days)).isoformat()
+
+
+def _review_week_end(settings: Settings) -> str:
+    """The Sunday a review decision would still change something by.
+
+    Past it a guess is a question with no deadline attached, and the queue says so by
+    ordering it below the ones that have one. Computed from the owner's active day the
+    same way `_review_floor` is, so both boundaries move with the timezone rather than
+    with the server's.
+    """
+    from backglass.brief.daily import today_in
+
+    today = today_in(settings.default_tz)
+    return (today + timedelta(days=(6 - today.weekday()))).isoformat()
 
 
 def _review_floor(settings: Settings) -> str:

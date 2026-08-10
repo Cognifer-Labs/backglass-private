@@ -1,11 +1,27 @@
 {% import "_macros.html" as m %}
 <details class="panel" id="panel-review" open>
-  {{ m.foldbanner(d.review.title, d.review.rows|length ~ ' waiting') }}
+  {# The count that changes behaviour is not the total. 158 waiting is a number that
+     gets a queue closed; "34 bear on this week" is a number that gets 34 answered.
+     Both are said, because the total is still true and hiding it would be the silent
+     truncation P2 forbids one panel over. #}
+  {{ m.foldbanner(d.review.title, (d.review.meta.pressing ~ ' of ' ~ d.review.rows|length ~ ' bear on this week')
+                                  if d.review.meta and d.review.meta.pressing
+                                  else d.review.rows|length ~ ' waiting') }}
   <div class="inner">
     {% if d.review.empty %}
       <p class="empty">Nothing to review.</p>
     {% else %}
+      {% set ns = namespace(rest_marked=false) %}
       {% for r in d.review.rows %}
+        {# One rule, where the questions stop bearing on a plan. Everything below it is
+           still here, still in the same order, still answerable — the divider says the
+           work above it is the work that changes something, so a queue this long has an
+           honest place to stop rather than an implied obligation to reach the end. #}
+        {% if not ns.rest_marked and r['record'] == 'commitment' and r.get('plan_impact', 0) > 0 %}
+          {% set ns.rest_marked = true %}
+          <p class="dnote">Below here, a decision changes no plan this week — undated
+            promises, and work owed to you, which the planner never schedules.</p>
+        {% endif %}
         {% if r['record'] == 'plan' %}
         {# A plan asks a different question from a commitment — "is this a real plan?"
            rather than "did you promise this?" — so it says so, and its buttons post to
