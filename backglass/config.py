@@ -245,7 +245,18 @@ class Settings(BaseSettings):
     dashboard_base_url: str = "http://127.0.0.1:8765"
 
     # ── model + cost ──────────────────────────────────────────────────────
-    model_backend: Literal["claude_cli", "deepinfra", "anthropic"] = "anthropic"
+    #: `openai_compatible` is the bring-your-own-endpoint path and covers most of what
+    #: exists: Ollama and vLLM on localhost, Together, Groq, OpenRouter, DeepInfra. They
+    #: differ by `model_base_url` and a key, not by code, because they all speak the same
+    #: chat-completions dialect the backend already forces a tool call through.
+    #: `deepinfra` stays as its own name for the installations already configured with it.
+    model_backend: Literal[
+        "claude_cli", "deepinfra", "anthropic", "openai_compatible"
+    ] = "anthropic"
+    #: Where `openai_compatible` points. Empty means the DeepInfra default below, so an
+    #: existing config keeps working; `http://127.0.0.1:11434/v1` is Ollama, and any
+    #: OpenAI-shaped server is a URL away.
+    model_base_url: str = ""
     model_triage: str = "haiku"
     model_extract: str = "sonnet"
     model_api_key: str = ""

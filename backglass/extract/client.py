@@ -666,6 +666,15 @@ def build(settings: Settings) -> ModelClient:
         primary = DeepInfraBackend(
             api_key=settings.model_api_key, base_url=settings.deepinfra_base_url
         )
+    elif settings.model_backend == "openai_compatible":
+        # No key check. A local server is the case this exists for — Ollama and vLLM
+        # authenticate nothing — and demanding a key to talk to 127.0.0.1 would make the
+        # zero-cost, nothing-leaves-the-machine path the only one that needs a secret.
+        # Hosted providers on this same path still fail loudly, at their own 401.
+        primary = DeepInfraBackend(
+            api_key=settings.model_api_key or "not-needed",
+            base_url=settings.model_base_url or settings.deepinfra_base_url,
+        )
     elif settings.model_backend == "anthropic":
         key = anthropic_api_key(settings)
         if not key:
@@ -693,6 +702,10 @@ def build(settings: Settings) -> ModelClient:
 #: to find out that it does not need one.
 _BACKEND_CLASSES: dict[str, type] = {
     "deepinfra": DeepInfraBackend,
+    # Same class, same billing answer: a call to a hosted endpoint is charged, and a call
+    # to localhost costs nothing but is not *imputed* either — the cap counting zero is
+    # correct rather than a fiction, which is the distinction `spend_is_imputed` draws.
+    "openai_compatible": DeepInfraBackend,
     "anthropic": AnthropicAPIBackend,
     "claude_cli": ClaudeCLIBackend,
 }

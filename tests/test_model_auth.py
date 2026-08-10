@@ -35,6 +35,7 @@ from backglass.extract.client import (
     ModelResult,
     build,
 )
+from backglass.extract import client
 from backglass.sync import _in_parallel, sync
 from tests.conftest import FakeGmailService, gmail_message, make_connector
 
@@ -455,3 +456,106 @@ class TestAnOutageAndAClosedWindowStaySeparate:
 
 
 assert FakeGmailService  # imported for the connector fixtures above
+
+
+class TestBringYourOwnEndpoint:
+    """`openai_compatible`: the same dialect, pointed anywhere.
+
+    Ollama and vLLM on localhost, Together, Groq, OpenRouter, DeepInfra — they differ by
+    a URL and a key, not by code, because they all speak the chat-completions shape the
+    backend already forces a tool call through. Naming each one in a Literal and adding a
+    branch per provider would have been a new class every time somebody changed vendor.
+
+    The reason this matters here specifically: `claude_cli` is a subscription CLI whose
+    reported cost is imputed, and it is the one backend that cannot be pointed at anything
+    else. This is the path off it.
+    """
+
+    def _capture(self, monkeypatch, payload: dict[str, Any] | None = None):  # type: ignore[no-untyped-def]
+        """Records the request the backend would have sent, and answers it."""
+        import json as json_mod
+
+        import backglass.extract.client as client_mod
+
+        seen: dict[str, Any] = {}
+
+        class _Response:
+            def __enter__(self) -> Any:
+                return self
+
+            def __exit__(self, *exc: object) -> None:
+                return None
+
+            def read(self) -> bytes:
+                return json_mod.dumps(
+                    payload
+                    or {
+                        "choices": [
+                            {
+                                "message": {
+                                    "tool_calls": [
+                                        {"function": {"arguments": json_mod.dumps({"verdict": "keep"})}}
+                                    ]
+                                }
+                            }
+                        ],
+                        "usage": {"prompt_tokens": 10, "completion_tokens": 2},
+                    }
+                ).encode()
+
+        def fake_urlopen(request: Any, timeout: float = 0) -> Any:
+            del timeout
+            seen["url"] = request.full_url
+            seen["auth"] = request.headers.get("Authorization")
+            return _Response()
+
+        monkeypatch.setattr(client_mod.urllib.request, "urlopen", fake_urlopen)
+        return seen
+
+    def test_it_points_wherever_model_base_url_says(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        seen = self._capture(monkeypatch)
+        settings = Settings(
+            _env_file=None,  # type: ignore[call-arg]
+            model_backend="openai_compatible",
+            model_base_url="http://127.0.0.1:11434/v1",
+        )
+
+        client.build(settings).complete(
+            system="s", user="u", schema=TRIAGE_SCHEMA, model="llama3.2", budget_usd=1.0
+        )
+
+        assert seen["url"].startswith("http://127.0.0.1:11434/v1")
+
+    def test_a_local_server_needs_no_key(self, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+        """The zero-cost, nothing-leaves-the-machine path must not be the only one that
+        demands a secret. Ollama and vLLM authenticate nothing; a hosted provider on this
+        same path still fails loudly at its own 401."""
+        self._capture(monkeypatch)
+        settings = Settings(
+            _env_file=None,  # type: ignore[call-arg]
+            model_backend="openai_compatible",
+            model_base_url="http://127.0.0.1:11434/v1",
+            model_api_key="",
+        )
+        # deepinfra with no key raises; this must not.
+        client.build(settings)
+
+    def test_an_empty_base_url_keeps_an_existing_deepinfra_config_working(self) -> None:
+        settings = Settings(
+            _env_file=None,  # type: ignore[call-arg]
+            model_backend="openai_compatible",
+            model_api_key="k",
+        )
+        built = client.build(settings)
+        inner = getattr(built, "inner", built)
+        assert inner.base_url == settings.deepinfra_base_url
+
+    def test_its_spend_is_real_money_not_an_imputed_price(self) -> None:
+        """The distinction the cap depends on. `claude_cli` reports a price nobody is
+        charged, which is what froze extraction on 2026-08-03; a hosted endpoint bills,
+        and localhost bills zero — both are true numbers, so the cap may trust them."""
+        settings = Settings(
+            _env_file=None,  # type: ignore[call-arg]
+            model_backend="openai_compatible",
+        )
+        assert client.spend_is_imputed(settings) is False
