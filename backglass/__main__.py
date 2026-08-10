@@ -778,6 +778,10 @@ def plan(
             help="Do nothing if the day already has a live plan (catch-up runs)",
         ),
     ] = False,
+    all_overflow: Annotated[
+        bool,
+        typer.Option("--all", help="List every item that did not fit, not just what is due"),
+    ] = False,
 ) -> None:
     """Propose a day. docs/04 §1.
 
@@ -831,9 +835,53 @@ def plan(
         typer.echo(f"  {start}–{end}  {block['title']}{mark}")
     for note in proposal.notes:
         typer.echo(f"  · {note}")
-    if proposal.overflow:
-        for item in proposal.overflow:
-            typer.echo(f"  · did not fit: {item.what} ({item.minutes}m)", err=True)
+    _echo_overflow(proposal, all_overflow)
+
+
+def _echo_overflow(proposal: Any, all_overflow: bool = False) -> None:
+    """P2 without the wall of text.
+
+    "Never silently truncate" is the rule, and printing all of them obeyed it the way a
+    thirty-page contract obeys disclosure. The owner's 2026-08-09 ended in 46 lines, most
+    of them restatements of each other, and a list that long is not read — so the items
+    in it that were actually due that day were as invisible as if they had been dropped.
+
+    What did not fit AND is already due or overdue is printed in full: those are the ones
+    where not fitting is news. The rest is counted by the band it fell in, so the total
+    still adds up in view and nothing is merely gone. `--all` prints every line for when
+    the tail itself is the thing being looked at.
+
+    The count line is the planner's own P2 note, already in `proposal.notes` — printing a
+    second total here would be two numbers describing one pile.
+    """
+    from backglass.plan import planner
+
+    if not proposal.overflow:
+        return
+    # Keyed by the priority each candidate already carries, so this stays a way of reading
+    # the planner's ordering rather than a second opinion about it.
+    bands = (
+        (planner.PRIORITY_OVERDUE, "overdue"),
+        (planner.PRIORITY_DUE_TODAY, "due today"),
+        (planner.PRIORITY_AT_RISK_GOAL, "for a goal at risk"),
+        (planner.PRIORITY_DUE_THIS_WEEK, "due this week"),
+        (planner.PRIORITY_REST, "no date"),
+    )
+    shown = (
+        proposal.overflow
+        if all_overflow
+        else [c for c in proposal.overflow if c.priority <= planner.PRIORITY_DUE_TODAY]
+    )
+    for item in shown:
+        typer.echo(f"  · did not fit: {item.what} ({item.minutes}m)", err=True)
+    rest = [c for c in proposal.overflow if c not in shown]
+    if not rest:
+        return
+    counts = [
+        (label, sum(1 for c in rest if c.priority == priority)) for priority, label in bands
+    ]
+    summary = ", ".join(f"{n} {label}" for label, n in counts if n)
+    typer.echo(f"  · {len(rest)} more did not fit — {summary}", err=True)
 
 
 @app.command()

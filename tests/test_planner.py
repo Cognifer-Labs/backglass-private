@@ -9,6 +9,7 @@ errors would pass the first bullet and fail in week two.
 from __future__ import annotations
 
 import re
+import sqlite3
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -1234,6 +1235,70 @@ def test_a_day_with_nothing_due_gets_no_due_line(conn, sett: Settings) -> None: 
     assert proposal.overflow
     assert proposal.due_now == []
     assert not any("due or overdue" in note for note in proposal.notes)
+
+
+class TestTheOverflowIsReadableAndStillComplete:
+    """P2 forbids silent truncation. Printing all of it obeyed that the way a thirty-page
+    contract obeys disclosure: 2026-08-09 ended in 46 lines, mostly restatements of each
+    other, and a list nobody reads hides a due item exactly as well as dropping it would.
+
+    So the CLI prints in full what did not fit AND is already due or overdue — the cases
+    where not fitting is news — and counts the rest by band. These pin the property that
+    makes that safe: the two parts partition the overflow, so the numbers on screen add
+    up to the planner's own total and nothing leaves without being counted.
+    """
+
+    def _proposal(self, conn: sqlite3.Connection, sett: Settings):  # type: ignore[no-untyped-def]
+        add_commitment(conn, sett, "overdue form", minutes=30, due=date(2026, 8, 1), n=1)
+        add_commitment(conn, sett, "Move-in: Willow Hall 502", minutes=180, due=SUNDAY, n=2)
+        for i in range(3, 14):
+            add_commitment(conn, sett, f"someday item {i}", minutes=30, n=i)
+        return planner.propose(conn, sett, SUNDAY, events=[])
+
+    def test_every_item_is_either_printed_or_counted(
+        self, conn: sqlite3.Connection, sett: Settings, capsys
+    ) -> None:  # type: ignore[no-untyped-def]
+        from backglass.__main__ import _echo_overflow
+
+        proposal = self._proposal(conn, sett)
+        _echo_overflow(proposal)
+        printed = capsys.readouterr().err
+
+        lines = [ln for ln in printed.splitlines() if "did not fit:" in ln]
+        counted = int(re.search(r"· (\d+) more did not fit", printed).group(1))
+        assert len(lines) + counted == len(proposal.overflow)
+
+    def test_what_is_already_due_is_named_and_never_folded_into_a_count(
+        self, conn: sqlite3.Connection, sett: Settings, capsys
+    ) -> None:  # type: ignore[no-untyped-def]
+        from backglass.__main__ import _echo_overflow
+
+        _echo_overflow(self._proposal(conn, sett))
+        printed = capsys.readouterr().err
+
+        assert "did not fit: overdue form" in printed
+        assert "did not fit: Move-in: Willow Hall 502" in printed
+        assert "someday item 5" not in printed  # counted, not named
+
+    def test_all_prints_the_tail_for_when_the_tail_is_the_subject(
+        self, conn: sqlite3.Connection, sett: Settings, capsys
+    ) -> None:  # type: ignore[no-untyped-def]
+        from backglass.__main__ import _echo_overflow
+
+        proposal = self._proposal(conn, sett)
+        _echo_overflow(proposal, all_overflow=True)
+        printed = capsys.readouterr().err
+
+        assert printed.count("did not fit:") == len(proposal.overflow)
+        assert "more did not fit" not in printed
+
+    def test_no_overflow_says_nothing_at_all(
+        self, conn: sqlite3.Connection, sett: Settings, capsys
+    ) -> None:  # type: ignore[no-untyped-def]
+        from backglass.__main__ import _echo_overflow
+
+        _echo_overflow(planner.propose(conn, sett, SUNDAY, events=[]))
+        assert capsys.readouterr().err == ""
 
 
 def test_a_planned_day_leaves_due_now_empty(conn, weekends: Settings) -> None:  # type: ignore[no-untyped-def]
