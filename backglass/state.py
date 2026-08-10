@@ -291,6 +291,39 @@ def _knowledge_base(conn: sqlite3.Connection, settings: Settings, state: State) 
               Claim(len(context), "len(facts.owner_context(conn)) — what triage now carries"))
 
 
+def _open_questions(conn: sqlite3.Connection, state: State) -> None:
+    """What the system knows it does not know.
+
+    `state` is the answer to "what is true about this installation", and until now it
+    only reported what Backglass believes. A conflict it cannot resolve, an hour it
+    cannot name, two entities it suspects are one person — those are equally facts about
+    the installation, and the most useful kind, because each is a thing the owner can
+    settle in a sentence.
+
+    Counted by kind rather than listed: the questions themselves have a surface, and a
+    ground-truth report should say what is outstanding without becoming that surface.
+    """
+    rows = conn.execute(
+        "SELECT kind, COUNT(*) AS n FROM open_question"
+        " WHERE user_id = ? AND status = 'open' GROUP BY kind ORDER BY kind",
+        (USER_ID,),
+    ).fetchall()
+    by_kind = {str(row["kind"]): int(row["n"]) for row in rows}
+    state.add(
+        "open_questions", "waiting",
+        Claim(sum(by_kind.values()), "open_question WHERE status = 'open'"),
+    )
+    state.add("open_questions", "by_kind", Claim(by_kind, "GROUP BY kind over the same rows"))
+    answered = conn.execute(
+        "SELECT COUNT(*) AS n FROM open_question WHERE user_id = ? AND status = 'answered'",
+        (USER_ID,),
+    ).fetchone()
+    state.add(
+        "open_questions", "answered",
+        Claim(int(answered["n"]), "status = 'answered' — each also recorded as a decision"),
+    )
+
+
 def collect(conn: sqlite3.Connection, settings: Settings) -> State:
     """Everything, read fresh. Each probe is independent: one failing must not blank
     the rest, because a partial truth that says which part is missing beats a total
@@ -304,6 +337,7 @@ def collect(conn: sqlite3.Connection, settings: Settings) -> State:
         ("ledger", lambda: _ledger(conn, settings, state)),
         ("pipeline", lambda: _pipeline(conn, state)),
         ("knowledge_base", lambda: _knowledge_base(conn, settings, state)),
+        ("open_questions", lambda: _open_questions(conn, state)),
     ]
     for name, probe in probes:
         try:

@@ -499,3 +499,21 @@ CREATE TABLE model_call (
 CREATE INDEX idx_model_call_run ON model_call (user_id, run_id);
 
 CREATE INDEX idx_model_call_tier ON model_call (user_id, tier, started_at);
+
+CREATE TABLE open_question (
+  id            INTEGER PRIMARY KEY,
+  user_id       INTEGER NOT NULL DEFAULT 1,
+  kind          TEXT    NOT NULL,   -- conflict|untitled|duplicate_entity|contradiction|priority
+  subject_key   TEXT    NOT NULL,   -- unique within kind; how a detector finds its own row
+  question      TEXT    NOT NULL,   -- the sentence the owner reads
+  detail        TEXT,               -- the evidence, rendered; never the only place it lives
+  options_json  TEXT    NOT NULL DEFAULT '[]',
+  status        TEXT    NOT NULL DEFAULT 'open',  -- open|answered|dismissed
+  answer_option TEXT,               -- the option chosen, when one was
+  answer_text   TEXT,               -- the owner's own words, always allowed
+  asked_at      TEXT    NOT NULL,
+  answered_at   TEXT,
+  UNIQUE (user_id, kind, subject_key)
+);
+
+CREATE INDEX idx_open_question_open ON open_question(user_id, status) WHERE status = 'open';

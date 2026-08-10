@@ -224,6 +224,9 @@ FROZEN_CHECKSUMS = {
     "0019_model_call.sql": (
         "8bfe7567ee9f8ff6e1b5401862ab32d40405ec90c684799958eb627ac912ad71"
     ),
+    "0020_open_question.sql": (
+        "ef2e1137b477277938bc082fab0874d04f4df8a024ae4572d8fa20ef33adbebf"
+    ),
 }
 
 
