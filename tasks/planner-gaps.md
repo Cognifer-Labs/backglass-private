@@ -137,12 +137,44 @@ fact — so the fix is throughput, not a lower threshold.
 
 ### 6. Goal linkage is dead code against real data
 
-One of 132 open commitments has a `goal_id`. `PRIORITY_AT_RISK_GOAL` therefore never
-fires, and the day is ordered by due date and age alone — docs/04's "commitments against
-goals" join does not happen.
+One of 132 open commitments has a `goal_id`, and the med school goal — the one the whole
+roadmap hangs off — has none. `PRIORITY_AT_RISK_GOAL` sits in `planner.candidates`
+between due-today and due-this-week and has never once fired. The day is ordered by due
+date and age alone, so docs/04's "commitments against goals" join does not happen.
 
-- **Implement**: propose a goal link at extraction time, confirmed in the review queue.
-- **Test**: an at-risk goal pulls its linked work above due-this-week items.
+The cause is throughput: `checkpoints.link_commitment` is the only writer, takes one
+commitment and one goal, and is reachable only from `backglass goals link`. Nobody links
+132 rows one CLI call at a time.
+
+**A word-overlap suggester was built to fix this and then deleted, because it does not
+work.** Recorded here so nobody builds it twice. The goal vocabularies are rich and
+well-written — 53 words under the med school goal once its roadmap steps are folded in,
+including "clinical", "exposure", "coursework", "prerequisite". The commitments are short
+and concrete. The overlap between them is empty by construction:
+
+```
+Submit Hospice of the Valley volunteer application  → hospice, valley, volunteer
+Lock Willow Hall 502 move-in slot                   → willow
+Get into a competitive med school (+ its roadmap)   → clinical, exposure, documented, …
+```
+
+Over the whole ledger it produced one suggestion, and that one was coincidence
+("accept McKenna Program admission offer" ↔ med school, on the shared words "offer" and
+"program"). The owner writes goals as outcomes and promises as actions, and no amount of
+token matching crosses that. Lowering the floor buys noise, not recall.
+
+There is no deterministic path either: extraction never sets `goal_id`, and roadmap steps
+do not create commitments, so nothing in the ledger already knows the answer.
+
+- **Implement**: a `goal` field on the extraction, chosen from the active goal list passed
+  into the prompt. The model already has the source text in hand and the list is eight
+  items — this is an extraction field, not a retrieval problem, so it stays inside
+  docs/02's architecture and nowhere near a vector store. Low confidence goes to the
+  review queue like everything else (rule 2), which is also where a declined suggestion
+  gets remembered.
+- **Cost**: this is item 12's re-extraction, and lands with it.
+- **Test**: an at-risk goal pulls its linked work above due-this-week items; a fixture
+  where the source names no goal proposes none rather than the nearest one.
 
 ### 7. Estimates are guesses, so the packing is a guess
 
@@ -205,10 +237,34 @@ owner's own move-in still has its hour trapped in a title, and will until the ro
 re-read.
 
 - **Implement**: `backglass extract` re-runs against the new prompt without re-fetching.
-  Scope it to kept items that have an `@7` extraction rather than all 8,868, and price it
-  first — this is the one item on the list that costs money, and the spend cap is enforced
-  in code (CLAUDE.md rule 7).
+  Scope: **1,041 kept items still on `@7`** (224 are already `@8`), not all 9,067.
 - **Test**: none new. The extraction fixtures are the coverage; this is an operation.
+
+**Priced, because rule 7 makes the cap a code-enforced constraint and this is the only
+item on the list that meets it.** From `model_call`, 60 real extract calls at
+`tier='extract'`: mean **$0.1264** and **21.9s** each.
+
+```
+1,041 items × $0.1264  ≈ $132 imputed      monthly_spend_cap_cents = 5000 ($50)
+1,041 items × 21.9s    ≈ 6.3 hours serial
+```
+
+The dollars are not real. `MODEL_BACKEND=claude_cli`, so cost is **imputed from token
+counts against a subscription that bills none of it** — the failure already recorded for
+2026-08-03, where the cap froze extraction over money nobody was charged. What is real:
+
+- **The cap will trip at roughly item 400** and degrade the rest to triage-only, silently
+  producing a partial re-extraction that looks finished. Raise it for the run or the run
+  is a third of a run.
+- **~6 hours and the subscription rate limit**, which is the half of the 2026-08-03 issue
+  that was never fixed.
+- **The batch lane is not available here.** `schedule.py` is explicit that the overnight
+  Batches jobs "need a real Anthropic API key — the subscription CLI backend cannot drive
+  them", so the usual half-price answer does not apply.
+
+Do item 6's goal field in the same pass. Re-reading 1,041 items is the expensive part and
+it is identical either way; adding a field to the prompt while it happens costs nothing
+extra, and doing them separately means paying the 6 hours twice.
 
 ---
 
