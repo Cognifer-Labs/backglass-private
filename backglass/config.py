@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated, Literal
@@ -47,35 +48,59 @@ def _csv(value: str | list[str] | None) -> list[str]:
 # ── routines ──────────────────────────────────────────────────────────────
 
 
+#: The weekday vocabulary, in `date.weekday()` order. Shared with `working_days` on
+#: purpose: one spelling of Wednesday in the config file, not two.
+DAY_NAMES = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+
+
 @dataclass(frozen=True)
 class Routine:
-    """One recurring daily anchor: breakfast, gym, shower — life, as a fixed span."""
+    """One recurring anchor: breakfast, gym, shower — life, as a fixed span.
+
+    `days` is empty for the ordinary case, which is every day. Life mostly does not
+    check the calendar, so the common spelling stays the short one.
+    """
 
     name: str
     start_minute: int  # minute of the local day
     minutes: int
+    days: frozenset[str] = frozenset()
+
+    def falls_on(self, day: date) -> bool:
+        return not self.days or DAY_NAMES[day.weekday()] in self.days
 
 
 class RoutineError(ValueError):
     pass
 
 
-_ROUTINE_RE = re.compile(r"^(?P<name>[^@,]+)@(?P<hh>\d{2}):(?P<mm>\d{2})\+(?P<dur>\d+)$")
+_ROUTINE_RE = re.compile(
+    r"^(?P<name>[^@,]+)@(?P<hh>\d{2}):(?P<mm>\d{2})\+(?P<dur>\d+)"
+    r"(?:@(?P<days>[a-z]{3}(?:\|[a-z]{3})*))?$"
+)
 
 
 def parse_routines(raw: str) -> list[Routine]:
-    """`name@HH:MM+MINUTES,...` → routines sorted by start.
+    """`name@HH:MM+MINUTES[@day|day],...` → routines sorted by start.
 
-    One exception type for every malformed shape — the regex admits only digits, so
-    the int() calls below cannot raise their own. Lives here rather than in
-    plan/capacity so the field validator can call it without a circular import.
+    The day scope is what makes a weekly commitment expressible. Banner volunteering is
+    Wednesdays 4–8pm; without a scope it had to be spelled as an everyday routine, which
+    deleted four hours from six days that do not have it, or left off entirely, which
+    let the planner book over the one day that does. `banner@16:00+240@wed` is the whole
+    fix, and it reads the same as `WORKING_DAYS` because it uses the same day names.
+
+    Pipe-separated rather than comma, since commas already separate routines.
+
+    One exception type for every malformed shape — the regex admits only digits in the
+    numeric groups, so the int() calls below cannot raise their own. Lives here rather
+    than in plan/capacity so the field validator can call it without a circular import.
     """
     out: list[Routine] = []
     for part in (p.strip() for p in raw.split(",") if p.strip()):
         match = _ROUTINE_RE.match(part)
         if match is None:
             raise RoutineError(
-                f"malformed routine {part!r}; expected name@HH:MM+MINUTES"
+                f"malformed routine {part!r}; expected name@HH:MM+MINUTES[@mon|wed]"
             )
         hour, minute = int(match["hh"]), int(match["mm"])
         duration = int(match["dur"])
@@ -83,11 +108,18 @@ def parse_routines(raw: str) -> list[Routine]:
             raise RoutineError(f"routine {part!r} has no such time of day")
         if not 0 < duration <= 24 * 60:
             raise RoutineError(f"routine {part!r} needs a duration of 1..1440 minutes")
+        days = frozenset((match["days"] or "").split("|")) - {""}
+        unknown = sorted(days - set(DAY_NAMES))
+        if unknown:
+            raise RoutineError(
+                f"routine {part!r} names no such day: {', '.join(unknown)}"
+            )
         out.append(
             Routine(
                 name=match["name"].strip(),
                 start_minute=hour * 60 + minute,
                 minutes=duration,
+                days=days,
             )
         )
     return sorted(out, key=lambda r: r.start_minute)
@@ -127,12 +159,13 @@ class Settings(BaseSettings):
     working_days: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["mon", "tue", "wed", "thu", "fri"]
     )
-    #: The other things in life, as fixed events on every day: `name@HH:MM+MINUTES`,
-    #: comma-separated. They render on the schedule and the planner plans around
-    #: them; only the ones inside the working window spend capacity (lunch does,
-    #: breakfast does not). Empty string means none. Parsed and validated by
-    #: `parse_routines` above — the same function capacity consumes it through, so a
-    #: malformed entry fails at startup, not at 05:45.
+    #: The other things in life, as fixed events: `name@HH:MM+MINUTES`, comma-separated,
+    #: with an optional day scope — `banner@16:00+240@wed`, or `gym@17:30+60@mon|wed|fri`
+    #: for several. Unscoped means every day, which is what most of life is. They render
+    #: on the schedule and the planner plans around them; only the ones inside the working
+    #: window spend capacity (lunch does, breakfast does not). Empty string means none.
+    #: Parsed and validated by `parse_routines` above — the same function capacity
+    #: consumes it through, so a malformed entry fails at startup, not at 05:45.
     routines: str = (
         "breakfast@07:30+30,lunch@12:30+45,gym@17:30+60,shower@18:35+25,dinner@19:15+45"
     )

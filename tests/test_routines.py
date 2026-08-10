@@ -39,11 +39,51 @@ class TestParser:
     @pytest.mark.parametrize(
         "raw",
         ["lunch", "lunch@noon+30", "lunch@12:30", "lunch@25:00+30", "lunch@12:75+30",
-         "lunch@12:30+0", "lunch@12:30+2000"],
+         "lunch@12:30+0", "lunch@12:30+2000", "lunch@12:30+30@funday",
+         "lunch@12:30+30@wed,thu", "lunch@12:30+30@"],
     )
     def test_every_malformed_shape_leaves_by_one_door(self, raw: str) -> None:
         with pytest.raises(RoutineError):
             parse_routines(raw)
+
+
+class TestAWeeklyObligationIsExpressible:
+    """Banner volunteering is Wednesdays 4–8pm, and had nowhere to live.
+
+    An unscoped routine applies to every day, so spelling it that way deleted four hours
+    from the six days that do not have it; leaving it out let the planner book work over
+    the one day that does. Neither is the truth, and the truth is a weekly commitment.
+    """
+
+    WEDNESDAY = date(2026, 7, 29)
+    THURSDAY = date(2026, 7, 30)
+
+    def test_a_scoped_routine_lands_only_on_its_own_days(self) -> None:
+        settings = Settings(routines="banner@16:00+240@wed")
+        assert [e.title for e in capacity.routine_events(settings, self.WEDNESDAY, PHOENIX)] == [
+            "Banner"
+        ]
+        assert capacity.routine_events(settings, self.THURSDAY, PHOENIX) == []
+
+    def test_several_days_are_pipe_separated_because_commas_separate_routines(self) -> None:
+        routines = parse_routines("gym@17:30+60@mon|wed|fri, breakfast@07:30+30")
+        gym = next(r for r in routines if r.name == "gym")
+        breakfast = next(r for r in routines if r.name == "breakfast")
+        assert gym.days == {"mon", "wed", "fri"}
+        assert gym.falls_on(self.WEDNESDAY) and not gym.falls_on(self.THURSDAY)
+        # Unscoped stays unscoped: most of life does not check the calendar.
+        assert breakfast.days == frozenset()
+        assert breakfast.falls_on(self.WEDNESDAY) and breakfast.falls_on(self.THURSDAY)
+
+    def test_a_scoped_routine_spends_capacity_only_on_its_days(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The point of the scope, in the number that matters: an anchor the owner does
+        not have on Thursday must not shorten Thursday."""
+        scoped = settings.model_copy(update={"routines": "banner@16:00+240@wed"})
+        wed = capacity.compute(conn, scoped, self.WEDNESDAY)
+        thu = capacity.compute(conn, scoped, self.THURSDAY)
+        assert wed.capacity_minutes < thu.capacity_minutes
 
 
 class TestClock12:

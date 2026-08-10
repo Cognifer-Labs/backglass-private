@@ -434,11 +434,17 @@ def _allday(row: sqlite3.Row, day: date, tz: str) -> FixedEvent:
 
 
 def routine_events(settings: Settings, day: date, tz: str) -> list[FixedEvent]:
-    """The configured daily anchors — breakfast, lunch, gym — as fixed events on `day`.
+    """The configured anchors — breakfast, lunch, gym — as fixed events on `day`.
 
-    Life happens every day, so these carry no weekday gate: a Saturday breakfast is
-    still breakfast. They come from config rather than the ledger because they are
-    the owner's own template for a day, not something a source said.
+    Most of life happens every day, so an unscoped routine carries no weekday gate: a
+    Saturday breakfast is still breakfast. A routine that names days is filtered to
+    them, which is what lets a weekly obligation be one — Banner volunteering on
+    Wednesdays 4–8pm had to be either an everyday routine, deleting four hours from six
+    days that do not have it, or nothing at all, leaving the planner free to book over
+    the one day that does.
+
+    They come from config rather than the ledger because they are the owner's own
+    template for a day, not something a source said.
     """
     from zoneinfo import ZoneInfo
 
@@ -452,6 +458,7 @@ def routine_events(settings: Settings, day: date, tz: str) -> list[FixedEvent]:
             kind="routine",
         )
         for r in parse_routines(settings.routines)
+        if r.falls_on(day)
     ]
 
 
