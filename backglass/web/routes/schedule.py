@@ -106,6 +106,11 @@ class Entry:
     top: int
     height: int
     lane: int
+    #: How many lanes the overlap cluster this entry belongs to was split into. The
+    #: pair is what the stylesheet needs: `lane` is which column, `lanes` is how wide
+    #: a column is. Carried per entry rather than per timeline so a day with one
+    #: triple-booked hour does not narrow every other block on the canvas to a third.
+    lanes: int = 1
     outcome: str = ""
     travel: bool = False
 
@@ -249,26 +254,74 @@ def _window(raws: list[list[RawEntry]]) -> tuple[int, int]:
     return (start_min // 60) * 60, ((end_min + 59) // 60) * 60
 
 
+def _clusters(raw: list[RawEntry]) -> list[list[RawEntry]]:
+    """`raw`, already sorted by start, cut into runs of mutually overlapping entries.
+
+    A cluster ends at the first entry that starts at or after everything before it has
+    finished — the running maximum end, not the previous entry's end, because a two-hour
+    dinner can span three shorter blocks that each end before the next begins.
+
+    Clustering is what keeps the columns local. Lanes are a property of a collision, so
+    a day holding one triple-booked evening and nine ordinary blocks should draw nine
+    full-width blocks and three thirds, not twelve thirds.
+    """
+    out: list[list[RawEntry]] = []
+    reach: int | None = None
+    for entry in raw:
+        if reach is None or entry[0] >= reach:
+            out.append([])
+            reach = entry[0] + entry[1]
+        else:
+            reach = max(reach, entry[0] + entry[1])
+        out[-1].append(entry)
+    return out
+
+
 def _place(raw: list[RawEntry], start_min: int, *, px: float, min_height: int) -> list[Entry]:
+    """Entries positioned, and side by side wherever P5's ban on overlap does not hold.
+
+    P5 bans the planner from overlapping its own blocks, and nothing bans the day itself:
+    fixed events collide with each other and with the routines, which have no capacity
+    negotiation at all — they are anchors, drawn where the owner said they happen. The
+    evening of 2026-08-09 held five at once (gym, two versions of the same McKenna dinner,
+    shower, dinner), and the two-lane packing here put three of them in lane 1 without
+    ever asking whether lane 1 was free: `start >= lane_ends[0]` decides lane 0, and the
+    else branch was lane 1 unconditionally. Drawn, they stacked, and the titles underneath
+    were unreadable — a canvas asserting a schedule nobody could check.
+
+    So: first fit across as many lanes as the cluster needs. The first lane whose last
+    entry has finished takes it; if none has, the cluster grows a column. Entry order is
+    unchanged — clusters come out in start order and each preserves its own — so the
+    document order the templates rely on is the same one `_raw_entries` sorted.
+    """
     entries: list[Entry] = []
-    # Two lanes: P5 bans overlapping blocks, but two fixed events can collide.
-    lane_ends = [0, 0]
-    for start, dur, title, kind, outcome, travel in raw:
-        lane = 0 if start >= lane_ends[0] else 1
-        lane_ends[lane] = max(lane_ends[lane], start + dur)
-        entries.append(
-            Entry(
-                title=title,
-                kind=kind,
-                start_label=_clock(start),
-                end_label=_clock(start + dur),
-                top=round((start - start_min) * px),
-                height=max(round(dur * px), min_height),
-                lane=lane,
-                outcome=outcome,
-                travel=travel,
+    for cluster in _clusters(raw):
+        lane_ends: list[int] = []
+        placed: list[tuple[int, RawEntry]] = []
+        for entry in cluster:
+            start, dur = entry[0], entry[1]
+            lane = next(
+                (i for i, end in enumerate(lane_ends) if start >= end), len(lane_ends)
             )
-        )
+            if lane == len(lane_ends):
+                lane_ends.append(0)
+            lane_ends[lane] = start + dur
+            placed.append((lane, entry))
+        for lane, (start, dur, title, kind, outcome, travel) in placed:
+            entries.append(
+                Entry(
+                    title=title,
+                    kind=kind,
+                    start_label=_clock(start),
+                    end_label=_clock(start + dur),
+                    top=round((start - start_min) * px),
+                    height=max(round(dur * px), min_height),
+                    lane=lane,
+                    lanes=len(lane_ends),
+                    outcome=outcome,
+                    travel=travel,
+                )
+            )
     return entries
 
 

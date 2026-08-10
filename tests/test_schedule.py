@@ -326,6 +326,69 @@ class TestTheTimelineDrawsEachEventOnce:
         assert {e.lane for e in entries} == {0, 1}
 
 
+class TestNoTwoEntriesShareALaneAndAnHour:
+    """The evening of 2026-08-09, where five things overlapped and only two lanes existed.
+
+    `_place` decided lane 0 on `start >= lane_ends[0]` and fell through to lane 1 without
+    asking whether lane 1 was free, so the shower and the dinner were both drawn on top of
+    a two-hour McKenna dinner. The screenshot is the failure: three blocks of unreadable
+    text in one column. This is the invariant that makes that unrepresentable.
+    """
+
+    def _evening(self) -> schedule_page.DayView:
+        return _view(
+            fixed=[
+                capacity.FixedEvent(
+                    starts_at=capacity._aware("2026-08-20T18:00:00-07:00", TZ),
+                    ends_at=capacity._aware("2026-08-20T20:00:00-07:00", TZ),
+                    title="McKenna Program Welcome Dinner",
+                ),
+                capacity.FixedEvent(
+                    starts_at=capacity._aware("2026-08-20T18:30:00-07:00", TZ),
+                    ends_at=capacity._aware("2026-08-20T19:30:00-07:00", TZ),
+                    title="McKenna Summer Program kickoff dinner",
+                ),
+            ],
+            blocks=[
+                _block(
+                    "2026-08-20T17:30:00-07:00", "2026-08-20T18:30:00-07:00", "Gym", "routine"
+                ),
+                _block(
+                    "2026-08-20T18:35:00-07:00", "2026-08-20T19:00:00-07:00", "Shower", "routine"
+                ),
+                _block(
+                    "2026-08-20T19:15:00-07:00", "2026-08-20T20:00:00-07:00", "Dinner", "routine"
+                ),
+                # Clear of the pile-up, and the proof that lanes are a property of the
+                # collision rather than of the day: this one keeps the full width.
+                _block(
+                    "2026-08-20T21:00:00-07:00", "2026-08-20T21:30:00-07:00",
+                    "Log the day", "work",
+                ),
+            ],
+        )
+
+    def test_no_two_entries_in_one_lane_cover_the_same_minute(self) -> None:
+        entries = schedule_page.timeline(self._evening(), today=DAY).entries
+
+        by_lane: dict[int, list[schedule_page.Entry]] = {}
+        for entry in entries:
+            by_lane.setdefault(entry.lane, []).append(entry)
+        for lane_entries in by_lane.values():
+            spans = sorted((e.top, e.top + e.height) for e in lane_entries)
+            for (_, earlier_end), (later_top, _) in zip(spans, spans[1:]):
+                assert later_top >= earlier_end
+
+    def test_the_cluster_is_as_wide_as_it_needs_and_no_wider(self) -> None:
+        entries = schedule_page.timeline(self._evening(), today=DAY).entries
+        widths = {e.title: (e.lane, e.lanes) for e in entries}
+
+        # Five overlapping things, three columns: gym then kickoff dinner share one,
+        # shower then dinner share another, the two-hour welcome dinner holds the third.
+        assert {lanes for _, lanes in widths.values() if lanes > 1} == {3}
+        assert widths["Log the day"] == (0, 1)
+
+
 def test_dedup_keeps_the_outcome_only_the_plan_block_records() -> None:
     """The mirror of the travel rule, and the one a winner-takes-all merge loses.
 

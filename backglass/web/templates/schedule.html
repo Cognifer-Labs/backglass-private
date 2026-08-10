@@ -74,9 +74,12 @@
         {% endfor %}
 
         {% for e in tl.entries %}
-          <div class="ev k-{{ e.kind }}{% if e.lane %} lane1{% endif %}{% if e.tiny %} tiny{% elif e.slim %} slim{% endif %}"
-               style="top:{{ e.top }}px;height:{{ e.height }}px"
-               {% if e.tiny or e.slim %}title="{{ e.start_label }}–{{ e.end_label }} {{ e.title }}"
+          {# --lane/--lanes are the column and the count; the stylesheet does the
+             arithmetic so a cluster of five draws five columns rather than two
+             stacked on each other. #}
+          <div class="ev k-{{ e.kind }}{% if e.tiny %} tiny{% elif e.slim %} slim{% endif %}"
+               style="top:{{ e.top }}px;height:{{ e.height }}px;--lane:{{ e.lane }};--lanes:{{ e.lanes }}"
+               {% if e.tiny or e.slim or e.lanes > 1 %}title="{{ e.start_label }}–{{ e.end_label }} {{ e.title }}"
                aria-label="{{ e.start_label }}–{{ e.end_label }} {{ e.title }}"{% endif %}>
             {% if e.tiny %}
               {# Below 32px the title has nowhere to go but under the type floor, so it

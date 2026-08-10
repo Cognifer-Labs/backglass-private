@@ -518,12 +518,14 @@ button.box::before{content:"";position:absolute;inset:-6px}
 .wcol i{position:absolute;left:0;right:0;border-top:1px solid var(--rule-hair)}
 /* 4px gutters, on the scale. At 2px a day boundary — the grid's strongest division —
  * read no heavier than the seam between two back-to-back meetings inside one day. */
-.wev{position:absolute;left:var(--sp-1);right:var(--sp-1);border:1px solid var(--rule);
+.wev{position:absolute;--lane:0;--lanes:1;
+  left:calc(var(--sp-1) + (100% - var(--sp-1) * 2) * var(--lane) / var(--lanes));
+  width:calc((100% - var(--sp-1) * 2) / var(--lanes) - 1px);
+  border:1px solid var(--rule);
   border-radius:var(--radius-1);background:var(--fill-mild);
   font-size:11px;line-height:13px;color:var(--ink);text-decoration:none;
   overflow:hidden;white-space:nowrap;text-overflow:ellipsis;padding:0 3px}
 .wev:hover{outline:2px solid var(--rule)}
-.wev.lane1{left:50%}
 .wev.k-fixed{border-color:var(--ink-line);border-left-width:3px;background:var(--ink-wash)}
 .wev.k-work{border-color:var(--cobalt-line);border-left-width:3px;background:var(--cobalt-wash)}
 .wev.k-small{border-color:var(--turq-line);border-left-width:3px;background:var(--turq-wash)}
@@ -845,10 +847,18 @@ a.nm:hover{text-decoration:underline;text-underline-offset:2px}
  * welded to the title above it. Off the scale on purpose — this is the inside of a block
  * whose height is minutes-to-pixels, so a 4px step would push a 30-minute event's third
  * line out of its own box. */
-.tl .ev{position:absolute;left:64px;right:var(--sp-3);border:2px solid var(--rule);
+/* Lanes are set per entry, not per canvas: --lane is the column, --lanes the count in
+ * that entry's overlap cluster, and the track is the ruler's 64px gutter to the right
+ * inset. `right` is gone rather than left overconstrained, because a fractional left
+ * plus a fixed right is the two-lane bug in another spelling — lane 0 kept full width
+ * and drew underneath its neighbours. The 4px taken off the width is the seam between
+ * two adjacent columns; at --lanes:1 it is the old right inset within a pixel. */
+.tl .ev{position:absolute;--lane:0;--lanes:1;
+  left:calc(64px + (100% - 64px - var(--sp-3)) * var(--lane) / var(--lanes));
+  width:calc((100% - 64px - var(--sp-3)) / var(--lanes) - 4px);
+  border:2px solid var(--rule);
   border-radius:var(--radius-2);background:var(--fill-mild);padding:3px var(--sp-2);overflow:hidden;
   display:flex;flex-direction:column;gap:2px}
-.tl .ev.lane1{left:calc(50% + 32px)}
 /* From the wash pair, not the plain muted step. tokens.css states the contract —
  * "containers styled with the wash tokens set color from these, never inherit" —
  * and these two never did: neutral 500 measures 3.3 on the cobalt wash a work

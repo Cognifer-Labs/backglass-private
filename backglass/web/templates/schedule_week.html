@@ -78,8 +78,8 @@
                  block is shape plus kind stripe; the words live in the title
                  attribute, and one click lands on the day view where they are set
                  at readable size. #}
-              <a class="wev k-{{ e.kind }}{% if e.lane %} lane1{% endif %}"
-                 style="top:{{ e.top }}px;height:{{ e.height }}px"
+              <a class="wev k-{{ e.kind }}"
+                 style="top:{{ e.top }}px;height:{{ e.height }}px;--lane:{{ e.lane }};--lanes:{{ e.lanes }}"
                  href="/schedule?date={{ c.view.day.isoformat() }}"
                  aria-label="{{ e.start_label }}–{{ e.end_label }} {{ e.title }}"
                  title="{{ e.start_label }}–{{ e.end_label }} {{ e.title }}"></a>
