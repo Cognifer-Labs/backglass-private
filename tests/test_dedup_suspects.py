@@ -237,3 +237,64 @@ class TestTheBoardAsksTheQuestion:
         # Asked-and-answered stays answered on the next full page load too.
         assert "Looks the same (" not in client.get("/").text
         assert client.post(f"/commitments/{b}/distinct/{a}").status_code == 422
+
+
+class TestTheQueueLeadsWithWhatBothSignalsAgreeOn:
+    """261 suspect pairs is a queue nobody finishes — the review queue's failure again.
+
+    Wording and meaning disagree usefully. Thirteen of the owner's pairs score under 0.85
+    lexically and over 0.92 semantically: "Tell Mrs. Gathas you are back in Arizona"
+    against "…he's back in Arizona" is 0.81 and 0.94, and is plainly one promise. Those
+    are near-certain duplicates sitting anywhere in the list.
+
+    Agreement promotes; disagreement does nothing. The inverse band was measured and
+    discarded — "complete required ASU Ready program" against "…program modules" reads
+    alike at 0.90, the embedding calls them different, and the embedding is wrong. A
+    signal that is right about one direction is not thereby right about the other.
+    """
+
+    def _two_pairs(self, conn: sqlite3.Connection) -> None:
+        a_commitment(conn, "review AES agreement and accept the award")
+        a_commitment(conn, "complete AES acceptance and agreement form")
+        a_commitment(conn, "buy a parking permit for the year")
+        a_commitment(conn, "buy a parking permit for the semester")
+
+    def test_a_pair_both_signals_call_the_same_leads_the_queue(
+        self, conn: sqlite3.Connection, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        self._two_pairs(conn)
+        rows = conn.execute("SELECT id FROM commitment ORDER BY id").fetchall()
+        aes = (int(rows[0]["id"]), int(rows[1]["id"]))
+        monkeypatch.setattr(dedup, "_semantic_pairs", lambda conn: {aes})
+
+        pairs = dedup.suspects(conn)
+
+        assert (pairs[0]["a_id"], pairs[0]["b_id"]) == aes
+        assert pairs[0]["by_meaning"] is True
+        # Promoted despite scoring lower on wording than the pair it now leads.
+        assert any(p["score"] > pairs[0]["score"] for p in pairs[1:])
+
+    def test_the_queue_is_unchanged_without_an_index(
+        self, conn: sqlite3.Connection, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        """Retrieval is additive. An installation that never runs `search index` sees
+        exactly the queue it saw before any of this existed."""
+        self._two_pairs(conn)
+        monkeypatch.setattr(dedup, "_semantic_pairs", lambda conn: set())
+
+        pairs = dedup.suspects(conn)
+
+        assert pairs == sorted(pairs, key=lambda p: -p["score"])
+        assert all(p["by_meaning"] is False for p in pairs)
+
+    def test_a_broken_embedding_endpoint_does_not_break_the_board(
+        self, conn: sqlite3.Connection, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        """Rule 5's shape: the queue degrades to its old behaviour rather than failing."""
+        self._two_pairs(conn)
+
+        def boom(*args: object, **kwargs: object) -> set[tuple[int, int]]:
+            raise RuntimeError("connection refused")
+
+        monkeypatch.setattr("backglass.search.duplicate_pairs", boom)
+        assert dedup.suspects(conn)  # renders, and by wording alone

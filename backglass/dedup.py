@@ -46,6 +46,29 @@ def _fan_out(a: dict[str, Any], b: dict[str, Any]) -> bool:
     )
 
 
+def _semantic_pairs(conn: sqlite3.Connection) -> set[tuple[int, int]]:
+    """The second opinion, when there is one.
+
+    `entities.similar` compares token sets, which catches restatements that reuse the
+    words and misses restatements that do not. Over the owner's 191 open promises it finds
+    39 pairs; embeddings find 46, and 13 of those are ones only meaning catches — "Tell
+    Mrs. Gathas you are back in Arizona" against "…he's back in Arizona" scores 0.81
+    lexically and 0.94 semantically, and is plainly one promise. Six go the other way, so
+    neither replaces the other and the union is what gets asked about.
+
+    Silent when nothing is indexed, or when the embedding endpoint is down. Retrieval is
+    additive (docs/02) and the board must render without it — an installation that never
+    runs `search index` sees exactly the queue it saw before this existed.
+    """
+    try:
+        from backglass import search
+        from backglass.config import get_settings
+
+        return search.duplicate_pairs(conn, get_settings())
+    except Exception:  # noqa: BLE001 — no index, no endpoint, no vectors: all the same here
+        return set()
+
+
 def suspects(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Open same-direction pairs scoring in [SUSPECT_FLOOR, 1.0], strongest first.
 
@@ -74,6 +97,7 @@ def suspects(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             (USER_ID,),
         )
     }
+    semantic = _semantic_pairs(conn)
     out: list[dict[str, Any]] = []
     for i, a in enumerate(rows):
         for b in rows[i + 1 :]:
@@ -83,7 +107,15 @@ def suspects(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             if pair in settled:
                 continue
             score = entities.similar(str(a["what"]), str(b["what"]))
-            if score >= SUSPECT_FLOOR:
+            # Agreement is the signal; disagreement is not. Where both call a pair the
+            # same thing it is almost always the same thing, and 13 of the owner's pairs
+            # are that while scoring under 0.85 lexically — near-certain duplicates
+            # sitting anywhere in a queue of 261. The inverse set was measured and
+            # discarded: "complete required ASU Ready program" against "…program modules"
+            # reads alike and the embedding disagrees, and the embedding is wrong. So this
+            # promotes and never demotes.
+            by_meaning = pair in semantic
+            if score >= SUSPECT_FLOOR or by_meaning:
                 out.append(
                     {
                         "a_id": pair[0],
@@ -94,7 +126,14 @@ def suspects(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                         "b_who": str(b["who"]) if b["who"] else "",
                         "score": score,
                         "one_message": _fan_out(a, b),
+                        # Which signal found it, because "these read alike" and "these
+                        # mean the same" are different claims and the card should not
+                        # imply the first when only the second is true.
+                        "by_meaning": by_meaning,
                     }
                 )
-    out.sort(key=lambda p: -p["score"])
+    # Pairs both signals agree on lead, then the rest by wording as before. A queue of 261
+    # is one nobody reaches the end of — the same failure the review queue had — so what
+    # is nearly certain has to be at the top rather than merely present.
+    out.sort(key=lambda p: (not p["by_meaning"], -p["score"]))
     return out

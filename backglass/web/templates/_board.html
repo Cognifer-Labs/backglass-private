@@ -106,7 +106,9 @@
               <div class="grow">
                 <p class="b1">{{ s['a_what'] }}{% if s['a_who'] %} <span class="b2i">— {{ s['a_who'] }}</span>{% endif %}</p>
                 <p class="b1">{{ s['b_what'] }}{% if s['b_who'] %} <span class="b2i">— {{ s['b_who'] }}</span>{% endif %}</p>
-                <p class="b2">{{ '%.0f'|format(s['score'] * 100) }}% alike{% if s['one_message'] %} · one message, two people{% endif %}</p>
+                <p class="b2">{{ '%.0f'|format(s['score'] * 100) }}% alike
+                  {%- if s.get('by_meaning') and s['score'] < 0.85 %} · different words, same meaning{% endif %}
+                  {%- if s['one_message'] %} · one message, two people{% endif %}</p>
               </div>
               <div class="acts" style="display:flex">
                 <button class="btn ok" hx-post="/commitments/{{ s['a_id'] }}/same/{{ s['b_id'] }}"

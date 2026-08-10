@@ -390,11 +390,6 @@ DEPENDENTS = (
     "checkpoint",
     "fact",
     "model_batch_item",
-    # A pruned message must not stay findable. `embedding` cascades on delete, so the row
-    # would go either way — naming it here keeps the prune explicit about every table it
-    # clears rather than leaving one of them to a PRAGMA being on, and keeps the
-    # coverage test above a real check instead of one with a quiet exemption.
-    "embedding",
 )
 
 

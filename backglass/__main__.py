@@ -3411,9 +3411,15 @@ def search_run(
         raise typer.Exit(code=2) from exc
 
     for hit in hits:
+        # The fold is stated, never silent. "×8 since 17 Apr" is a fact about the corpus
+        # the owner cannot get anywhere else, and hiding seven rows without saying so is
+        # the same silent truncation P2 forbids one panel over.
+        repeats = (
+            f"  ×{hit.copies} since {hit.first_seen[:10]}" if hit.copies > 1 else ""
+        )
         typer.echo(
-            f"  {hit.score:.3f}  {hit.occurred_at[:10]}  {hit.title[:64]}"
-            f"   [{hit.source} #{hit.source_item_id}]"
+            f"  {hit.score:.3f}  {hit.occurred_at[:10]}  {hit.title[:56]}"
+            f"   [{hit.source} #{hit.source_item_id}]{repeats}"
         )
     if stats["pending"]:
         # Not a warning about the results shown; a statement about the ones that could not
@@ -3430,6 +3436,13 @@ def search_index(
     all_pending: Annotated[
         bool, typer.Option("--all", help="Keep going until nothing is pending")
     ] = False,
+    kind: Annotated[
+        str,
+        typer.Option(
+            "--kind",
+            help="source_item (searchable documents) or commitment (feeds duplicate detection)",
+        ),
+    ] = "source_item",
 ) -> None:
     """Embed kept documents that have no vector yet.
 
@@ -3445,7 +3458,7 @@ def search_index(
     total = 0
     while True:
         try:
-            added = search_mod.index(conn, settings, limit=limit)
+            added = search_mod.index(conn, settings, limit=limit, kind=kind)
         except search_mod.SearchError as exc:
             conn.commit()
             typer.echo(f"indexing stopped after {total}: {exc}", err=True)
@@ -3457,8 +3470,8 @@ def search_index(
         if not added or not all_pending:
             break
 
-    stats = search_mod.coverage(conn, settings)
+    stats = search_mod.coverage(conn, settings, kind)
     typer.echo(
-        f"{stats['indexed']} of {stats['indexable']} indexed ({stats['model']}); "
-        f"{stats['pending']} pending"
+        f"{stats['indexed']} of {stats['indexable']} {stats['kind']}s indexed "
+        f"({stats['model']}); {stats['pending']} pending"
     )
