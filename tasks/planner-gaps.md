@@ -1,5 +1,25 @@
 # Day planner — what it still needs
 
+> **Status, 2026-08-09 evening.** Written before a concurrent session landed six commits
+> on `main` covering most of Tier 1. Re-measured after merging them; the state of each
+> item is marked below. Five items are now done, two were superseded by that session's
+> work, and the remainder are real and unstarted.
+>
+> | Item | State |
+> |---|---|
+> | 1. An hour in prose | **superseded** — prompt v8 makes "be somewhere at 8am" an engagement (`2af4508`). Existing rows still predate it; see §12. |
+> | 2. Overdue outranks due-today | **superseded in practice** — with hours on engagements, a day-anchored event is a fixed block and never competes for ranking. Left open as a spec gap in docs/04 §1.5. |
+> | 3. Shutdown at 18:00 | **done** — `141eba6` |
+> | 4. Duplicates never merge | **done, differently** — `35f7414`. The merge would have been wrong; see the revised item. |
+> | 5. Half the ledger invisible | open |
+> | 6. Goal linkage dead | open — the largest remaining item |
+> | 7. Estimates are guesses | open |
+> | 8. Routines have no weekday | **done** — `58c5f93` |
+> | 9. `state` misses templates | **done** — `078b301` |
+> | 10. "46 did not fit" | **done** — `34b48dd` |
+> | 11. Lane readability | **done** — `dbb1f8f` |
+> | 12. Re-extract the old rows | **new**, and now the top of the list |
+
 Derived 2026-08-09 by measuring the live store, not by reading the spec and guessing.
 Every claim below names the command behind it, so it can be re-derived rather than
 believed. Written to its own file rather than `tasks/todo.md` because a second session
@@ -85,11 +105,23 @@ NULL. Nothing ever compares them.
 on ANY counterparty — the automatic path never got the same treatment. Semantically:
 8 open scholarship rows, 8 hospice, 6 diploma.
 
-- **Implement**: an entity-blind merge pass over the ledger — automatic at ≥0.95, with
-  everything below staying the question `dedup.suspects` already asks. Entity merging is
-  the deeper fix and a bigger job; this is the cheap half.
-- **Test**: identical rows whose counterparties resolved differently collapse; a 0.9 pair
-  stays a question.
+**The merge this item originally proposed would have destroyed data, and was not built.**
+Those three identical rows carry entities 155, 156 and 157 — Suriyampola, Hossain and
+Pedram — and all three came from source item 8763. One mail asking for three intro
+emails is three promises, and an entity-blind auto-merge at ≥0.95 would have silently
+deleted two of them. Nineteen of the pairs are this shape.
+
+What shipped instead (`35f7414`): the question carries the fact that answers it. Each
+side names its counterparty, and a pair drawn from one message to two different people
+says so. Every top pair in the owner's store is now decidable by eye — three instructors
+are Different; "Complete the Math Placement Test — ASU" against the same words with no
+counterparty is Same. Labelled, never merged, because same-source-different-person also
+covers one task read twice with the sender resolved differently each time, and this layer
+cannot tell those apart.
+
+- **Still open**: "complete Dreamscape waiver online" is owed to both "Nyasha" and
+  "Mrs. Shepard" — one person under two names. Entity merging is the deeper fix and its
+  own job.
 
 ### 5. Over half the owner's obligations are invisible to the planner
 
@@ -156,16 +188,41 @@ ellipsizes its title. Worth a cap plus an overflow affordance if a day ever hold
 
 ---
 
+### 12. The ledger predates the fixes to the code that fills it
+
+The concurrent session's work is all at extraction time: prompt v8 turns "be somewhere at
+8am" into an engagement, engagements collapse on overlap plus shared words, all-day plans
+render as banners. None of it has touched a single existing row. Measured after merging
+that work:
+
+```
+132 open commitments, 48 visible to the planner, 1 goal-linked, 112 default estimates
+6 move-in engagements, 5 with no start hour
+```
+
+`prompts.versions_in_the_ledger` is `extract-commitments@7`; on disk it is `@8`. So the
+owner's own move-in still has its hour trapped in a title, and will until the rows are
+re-read.
+
+- **Implement**: `backglass extract` re-runs against the new prompt without re-fetching.
+  Scope it to kept items that have an `@7` extraction rather than all 8,868, and price it
+  first — this is the one item on the list that costs money, and the spend cap is enforced
+  in code (CLAUDE.md rule 7).
+- **Test**: none new. The extraction fixtures are the coverage; this is an operation.
+
+---
+
 ## Tests to add, collected
 
-| Test | Tier |
+| Test | State |
 |---|---|
-| `a_day_anchored_item_is_never_dropped_for_an_overdue_one` | 1 |
-| an engagement whose text states an hour is placed at that hour | 1 |
-| six restatements of one engagement collapse to one row | 1 |
-| the shutdown hour derives from the working window | 1 |
-| identical commitments from two sources merge; a 0.9 pair stays a question | 2 |
-| an at-risk goal pulls its linked work up the order | 2 |
-| a weekday-scoped routine costs no capacity on other days | 3 |
-| a stale frozen template appears in `stale_surfaces` | 3 |
-| ~~no two timeline entries share a lane and a minute~~ | done, `dbb1f8f` |
+| no two timeline entries share a lane and a minute | done, `dbb1f8f` |
+| an engagement whose text states an hour is placed at that hour | done by the other session, `2af4508` |
+| several restatements of one engagement collapse to one row | done by the other session, `46a8fd5` |
+| the shutdown hour derives from the working window | done, `141eba6` |
+| a stale frozen template appears in `stale_surfaces` | done, `078b301` |
+| each duplicate pair names its counterparty; a fan-out is labelled | done, `35f7414` |
+| a weekday-scoped routine costs no capacity on other days | done, `58c5f93` |
+| the overflow partitions into named and counted, losing nothing | done, `34b48dd` |
+| an at-risk goal pulls its linked work up the order | **open** (item 6) |
+| a logged actual reaches `estimates` and moves the type default | **open** (item 7) |
