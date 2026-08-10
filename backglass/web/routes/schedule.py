@@ -13,6 +13,7 @@ from __future__ import annotations
 import sqlite3
 from collections.abc import Callable
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import date, datetime, timedelta
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
@@ -429,13 +430,21 @@ class WeekCol:
     entries: list[Entry]
     now_top: int | None
     cap: dict[str, Any] | None
+    #: Titles of the day's all-day plans. They are not entries — nothing on the ruler
+    #: can express "all day" — so the column carries them beside it and the grid draws
+    #: them above its own hours.
+    allday: list[str] = dataclass_field(default_factory=list)
 
     @property
     def busy(self) -> bool:
         """Something beyond the routine template is on this day. Routines repeat on
         all seven columns by construction, so they alone cannot earn the grid its
-        ink — an empty week stays a sentence, not a framed void of breakfasts."""
-        return any(e.kind != "routine" for e in self.entries)
+        ink — an empty week stays a sentence, not a framed void of breakfasts.
+
+        An all-day plan counts. A day whose only non-routine content is a six-day
+        programme has no entries at all, so without this the week reads as quiet and
+        can collapse to the "nothing on" sentence while the owner is at the programme."""
+        return bool(self.allday) or any(e.kind != "routine" for e in self.entries)
 
     @property
     def free_minutes(self) -> int | None:
@@ -483,6 +492,7 @@ def week_timeline(views: list[DayView], *, today: date) -> WeekTimeline:
             now_top=_now_top(v, today, start_min, end_min, WEEK_PX),
             # Day-level capacity fields ride on every block row of dashboard_today.
             cap=v.blocks[0] if v.blocks else None,
+            allday=allday(v),
         )
         for v, raw in zip(views, raws, strict=True)
     ]

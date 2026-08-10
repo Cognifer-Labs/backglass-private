@@ -1528,3 +1528,129 @@ class TestNearDuplicateEngagements:
 
         assert one < alone, "the dinner must cost the evening something"
         assert still_one == one, "the second reading of it must cost nothing more"
+
+
+class TestDedupDefectsFoundInReview:
+    """Six cases an adversarial review produced that the first pass missed.
+
+    Every one is a silent deletion: an event the owner has, that the day stops showing,
+    with nothing anywhere saying it was dropped. That is the failure mode this collapse
+    is most dangerous for, so each gets its own name.
+    """
+
+    VENUE = "Armstrong Hall Rotunda, 1100 S McAllister Ave, Tempe, AZ 85281"
+
+    def test_one_venue_does_not_merge_the_meetings_held_in_it(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings
+    ) -> None:
+        """`engagement_events` appends " — {location}" to the title before the collapse
+        runs, so a shared address used to supply every token identity needed. Two
+        unrelated plans in one campus building overlapped, shared five long words of
+        street address, and one of them disappeared — taking its minutes out of the
+        capacity subtraction too, so the day reported MORE free time than it had."""
+        add_engagement(
+            conn,
+            what="Law school info session",
+            starts_at=f"{THURSDAY.isoformat()}T14:00:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T15:00:00-07:00",
+            location=self.VENUE,
+        )
+        add_engagement(
+            conn,
+            what="Barrett honors reception",
+            starts_at=f"{THURSDAY.isoformat()}T14:30:00-07:00",
+            ends_at=f"{THURSDAY.isoformat()}T16:00:00-07:00",
+            location=self.VENUE,
+        )
+        events = capacity_mod.engagement_events(conn, THURSDAY, PHOENIX)
+        assert len(events) == 2, "a room is not evidence that two meetings are one"
+        assert {e.title.split(" — ")[0] for e in events} == {
+            "Law school info session",
+            "Barrett honors reception",
+        }
+
+    def test_two_different_programmes_do_not_annihilate_each_other(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings
+    ) -> None:
+        """All-day banners span midnight to midnight, so overlap is guaranteed and
+        carries no information. Matched on it, a six-day programme and a three-day one
+        sharing two words deleted each other on alternate days — leaving the longer one
+        with a hole in its middle and the winner flipping day to day."""
+        add_engagement(
+            conn,
+            what="McKenna Summer Program",
+            starts_at="2026-08-09",
+            ends_at="2026-08-14",
+        )
+        add_engagement(
+            conn,
+            what="McKenna Research Program",
+            starts_at="2026-08-10",
+            ends_at="2026-08-12",
+        )
+        for day in (date(2026, 8, 10), date(2026, 8, 11), date(2026, 8, 12)):
+            titles = {
+                e.title.split(" (")[0]
+                for e in capacity_mod.engagement_events(conn, day, PHOENIX)
+            }
+            assert titles == {"McKenna Summer Program", "McKenna Research Program"}, day
+        # And the longer one still runs its whole length, unbroken.
+        for offset in range(6):
+            day = date(2026, 8, 9) + timedelta(days=offset)
+            assert any(
+                e.title.startswith("McKenna Summer Program")
+                for e in capacity_mod.engagement_events(conn, day, PHOENIX)
+            ), day
+
+    def test_two_readings_of_one_programme_still_collapse(self, conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+        """The fix above must not cost the case it was built for: two extractions of one
+        programme name the same run of days, and are one banner."""
+        add_engagement(
+            conn,
+            what="BioBridge 2026 Early Start Program",
+            starts_at="2026-08-05",
+            ends_at="2026-08-15",
+        )
+        add_engagement(
+            conn,
+            what="Biomedical Sciences Early Start program",
+            starts_at="2026-08-05",
+            ends_at="2026-08-15",
+        )
+        events = capacity_mod.engagement_events(conn, date(2026, 8, 9), PHOENIX)
+        assert len(events) == 1
+
+    def test_a_run_of_days_written_with_a_clock_is_still_a_run_of_days(  # type: ignore[no-untyped-def]
+        self, conn, sett: Settings
+    ) -> None:
+        """Read literally, "2026-08-10T09:00" to "2026-08-14" is a single 5220-minute
+        event: it swallowed the whole of the 10th's window — capacity zero — and then
+        appeared on none of the four days after it."""
+        add_engagement(
+            conn,
+            what="BioBridge Early Start",
+            starts_at="2026-08-10T09:00:00-07:00",
+            ends_at="2026-08-14",
+        )
+        for offset in range(5):
+            day = date(2026, 8, 10) + timedelta(days=offset)
+            (event,) = capacity_mod.engagement_events(conn, day, PHOENIX)
+            assert event.allday is True, day
+            assert event.minutes == 1440, day
+
+        weekday = date(2026, 8, 11)  # a Tuesday, inside the default working days
+        before = capacity_mod.compute(conn, sett, weekday).capacity_minutes
+        assert before > 0, "a five-day programme must not zero the days it spans"
+
+    def test_a_degenerate_window_is_refused_rather_than_reported_two_ways(  # type: ignore[no-untyped-def]
+        self, sett: Settings
+    ) -> None:
+        """"09:00-09:00" parsed, made `window_minutes` zero on a day `is_working_day`
+        called a working day, and the planner then said "not a working day" while the
+        schedule page said "fully booked" about the same Thursday."""
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError, match="ends at or before it starts"):
+            Settings(owner_name="K", db_path=sett.db_path, working_window="09:00-09:00")
+        with pytest.raises(pydantic.ValidationError, match="ends at or before it starts"):
+            Settings(owner_name="K", db_path=sett.db_path, weekend_window="18:00-10:00")

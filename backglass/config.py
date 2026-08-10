@@ -439,11 +439,22 @@ class Settings(BaseSettings):
 
         A blank `weekend_window` is the documented "same as the weekday one", so it is
         the one value that skips the check rather than raising on an empty string.
+
+        An empty span is rejected outright. "09:00-09:00" parses, and produces a day
+        that `is_working_day` calls a working day while `window_minutes` is zero — so
+        the planner said "not a working day" and the schedule page said "fully booked"
+        about the same Thursday. A day with no hours is expressed by leaving it out of
+        `working_days`; this field cannot be a second way to say it.
         """
         if value:
             from backglass.plan.timezones import parse_window
 
-            parse_window(value)
+            start, end = parse_window(value)
+            if end <= start:
+                raise ValueError(
+                    f"window {value!r} ends at or before it starts; a day with no hours "
+                    f"is one left out of WORKING_DAYS"
+                )
         return value
 
     # .env.example ships these four blank ("APPLE_TRIAGE=", "REVIEWS_TARGET_ID=") so a

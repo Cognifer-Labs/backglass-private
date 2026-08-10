@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+from datetime import date
 
 import pytest
 from fastapi.testclient import TestClient
@@ -1909,3 +1910,65 @@ class TestRecentRunErrors:
         page = client.get("/")
         assert page.status_code == 200
         assert "1 item failed triage" in panel_slice(page.text, "panel-sources")
+
+
+class TestAllDayReachesEveryReader:
+    """Three surfaces read a day, and an adversarial review found the new all-day kind
+    had only reached one of them. Each gap below rendered as a different wrong thing."""
+
+    def _plan(self, conn: sqlite3.Connection, day: str, capacity: int = 300) -> None:
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, generated_at, status)"
+            " VALUES (?, 'America/Phoenix', ?, ?, 'proposed')",
+            (day, capacity, f"{day}T05:50:00"),
+        )
+        plan_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (?, ?, ?, 'allday', 'McKenna Summer Program (day 1 of 6)')",
+            (plan_id, f"{day}T00:00:00-07:00", f"{day}T23:59:00-07:00"),
+        )
+        conn.commit()
+
+    def test_the_dashboard_today_panel_never_prints_midnight_to_midnight(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """The banner sorts first because it spans the day, and the generic row branch
+        rendered its span as "12:00am–12:00am" with Done/Roll/Pin buttons beside it —
+        the exact string the kind exists to avoid, attached to verbs that make no sense
+        on a six-day programme."""
+        self._plan(conn, date.today().isoformat())
+        panel = panel_slice(client.get("/").text, "panel-today")
+
+        assert "McKenna Summer Program (day 1 of 6)" in panel
+        assert "12:00am" not in panel
+        assert "All day" in panel
+
+    def test_the_week_grid_shows_a_programme_it_cannot_draw_an_hour_for(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """The week is where a six-day programme matters most, and `_raw_entries` skips
+        all-day events — so the grid, which is built only from entries, showed nothing
+        at all. The originating complaint was a programme the schedule never mentioned."""
+        day = date.today()
+        self._plan(conn, day.isoformat())
+        page = client.get(f"/schedule/week?start={day.isoformat()}").text
+
+        assert "McKenna Summer Program (day 1 of 6)" in page
+
+    def test_a_day_holding_only_a_banner_counts_as_busy(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """`WeekCol.busy` asked only about entries. A day whose sole non-routine content
+        is an all-day plan has none, so the week read as quiet and could collapse to its
+        "nothing on" sentence while the owner was at the programme."""
+        from backglass.web.routes.schedule import WeekCol, day_view
+
+        day = date.today()
+        self._plan(conn, day.isoformat())
+        view = day_view(conn, settings, day)
+        col = WeekCol(view=view, entries=[], now_top=None, cap=None,
+                      allday=["McKenna Summer Program (day 1 of 6)"])
+
+        assert col.busy is True
+        assert WeekCol(view=view, entries=[], now_top=None, cap=None).busy is False

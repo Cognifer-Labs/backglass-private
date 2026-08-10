@@ -514,6 +514,17 @@ button.box::before{content:"";position:absolute;inset:-6px}
   font:700 11px/14px ui-monospace,monospace;color:var(--ink-muted);font-variant-numeric:tabular-nums}
 .wcol{position:relative;border-right:1px solid var(--rule-hair);overflow:hidden;
   box-sizing:content-box;padding-bottom:var(--sp-4)}
+/* All-day strip: one row of the same eight-column grid, above the hour ruler. It sits
+ * outside the timeline because a plan with no hour has nowhere to be drawn on one —
+ * §7b, so each title is its own outlined tile rather than a tinted band. */
+.wadl{align-self:center;padding-right:var(--sp-2);text-align:right;color:var(--ink-muted)}
+.wad{display:flex;flex-direction:column;gap:2px;min-width:0;
+  padding:0 2px var(--sp-2);border-right:1px solid var(--rule-hair)}
+.wk7 .wad:last-of-type{border-right:0}
+.wadi{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  border:var(--hair) solid var(--ink);border-radius:var(--radius-1);
+  padding:1px var(--sp-1);font:700 10px/14px system-ui,sans-serif;
+  color:var(--ink);text-decoration:none}
 .wk7 > :last-child{border-right:0}
 .wcol i{position:absolute;left:0;right:0;border-top:1px solid var(--rule-hair)}
 /* 4px gutters, on the scale. At 2px a day boundary — the grid's strongest division —

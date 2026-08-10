@@ -234,28 +234,32 @@ def engagement_events(
     ).fetchall()
     # A multi-day plan is only selected on the day it starts by the query above, so the
     # days in the middle of it are found separately — otherwise a six-day programme
-    # appears on the Sunday and vanishes for the rest of the week.
+    # appears on the Sunday and vanishes for the rest of the week. Deliberately not
+    # restricted to date-only starts: a run of days written with a clock on its first
+    # ("2026-08-10T09:00" through "2026-08-14") is still a run of days, and excluding it
+    # left the plan visible on day one as a 5220-minute block that ate the whole window
+    # and absent from the four days after.
     rows = list(rows) + list(
         conn.execute(
             "SELECT what, starts_at, ends_at, location, confidence FROM engagement "
             "WHERE user_id = ? AND status = 'confirmed' AND confidence >= ? "
             "  AND starts_at IS NOT NULL AND ends_at IS NOT NULL "
-            "  AND substr(starts_at, 1, 10) < ? AND substr(ends_at, 1, 10) >= ? "
-            "  AND length(starts_at) = 10",
+            "  AND substr(starts_at, 1, 10) < ? AND substr(ends_at, 1, 10) >= ?",
             (USER_ID, min_confidence, day.isoformat(), day.isoformat()),
         ).fetchall()
     )
 
-    events: list[FixedEvent] = []
-    #: Confidence keyed by identity rather than carried on `FixedEvent`: it is what
-    #: settles a tie between two readings of one plan and means nothing to anything
-    #: downstream, so it stays local to the function that needs it.
-    confidences: dict[int, float] = {}
+    candidates: list[Candidate] = []
     for row in rows:
         raw_start = str(row["starts_at"])
-        if "T" not in raw_start and " " not in raw_start:
-            events.append(_allday(row, day, tz))
-            confidences[id(events[-1])] = float(row["confidence"] or 0.0)
+        span = _span(row)
+        if "T" not in raw_start and " " not in raw_start or span[1] > span[0]:
+            # A day and no hour, or a run of days however it was written. A plan that
+            # spans more than one day cannot be an hour on any of them: read literally,
+            # "2026-08-10T09:00" to "2026-08-14" is a 5220-minute event that swallows
+            # the whole of the 10th's window and appears on none of the four days after
+            # it. A banner is the only honest reading.
+            candidates.append(Candidate(_allday(row, day, tz), row, span))
             continue
         try:
             begins = _aware(raw_start, tz)
@@ -271,9 +275,52 @@ def engagement_events(
         title = str(row["what"])
         if row["location"]:
             title = f"{title} — {row['location']}"
-        events.append(FixedEvent(starts_at=begins, ends_at=ends, title=title))
-        confidences[id(events[-1])] = float(row["confidence"] or 0.0)
-    return sorted(_one_plan_per_plan(events, confidences), key=lambda e: e.starts_at)
+        candidates.append(
+            Candidate(FixedEvent(starts_at=begins, ends_at=ends, title=title), row, span)
+        )
+    return sorted(_one_plan_per_plan(candidates), key=lambda e: e.starts_at)
+
+
+def _span(row: sqlite3.Row) -> tuple[date, date]:
+    """The run of local days a plan covers, as (first, last). One day means first == last."""
+    start = date.fromisoformat(str(row["starts_at"])[:10])
+    raw_end = row["ends_at"]
+    try:
+        end = date.fromisoformat(str(raw_end)[:10]) if raw_end else start
+    except ValueError:
+        end = start
+    return (start, max(start, end))
+
+
+@dataclass(frozen=True)
+class Candidate:
+    """One engagement row on its way to becoming a day's event.
+
+    Carries the two things the collapse below needs and nothing downstream wants: the
+    row it came from, and the run of days it covers. Keeping them here rather than on
+    `FixedEvent` is what stops a rendering concern from leaking into the type every
+    consumer of the module reads.
+    """
+
+    event: FixedEvent
+    row: sqlite3.Row
+    span: tuple[date, date]
+
+    @property
+    def confidence(self) -> float:
+        return float(self.row["confidence"] or 0.0)
+
+    @property
+    def tokens(self) -> set[str]:
+        """Words from what the plan IS — never from where it is.
+
+        `engagement_events` appends " — {location}" to the title before this runs, and
+        a venue is not evidence of identity: two different plans at "Armstrong Hall
+        Rotunda, 1100 S McAllister Ave, Tempe" share five long words and are two
+        different plans. Reading `what` alone is what keeps a room from merging the
+        meetings held in it.
+        """
+        return _tokens(str(self.row["what"]))
 
 
 #: Words too short to identify anything. Five characters is not a rule about English, it
@@ -294,9 +341,7 @@ def _tokens(title: str) -> set[str]:
     }
 
 
-def _one_plan_per_plan(
-    events: list[FixedEvent], confidences: dict[int, float]
-) -> list[FixedEvent]:
+def _one_plan_per_plan(candidates: list[Candidate]) -> list[FixedEvent]:
     """Collapse several extractions of the SAME plan into the one the model believed most.
 
     The owner's day held "McKenna Program Welcome Dinner" 18:00–20:00, "McKenna Summer
@@ -322,22 +367,35 @@ def _one_plan_per_plan(
     "BioBridge Early Start orientation" at 9am and delete a real hour from the schedule.
     Same kind only: a banner can absorb a banner, an hour can absorb an hour.
 
+    And between two banners, overlap carries no information for the same reason, so they
+    are compared on the run of days they cover instead. "McKenna Summer Program"
+    (9th–14th) and "McKenna Research Program" (10th–12th) share two long words and every
+    day of the shorter one; matched on overlap they would delete each other on alternate
+    days and leave a six-day banner with a hole in the middle. Identical spans are one
+    programme described twice; different spans are two programmes.
+
     Nothing is written. The ledger keeps every row, so a merge here changes what the day
     renders, never what the owner can go and look at.
     """
-    kept: list[FixedEvent] = []
-    for event in sorted(events, key=lambda e: -confidences.get(id(e), 0.0)):
-        tokens = _tokens(event.title)
-        duplicate = any(
-            event.allday == winner.allday
-            and event.starts_at < winner.ends_at
-            and winner.starts_at < event.ends_at
-            and len(tokens & _tokens(winner.title)) >= _SHARED_TOKENS
-            for winner in kept
-        )
+    kept: list[Candidate] = []
+    for candidate in sorted(candidates, key=lambda c: -c.confidence):
+        event, tokens = candidate.event, candidate.tokens
+        duplicate = False
+        for winner in kept:
+            if event.allday != winner.event.allday:
+                continue
+            same_occasion = (
+                candidate.span == winner.span
+                if event.allday
+                else event.starts_at < winner.event.ends_at
+                and winner.event.starts_at < event.ends_at
+            )
+            if same_occasion and len(tokens & winner.tokens) >= _SHARED_TOKENS:
+                duplicate = True
+                break
         if not duplicate:
-            kept.append(event)
-    return kept
+            kept.append(candidate)
+    return [c.event for c in kept]
 
 
 def _allday(row: sqlite3.Row, day: date, tz: str) -> FixedEvent:

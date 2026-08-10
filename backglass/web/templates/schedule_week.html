@@ -64,6 +64,22 @@
           </a>
         {% endfor %}
 
+        {# All-day plans, above the ruler and spanning nothing on it. A six-day
+           programme is the single most useful thing a week can tell you, and it has no
+           hour to be drawn at — so each day's column gets a strip and the week reads as
+           the week it is. #}
+        {% if wtl.cols | map(attribute='allday') | select | first %}
+          <span class="lbl wadl">All day</span>
+          {% for c in wtl.cols %}
+            <div class="wad" id="panel-weekallday">
+              {% for title in c.allday %}
+                <a class="wadi" href="/schedule?date={{ c.view.day.isoformat() }}"
+                   aria-label="{{ title }}" title="{{ title }}">{{ title }}</a>
+              {% endfor %}
+            </div>
+          {% endfor %}
+        {% endif %}
+
         <div class="wkhrs" style="height:{{ wtl.height }}px">
           {% for h in wtl.hours %}
             {# Every second hour: at 30px an hour, a label on each one collided. #}
