@@ -837,3 +837,23 @@ deterministic given the id.
   before any operation that writes to it; a branch is not a fact you learn once. And when
   main is not checked out anywhere, `git push . <branch>:main` is the merge that cannot
   disturb a neighbour — no checkout, no stash, no race.
+
+- 2026-08-11 | `cd desktop` in one Bash call was still the working directory in the next
+  one, so `uv run backglass state` missed the repo's `.env`, fell back to the default
+  relative `./data/backglass.db`, created an empty one under `desktop/`, and reported a
+  ledger of zero source items and zero commitments. Every number in the tool that exists
+  to be trusted over inference was wrong, and nothing in its output said which directory
+  it had read. | The shell's cwd persists across tool calls; a bare relative path is a
+  question about where you happen to be standing. Use absolute paths, or `cd` back in the
+  same command. And when a ground-truth tool reports all zeros for something that
+  demonstrably has rows, suspect the path before the data.
+
+- 2026-08-11 | Spent an hour on the write path because the report was "resolve, snooze and
+  drop don't register" — and the write path was fine: a real WebKit click returned 200 and
+  moved the row. The sentence that actually located the bug was the owner's answer to
+  "what did the click do on screen": *nothing at all*. Every server answer, including a
+  500, reaches `oops.js` and paints the failed-write strip. No strip means no request. |
+  In a surface where failures are instrumented, the absence of the failure UI is evidence
+  about WHERE the failure is, not about whether there was one. Read the instrumentation
+  you already built before reading the code it instruments — and ask what the click looked
+  like before asking what the handler did.
