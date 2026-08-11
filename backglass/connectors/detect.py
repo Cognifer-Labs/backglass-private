@@ -462,8 +462,15 @@ def _credentialed(settings: Settings, authed: set[str]) -> list[Detection]:
         ),
         (
             "canvas",
-            bool(settings.canvas_base_url and settings.canvas_token),
-            "set CANVAS_BASE_URL + CANVAS_TOKEN in .env",
+            bool(
+                (settings.canvas_base_url and settings.canvas_token)
+                or settings.canvas_ics_url
+            ),
+            # Both routes named, because on an institution that disables student tokens
+            # the first hint is a dead end and reporting only it sends the owner back to
+            # a button that will never work.
+            "set CANVAS_BASE_URL + CANVAS_TOKEN in .env — or, if your institution "
+            "disables student tokens, CANVAS_ICS_URL from Calendar → Calendar Feed",
         ),
     ):
         out.append(

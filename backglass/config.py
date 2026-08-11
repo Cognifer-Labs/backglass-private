@@ -366,6 +366,13 @@ class Settings(BaseSettings):
     obsidian_vault_path: Path | None = None
     canvas_base_url: str = ""
     canvas_token: str = ""
+    #: The published Canvas calendar feed (Calendar → Calendar Feed), for institutions
+    #: that disable student-generated tokens — ASU does, which is docs/07 §Canvas's
+    #: documented failure mode. Strictly the fallback: it carries no submission state, so
+    #: work already handed in keeps reading as open. If a token is ever granted, set
+    #: CANVAS_TOKEN and clear this one; running both would ingest every assignment twice
+    #: under two source names.
+    canvas_ics_url: str = ""
 
     # ── Phase 7 sources ───────────────────────────────────────────────────
     #: GitHub personal access token (classic or fine-grained; needs repo+read:user).

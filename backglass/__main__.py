@@ -1121,6 +1121,16 @@ def _all_connectors(conn: sqlite3.Connection, settings: Settings) -> list[Connec
                 boundary=boundary,
             )
         )
+    elif settings.canvas_ics_url:
+        # `elif`, deliberately. The two read the same assignments and would write them
+        # twice under two source names, and the API path is strictly better — it knows
+        # what has been submitted. So the token wins whenever there is one, and the feed
+        # is what an institution's token policy leaves behind.
+        from backglass.connectors.canvas_ics import CanvasIcsConnector
+
+        built.append(
+            CanvasIcsConnector(feed_url=settings.canvas_ics_url, boundary=boundary)
+        )
 
     # ── Phase 7 sources — same protocol, config-gated like everything above ──
     if settings.github_token:

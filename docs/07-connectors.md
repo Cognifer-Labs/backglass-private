@@ -118,6 +118,26 @@ Optional and last. The original request that seeded this project.
   Account → Settings → Approved Integrations before building. If absent, the fallback is
   the ICS feed, which loses submission state.
 
+### The fallback, built 2026-08-11 because ASU is one of those institutions
+
+Approved Integrations renders "+ New Access Token" inert: *"Your Canvas administrators
+have chosen to limit your ability to generate your own access token."* So
+`connectors/canvas_ics.py` reads the per-user feed Canvas publishes at
+Calendar → Calendar Feed. That document is handed out by the institution; this is the
+fallback the paragraph above names, not a way around the decision it describes.
+
+It emits `canvas:ics` rather than letting `apple_calendar` collect the subscription,
+because tier 0 drops calendar invites by rule — the 200 `calendar:asu` rows are all kept
+and none extracted. Read as a calendar, an assignment feeds the capacity model and never
+becomes a commitment, so it lands on the schedule and never in the brief or the due-today
+list.
+
+**What it cannot do.** The feed carries no submission state, so the API connector's filter
+on submitted-or-graded work has nothing to read: everything already handed in keeps
+reading as an open obligation until closed by hand. `CANVAS_TOKEN` therefore wins whenever
+it is set, and `_all_connectors` builds the two on an `elif` — running both would ingest
+every assignment twice under two source names.
+
 ## Local and later-phase sources
 
 The sections above are the network sources the first phases were built around. These
