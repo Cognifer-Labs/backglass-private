@@ -521,14 +521,25 @@ class AnthropicAPIBackend:
     #: Billed per call, from real usage counts. The monthly cap is real money.
     spend_is_imputed: bool = False
 
+    #: An Anthropic-shaped endpoint that is not Anthropic. Empty means the real API.
+    #: Exists for a local router in front of a free-model pool — FreeLLMAPI on
+    #: 127.0.0.1:31415 speaks this protocol — and equally for a company proxy or a
+    #: recorded fixture server. The SDK takes it directly, so the whole feature is this
+    #: field plus one keyword.
+    base_url: str = ""
+
     def _client(self) -> Any:
         if self.client is None:
             import anthropic
 
             # SDK retries 408/429/5xx (incl. 529 overloaded) with backoff and honors
             # retry-after; no hand-rolled loop.
+            extra = {"base_url": self.base_url} if self.base_url else {}
             self.client = anthropic.Anthropic(
-                api_key=self.api_key, max_retries=4, timeout=self.timeout_seconds
+                api_key=self.api_key,
+                max_retries=4,
+                timeout=self.timeout_seconds,
+                **extra,
             )
         return self.client
 
@@ -681,7 +692,7 @@ def build(settings: Settings) -> ModelClient:
             raise ModelError(
                 "MODEL_BACKEND=anthropic but MODEL_API_KEY and ANTHROPIC_API_KEY are empty"
             )
-        primary = AnthropicAPIBackend(api_key=key)
+        primary = AnthropicAPIBackend(api_key=key, base_url=settings.anthropic_base_url)
     else:
         primary = ClaudeCLIBackend(executable=_find_claude())
     if settings.apple_triage:

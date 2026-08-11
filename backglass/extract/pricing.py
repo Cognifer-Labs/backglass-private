@@ -35,6 +35,20 @@ class Price:
 PRICES: dict[str, Price] = {
     "claude-haiku-4-5": Price(input=1.00, output=5.00, cache_read=0.10, cache_write_5m=1.25),
     "claude-sonnet-4-6": Price(input=3.00, output=15.00, cache_read=0.30, cache_write_5m=3.75),
+    # Free-tier pools behind a local Anthropic-shaped router (FreeLLMAPI's `auto`,
+    # `auto:fast`, `fusion`), reachable via ANTHROPIC_BASE_URL.
+    #
+    # Zero here is a measurement, not the fallback `cost_usd` refuses to invent. The rule
+    # below exists so an unpriced *paid* model cannot bill silently past the cap; a pool
+    # that charges nothing is priced correctly at nothing, and naming the ids explicitly
+    # keeps the invariant — an id nobody has entered still raises.
+    #
+    # What zero does not mean: free of consequence. These forward to third-party
+    # providers that commonly train on inputs, so the constraint on them is docs/08, not
+    # the spend cap, and it is not a number.
+    "auto": Price(input=0.0, output=0.0, cache_read=0.0, cache_write_5m=0.0),
+    "auto:fast": Price(input=0.0, output=0.0, cache_read=0.0, cache_write_5m=0.0),
+    "fusion": Price(input=0.0, output=0.0, cache_read=0.0, cache_write_5m=0.0),
 }
 
 

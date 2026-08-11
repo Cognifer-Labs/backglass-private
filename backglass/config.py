@@ -257,6 +257,17 @@ class Settings(BaseSettings):
     #: existing config keeps working; `http://127.0.0.1:11434/v1` is Ollama, and any
     #: OpenAI-shaped server is a URL away.
     model_base_url: str = ""
+    #: An Anthropic-shaped endpoint that is not Anthropic, for `MODEL_BACKEND=anthropic`.
+    #: A local router in front of free-model pools speaks this protocol (FreeLLMAPI on
+    #: 127.0.0.1:31415), as does a corporate proxy.
+    #:
+    #: **Read docs/08 before pointing this anywhere.** A router is not a destination: it
+    #: forwards to whatever pool it is configured with, and free tiers commonly train on
+    #: their inputs. Every triaged item is a whole message — this ledger's are mail and
+    #: iMessages — so this is the one setting in the file that can send private
+    #: correspondence to a third party by being filled in. Local inference through
+    #: `openai_compatible` is the free option that does not.
+    anthropic_base_url: str = ""
     #: Retrieval over the drop folder (owner's ruling 2026-08-10; docs/02 revised). Reads
     #: `/v1/embeddings` at `model_base_url`, so a local model indexes signed contracts and
     #: scanned letters without any of it leaving the machine. Changing this model
