@@ -33,6 +33,22 @@ _DB_MODE = 0o600
 #: on every connect. Same shape as the model-backend fallback notice in extract/client.py.
 _mode_warned: set[str] = set()
 
+#: How long a writer waits for another writer before giving up.
+#:
+#: WAL lets the dashboard read while the sync writes, but it does not let two writers
+#: overlap: the second one gets `database is locked` the moment the first holds the
+#: write lock. Python's default is five seconds, and five seconds is not enough here —
+#: the sync runs every half hour for one to four minutes, taking a short BEGIN IMMEDIATE
+#: per extracted item, so a Resolve clicked inside that window queues behind a stream of
+#: them and can lose the race repeatedly. What the owner saw was a button that hung and
+#: then changed nothing, because `sqlite3.OperationalError` is not `ActionError`: it went
+#: past the route's handler as a 500 and the write was simply gone.
+#:
+#: Thirty seconds is longer than any transaction this codebase opens (every one of them
+#: is a handful of INSERTs with no model call inside — see sync.py's per-item comment),
+#: so it can only ever be spent waiting on contention, never on one slow statement.
+BUSY_TIMEOUT_MS = 30_000
+
 
 class MigrationError(RuntimeError):
     """The migration files and the recorded schema version disagree."""
@@ -90,6 +106,7 @@ def connect(db_path: Path) -> sqlite3.Connection:
     conn.row_factory = _dict_row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS}")
     # The -wal holds committed pages not yet checkpointed back, so it carries the same
     # rows — including `credential` — as the database itself. SQLite creates both
     # sidecars under the umask when WAL mode is entered, so they are restricted here

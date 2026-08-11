@@ -219,6 +219,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except actions.ActionError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    # A write that lost the race with the sync used to leave the route by the one door
+    # nobody had written a sentence for: `sqlite3.OperationalError` is not `ActionError`,
+    # so it went past the handler above as a bare 500 whose body is Starlette's own
+    # "Internal Server Error" — not JSON, so the failed-write strip fell back to a status
+    # code, and the owner was told a number for something the ledger could simply be
+    # asked to do again. `db.BUSY_TIMEOUT_MS` makes this rare; it cannot make it
+    # impossible, so the remaining case gets a sentence and the right code.
+    #
+    # 503 rather than 500 on purpose: nothing is broken and nothing was half-written
+    # (every action either runs inside one transaction or is a single statement), so the
+    # honest reading is "busy, try again", which is also what the sentence says.
+    @app.exception_handler(sqlite3.OperationalError)
+    def contended(request: Request, exc: Exception) -> Any:
+        from fastapi.responses import JSONResponse
+
+        if "locked" not in str(exc) and "busy" not in str(exc):
+            raise exc
+        return JSONResponse(
+            status_code=503,
+            content={
+                "detail": "The ledger is busy writing (a sync is running) and that "
+                "change was not saved. Click it again in a moment."
+            },
+        )
+
     # ── write-back: the seven actions in docs/06 ──────────────────────────
 
     @app.post("/commitments/{commitment_id}/resolve", response_class=HTMLResponse)

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import threading
 from datetime import date
 from pathlib import Path
 
@@ -23,6 +24,7 @@ from fastapi.testclient import TestClient
 from typer.testing import CliRunner
 
 from backglass import __main__ as cli
+from backglass import db
 from backglass.config import Settings
 from backglass.db import now_iso
 from backglass.ledger import USER_ID, Ledger, LedgerError
@@ -131,6 +133,73 @@ class TestASnoozeCannotEraseTheDeadline:
         assert client.post(f"/commitments/{cid}/snooze/7").status_code == 200
         after = conn.execute("SELECT due_at FROM commitment WHERE id = ?", (cid,)).fetchone()
         assert after["due_at"] == "2026-08-17"
+
+
+class TestAWriteThatLosesTheRaceWithTheSync:
+    """WAL lets the dashboard read while the sync writes; it does not let two writers
+    overlap. The sync takes a short `BEGIN IMMEDIATE` per extracted item, so a Resolve
+    clicked during one of its one-to-four-minute runs queues behind that stream — and
+    Python's five-second default gave up inside the window rather than outside it.
+
+    What that cost was not an error, it was the write: `sqlite3.OperationalError` is not
+    `ActionError`, so it left the route past the only handler there was, as a 500 whose
+    body is Starlette's own plain-text page. The failed-write strip parses JSON, so the
+    owner got a status code for a click that could simply have been made to wait.
+    """
+
+    def _holding_the_write_lock(self, settings: Settings) -> sqlite3.Connection:
+        """A second writer, exactly as the sync is one: open, then hold.
+
+        `check_same_thread=False` because the release below happens on a timer thread
+        while the request blocks on this very lock — which is the situation being
+        reproduced, and the only way to reproduce it from one process.
+        """
+        other = sqlite3.connect(
+            settings.db_path, isolation_level=None, check_same_thread=False
+        )
+        other.execute("BEGIN IMMEDIATE")
+        other.execute("UPDATE commitment SET rollover_count = rollover_count")
+        return other
+
+    def test_it_waits_for_the_other_writer_rather_than_dropping_the_write(
+        self, client: TestClient, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        cid = _open_commitment(conn)
+        other = self._holding_the_write_lock(settings)
+        # Released from a timer rather than after the call, because the call is what has
+        # to survive the wait: with the bound at five seconds and no wait at all, this is
+        # the 500 the owner saw.
+        timer = threading.Timer(0.4, lambda: other.execute("ROLLBACK"))
+        timer.start()
+        try:
+            response = client.post(f"/commitments/{cid}/snooze/7")
+        finally:
+            timer.join()
+        assert response.status_code == 200
+        after = conn.execute("SELECT due_at FROM commitment WHERE id = ?", (cid,)).fetchone()
+        assert after["due_at"] == "2026-08-17", "the write waited and then landed"
+
+    def test_a_writer_that_never_lets_go_is_a_sentence_not_a_500(
+        self,
+        client: TestClient,
+        conn: sqlite3.Connection,
+        settings: Settings,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """The bound makes contention rare, not impossible. What is left has to say what
+        happened, in the shape `oops.js` reads — it shows `detail` verbatim and falls back
+        to the status code for anything that is not JSON."""
+        monkeypatch.setattr(db, "BUSY_TIMEOUT_MS", 200)
+        cid = _open_commitment(conn)
+        other = self._holding_the_write_lock(settings)
+        try:
+            response = client.post(f"/commitments/{cid}/snooze/7")
+        finally:
+            other.execute("ROLLBACK")
+        assert response.status_code == 503, "busy is not broken"
+        assert "not saved" in response.json()["detail"]
+        after = conn.execute("SELECT due_at FROM commitment WHERE id = ?", (cid,)).fetchone()
+        assert after["due_at"] == "2026-08-10", "and it wrote nothing on the way out"
 
 
 class TestQuickAddWritesADate:
