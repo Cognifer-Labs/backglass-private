@@ -34,7 +34,11 @@
         {%- if derived['first_at'] %} since {{ derived['first_at'][:10] }}{% endif %}.
       </p>
     {% endif %}
-    {% if p['notes'] %}<p class="b1" style="margin-top:12px">{{ p['notes'] }}</p>{% endif %}
+    {# `pre-wrap`, because a note is written by hand and its line breaks are the author's
+       structure — a career synopsis laid out as NOW / CAREER / WHY collapses into one
+       wall of prose without it, which is the shape nobody reads before walking into a
+       room. Wrapping still happens; only the newlines survive. #}
+    {% if p['notes'] %}<p class="b1" style="margin-top:12px;white-space:pre-wrap">{{ p['notes'] }}</p>{% endif %}
 
     <details class="addform" style="margin-top:16px">
       <summary class="lbl">Edit profile</summary>

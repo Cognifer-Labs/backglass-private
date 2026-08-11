@@ -1379,6 +1379,14 @@ def people_show(entity_id: int) -> None:
     typer.echo(f"{line}{' — ' + extras if extras else ''}")
     if record["aliases"]:
         typer.echo(f"known as: {', '.join(record['aliases'])}")
+    # The notes are the part a person actually wrote by hand, and this command printed
+    # everything except them — a profile carrying a career synopsis showed one line of
+    # role and org, and the only way to read the rest was the web page.
+    if record["notes"]:
+        typer.echo()
+        for paragraph in str(record["notes"]).split("\n"):
+            typer.echo(f"  {paragraph}" if paragraph.strip() else "")
+        typer.echo()
     for c in profiles.open_commitments(conn, entity_id):
         arrow = "you owe" if c["direction"] == "i_owe" else "owed to you"
         due = f" due {c['due_at'][:10]}" if c["due_at"] else ""
