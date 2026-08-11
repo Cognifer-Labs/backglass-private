@@ -17,7 +17,12 @@
            still here, still in the same order, still answerable — the divider says the
            work above it is the work that changes something, so a queue this long has an
            honest place to stop rather than an implied obligation to reach the end. #}
-        {% if not ns.rest_marked and r['record'] == 'commitment' and r.get('plan_impact', 0) > 0 %}
+        {# `loop.first` guards the case the divider reads worst in: when nothing is
+           pressing, the rule has no work above it to separate from and lands as a
+           heading over the whole queue, announcing that none of it matters. A divider
+           with nothing on one side is not a divider. #}
+        {% if not ns.rest_marked and not loop.first
+              and r['record'] == 'commitment' and r.get('plan_impact', 0) > 0 %}
           {% set ns.rest_marked = true %}
           <p class="dnote">Below here, a decision changes no plan this week — undated
             promises, and work owed to you, which the planner never schedules.</p>
