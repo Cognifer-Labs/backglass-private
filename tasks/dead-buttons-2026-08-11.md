@@ -33,18 +33,34 @@ The write itself was gone.
 Reproduced before the fix as 500 after 5.0s with nothing written; after it, 200 after
 6.2s with the row moved.
 
+## Shipped
+
+`desktop/build-sidecar.sh` rebuilt the frozen backend and the bundle, and it was
+installed over `/Applications/Backglass.app`. Verified behaviourally rather than by a
+version string: the rebuilt binary, run against a copy of the real ledger with a second
+connection holding the write lock, answered 200 after 6.9s and moved the row —
+the same click the old binary lost. `backglass state` now reports `matches_source: True`
+with no stale surfaces.
+
 ## Still open
 
-1. **The desktop symptom is not explained by the above.** A 500 or a 503 both reach the
-   failed-write strip, and the owner saw nothing at all — which means the request never
-   left the page. The window had been open since Aug 10 17:58; a WKWebView whose
-   WebContent process is gone renders its last frame and runs no JS, which looks exactly
-   like this. Discriminator: does the Theme button in the masthead also do nothing? If
-   so the page is dead, not the server, and the fix is a reload.
-2. **The fix does not reach the installed app until the sidecar is rebuilt**
-   (`desktop/build-sidecar.sh`). The bundled Python is frozen at the Aug 10 17:57 build.
-3. **Port 8765 is currently served by a logged `uvicorn` from the checkout**, started to
-   catch the click. Kill it and relaunch `Backglass.app` to go back to the sidecar.
-4. A dev `uvicorn` on 8771 has been running since Friday off older code.
-5. `ruff` (19) and `mypy` (4) report pre-existing failures, untouched by this change.
+1. **The desktop symptom is still not explained by the fix above**, and probably never
+   was. A 500 and a 503 both reach the failed-write strip; the owner saw nothing at all,
+   which means the request never left the page. The window had been open since Aug 10
+   17:58 and its WebContent process was sitting at 10MB RSS after 22h47m — a page whose
+   memory the system had reclaimed renders its last frame and runs no JS. The relaunched
+   app's WebContent is at 94MB, which is what a live dashboard weighs. **Unverified until
+   somebody clicks Snooze in the app window and the row moves.** If it does not: the
+   sidecar logs to `/dev/null`, so swap port 8765 for `uv run uvicorn --factory --host
+   127.0.0.1 --port 8765 backglass.web.app:create_app` with its log on a file, and click
+   again — a POST that never appears is the page, not the server.
+2. Worth proposing, not built: the shell could re-navigate the window when it regains
+   focus after a long idle. A dashboard open for 23 hours is showing yesterday's board
+   whether or not its JS is alive, and this is the failure mode that made a page look
+   fine and act dead.
+3. A dev `uvicorn` on 8771 has been running since Friday off older code. Left alone: a
+   second session is active in this checkout (it changed `config.py` and
+   `extract/client.py` mid-session, an `anthropic_base_url` feature in progress), and
+   that process may be theirs.
+4. `ruff` (19) and `mypy` (4) report pre-existing failures, untouched by this change.
    `backglass/web/panels.py:808` assigns a `list[Chat]` to an `int` — worth a look.
