@@ -29,6 +29,24 @@ other way, i.e. while the bind is 127.0.0.1. Under `--host 0.0.0.0
 both guards by design of that flag; nothing in this module defends a non-loopback
 bind, and nothing should be added here that pretends to.
 
+`DASHBOARD_ALLOWED_HOSTS` extends guard 1 with extra names, and does not weaken that
+sentence, because the bind stays 127.0.0.1. It exists for a reverse proxy that
+terminates on this machine and forwards to loopback — `tailscale serve`, whose
+listener is tailscaled on the tailnet address and whose upstream is 127.0.0.1:8765.
+The socket is still unreachable from the network; what reaches it is a proxy that
+already decided the caller is one of the owner's own devices. That is why the name
+goes in configuration rather than being inferred from `X-Forwarded-Host`: a forwarded
+header is the *caller's* claim, and guard 1 exists precisely because the caller's
+claim about who they are addressing cannot be trusted. An entry here is the owner
+naming a name, once, on the machine.
+
+It follows that an added name must reach BOTH guards, not just the first. Guard 2's
+Origin fallback compares against the same set: a browser that omits Sec-Fetch-Site
+(Safari before 16.4, some webviews) sends `Origin: https://<the-proxy-name>` on its
+own same-origin POSTs, and checking that against loopback alone would 403 every write
+the owner made through the proxy while letting the reads through — the worst of the
+two failure modes, because it looks like a broken button rather than a refusal.
+
 Deliberately NOT here: a CSRF token. Tokens are for apps with sessions and multiple
 users; this app has neither, and a token would add a rendering dependency to every
 one of ~35 forms to defend a threat the header check already covers.
@@ -41,6 +59,7 @@ exposure is a metric a hostile page could mark read, not a write to the ledger.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -102,7 +121,22 @@ def is_loopback(value: str) -> bool:
     return _hostname(value) in LOOPBACK_HOSTS
 
 
-def is_cross_site_write(request: Request) -> bool:
+def resolve_allowed(extra: Iterable[str] = ()) -> frozenset[str]:
+    """The names this app answers for: loopback, plus whatever the owner configured.
+
+    Entries are run through `_hostname` rather than trusted as typed, so a value
+    copied out of a browser bar (`https://backglass-mac.tail1234.ts.net/`) or off
+    `tailscale serve status` (with its `:443`) means the same thing as the bare name.
+    An entry that reduces to nothing — a stray comma, a lone port — is dropped rather
+    than admitted as the empty host, which `_hostname` also returns for a missing
+    Host header.
+    """
+    return LOOPBACK_HOSTS | frozenset(h for name in extra if (h := _hostname(name)))
+
+
+def is_cross_site_write(
+    request: Request, allowed: frozenset[str] = LOOPBACK_HOSTS
+) -> bool:
     """True when a state-changing request did not come from the dashboard itself."""
     if request.method not in WRITE_METHODS:
         return False
@@ -112,31 +146,38 @@ def is_cross_site_write(request: Request) -> bool:
     origin = request.headers.get("origin", "")
     if origin:
         # "null" (a sandboxed frame, a data: URL) is not this app.
-        return not is_loopback(origin)
+        return _hostname(origin) not in allowed
     return False
 
 
-def install(app: FastAPI) -> None:
-    """Add the guards to `app`.
+def install(app: FastAPI, allowed_hosts: Iterable[str] = ()) -> None:
+    """Add the guards to `app`, answering for loopback plus `allowed_hosts`.
 
     Ordering matters and is not obvious: Starlette inserts each middleware at the
     front of the stack, so the one registered LAST runs FIRST. This must be called
     after every other `app.middleware` registration, or a refused request would
     still run the sidebar query against the ledger before being turned away.
+
+    The set is resolved once here, at wiring time, so a malformed entry costs nothing
+    per request and the guard compares against a frozen set rather than re-parsing
+    configuration on every call.
     """
+    allowed = resolve_allowed(allowed_hosts)
 
     @app.middleware("http")
     async def guard(request: Request, call_next: Any) -> Any:
         host = request.headers.get("host", "")
-        if not is_loopback(host):
+        if _hostname(host) not in allowed:
             # 421 is the honest code: the request reached a server that does not
             # answer for that name. It also tells a rebinding attempt nothing.
+            # The wording stays independent of what is configured: naming the allowed
+            # hosts here would hand a rebinding attempt the one thing it lacks.
             return PlainTextResponse(
-                "Backglass answers on loopback only.",
+                "Backglass does not answer for that name.",
                 status_code=421,
                 headers=SECURITY_HEADERS,
             )
-        if is_cross_site_write(request):
+        if is_cross_site_write(request, allowed):
             return PlainTextResponse(
                 "Cross-site writes are refused.",
                 status_code=403,

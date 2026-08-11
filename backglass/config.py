@@ -299,6 +299,19 @@ class Settings(BaseSettings):
     # count is a good enough proxy that needs no tokenizer.
     per_item_char_ceiling: int = 60_000
 
+    # ── dashboard ─────────────────────────────────────────────────────────
+    # Extra hostnames the dashboard answers for, beyond loopback. Empty by default:
+    # the bind is 127.0.0.1 and web/security.py refuses every other name, which is
+    # what stops a DNS-rebinding page from reading the ledger.
+    #
+    # The one case for filling it in is a proxy that terminates on this machine and
+    # forwards to loopback — `tailscale serve --bg 8765`, which puts the dashboard on
+    # the owner's own devices and nowhere else. Its Host is the tailnet name, so
+    # without the name here every request 421s. Names only; a URL or a :port is
+    # tolerated and reduced to the name. Read web/security.py before adding an entry:
+    # anything reaching the dashboard reads and edits the whole ledger with no login.
+    dashboard_allowed_hosts: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
     # ── data boundary (docs/08) ───────────────────────────────────────────
     boundary_mode: Literal["exclude", "full_scope"] = "exclude"
     boundary_deny_domains: Annotated[list[str], NoDecode] = Field(default_factory=list)
@@ -455,6 +468,7 @@ class Settings(BaseSettings):
     # that entirely, which is why tests/test_config.py reads from the environment instead.
     @field_validator(
         "owner_emails",
+        "dashboard_allowed_hosts",
         "boundary_deny_domains",
         "boundary_deny_addresses",
         "gmail_accounts",

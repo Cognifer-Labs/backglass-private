@@ -17,7 +17,7 @@ from backglass.config import Settings
 from backglass.db import now_iso
 from backglass.ledger import USER_ID
 from backglass.web.app import create_app
-from backglass.web.security import is_loopback
+from backglass.web.security import LOOPBACK_HOSTS, is_loopback, resolve_allowed
 
 LOOPBACK = "http://127.0.0.1:8765"
 
@@ -141,6 +141,104 @@ def test_a_non_browser_caller_is_not_refused(
 def test_reads_are_not_subject_to_the_write_guard(client: TestClient) -> None:
     """The pixel is loaded by a mail client on another origin — that is its job."""
     assert client.get("/", headers={"Sec-Fetch-Site": "cross-site"}).status_code == 200
+
+
+# ── the configured extra hosts (DASHBOARD_ALLOWED_HOSTS) ──────────────────
+#
+# The case these exist for: `tailscale serve --bg 8765` puts tailscaled on the tailnet
+# address and forwards to 127.0.0.1:8765, keeping the bind loopback. It forwards the
+# original Host, so without the name configured the owner's own phone gets a 421.
+
+TAILNET = "backglass-mac.tail1234.ts.net"
+
+
+@pytest.fixture
+def proxied(conn: sqlite3.Connection, settings: Settings) -> TestClient:
+    del conn
+    allowed = settings.model_copy(update={"dashboard_allowed_hosts": [TAILNET]})
+    return TestClient(create_app(allowed), base_url=f"https://{TAILNET}")
+
+
+def test_a_configured_host_is_answered_for(proxied: TestClient) -> None:
+    assert proxied.get("/", headers={"Host": TAILNET}).status_code == 200
+
+
+def test_a_configured_host_does_not_admit_every_other_name(proxied: TestClient) -> None:
+    """The allowlist is a list, not a switch: guard 1 still refuses everything else.
+
+    A rebinding page is unaffected by the owner naming their own tailnet host, and the
+    near-miss below is the shape that would matter — a name that merely ends the same
+    way must not pass, because `_hostname` compares whole names, not suffixes.
+    """
+    assert proxied.get("/", headers={"Host": "evil.tld"}).status_code == 421
+    assert proxied.get("/", headers={"Host": f"evil.{TAILNET}"}).status_code == 421
+    suffixed = proxied.get("/", headers={"Host": f"{TAILNET}.evil.tld"})
+    assert suffixed.status_code == 421
+
+
+def test_loopback_still_works_alongside_a_configured_host(proxied: TestClient) -> None:
+    """Configuring a proxy name must not cost the owner their own 127.0.0.1 tab."""
+    assert proxied.get("/", headers={"Host": "127.0.0.1:8765"}).status_code == 200
+
+
+def test_a_write_from_the_configured_host_is_not_a_cross_site_write(
+    proxied: TestClient, conn: sqlite3.Connection
+) -> None:
+    """Guard 2's Origin fallback has to learn the same name, or writes 403 while reads pass.
+
+    A browser that omits Sec-Fetch-Site (Safari before 16.4, some webviews) sends
+    `Origin: https://<tailnet name>` on its own same-origin POST. Compared against
+    loopback alone that reads as cross-site, and the owner gets a dashboard whose
+    buttons all fail — which looks like a bug, not a refusal.
+    """
+    cid = _commitment(conn)
+    response = proxied.post(
+        f"/commitments/{cid}/resolve", headers={"Origin": f"https://{TAILNET}"}
+    )
+    assert response.status_code == 200
+    assert _status(conn, cid) == "done"
+
+
+def test_a_cross_site_write_is_still_refused_through_the_proxy(
+    proxied: TestClient, conn: sqlite3.Connection
+) -> None:
+    cid = _commitment(conn)
+    response = proxied.post(
+        f"/commitments/{cid}/resolve",
+        headers={"Sec-Fetch-Site": "cross-site", "Origin": "https://evil.tld"},
+    )
+    assert response.status_code == 403
+    assert _status(conn, cid) == "open"
+
+
+def test_the_default_configuration_is_loopback_and_nothing_else(
+    settings: Settings,
+) -> None:
+    """The guard is only as good as its default. Nobody who does not opt in is exposed."""
+    assert settings.dashboard_allowed_hosts == []
+    assert resolve_allowed() == LOOPBACK_HOSTS
+
+
+@pytest.mark.parametrize(
+    "configured",
+    [f"https://{TAILNET}/", f"{TAILNET}:443", f"  {TAILNET.upper()}  "],
+)
+def test_a_configured_entry_is_read_as_a_name_however_it_was_pasted(
+    configured: str,
+) -> None:
+    """Copied from a browser bar or off `tailscale serve status`, it means one thing."""
+    assert TAILNET in resolve_allowed([configured])
+
+
+def test_an_empty_entry_cannot_become_the_empty_host(
+    conn: sqlite3.Connection, settings: Settings
+) -> None:
+    """`_hostname` returns "" for a missing Host header too, so "" must never be allowed."""
+    del conn
+    assert resolve_allowed(["", "  ", ":8765"]) == LOOPBACK_HOSTS
+    blank = settings.model_copy(update={"dashboard_allowed_hosts": [""]})
+    client = TestClient(create_app(blank), base_url=LOOPBACK)
+    assert client.get("/", headers={"Host": ""}).status_code == 421
 
 
 # ── response headers ──────────────────────────────────────────────────────

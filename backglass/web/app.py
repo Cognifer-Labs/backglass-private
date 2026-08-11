@@ -96,7 +96,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # middleware first, so a refused request is turned away before it opens a
     # connection to the ledger. See security.py for what "refused" covers and why
     # there is no CSRF token.
-    security.install(app)
+    security.install(app, resolved.dashboard_allowed_hosts)
 
     # ── per-page routers (Phase 6) ────────────────────────────────────────
 
