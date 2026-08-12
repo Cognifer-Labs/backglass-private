@@ -268,3 +268,37 @@ def test_the_theme_flip_cleans_up_after_itself() -> None:
     )
     universal = re.search(r":root\.theming\s*,\s*:root\.theming\s*\*", _sheet())
     assert universal, "the theme cross-fade rule is gone"
+
+
+def test_the_acted_on_row_acknowledges_its_own_write() -> None:
+    """§9's table asks how often the owner sees a thing. Resolve, Snooze and Drop are
+    the most frequent writes in the product, and until 2026-08-11 the only thing that
+    moved between the click and the replaced panel was one control dimming — on a card
+    the width of the grid. The card the write belongs to now dims and lifts with it.
+
+    Asserted against the sheet for the same reason every test in this file is: a
+    transition is not in the DOM and not in the response body.
+    """
+    sheet = _sheet()
+    rule = re.search(r"\.card:has\(\.btn\.htmx-request\)\s*\{([^}]*)\}", sheet)
+    assert rule, "the acted-on card no longer acknowledges its write"
+    body = rule.group(1)
+    assert "opacity" in body and "transform" in body, "§9 rule 1: these two only"
+    assert "--motion-travel" in body, (
+        "§9 rule 3: the distance is the system's one distance, and routing it through "
+        "the token is also what zeroes it under prefers-reduced-motion"
+    )
+
+
+def test_the_in_flight_dim_does_not_compound() -> None:
+    """Two nested dims multiply, and the control the owner is looking at ends up the
+    faintest thing on the screen — .55 x .55 is .30, below the sheet's muted ink."""
+    assert re.search(
+        r"\.card:has\(\.btn\.htmx-request\)\s+\.htmx-request\s*\{[^}]*opacity:\s*1", _sheet()
+    ), "the button's own dim must be cancelled inside a dimming card"
+
+
+def test_the_confirmation_script_is_loaded_wherever_a_write_can_happen() -> None:
+    """Every page can write, which is why the failed-write strip is in base.html. Drop's
+    confirmation is the same kind of thing and belongs in the same place."""
+    assert "/static/confirm.js" in BASE.read_text()

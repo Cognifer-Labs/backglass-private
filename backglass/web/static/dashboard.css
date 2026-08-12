@@ -420,6 +420,25 @@ button.box::before{content:"";position:absolute;inset:-6px}
  * of noise, and design-system.md has no loading language.
  */
 .htmx-request{opacity:.55}
+/* The row acknowledges its own write, not just the button that started it.
+ *
+ * Resolve, Snooze and Drop all replace the whole board, so the only thing that moved
+ * between the click and the new panel was one control dimming — on a card the width of
+ * the grid, which is why a write could read as nothing happening at all. The card the
+ * owner acted on now dims and lifts a hair while its request is in flight.
+ *
+ * This does not break §9's first omission. What that rule refuses is holding the swap
+ * open to animate the outgoing node, because that is latency in front of the most
+ * frequent actions in the product. This spends no time at all: it fills the wait the
+ * request is already costing, and the moment the response lands the card is gone with
+ * the rest of the panel. Reduced motion zeroes the travel at the token layer and keeps
+ * the dim, which is §9 rule 4's "less movement, not less feedback".
+ *
+ * The button's own dim is cancelled inside a dimming card, or the two multiply and the
+ * control the owner is looking at is the faintest thing on the screen. */
+.card:has(.btn.htmx-request){opacity:.55;
+  transform:translateY(calc(var(--motion-travel) * -1))}
+.card:has(.btn.htmx-request) .htmx-request{opacity:1}
 /* The dim, not the disappearance. `.htmx-swapping` used to carry an 80ms fade-out
  * that never once played: htmx's `defaultSwapDelay` is 0, so the outgoing node is
  * replaced in the same frame the class lands on it. Raising that delay would buy the
@@ -446,6 +465,11 @@ button.box::before{content:"";position:absolute;inset:-6px}
 .btn.defer:hover{background:var(--gold);border-color:var(--gold);color:#000}
 .btn.pin:hover{background:var(--turquoise);border-color:var(--turquoise);color:#000}
 .btn.danger:hover{background:var(--vermilion);border-color:var(--vermilion);color:#000}
+/* Drop, asked and waiting for its answer (static/confirm.js). It takes the full ink
+ * its own hover already means — the press-preview held open — so an armed button is
+ * the loudest thing in the action row without spending a sixth ink or a border width
+ * on it. The colour arrives through the cross-fade every .btn already carries. */
+.btn.danger[data-armed]{background:var(--vermilion);border-color:var(--vermilion);color:#000}
 
 /* The currently-set value (a /WK cadence) is state, so it holds the same ink-fill
  * treatment as the active nav item. */

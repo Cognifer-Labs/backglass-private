@@ -578,6 +578,38 @@ def test_the_only_confirmation_is_on_drop(client: TestClient, conn, settings: Se
             assert "/drop" in fragment, "only drop may confirm"
 
 
+def test_the_drop_confirmation_never_reaches_a_native_dialog(client: TestClient) -> None:
+    """The bug that made Drop look broken for a day.
+
+    `hx-confirm` calls `window.confirm`, and the desktop shell's WKWebView implements no
+    confirm panel — the call returns false, htmx cancels, and the request is never sent.
+    The server logged zero drop requests across a day of clicking while resolve and
+    snooze from the same card went through, because only Drop carries a dialog.
+
+    So the assertion is not "Drop confirms" — the test above already holds that line —
+    but that the confirmation is the page's own, reachable in any webview. A native
+    dialog cannot be asserted from here; its absence can.
+    """
+    assert "/static/confirm.js" in client.get("/").text, "the page must load it"
+    source = _strip_css_comments(client.get("/static/confirm.js").text)
+    assert "htmx:confirm" in source, "the hook htmx offers for exactly this"
+    assert "preventDefault" in source, "the native dialog must never be allowed to run"
+    assert "issueRequest" in source, "and the answered request must still be sent"
+    assert "confirm(" not in source, (
+        "a call to window.confirm is the defect itself; in this webview it returns "
+        "false and the write is silently dropped"
+    )
+
+
+def test_an_armed_drop_is_visible_without_spending_a_sixth_ink(client: TestClient) -> None:
+    """A confirmation the owner cannot see is a button that ate a click. The armed state
+    takes the full vermilion Drop's own hover already means, so §3's five inks stand."""
+    css = _strip_css_comments(client.get("/static/dashboard.css").text)
+    armed = [line for line in css.splitlines() if "danger[data-armed]" in line]
+    assert armed, "an armed Drop looks the same as an unarmed one"
+    assert "--vermilion" in armed[0], "destroy is vermilion's, and no other ink's"
+
+
 def test_no_shadows_no_gradients_outside_the_hatch(client: TestClient) -> None:
     """design-system.md §8 rule 7. The 2026-08-06 rounding ruling amended this rule but
     re-opened only rounding: a drop shadow still reads as a different design language on

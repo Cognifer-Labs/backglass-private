@@ -51,6 +51,14 @@ FROZEN_STYLESHEETS = ("backglass/web/static/dashboard.css", "design/tokens.css")
 #: surface it never looked at.
 FROZEN_TEMPLATE_DIR = "backglass/web/templates"
 
+#: The scripts are frozen too, and until 2026-08-11 nothing compared them. That is the
+#: gap that hid the Drop bug for as long as it hid: the behaviour of every button on the
+#: dashboard lives in these files, `state` reported `matches_source: True` about an app
+#: whose scripts it had never hashed, and a stale one would have looked identical to a
+#: correct one. Globbed for the same reason the templates are — a script added later is
+#: covered without anyone deciding to cover it.
+FROZEN_SCRIPT_DIR = "backglass/web/static"
+
 
 def frozen_surfaces() -> tuple[str, ...]:
     """Every repo-relative path the sidecar bundles, found rather than remembered.
@@ -68,7 +76,11 @@ def frozen_surfaces() -> tuple[str, ...]:
         str(path.relative_to(REPO_ROOT))
         for path in (REPO_ROOT / FROZEN_TEMPLATE_DIR).glob("*.html")
     )
-    return (*FROZEN_STYLESHEETS, *templates)
+    scripts = sorted(
+        str(path.relative_to(REPO_ROOT))
+        for path in (REPO_ROOT / FROZEN_SCRIPT_DIR).glob("*.js")
+    )
+    return (*FROZEN_STYLESHEETS, *templates, *scripts)
 
 
 @dataclass

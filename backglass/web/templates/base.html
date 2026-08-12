@@ -110,6 +110,9 @@ function toggleTheme() {
 
 </script>
 <script src="/static/oops.js"></script>
+{# Drop's confirmation. Must load wherever a write can happen, which is every page,
+   for the same reason the failed-write strip does. #}
+<script src="/static/confirm.js"></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>
