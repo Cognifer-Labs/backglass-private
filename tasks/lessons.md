@@ -857,3 +857,25 @@ deterministic given the id.
   about WHERE the failure is, not about whether there was one. Read the instrumentation
   you already built before reading the code it instruments — and ask what the click looked
   like before asking what the handler did.
+
+- 2026-08-11 | Three defects wore the same symptom — "the button does nothing" — and the
+  first one I found and fixed was not the one being reported. A five-second busy_timeout
+  lost writes to the sync; `check_same_thread` lost them to FastAPI's threadpool; and
+  `hx-confirm` never sent them at all, because `window.confirm` returns false in a
+  WKWebView with no confirm panel. Only the third explained the actual report, and I
+  found it by putting a logging server on the port and driving the real window until the
+  request either appeared or did not. | A reproducible defect in the neighbourhood is not
+  evidence that it is THE defect. When a fix does not explain the reported symptom —
+  here, a 500 paints the failed-write strip and the owner saw nothing — say so and keep
+  going, rather than letting a green test stand in for the thing that was asked about.
+  And instrument the actual environment: the frozen sidecar logs to /dev/null, so one
+  substituted server answered in a minute what an afternoon of reading code had not.
+
+- 2026-08-11 | Drove the owner's real ledger with synthetic keystrokes and hit the wrong
+  rows twice — `j` advances from the current selection rather than selecting the first
+  card, so a second press moved past the probe onto a real commitment; one resolve and
+  one snooze had to be restored by hand from their untouched siblings. | Before
+  automating a destructive control, make the target unambiguous and re-check it in the
+  same breath as the keystroke — read what the board says is first immediately before
+  pressing, never from a check a few minutes old. And after one misfire, stop: the second
+  attempt cost more than handing the click back would have.

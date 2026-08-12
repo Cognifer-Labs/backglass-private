@@ -33,6 +33,30 @@ The write itself was gone.
 Reproduced before the fix as 500 after 5.0s with nothing written; after it, 200 after
 6.2s with the row moved.
 
+## A third defect, found in the log while driving the app
+
+A dashboard `GET /` answered 200 and then raised out of the dependency teardown:
+
+```
+File "backglass/web/app.py", line 63, in get_conn
+    conn.close()
+sqlite3.ProgrammingError: SQLite objects created in a thread can only be used in
+that same thread.
+```
+
+FastAPI runs a sync route in a worker thread, and runs the setup and the teardown of a
+sync generator dependency as two separate threadpool calls that anyio may schedule on
+two different workers. `connect()` took SQLite's default `check_same_thread=True`, so
+the connection was opened on one thread and closed on another and the close failed,
+leaking it. The teardown is the harmless end: the same scheduling one call earlier
+raises inside the route body, which is a 500 with the write lost — a button that does
+nothing, intermittently, for a reason nothing on the page can explain. Fixed with
+`check_same_thread=False`, which is a handoff and not sharing: one connection, one
+request, never two threads at once.
+
+The three regression tests were run against the unfixed line first and one of them
+fails there, which is the only reason to trust the other two.
+
 ## Shipped
 
 `desktop/build-sidecar.sh` rebuilt the frozen backend and the bundle, and it was
@@ -59,7 +83,13 @@ seconds and the arm expired between two presses while being driven, which rebuil
 same silent no-op by hand.
 
 Verified two ways: in WebKit, one press wrote nothing and the second sent
-`POST /commitments/343/drop`; then the same two presses in the desktop app.
+`POST /commitments/343/drop`; then the same two presses in the desktop app itself,
+driven through `d` `d` on the keyboard — first press zero drop requests and the row
+still open, second press `POST /commitments/344/drop` 200 and the row dropped.
+
+**This changes how Drop is used.** It is two presses now: `Drop` → `Sure?` → gone, by
+mouse or by `d` `d`. That is the confirmation docs/06 asks for, in the page instead of
+in a dialog that this webview never had.
 
 ## Still open
 
