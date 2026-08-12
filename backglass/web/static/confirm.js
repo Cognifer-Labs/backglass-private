@@ -20,14 +20,15 @@
  * moves. An element that arrives with `hx-confirm` tomorrow inherits this.
  */
 (function () {
-  // Long enough to read "Sure?" and reach for the button, short enough that a Drop
-  // armed by a misclick is not still armed when the owner comes back to the tab.
-  var DISARM_AFTER = 4000;
+  // Deliberately no timeout. The first draft disarmed after four seconds, which is
+  // long enough to look fine and short enough to expire while someone is deciding —
+  // and an expired arm answers the second press with nothing at all, which is the
+  // exact failure this file exists to remove. An armed button is not hidden state: it
+  // is the loudest thing in the action row until it is answered, and a press anywhere
+  // else, Escape, or the next swap all answer it no.
   var armed = null;
-  var timer = null;
 
   function disarm() {
-    if (timer) { window.clearTimeout(timer); timer = null; }
     if (!armed) return;
     // Restored from the element rather than from a closure: the board re-renders on
     // every write, so the node this was armed on may not be in the document by the
@@ -47,7 +48,6 @@
     button.dataset.label = button.textContent;
     button.dataset.armed = 'true';
     button.textContent = 'Sure?';
-    timer = window.setTimeout(disarm, DISARM_AFTER);
   }
 
   document.body.addEventListener('htmx:confirm', function (event) {
