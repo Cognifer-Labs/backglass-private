@@ -56,16 +56,19 @@ not permitted while System Integrity Protection is engaged."*
 **Restart the Mac** (or log out and back in). That is the whole remedy, and it is the
 owner's to do — nothing in this repo can restart a SIP-protected system agent.
 
-It will recur. This owner moves between UTC−7 and UTC+5:30, and every such move leaves
-the schedule wrong until the next restart, silently. Two ways out, and this is a
-decision, not a detail:
+### Owner's ruling, 2026-08-11: restart after moving; do not redesign
 
-1. **Restart after changing timezone.** No code. Relies on remembering.
-2. **Stop using calendar intervals.** Fire the jobs on a `StartInterval` tick and let
-   the program decide whether its local time has come and whether today's work is
-   already done. Seconds are timezone-immune, which is why the sync never broke. The
-   shape already exists here: `plan --if-missing` is exactly this guard, and `brief` is
-   already unique per `generated_for_date`.
+The alternative was to stop using calendar intervals altogether — fire the jobs on a
+`StartInterval` tick and let the program decide whether its local time has come and
+whether today's work is already done, which is timezone-immune by construction and is
+why the sync never broke. It was declined: the owner rarely travels to the +5:30 zone,
+so the redesign would be carrying permanent machinery for a rare event.
+
+**So the standing rule is: restart the Mac after changing its timezone.** The `state`
+schedule section below is the backstop that makes a forgotten restart visible instead of
+silent, which is what made this cost eighteen days the first time. Do not re-open the
+interval redesign without new evidence — a second occurrence that the state check failed
+to surface would be that evidence.
 
 ## What was fixed in code
 
@@ -91,9 +94,10 @@ is still full at 06:30 tomorrow means the restart did not take.
 
 ## Separate, and the owner's call
 
-- **The brief has never been emailed.** `BRIEF_TO` is unset, so `brief --send` saves it
-  and says so — deliberately not an error (docs/05; it is readable at `/brief`). Sending
-  needs `BRIEF_TO` and a `RESEND_API_KEY`. Eight briefs are sitting generated and unsent.
+- **The brief is deliberately not emailed** (owner's ruling, 2026-08-11). `BRIEF_TO` is
+  unset, so `brief --send` saves it and says so, which docs/05 already treats as a
+  non-error. The owner reads it at `/brief` and does not want delivery wired. Eight
+  briefs generated since 4 August are all readable there. Do not offer this again.
 - The OAuth failures in `sync.err` are historical; the last five runs are clean.
 - `sync.err` also records a date read as 2027: `'2026-05-14T19:30' resolved to
   2026-05-14, before the message date 2026-05-15; read as 2027-05-14`. Same shape as the
