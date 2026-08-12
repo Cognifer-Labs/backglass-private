@@ -18,6 +18,7 @@ import sqlite3
 import threading
 from datetime import date
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -759,3 +760,65 @@ class TestNothingIsWiderThanThePhone:
         assert ".sblock{display:none}" not in narrow, (
             "a blanket hide takes the alerts with it — name the two blocks that yield"
         )
+
+
+class TestAConnectionOutlivesTheThreadThatOpenedIt:
+    """FastAPI runs a sync route in a worker thread, and runs the setup and teardown of a
+    sync generator dependency as two separate threadpool calls that anyio may schedule on
+    two different workers. So `get_conn` opens a connection on one thread, the route uses
+    it on a second and `conn.close()` runs on a third, and none of that is this code's to
+    arrange. SQLite's default refuses the second thread.
+
+    Caught in the wild rather than reasoned about: a dashboard GET answered 200 and then
+    raised `SQLite objects created in a thread can only be used in that same thread` out
+    of the teardown, leaking the connection. The same scheduling one call earlier is a
+    500 out of the route body with the write lost — a button that does nothing.
+    """
+
+    def _in_another_thread(self, work: Any) -> Any:
+        box: dict[str, Any] = {}
+
+        def run() -> None:
+            try:
+                box["value"] = work()
+            except BaseException as exc:  # noqa: BLE001 - re-raised below, on this thread
+                box["error"] = exc
+
+        thread = threading.Thread(target=run)
+        thread.start()
+        thread.join()
+        if "error" in box:
+            raise box["error"]
+        return box.get("value")
+
+    def test_it_can_be_read_from_another_thread(self, settings: Settings) -> None:
+        conn = db.connect(settings.db_path)
+        try:
+            rows = self._in_another_thread(
+                lambda: conn.execute("SELECT 1 AS n").fetchone()["n"]
+            )
+            assert rows == 1
+        finally:
+            conn.close()
+
+    def test_it_can_be_closed_from_another_thread(self, settings: Settings) -> None:
+        """The exact call that raised: the teardown, on a worker that did not open it."""
+        conn = db.connect(settings.db_path)
+        self._in_another_thread(conn.close)
+
+    def test_a_write_survives_the_handoff(
+        self, client: TestClient, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """And the point of all of it: the row moves."""
+        cid = _open_commitment(conn)
+        app_conn = db.connect(settings.db_path)
+        try:
+            self._in_another_thread(
+                lambda: app_conn.execute(
+                    "UPDATE commitment SET due_at = '2026-08-17' WHERE id = ?", (cid,)
+                )
+            )
+        finally:
+            self._in_another_thread(app_conn.close)
+        after = conn.execute("SELECT due_at FROM commitment WHERE id = ?", (cid,)).fetchone()
+        assert after["due_at"] == "2026-08-17"

@@ -42,22 +42,35 @@ connection holding the write lock, answered 200 after 6.9s and moved the row —
 the same click the old binary lost. `backglass state` now reports `matches_source: True`
 with no stale surfaces.
 
+## The actual cause of "Drop does nothing"
+
+Found by driving the real app window: `POST /commitments/343/snooze/1` and
+`/105/resolve` both reached the server from the app, and **no drop request ever did** —
+zero, across the whole log. The difference between Drop and the other two is one
+attribute. `hx-confirm` calls `window.confirm`; the shell's WKWebView implements no
+confirm panel, so the call returns false and htmx cancels the request. The click was
+answered by nothing at all, which is what was reported and what no server log could
+show, because there was nothing to log.
+
+The confirmation moved into the page (`backglass/web/static/confirm.js`): first press
+arms the button, second sends it. `hx-confirm` stays in the markup as the declaration
+that the action is destructive. No timeout — the first draft disarmed after four
+seconds and the arm expired between two presses while being driven, which rebuilds the
+same silent no-op by hand.
+
+Verified two ways: in WebKit, one press wrote nothing and the second sent
+`POST /commitments/343/drop`; then the same two presses in the desktop app.
+
 ## Still open
 
-1. **The desktop symptom is still not explained by the fix above**, and probably never
-   was. A 500 and a 503 both reach the failed-write strip; the owner saw nothing at all,
-   which means the request never left the page. The window had been open since Aug 10
-   17:58 and its WebContent process was sitting at 10MB RSS after 22h47m — a page whose
-   memory the system had reclaimed renders its last frame and runs no JS. The relaunched
-   app's WebContent is at 94MB, which is what a live dashboard weighs. **Unverified until
-   somebody clicks Snooze in the app window and the row moves.** If it does not: the
-   sidecar logs to `/dev/null`, so swap port 8765 for `uv run uvicorn --factory --host
-   127.0.0.1 --port 8765 backglass.web.app:create_app` with its log on a file, and click
-   again — a POST that never appears is the page, not the server.
+1. **Quick-add moves an explicit past date a year forward.** Typing `2026-07-30` into
+   the form's date field stored `2027-07-30`, silently — `dates.resolve_due` rolls a
+   past date into the future, which is right for "friday" and wrong for a date the owner
+   picked out of a calendar widget. Not investigated further; found while building a
+   probe row.
 2. Worth proposing, not built: the shell could re-navigate the window when it regains
-   focus after a long idle. A dashboard open for 23 hours is showing yesterday's board
-   whether or not its JS is alive, and this is the failure mode that made a page look
-   fine and act dead.
+   focus after a long idle. A dashboard open for 23 hours is showing yesterday's board,
+   and nothing on either side says so.
 3. A dev `uvicorn` on 8771 has been running since Friday off older code. Left alone: a
    second session is active in this checkout (it changed `config.py` and
    `extract/client.py` mid-session, an `anthropic_base_url` feature in progress), and

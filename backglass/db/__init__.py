@@ -102,7 +102,23 @@ def connect(db_path: Path) -> sqlite3.Connection:
     except OSError:
         pass  # Not ours to report: sqlite3.connect gives the real reason a line below.
     _restrict(db_path)
-    conn = sqlite3.connect(db_path, isolation_level=None)
+    # `check_same_thread=False` because the dashboard hands one connection between
+    # threads, and SQLite's default forbids that on the second thread rather than on the
+    # sharing. FastAPI runs a sync route in a worker thread and runs the setup and the
+    # teardown of a sync generator dependency as two separate threadpool calls, which
+    # anyio is free to schedule on two different workers — so `get_conn`'s connection is
+    # opened on one thread, used on a second and closed on a third, and none of that is
+    # under this code's control. Caught in the wild on 2026-08-11: a dashboard GET
+    # answered 200 and then raised `SQLite objects created in a thread can only be used
+    # in that same thread` out of `conn.close()`, leaking the connection. The same
+    # scheduling landing one call earlier is a 500 out of the route body with the write
+    # lost, which is indistinguishable from a button that does nothing.
+    #
+    # This is a handoff, not sharing: `get_conn` yields one connection to one request and
+    # closes it, so there is never a second thread touching it at the same moment — which
+    # is the condition the flag actually relaxes. Every other caller (the CLI, the sync,
+    # the tests) is single-threaded and unaffected.
+    conn = sqlite3.connect(db_path, isolation_level=None, check_same_thread=False)
     conn.row_factory = _dict_row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA foreign_keys = ON")
