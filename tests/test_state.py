@@ -173,3 +173,111 @@ def _missing_path():  # type: ignore[no-untyped-def]
     from pathlib import Path
 
     return Path("/nonexistent/Backglass.app")
+
+
+class TestTheScheduleIsAClaimThatCanBeChecked:
+    """The failure this section was written for, on 2026-08-11.
+
+    All four calendar jobs were firing seven and a half hours early: the morning brief
+    was written at 17:30 and the day planner ran at 17:17, planning a day that was over
+    — which is why it reported a fully booked day with a hundred items overflowing, and
+    why that looked like a planner bug. The plists said 06:00 and 05:45, and `launchctl
+    print` agreed with them, because the hour was never what was wrong.
+
+    Every existing check read one side or the other and both sides looked right. What
+    nobody could see was the distance between them, which is what this reports.
+    """
+
+    def _agents(self, root, jobs):  # type: ignore[no-untyped-def]
+        """A fake LaunchAgents dir: one plist per job, with its log stamped at the hour
+        the job was actually last seen to run."""
+        import os
+        import plistlib
+        from datetime import datetime
+
+        root.mkdir(parents=True, exist_ok=True)
+        for label, (scheduled, ran_at) in jobs.items():
+            log = root / f"{label}.log"
+            log.write_text("ran\n")
+            if ran_at is not None:
+                when = datetime.now().replace(
+                    hour=ran_at[0], minute=ran_at[1], second=0, microsecond=0
+                ).timestamp()
+                os.utime(log, (when, when))
+            body: dict = {"Label": label, "StandardOutPath": str(log)}
+            if scheduled is not None:
+                body["StartCalendarInterval"] = {
+                    "Hour": scheduled[0], "Minute": scheduled[1]
+                }
+            else:
+                body["StartInterval"] = 1800
+            (root / f"{label}.plist").write_bytes(plistlib.dumps(body))
+        return root
+
+    def test_a_job_that_fires_when_it_says_is_not_reported(
+        self, conn: sqlite3.Connection, settings: Settings, tmp_path, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        agents = self._agents(
+            tmp_path / "LaunchAgents",
+            {"com.backglass.brief": ((6, 0), (6, 2))},  # two minutes late is not news
+        )
+        monkeypatch.setattr(state_mod, "LAUNCH_AGENTS_DIR", agents)
+        schedule = state_mod.collect(conn, settings).sections["schedule"]
+        assert schedule["drifting"].value == []
+        assert "06:00 daily" in schedule["jobs"].value["com.backglass.brief"]
+
+    def test_the_seven_and_a_half_hour_drift_is_reported(
+        self, conn: sqlite3.Connection, settings: Settings, tmp_path, monkeypatch
+    ) -> None:  # type: ignore[no-untyped-def]
+        """The real numbers off the machine it happened on."""
+        agents = self._agents(
+            tmp_path / "LaunchAgents",
+            {
+                "com.backglass.brief": ((6, 0), (17, 30)),
+                "com.backglass.plan": ((5, 45), (17, 15)),
+            },
+        )
+        monkeypatch.setattr(state_mod, "LAUNCH_AGENTS_DIR", agents)
+        schedule = state_mod.collect(conn, settings).sections["schedule"]
+        assert len(schedule["drifting"].value) == 2
+        assert any("brief" in line for line in schedule["drifting"].value)
+
+    def test_drift_is_measured_around_the_clock_not_across_it(
+        self, conn: sqlite3.Connection, settings: Settings, tmp_path, monkeypatch
+    ) -> None:
+        """A 00:05 job last seen at 23:50 is fifteen minutes early, not twenty-three
+        hours and forty-five minutes late. Measured the naive way, every job scheduled
+        near midnight reports as broken forever, and a section that cries wolf nightly
+        is one nobody reads on the morning it is right."""
+        agents = self._agents(
+            tmp_path / "LaunchAgents", {"com.backglass.backup": ((0, 5), (23, 50))}
+        )
+        monkeypatch.setattr(state_mod, "LAUNCH_AGENTS_DIR", agents)
+        schedule = state_mod.collect(conn, settings).sections["schedule"]
+        assert schedule["drifting"].value == []
+
+    def test_an_interval_job_cannot_drift(
+        self, conn: sqlite3.Connection, settings: Settings, tmp_path, monkeypatch
+    ) -> None:
+        """Seconds are the same in every timezone, which is why the sync was the one job
+        that stayed right through all of it."""
+        agents = self._agents(
+            tmp_path / "LaunchAgents", {"com.backglass.sync": (None, (3, 0))}
+        )
+        monkeypatch.setattr(state_mod, "LAUNCH_AGENTS_DIR", agents)
+        schedule = state_mod.collect(conn, settings).sections["schedule"]
+        assert schedule["drifting"].value == []
+        assert "every 1800s" in schedule["jobs"].value["com.backglass.sync"]
+
+    def test_no_jobs_installed_says_so_rather_than_reporting_health(
+        self, conn: sqlite3.Connection, settings: Settings, tmp_path, monkeypatch
+    ) -> None:
+        """Rule 2 of this module: a probe with nothing to look at reports unknown. An
+        empty `drifting` list on a machine with no schedule at all is the confident
+        answer assembled from a missing input that this file exists to prevent."""
+        empty = tmp_path / "LaunchAgents"
+        empty.mkdir()
+        monkeypatch.setattr(state_mod, "LAUNCH_AGENTS_DIR", empty)
+        schedule = state_mod.collect(conn, settings).sections["schedule"]
+        assert schedule["jobs"].unknown is not None
+        assert "drifting" not in schedule

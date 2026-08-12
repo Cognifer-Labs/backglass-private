@@ -362,6 +362,122 @@ def _retrieval(conn: sqlite3.Connection, settings: Settings, state: State) -> No
     )
 
 
+#: Where `schedule install` puts the jobs, and the prefix that marks them as ours.
+LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
+JOB_PREFIX = "com.backglass."
+
+#: How far a job's last observed fire may sit from its scheduled time before this
+#: reports it as drifting.
+#:
+#: Generous on purpose. launchd defers a `StartCalendarInterval` job that came due while
+#: the machine was asleep and runs it at wake, so a late fire is ordinary and not news.
+#: What this is looking for is the failure below, which was hours wide and constant.
+SCHEDULE_DRIFT_TOLERANCE_MINUTES = 45
+
+
+def _last_fire(plist: dict[str, Any]) -> float | None:
+    """When the job last actually ran, from the mtime of the streams it writes to.
+
+    launchd keeps no accessible record of the last fire — `launchctl print` reports how
+    many times a job has run since it was loaded, and not once when. The log is the only
+    durable evidence, and every one of these jobs writes to one on every run.
+    """
+    stamps = [
+        path.stat().st_mtime
+        for key in ("StandardOutPath", "StandardErrorPath")
+        if (raw := plist.get(key)) and (path := Path(str(raw))).exists()
+    ]
+    return max(stamps) if stamps else None
+
+
+def _schedule(state: State) -> None:
+    """Do the launchd jobs fire when the plists say they do?
+
+    They did not, and nothing in this program could have told anyone. On 2026-08-11 all
+    four calendar jobs were firing seven and a half hours early — the morning brief was
+    written at 17:30 and the day planner ran at 17:17, planning a day that was over,
+    which is why it kept reporting a fully booked day with a hundred items overflowing.
+    The plists said 06:00 and 05:45 and `launchctl print` agreed with them, because the
+    hour is not the thing that was wrong: launchd fixes a calendar job's fire times when
+    it loads the job, and this owner had loaded them in one timezone and carried the
+    machine to another five and a half hours away. Nothing re-evaluates on its own.
+
+    Which is exactly the shape this module exists for. The schedule was a claim nobody
+    could check: the file said one time, the job did another, and both looked right when
+    read alone. So the claim here is not what the plist says — it is the distance between
+    what it says and when the job was last seen to run. The remedy is `backglass schedule
+    install`, which unloads and reloads each job and so re-fixes every fire time to the
+    zone the machine is in now.
+    """
+    import plistlib
+    from datetime import datetime
+
+    if not LAUNCH_AGENTS_DIR.exists():
+        state.add(
+            "schedule", "jobs",
+            Claim(None, str(LAUNCH_AGENTS_DIR), "no LaunchAgents dir"),
+        )
+        return
+    paths = sorted(LAUNCH_AGENTS_DIR.glob(f"{JOB_PREFIX}*.plist"))
+    if not paths:
+        state.add(
+            "schedule", "jobs",
+            Claim([], f"{JOB_PREFIX}*.plist in {LAUNCH_AGENTS_DIR}",
+                  "none installed — run `backglass schedule install`"),
+        )
+        return
+
+    jobs: dict[str, str] = {}
+    drifting: list[str] = []
+    for path in paths:
+        try:
+            plist = plistlib.loads(path.read_bytes())
+        except Exception as exc:  # noqa: BLE001 - an unreadable plist is reportable news
+            jobs[path.stem] = f"unreadable ({exc})"
+            continue
+        fired = _last_fire(plist)
+        seen = datetime.fromtimestamp(fired).strftime("%H:%M") if fired else "never seen"
+        calendar = plist.get("StartCalendarInterval")
+        if isinstance(calendar, dict):
+            hour, minute = int(calendar.get("Hour", 0)), int(calendar.get("Minute", 0))
+            jobs[path.stem] = f"{hour:02d}:{minute:02d} daily, last ran {seen}"
+            if fired is None:
+                continue
+            when = datetime.fromtimestamp(fired)
+            # Circular: 23:50 against a 00:05 job is fifteen minutes apart, not
+            # twenty-three hours, and a job that drifts across midnight is the case
+            # this exists to catch rather than the one it should miss.
+            apart = abs((when.hour * 60 + when.minute) - (hour * 60 + minute))
+            if min(apart, 24 * 60 - apart) > SCHEDULE_DRIFT_TOLERANCE_MINUTES:
+                drifting.append(f"{path.stem} fires {hour:02d}:{minute:02d}, last ran {seen}")
+        elif (interval := plist.get("StartInterval")) is not None:
+            # Interval jobs cannot drift: they count seconds, and seconds are the same
+            # in every timezone. That is why the sync was the one job that stayed right.
+            jobs[path.stem] = f"every {int(interval)}s, last ran {seen}"
+        else:
+            jobs[path.stem] = f"at load, last ran {seen}"
+
+    state.add(
+        "schedule", "jobs",
+        Claim(jobs, f"{JOB_PREFIX}*.plist, and the mtime of each job's log"),
+    )
+    state.add(
+        "schedule", "drifting",
+        Claim(drifting,
+              f"last fire more than {SCHEDULE_DRIFT_TOLERANCE_MINUTES}m from the "
+              f"scheduled time — reinstall with `backglass schedule install`"),
+    )
+    state.add("schedule", "timezone", Claim(_timezone(), "readlink /etc/localtime"))
+
+
+def _timezone() -> str | None:
+    """The zone launchd will fix fire times to the next time a job is loaded."""
+    try:
+        return Path("/etc/localtime").resolve().as_posix().split("zoneinfo/", 1)[-1]
+    except Exception:  # noqa: BLE001 - a missing link is unknown, not a crash
+        return None
+
+
 def collect(conn: sqlite3.Connection, settings: Settings) -> State:
     """Everything, read fresh. Each probe is independent: one failing must not blank
     the rest, because a partial truth that says which part is missing beats a total
@@ -377,6 +493,7 @@ def collect(conn: sqlite3.Connection, settings: Settings) -> State:
         ("knowledge_base", lambda: _knowledge_base(conn, settings, state)),
         ("open_questions", lambda: _open_questions(conn, state)),
         ("retrieval", lambda: _retrieval(conn, settings, state)),
+        ("schedule", lambda: _schedule(state)),
     ]
     for name, probe in probes:
         try:
