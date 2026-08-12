@@ -461,11 +461,19 @@ def _schedule(state: State) -> None:
         "schedule", "jobs",
         Claim(jobs, f"{JOB_PREFIX}*.plist, and the mtime of each job's log"),
     )
+    # Two causes, and they need different remedies, so the hint names both rather than
+    # the one that happens to be commoner. A plist that was edited but never reloaded is
+    # fixed by `schedule install`. A system whose calendar agent holds a stale timezone
+    # is not: that agent reads the zone when it starts and never again, it is
+    # SIP-protected against restarting, and a job loaded seconds ago inherits the stale
+    # zone too — which is what happened here, and only a restart clears it.
     state.add(
         "schedule", "drifting",
         Claim(drifting,
               f"last fire more than {SCHEDULE_DRIFT_TOLERANCE_MINUTES}m from the "
-              f"scheduled time — reinstall with `backglass schedule install`"),
+              f"scheduled time — if every job is off by the same amount the machine's "
+              f"timezone changed since it last booted and only a restart fixes it; "
+              f"if one is off, `backglass schedule install` reloads it"),
     )
     state.add("schedule", "timezone", Claim(_timezone(), "readlink /etc/localtime"))
 
