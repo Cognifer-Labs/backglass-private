@@ -879,3 +879,23 @@ deterministic given the id.
   same breath as the keystroke — read what the board says is first immediately before
   pressing, never from a check a few minutes old. And after one misfire, stop: the second
   attempt cost more than handing the click back would have.
+
+- 2026-08-12 | Deduping the ledger, I passed entity ids to `actions.different()`, whose
+  arguments are commitment ids. 58 and 88 exist in both tables, so nothing raised: the
+  question "are these two phone numbers one person?" was recorded as a permanent
+  "keep apart" on "buy more pickleball balls" and "complete 2026 Annual Education quiz".
+  Caught it on the next read; one `DELETE` from `commitment_distinct` and a re-call with
+  153/263 fixed it. | Every id in this codebase is a bare int and most tables overlap in
+  range, so a wrong-table id validates and writes to the wrong row rather than failing.
+  Before calling anything that takes an id, re-read what the function's own SELECT joins
+  against, and print the row you are about to act on. `_require_open` and friends check
+  existence, never that the id came from the table you meant.
+
+- 2026-08-12 | Wrote a `for p in "43 33" "44 40" ...; do set -- $p` loop to drive
+  `people merge`, and zsh does not word-split unquoted parameters, so every iteration
+  called `merge "43 33" ""` and printed the usage box. Seventeen merges silently did
+  nothing; I only noticed because the output was a box-drawing character instead of
+  "merged into". | In zsh, feed pairs through `while read -r a b` from a heredoc rather
+  than relying on splitting. And when a batch loop's output does not contain the words
+  the successful case prints, treat that as failure — a command that exits after printing
+  its help is a failure that returns nothing to grep for.
