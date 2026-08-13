@@ -548,3 +548,38 @@ class TestTouchOnThePage:
 
         assert answer.status_code == 422
         assert "not a number of days" in answer.text
+
+
+class TestTimelineAgreement:
+    def test_a_recorded_touch_appears_in_the_timeline(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The banner and the timeline must not disagree: "0 days since last touch"
+        above "No interactions on record" is two surfaces contradicting each other about
+        the same person."""
+        from backglass.people import profiles, touch
+
+        pid = _person(conn, "Felipe Batalini", tags=["connection"])
+        touch.record(conn, settings, pid, kind="met", occurred_at="2026-08-11",
+                     note="McKenna dinner")
+
+        rows = profiles.timeline(conn, pid)
+
+        assert [r["via"] for r in rows] == ["touch"]
+        assert rows[0]["source_title"] == "Met: Felipe Batalini"
+        assert rows[0]["what"] == "McKenna dinner"
+        assert rows[0]["source_item_id"]
+
+    def test_touches_interleave_with_evidence_newest_first(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        from backglass.people import profiles, touch
+
+        pid = _person(conn, "Ravi Menon", role="Partner")
+        _interaction(conn, pid, "2026-08-05T10:00:00Z")
+        touch.record(conn, settings, pid, kind="call", occurred_at="2026-08-09")
+        _interaction(conn, pid, "2026-07-01T10:00:00Z")
+
+        assert [r["via"] for r in profiles.timeline(conn, pid)] == [
+            "touch", "commitment", "commitment",
+        ]

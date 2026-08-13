@@ -1,7 +1,14 @@
--- Interaction timeline for one person. Two legs:
+-- Interaction timeline for one person. Three legs:
 --   via='commitment' — source items behind commitments with this counterparty
+--   via='touch'      — touches the owner recorded by hand (migration 0023)
 --   via='mention'    — source items whose author matches one of the aliases, that
 --                      did not already appear in the first leg
+--
+-- The touch leg is here because the banner and this panel must not disagree. A person
+-- whose whole history is one dinner read "0 days since last touch" above a timeline
+-- saying "No interactions on record", which is the two-surfaces-disagree failure this
+-- codebase keeps paying for. A recorded touch is an interaction; it belongs in the list
+-- of them.
 -- Every row is a source_item, so every timeline entry carries provenance by
 -- construction (CLAUDE.md rule 1).
 --
@@ -14,6 +21,13 @@ SELECT
 FROM commitment c
 JOIN source_item s ON s.id = c.source_item_id
 WHERE c.user_id = :user_id AND c.counterparty_entity_id = :entity_id
+UNION ALL
+SELECT
+  s.id, s.source, s.external_id, s.occurred_at, datetime(s.occurred_at), s.title, s.author,
+  'touch', t.note
+FROM touchpoint t
+JOIN source_item s ON s.id = t.source_item_id
+WHERE t.user_id = :user_id AND t.entity_id = :entity_id
 UNION ALL
 SELECT
   s.id, s.source, s.external_id, s.occurred_at, datetime(s.occurred_at), s.title, s.author,

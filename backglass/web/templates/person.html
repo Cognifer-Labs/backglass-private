@@ -231,7 +231,10 @@
           <span class="time">{{ (item['source_occurred_at'] or '')[:10] }}</span>
           <div class="grow">
             <p class="b1">{{ item['source_title'] or 'no subject' }}</p>
-            <p class="b2">{{ 'commitment evidence' if item['via'] == 'commitment' else 'mentioned' }}
+            <p class="b2">
+              {%- if item['via'] == 'commitment' %}commitment evidence
+              {%- elif item['via'] == 'touch' %}you recorded this
+              {%- else %}mentioned{% endif %}
               · {{ m.source_link(item) }}</p>
           </div>
         </div>
