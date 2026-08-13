@@ -18,7 +18,7 @@ from fastapi.templating import Jinja2Templates
 
 from backglass.config import Settings
 from backglass.people import merge as merge_mod
-from backglass.people import profiles, touch
+from backglass.people import profiles, reachout, touch
 from backglass.web import actions
 from backglass.web.params import RowId
 
@@ -90,7 +90,36 @@ def build_router(
                 "derived": profiles.derived(conn, entity_id, today().isoformat()),
                 "today": today(),
                 "settings": settings,
+                "templates": reachout.TEMPLATES,
+                "draft": None,
             },
+        )
+
+    @router.post("/people/{entity_id}/reachout", response_class=HTMLResponse)
+    def reachout_draft(
+        entity_id: RowId,
+        request: Request,
+        template: str = Form("thanks"),
+        note: str = Form(""),
+        where: str = Form(""),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        """Render a warm-keeping draft. A read, so it returns a fragment and writes
+        nothing — the page around it is still true afterwards."""
+        try:
+            record = reachout.draft(
+                conn, settings, entity_id, note=note, template=template,
+                where=where or None, day=today(),
+            )
+        except reachout.ReachoutError as exc:
+            # A missing note is the owner mis-filling a form, not a server fault: it
+            # renders in the fragment where they can fix it, rather than as a 422 the
+            # HTMX swap would drop on the floor.
+            return templates.TemplateResponse(
+                request, "_reachout.html", {"draft": None, "error": str(exc)}
+            )
+        return templates.TemplateResponse(
+            request, "_reachout.html", {"draft": record, "error": None}
         )
 
     @router.post("/people", response_class=HTMLResponse)

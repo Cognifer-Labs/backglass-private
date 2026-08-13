@@ -1,0 +1,31 @@
+{# The rendered draft. Replaces itself on every submit, so the form above it stays put
+   and the owner can retype the note and re-render without losing the page.
+
+   The email is a plain <pre>: it is going to be pasted into a mail client, and any
+   markup this page adds is markup the owner has to strip. Provenance sits underneath,
+   never inside — CLAUDE.md rule 1 asks that a claim can be checked, not that the
+   recipient reads the audit trail. #}
+<div id="reachout-draft">
+  {% if draft %}
+    <p class="b2" style="margin-top:12px">
+      To: {{ draft.to_email or draft.to_name }} · Subject: {{ draft.subject }}
+    </p>
+    <pre class="b1 draftmail">{{ draft.body }}</pre>
+    {% if draft.mailto() %}
+      <p class="b2"><a class="lnk" href="{{ draft.mailto() }}">Open in your mail client</a></p>
+    {% else %}
+      <p class="b2">
+        No address on this profile — copy the text above. Add their email to the
+        profile's aliases and this becomes a one-click link.
+      </p>
+    {% endif %}
+    <details class="addform">
+      <summary class="lbl">Where each part came from</summary>
+      {% for line in draft.evidence %}
+        <p class="b2">· {{ line }}</p>
+      {% endfor %}
+    </details>
+  {% elif error %}
+    <p class="b2" style="margin-top:12px">{{ error }}</p>
+  {% endif %}
+</div>

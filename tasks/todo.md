@@ -1193,3 +1193,50 @@ unique index to make S1 idempotent; the version bumps would have re-read 1,266 i
 times (~$880 imputed) with nothing saying so; `record_link` lost two of its four kinds for
 having no reader; and `scope_json`'s "template shapes" would have meant inventing a second
 matcher tier 0 does not have.
+
+---
+
+# Reach-out drafts: keeping in-person connections warm (2026-08-12)
+
+A person met once in person leaves no trace in the ledger — no thread, no commitment, no
+calendar block. `touch.py` can only measure silence it has evidence for, so the exact
+relationships most at risk of going cold are the ones the system is blindest to. The
+missing piece is not another detector, it is the next action: a written email the owner
+can send in under a minute.
+
+## What it is
+
+`backglass reachout <person> --template <name> --note "<the specific thing>"` renders a
+draft from a fixed template and prints it, with the evidence it was built from listed
+beside it — never inside the email.
+
+## Constraints taken as given
+
+- **Deterministic, no model call.** Extraction is 30,593c of imputed spend; a template
+  that fills slots costs nothing, is testable against fixtures, and calls no live API
+  (testing rule). Phrasing is the owner's job, and the `--note` is where their voice goes.
+- **Reads only.** The draft writes nothing. Sending it is what produces evidence: the
+  reply lands through apple-mail like any other item.
+- **Works with zero ledger evidence.** The in-person case is the primary case, not the
+  edge. Name plus note must render a complete email; last-touch and commitments are
+  optional enrichment.
+- **Provenance beside the draft, not in it** (rule 1). Each line says which row, note or
+  fact it came from.
+- **Curated profiles only.** `people_cold.sql` requires role, org or a tag — a person
+  created with a bare name is invisible to the warmth machinery this serves.
+
+## Steps
+
+- [x] `backglass/people/reachout.py` — templates, slot fill, `Draft` with evidence.
+- [x] `reachout` CLI command, name-or-id resolution, `--json`.
+- [x] Person page panel: template picker + note, returns the draft fragment with a
+      `mailto:` when an address is known.
+- [x] `tests/test_reachout.py` — fixture drafts, the zero-evidence case, the note line,
+      no-writes assertion.
+- [x] Felipe Batalini created as a curated profile and his draft produced.
+
+## Done means
+
+`uv run backglass reachout "Felipe Batalini" --template thanks --note "..."` prints a
+sendable email containing the appreciation line, the ledger is unchanged after it runs,
+and the same draft renders on `/people/<id>`.

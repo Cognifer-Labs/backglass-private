@@ -631,6 +631,23 @@ input:focus,textarea:focus,select:focus{outline:3px solid var(--rule);outline-of
  * two options, "I owe" and "Owed to me" — and an unscoped 320px basis inflated a control
  * whose intrinsic width is a third of that. A cap written for one long list is not a rule
  * about selects. */
+/* The reach-out form is not inside a `<details class="addform">` — it is the panel's
+ * primary control, not something folded away — so it needs the same wrapping row and
+ * the same width floor of zero. Without them a select sized by its longest option and
+ * an input with a default 20ch size both refuse to shrink, and the panel loses its
+ * right keyline. The note takes the whole second line for the reason `.what` does:
+ * it is a sentence, and a sentence field the width of a name gets a name written in
+ * it. */
+.reachform{display:flex;gap:var(--sp-2);flex-wrap:wrap;margin-top:var(--sp-3)}
+.reachform input,.reachform select{min-width:0;max-width:100%}
+.reachform select{flex:0 1 220px}
+.reachform input[name="where"]{flex:1 1 200px}
+.reachform .what{flex:1 1 100%}
+/* The draft is prose, not a numeral or a key: a `<pre>` for the line breaks, which the
+ * paragraphing carries, but the body face rather than the monospace this sheet reserves
+ * for counts and shortcuts. It is going to be pasted into a mail client, so what is on
+ * screen should read as what will be sent. */
+.draftmail{font:inherit;white-space:pre-wrap;margin:var(--sp-2) 0}
 .src .nm a,a.nm{color:var(--ink);text-decoration:none}
 a.nm:hover{text-decoration:underline;text-underline-offset:2px}
 /* A paused source stays listed — configuration is visible even when inactive. */
@@ -1761,14 +1778,17 @@ details.panel:not([open]){padding-bottom:0}
  * page still works, one fragment simply snaps while its neighbour fades. `.panel` and
  * `.sec` are what a swappable region already is here, so a fragment added next year
  * inherits the animation instead of having to be remembered. The remaining five ids
- * are the regions that wear no such class; `test_every_swap_target_arrives` compares
+ * are the regions that wear no such class — six now, with the reach-out draft;
+ * `test_every_swap_target_arrives` compares
  * this list against the templates so the next omission is a failing test. */
 #content,.panel,.sec,
-#people-rows,#roadmap-totals,#roadmap-steps,#roadmap-masthead,#week-grid{
+#people-rows,#roadmap-totals,#roadmap-steps,#roadmap-masthead,#week-grid,
+  #reachout-draft{
   transition:opacity var(--motion) var(--ease-out),transform var(--motion) var(--ease-out)}
 @starting-style{
   #content,.panel,.sec,
-  #people-rows,#roadmap-totals,#roadmap-steps,#roadmap-masthead,#week-grid{
+  #people-rows,#roadmap-totals,#roadmap-steps,#roadmap-masthead,#week-grid,
+  #reachout-draft{
     opacity:0;transform:translateY(var(--motion-travel))}
 }
 /* The week-pace readout is an inline span mid-sentence — a transform would not apply

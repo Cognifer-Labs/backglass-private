@@ -53,6 +53,38 @@
   </div>
 </section>
 
+{# Keeping the connection warm. Placed second, above Plans and Open commitments,
+   because for someone met once in person those two panels are empty and this is the
+   only thing on the page that is an action rather than a record. #}
+<section class="panel" id="panel-reachout">
+  {{ m.banner('Reach out', touch.chip() if touch else '') }}
+  <div class="inner">
+    <form class="reachform" hx-post="/people/{{ p['id'] }}/reachout"
+          hx-target="#reachout-draft" hx-swap="outerHTML">
+      {# Short labels, long explanations underneath: a select is as wide as its
+         widest option, and a sentence in there walks the control off the panel. #}
+      <select name="template" aria-label="Template">
+        {% for name, t in templates.items() %}
+          <option value="{{ name }}">{{ name }} — {{ t.label }}</option>
+        {% endfor %}
+      </select>
+      <input name="where" placeholder="Where you met — 'at the welcome dinner'">
+      <input class="what" name="note" required
+             placeholder="The specific thing you want to say, in your words">
+      <button class="btn ok" type="submit">Draft</button>
+    </form>
+    <p class="b2">
+      A template with the sentence you type in it — no model call, nothing written, and
+      nothing said that you did not say. Send it and the reply reaches the ledger the
+      ordinary way.
+    </p>
+    {% for name, t in templates.items() %}
+      <p class="b2"><strong>{{ name }}</strong> — {{ t.purpose }}</p>
+    {% endfor %}
+    {% include "_reachout.html" %}
+  </div>
+</section>
+
 <section class="panel" id="panel-plans">
   {{ m.banner('Plans', derived['upcoming']|length ~ ' ahead') }}
   <div class="inner">

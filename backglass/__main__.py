@@ -2579,6 +2579,94 @@ def batch_status() -> None:
         )
 
 
+# ── Keeping people warm ───────────────────────────────────────────────────
+
+
+@app.command()
+def reachout(
+    person: Annotated[
+        str | None,
+        typer.Argument(help="Name or entity id; omit to list who is going quiet"),
+    ] = None,
+    template: Annotated[
+        str, typer.Option("--template", "-t", help="thanks | warm | ask")
+    ] = "thanks",
+    note: Annotated[
+        str | None,
+        typer.Option("--note", "-n", help="The specific thing you want to say, in your words"),
+    ] = None,
+    where: Annotated[
+        str | None,
+        typer.Option("--where", help="Where you met — 'at the welcome dinner'"),
+    ] = None,
+    subject: Annotated[
+        str | None, typer.Option("--subject", help="Override the template's subject line")
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable")] = False,
+) -> None:
+    """Draft an email that keeps a connection warm.
+
+    Deterministic — no model call, so this costs nothing and reads the same way twice.
+    The `--note` is the whole draft: the specific thing that passed between you two,
+    in your words. Everything else is scaffolding around it.
+
+    Nothing is written. The draft becomes evidence when you send it and the reply
+    arrives through the mail connector like any other item.
+    """
+    from backglass.people import reachout as reachout_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    day = _today(settings)
+
+    if person is None:
+        rows = reachout_mod.candidates(conn, settings, day)
+        if not rows:
+            typer.echo(
+                "nobody is going quiet — only curated profiles (a role, an org or a tag)"
+                " are tracked, so a bare name will not appear here"
+            )
+            return
+        typer.echo(f"{len(rows)} to consider, coldest first:")
+        for row in rows:
+            label = " · ".join(part for part in (row.role, row.org) if part)
+            typer.echo(
+                f"  #{row.entity_id:<5} {row.name:<28} {row.chip()}"
+                f"{('  (' + label + ')') if label else ''}"
+            )
+        typer.echo(
+            '\ndraft one:  backglass reachout "<name>" --template thanks'
+            ' --note "<the specific thing>"'
+        )
+        return
+
+    try:
+        entity_id = reachout_mod.resolve(conn, person)
+        record = reachout_mod.draft(
+            conn,
+            settings,
+            entity_id,
+            note=note or "",
+            template=template,
+            where=where,
+            subject=subject,
+            day=day,
+        )
+    except reachout_mod.ReachoutError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+
+    if as_json:
+        typer.echo(reachout_mod.to_json(record))
+        return
+
+    typer.echo(record.as_text())
+    typer.echo("\n── where each part came from ──")
+    for line in record.evidence:
+        typer.echo(f"  · {line}")
+
+
 # ── Phase A2: setup ───────────────────────────────────────────────────────
 
 
