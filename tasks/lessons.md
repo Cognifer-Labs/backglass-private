@@ -899,3 +899,15 @@ deterministic given the id.
   than relying on splitting. And when a batch loop's output does not contain the words
   the successful case prints, treat that as failure — a command that exits after printing
   its help is a failure that returns nothing to grep for.
+
+- 2026-08-12 | Added the `touchpoint` table and three of this repo's own guards failed in
+  sequence, one per test run: `test_every_table_that_names_a_source_item_is_covered`
+  (imessage's prune DEPENDENTS), `test_every_migration_is_frozen` (the checksum list),
+  and `test_every_table_that_names_an_entity_survives_a_merge` (merge.py plus its
+  seeder). Each was found reactively, costing a full-suite run apiece. | A new table in
+  this codebase has a fixed checklist, and it is written down as tests rather than as
+  prose. Before running the suite on a migration, grep for the guards first —
+  `REFERENCES source_item` and `REFERENCES entity` both have a test that enumerates
+  every table naming them, and `FROZEN_CHECKSUMS` needs the new file's sha256. Do the
+  same for the mirror: `uv run python -m tests.test_schema_reference` regenerates
+  `specs/schema.sql`, which is generated, never hand-edited.
