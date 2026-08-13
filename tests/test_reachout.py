@@ -298,3 +298,253 @@ class TestPersonPage:
         assert page.status_code == 200
         assert "--note" in page.text
         assert "Hi Felipe," not in page.text
+
+
+class TestTouchpoints:
+    """The reminder half: a touch the ledger cannot see, recorded so it can be cited."""
+
+    def test_a_recorded_touch_becomes_evidence_the_brief_may_cite(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The whole point. `follow_up_section` refuses a person with no source row, so
+        before this a dinner could never produce a nudge."""
+        from backglass.people import touch
+
+        pid = _person(conn, "Felipe Batalini", tags=["connection"])
+        touch.record(conn, settings, pid, kind="met", occurred_at="2026-06-01",
+                     note="McKenna dinner")
+
+        [t] = touch.cold(conn, settings, TODAY)
+        assert t.days_since == 72
+        assert t.source_row is not None
+        assert t.source_row["source"] == "manual"
+        assert t.source_row["source_title"] == "Met: Felipe Batalini"
+        assert [x.entity_id for x in touch.needing_follow_up(conn, settings, TODAY)] == [pid]
+
+    def test_the_newest_evidence_wins_whichever_kind_it_is(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        from backglass.people import touch
+
+        pid = _person(conn, "Ravi Menon", role="Partner")
+        _interaction(conn, pid, "2026-07-01T10:00:00Z")
+        assert touch.cold(conn, settings, TODAY)[0].days_since == 42
+
+        touch.record(conn, settings, pid, kind="call", occurred_at="2026-08-10")
+        assert touch.cold(conn, settings, TODAY)[0].days_since == 2
+
+        # And a touch older than the commitment does not rewind the clock.
+        touch.record(conn, settings, pid, kind="met", occurred_at="2026-05-01")
+        assert touch.cold(conn, settings, TODAY)[0].days_since == 2
+
+    def test_logging_the_same_touch_twice_in_a_day_is_one_touch(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """Rule 3, in the only form a hand-entered record can take."""
+        from backglass.people import touch
+
+        pid = _person(conn, "Felipe Batalini", tags=["connection"])
+        first = touch.record(conn, settings, pid, kind="met", occurred_at="2026-08-11")
+        conn.commit()
+        before = conn.total_changes
+
+        again = touch.record(conn, settings, pid, kind="met", occurred_at="2026-08-11",
+                             note="different words, same meeting")
+
+        assert again == first
+        assert conn.total_changes == before
+        assert len(touch.history(conn, pid)) == 1
+
+    def test_a_bad_kind_or_date_is_refused_with_a_sentence(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        from backglass.people import touch
+
+        pid = _person(conn, "Felipe Batalini", tags=["connection"])
+        with pytest.raises(touch.TouchError, match="unknown kind"):
+            touch.record(conn, settings, pid, kind="vibes")
+        with pytest.raises(touch.TouchError, match="not a date"):
+            touch.record(conn, settings, pid, occurred_at="last tuesday")
+
+    def test_history_carries_provenance_for_every_row(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        from backglass.people import touch
+
+        pid = _person(conn, "Felipe Batalini", tags=["connection"])
+        touch.record(conn, settings, pid, kind="met", occurred_at="2026-08-01")
+        touch.record(conn, settings, pid, kind="sent", occurred_at="2026-08-11")
+
+        rows = touch.history(conn, pid)
+        assert [r["kind"] for r in rows] == ["sent", "met"]  # newest first
+        assert all(r["source_item_id"] and r["source"] == "manual" for r in rows)
+
+
+class TestCadence:
+    def test_the_owners_cadence_replaces_both_thresholds(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        from backglass.people import touch
+
+        pid = _person(conn, "Ravi Menon", tags=["connection"])
+        touch.set_cadence(conn, pid, 30)
+
+        # Exactly at the cadence is due; one short of it is not.
+        touch.record(conn, settings, pid, kind="met", occurred_at="2026-07-13")  # 30 days
+        assert touch.cold(conn, settings, TODAY)[0].level == "warn"
+
+        conn.execute("DELETE FROM touchpoint WHERE entity_id = ?", (pid,))
+        touch.record(conn, settings, pid, kind="call", occurred_at="2026-07-14")  # 29
+        assert touch.cold(conn, settings, TODAY)[0].level == "fresh"
+
+    def test_overdue_is_twice_the_cadence(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        from backglass.people import touch
+
+        pid = _person(conn, "Ravi Menon", tags=["connection"])
+        touch.set_cadence(conn, pid, 30)
+        touch.record(conn, settings, pid, kind="met", occurred_at="2026-06-13")  # 60 days
+
+        row = touch.cold(conn, settings, TODAY)[0]
+        assert row.level == "cold"
+        assert row.cadence_chip() == "every 30 days"
+
+    def test_no_cadence_falls_back_to_the_settings_pair_and_says_nothing(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        from backglass.people import touch
+
+        pid = _person(conn, "Ravi Menon", tags=["connection"])
+        touch.record(conn, settings, pid, kind="met",
+                     occurred_at=str(TODAY.replace(day=1)))
+
+        row = touch.cold(conn, settings, TODAY)[0]
+        assert row.every_days == settings.people_touch_warn_days
+        assert row.cadence_is_owners is False
+        assert row.cadence_chip() is None
+
+    def test_clearing_a_cadence_hands_the_person_back_to_the_defaults(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        from backglass.people import touch
+
+        pid = _person(conn, "Ravi Menon", tags=["connection"])
+        touch.set_cadence(conn, pid, 7)
+        touch.set_cadence(conn, pid, None)
+        assert touch.cold(conn, settings, TODAY)[0].cadence_is_owners is False
+
+    def test_setting_the_same_cadence_twice_writes_nothing(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        from backglass.people import touch
+
+        del settings
+        pid = _person(conn, "Ravi Menon", tags=["connection"])
+        touch.set_cadence(conn, pid, 21)
+        conn.commit()
+        before = conn.total_changes
+
+        touch.set_cadence(conn, pid, 21)
+
+        assert conn.total_changes == before
+
+    def test_a_cadence_of_zero_is_refused(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        from backglass.people import touch
+
+        del settings
+        pid = _person(conn, "Ravi Menon", tags=["connection"])
+        with pytest.raises(touch.TouchError, match="at least 1"):
+            touch.set_cadence(conn, pid, 0)
+
+
+class TestBriefNudge:
+    def test_a_person_known_only_from_a_recorded_touch_reaches_the_brief(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The sentence in follow_up_section's docstring, now answerable: the claim has
+        a source, so it ships."""
+        from backglass.brief.daily import follow_up_section
+        from backglass.people import touch
+
+        pid = _person(conn, "Felipe Batalini", tags=["connection"])
+        touch.record(conn, settings, pid, kind="met", occurred_at="2026-06-01",
+                     note="McKenna dinner")
+
+        section = follow_up_section(conn, TODAY, settings)
+
+        assert len(section.lines) == 1
+        line = section.lines[0]
+        assert "Felipe Batalini" in line.text
+        assert "Met: Felipe Batalini" in line.text
+        assert line.provenance is not None
+        assert line.provenance.source == "manual"
+
+    def test_a_person_with_no_evidence_at_all_still_stays_out(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """Rule 1 is untouched: recording a touch is how you get in, not an exemption."""
+        from backglass.brief.daily import follow_up_section
+
+        _person(conn, "Felipe Batalini", tags=["connection"])
+        assert follow_up_section(conn, TODAY, settings).lines == []
+
+
+class TestTouchOnThePage:
+    @pytest.fixture
+    def client(self, conn: sqlite3.Connection, settings: Settings):  # type: ignore[no-untyped-def]
+        from fastapi.testclient import TestClient
+
+        from backglass.web.app import create_app
+
+        del conn
+        return TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
+
+    def test_recording_a_touch_moves_the_chip(
+        self, conn: sqlite3.Connection, settings: Settings, client
+    ) -> None:  # type: ignore[no-untyped-def]
+        del settings
+        pid = _person(conn, "Felipe Batalini", tags=["connection"])
+        conn.commit()
+        assert "no interactions yet" in client.get(f"/people/{pid}").text
+
+        posted = client.post(
+            f"/people/{pid}/touch",
+            data={"kind": "met", "on": "2026-08-11", "note": "McKenna dinner"},
+            follow_redirects=False,
+        )
+
+        assert posted.status_code == 303
+        page = client.get(f"/people/{pid}").text
+        assert "1 days since last touch" in page
+        assert "McKenna dinner" in page
+
+    def test_a_cadence_typed_on_the_page_changes_the_level(
+        self, conn: sqlite3.Connection, settings: Settings, client
+    ) -> None:  # type: ignore[no-untyped-def]
+        from backglass.people import touch
+
+        pid = _person(conn, "Felipe Batalini", tags=["connection"])
+        touch.record(conn, settings, pid, kind="met", occurred_at="2026-08-01")
+        conn.commit()
+
+        client.post(f"/people/{pid}/cadence", data={"every_days": "7"},
+                    follow_redirects=False)
+
+        page = client.get(f"/people/{pid}").text
+        assert "every 7 days" in page
+        assert [t.level for t in touch.cold(conn, settings, TODAY)] == ["warn"]
+
+    def test_a_cadence_that_is_not_a_number_answers_in_words(
+        self, conn: sqlite3.Connection, settings: Settings, client
+    ) -> None:  # type: ignore[no-untyped-def]
+        del settings
+        pid = _person(conn, "Felipe Batalini", tags=["connection"])
+        conn.commit()
+
+        answer = client.post(f"/people/{pid}/cadence", data={"every_days": "soon"})
+
+        assert answer.status_code == 422
+        assert "not a number of days" in answer.text

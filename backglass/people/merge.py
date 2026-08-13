@@ -98,6 +98,22 @@ def merge(conn: sqlite3.Connection, winner_id: int, loser_id: int) -> dict[str, 
             "UPDATE entity_merge SET winner_id = ? WHERE user_id = ? AND winner_id = ?",
             (winner_id, USER_ID, loser_id),
         )
+        # Recorded touches (migration 0023) follow the person, not the row. The unique
+        # index is (user_id, entity_id, kind, day), so two halves of a duplicate that
+        # were both logged as met on the same day collide — the loser's copy is dropped
+        # rather than repointed, which is right on the merits too: it was one meeting,
+        # recorded twice because the person was two rows.
+        conn.execute(
+            "DELETE FROM touchpoint WHERE user_id = ? AND entity_id = ?"
+            "  AND EXISTS (SELECT 1 FROM touchpoint w WHERE w.user_id = touchpoint.user_id"
+            "    AND w.entity_id = ? AND w.kind = touchpoint.kind"
+            "    AND substr(w.occurred_at, 1, 10) = substr(touchpoint.occurred_at, 1, 10))",
+            (USER_ID, loser_id, winner_id),
+        )
+        conn.execute(
+            "UPDATE touchpoint SET entity_id = ? WHERE user_id = ? AND entity_id = ?",
+            (winner_id, USER_ID, loser_id),
+        )
         conn.execute(
             "INSERT INTO entity_merge (user_id, winner_id, loser_snapshot_json, merged_at)"
             " VALUES (?, ?, ?, ?)",

@@ -390,6 +390,11 @@ DEPENDENTS = (
     "checkpoint",
     "fact",
     "model_batch_item",
+    # A touchpoint's source item is always 'manual' and can never be an iMessage row, so
+    # this line deletes nothing today. It is here because the list is about the schema,
+    # not about which rows happen to match: leaving it out arms a foreign-key failure for
+    # whoever later prunes a source that a touch could cite.
+    "touchpoint",
 )
 
 

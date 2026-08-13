@@ -91,9 +91,53 @@ def build_router(
                 "today": today(),
                 "settings": settings,
                 "templates": reachout.TEMPLATES,
+                "kinds": touch.KINDS,
+                "touches": touch.history(conn, entity_id),
                 "draft": None,
             },
         )
+
+    @router.post("/people/{entity_id}/touch", response_class=HTMLResponse)
+    def log_touch(
+        entity_id: RowId,
+        kind: str = Form("met"),
+        on: str = Form(""),
+        note: str = Form(""),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        """Record a touch the ledger cannot see.
+
+        Full-page redirect, not a fragment: this moves the chip in the banner, the
+        timeline, the recorded-touch list and the person's place on /people all at once,
+        so re-reading the whole page is the honest answer. Same choice as /edit and
+        /plans/{id}/went, and it makes a double submit harmless alongside the unique
+        index behind it.
+        """
+        try:
+            touch.record(conn, settings, entity_id, kind=kind, occurred_at=on or None,
+                         note=note or None)
+        except touch.TouchError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return RedirectResponse(url=f"/people/{entity_id}", status_code=303)
+
+    @router.post("/people/{entity_id}/cadence", response_class=HTMLResponse)
+    def set_cadence(
+        entity_id: RowId,
+        every_days: str = Form(""),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        """How often this person is worth a touch. Empty hands them back to the defaults."""
+        raw = every_days.strip()
+        try:
+            touch.set_cadence(conn, entity_id, int(raw) if raw else None)
+        except ValueError as exc:
+            # Both a non-number and a zero land here; the sentence differs, the answer
+            # does not — 422 with words, never a traceback.
+            detail = str(exc) if isinstance(exc, touch.TouchError) else (
+                f"{raw!r} is not a number of days"
+            )
+            raise HTTPException(status_code=422, detail=detail) from exc
+        return RedirectResponse(url=f"/people/{entity_id}", status_code=303)
 
     @router.post("/people/{entity_id}/reachout", response_class=HTMLResponse)
     def reachout_draft(

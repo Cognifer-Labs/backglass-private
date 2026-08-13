@@ -12,7 +12,7 @@
     {% if touch %}
       <p class="cap">
         {% if touch.level == 'cold' %}{{ m.chip('overdue') }}{% elif touch.level == 'warn' %}{{ m.chip('slipping') }}{% endif %}
-        {{ touch.chip() }}
+        {{ touch.chip() }}{% if touch.cadence_chip() %} · {{ touch.cadence_chip() }}{% endif %}
       </p>
     {% endif %}
     {% if p['aliases'] %}
@@ -82,6 +82,52 @@
       <p class="b2"><strong>{{ name }}</strong> — {{ t.purpose }}</p>
     {% endfor %}
     {% include "_reachout.html" %}
+
+    {# The other half: a touch the ledger cannot see. Sending the draft leaves no trace
+       here until someone replies, and a dinner leaves none ever — so the reminder can
+       only be honest if the owner can say it happened. The record becomes a manual
+       source item, which is what lets the brief cite it. #}
+    <details class="addform" {% if touch and touch.level in ('warn', 'cold') %}open{% endif %}>
+      <summary class="lbl">I saw them / I sent it</summary>
+      <form class="reachform" method="post" action="/people/{{ p['id'] }}/touch">
+        <select name="kind" aria-label="What happened">
+          {% for key, label in kinds.items() %}
+            <option value="{{ key }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+        <input name="on" placeholder="YYYY-MM-DD — blank means today">
+        <input class="what" name="note" placeholder="What happened, in a line">
+        <button class="btn ok" type="submit">Record</button>
+      </form>
+    </details>
+
+    <details class="addform">
+      <summary class="lbl">
+        How often{% if touch and touch.cadence_chip() %} — {{ touch.cadence_chip() }}{% endif %}
+      </summary>
+      <form class="reachform" method="post" action="/people/{{ p['id'] }}/cadence">
+        <input name="every_days" inputmode="numeric"
+               placeholder="Days between touches — blank for the default"
+               value="{{ touch.every_days if touch and touch.cadence_is_owners else '' }}">
+        <button class="btn ok" type="submit">Save</button>
+      </form>
+      <p class="b2">Due at the cadence, overdue at twice it. The brief nags from due.</p>
+    </details>
+
+    {% if touches %}
+      <details class="addform">
+        <summary class="lbl">Recorded touches ({{ touches|length }})</summary>
+        {% for t in touches %}
+          <div class="row">
+            <span class="time">{{ t['occurred_at'][:10] }}</span>
+            <div class="grow">
+              <p class="b1">{{ kinds.get(t['kind'], t['kind']) }}{% if t['note'] %}: {{ t['note'] }}{% endif %}</p>
+              <p class="b2">{{ m.source_link(t) }}</p>
+            </div>
+          </div>
+        {% endfor %}
+      </details>
+    {% endif %}
   </div>
 </section>
 

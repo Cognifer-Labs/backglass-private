@@ -113,6 +113,31 @@ Resolution merges "Dave", "David R.", and `drodriguez@…` into one entity. Alia
 with manual override. Get this wrong and the "awaiting others" view fragments into
 duplicates and stops being useful.
 
+`touch_every_days` is how often this relationship is worth a touch, in days. NULL means
+the global pair in settings — the right default for the hundred profiles extraction
+created, and the wrong one for the handful the owner keeps warm on purpose.
+
+## touchpoint
+
+```
+id, user_id, entity_id, kind, occurred_at, note, source_item_id, created_at
+```
+
+A touch the ledger cannot see: a dinner, a call, a message the owner sent. `kind` is
+`met | sent | call | note` — what happened, not how it travelled.
+
+It exists because the follow-up nudge could not otherwise mention the relationships that
+need it most. A conversation in person produces no email, no calendar block and no
+commitment, and a claim with no source does not ship (rule 1), so the person the owner
+should be reminded about was the one the brief could never name. The answer is not to
+relax the rule but to create the evidence: `source_item_id` is NOT NULL, and the owner's
+own words become a manual source item first, exactly as `actions.quick_add` does for a
+hand-entered commitment.
+
+Unique on `(user_id, entity_id, kind, date(occurred_at))` — the same touch logged twice
+in a day is one touch (rule 3). `people_cold.sql` takes the newest of commitment
+evidence and touchpoints, so both kinds of history feed one clock.
+
 ## Design rules
 
 **`user_id` on every table, always 1.** Adding it later means a migration across every

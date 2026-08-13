@@ -2582,6 +2582,81 @@ def batch_status() -> None:
 # ── Keeping people warm ───────────────────────────────────────────────────
 
 
+reachout_app = typer.Typer(help="Log a touch, and set how often one is due.")
+app.add_typer(reachout_app, name="touch")
+
+
+@reachout_app.command("log")
+def touch_log(
+    person: Annotated[str, typer.Argument(help="Name or entity id")],
+    kind: Annotated[str, typer.Option("--kind", "-k", help="met | sent | call | note")] = "met",
+    on: Annotated[
+        str | None, typer.Option("--on", help="YYYY-MM-DD; defaults to today")
+    ] = None,
+    note: Annotated[str | None, typer.Option("--note", "-n", help="What happened")] = None,
+) -> None:
+    """Record a touch the ledger cannot see — a dinner, a call, a message you sent.
+
+    This is what makes the reminder work for someone you only ever meet in person: the
+    touch becomes a manual source item, so the brief has provenance to cite and the
+    clock restarts from a real date rather than from silence.
+    """
+    from backglass.people import reachout as reachout_mod
+    from backglass.people import touch as touch_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    try:
+        entity_id = reachout_mod.resolve(conn, person)
+        touch_id = touch_mod.record(
+            conn, settings, entity_id, kind=kind, occurred_at=on, note=note
+        )
+    except (reachout_mod.ReachoutError, touch_mod.TouchError) as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    conn.commit()
+
+    warmth = next(
+        (t for t in touch_mod.cold(conn, settings, _today(settings))
+         if t.entity_id == entity_id),
+        None,
+    )
+    where = f" — {warmth.chip()}" if warmth else ""
+    typer.echo(f"touchpoint {touch_id}: {kind} with #{entity_id}{where}")
+
+
+@reachout_app.command("every")
+def touch_every(
+    person: Annotated[str, typer.Argument(help="Name or entity id")],
+    days: Annotated[
+        int | None,
+        typer.Argument(help="Days between touches; omit to fall back to the defaults"),
+    ] = None,
+) -> None:
+    """Set how often this person is worth a touch. Due at the cadence, overdue at twice."""
+    from backglass.people import reachout as reachout_mod
+    from backglass.people import touch as touch_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    try:
+        entity_id = reachout_mod.resolve(conn, person)
+        touch_mod.set_cadence(conn, entity_id, days)
+    except (reachout_mod.ReachoutError, touch_mod.TouchError) as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+    conn.commit()
+    if days:
+        typer.echo(f"#{entity_id}: due every {days} days, overdue at {days * 2}")
+    else:
+        typer.echo(
+            f"#{entity_id}: back to the defaults — due at "
+            f"{settings.people_touch_warn_days}, overdue at {settings.people_touch_cold_days}"
+        )
+
+
 @app.command()
 def reachout(
     person: Annotated[
@@ -2602,6 +2677,9 @@ def reachout(
     subject: Annotated[
         str | None, typer.Option("--subject", help="Override the template's subject line")
     ] = None,
+    due: Annotated[
+        bool, typer.Option("--due", help="Only those at or past their cadence")
+    ] = False,
     as_json: Annotated[bool, typer.Option("--json", help="Machine-readable")] = False,
 ) -> None:
     """Draft an email that keeps a connection warm.
@@ -2622,22 +2700,29 @@ def reachout(
 
     if person is None:
         rows = reachout_mod.candidates(conn, settings, day)
+        if due:
+            rows = [row for row in rows if row.level in ("warn", "cold")]
         if not rows:
             typer.echo(
+                "nobody is due" if due else
                 "nobody is going quiet — only curated profiles (a role, an org or a tag)"
                 " are tracked, so a bare name will not appear here"
             )
             return
-        typer.echo(f"{len(rows)} to consider, coldest first:")
+        typer.echo(f"{len(rows)} {'due' if due else 'to consider'}, coldest first:")
         for row in rows:
-            label = " · ".join(part for part in (row.role, row.org) if part)
+            label = " · ".join(
+                part for part in (row.role, row.org, row.cadence_chip()) if part
+            )
+            mark = {"cold": "!!", "warn": "!", "new": " ·"}.get(row.level, "  ")
             typer.echo(
-                f"  #{row.entity_id:<5} {row.name:<28} {row.chip()}"
+                f"  {mark} #{row.entity_id:<5} {row.name:<28} {row.chip()}"
                 f"{('  (' + label + ')') if label else ''}"
             )
         typer.echo(
             '\ndraft one:  backglass reachout "<name>" --template thanks'
             ' --note "<the specific thing>"'
+            '\nlog one:    backglass touch log "<name>" --kind met --note "<what happened>"'
         )
         return
 

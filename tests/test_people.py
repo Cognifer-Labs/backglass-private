@@ -441,6 +441,15 @@ def _seed_reference(
             (f"activity {entity_id}", entity_id),
         )
         return
+    if table == "touchpoint":
+        sid = _interaction(conn, entity_id, f"2026-07-2{entity_id % 10}T09:00:00-07:00")
+        conn.execute(
+            "INSERT INTO touchpoint (user_id, entity_id, kind, occurred_at, note,"
+            " source_item_id, created_at)"
+            " VALUES (1, ?, 'met', ?, 'seed', ?, '2026-07-01T00:00:00Z')",
+            (entity_id, f"2026-07-2{entity_id % 10}T09:00:00-07:00", sid),
+        )
+        return
     raise AssertionError(
         f"{table}.{column} references entity and this test does not know how to seed it — "
         "add a case so the merge invariant covers it"

@@ -1240,3 +1240,30 @@ beside it — never inside the email.
 `uv run backglass reachout "Felipe Batalini" --template thanks --note "..."` prints a
 sendable email containing the appreciation line, the ledger is unchanged after it runs,
 and the same draft renders on `/people/<id>`.
+
+## Follow-up: the reminder half (2026-08-12)
+
+The draft was half the feature. `follow_up_section`'s own docstring names the other
+half: *"a curated profile with no interactions ever has no evidence to cite, so it
+appears on the People page but never here — a claim with no source does not ship."*
+That is precisely the in-person connection, so the brief could never nag about the one
+kind of relationship that has nothing but memory holding it up.
+
+The fix is not to relax rule 1. It is to **create the evidence**: a touch the owner
+records is their own claim, and quick-add already establishes the pattern — the owner's
+words become a manual `source_item`, and the record cites it.
+
+- [x] Migration 0023: `touchpoint` (entity, kind, when, note, `source_item_id NOT NULL`)
+      and `entity.touch_every_days` — a per-person cadence, NULL meaning the global pair.
+- [x] `people_cold.sql`: last touch is the newest of commitment evidence and touchpoints,
+      so the provenance columns stay uniform and the brief's assert keeps holding.
+- [x] `touch.py`: warn at the cadence, cold at twice it; the settings pair is the default.
+- [x] `touch.record()` — the manual source item, the touchpoint, idempotent per day.
+- [x] `backglass reachout log`, and `--due` for what is owed today.
+- [x] Person page: "I met them" and "I sent it", full-page redirects like `/edit`.
+- [x] The brief and the sidebar count need no change — both read `needing_follow_up`,
+      which now sees these people.
+
+Out of scope, deliberately: no snooze (logging a touch resets the clock, editing the
+cadence covers "not now"), no new launchd job and no push channel (the 06:00 brief and
+the sidebar are the delivery mechanisms, and both already exist).

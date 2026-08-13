@@ -64,7 +64,7 @@ CREATE TABLE entity (
   kind           TEXT    NOT NULL,         -- person|org|project
   canonical_name TEXT    NOT NULL,
   aliases_json   TEXT    NOT NULL DEFAULT '[]',
-  notes          TEXT, role TEXT, org TEXT, tags_json TEXT NOT NULL DEFAULT '[]', profile_json TEXT, updated_at TEXT,
+  notes          TEXT, role TEXT, org TEXT, tags_json TEXT NOT NULL DEFAULT '[]', profile_json TEXT, updated_at TEXT, touch_every_days INTEGER,
   UNIQUE (user_id, kind, canonical_name)
 );
 
@@ -535,3 +535,19 @@ CREATE TABLE embedding (
 );
 
 CREATE INDEX idx_embedding_lookup ON embedding(user_id, kind, model);
+
+CREATE TABLE touchpoint (
+  id             INTEGER PRIMARY KEY,
+  user_id        INTEGER NOT NULL DEFAULT 1,
+  entity_id      INTEGER NOT NULL REFERENCES entity(id),
+  kind           TEXT    NOT NULL,          -- met|sent|call|note
+  occurred_at    TEXT    NOT NULL,          -- when it happened, in the owner's local time
+  note           TEXT,                      -- their words; also the source item's body
+  source_item_id INTEGER NOT NULL REFERENCES source_item(id),
+  created_at     TEXT    NOT NULL
+);
+
+CREATE UNIQUE INDEX idx_touchpoint_once
+  ON touchpoint(user_id, entity_id, kind, substr(occurred_at, 1, 10));
+
+CREATE INDEX idx_touchpoint_person ON touchpoint(user_id, entity_id, occurred_at);

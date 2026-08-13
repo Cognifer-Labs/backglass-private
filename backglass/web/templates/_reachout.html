@@ -19,6 +19,14 @@
         profile's aliases and this becomes a one-click link.
       </p>
     {% endif %}
+    {# Sending leaves no trace here until they reply, and for someone met in person a
+       reply may never come — so the clock only restarts if the owner can say they sent
+       it. One button, right where they finish reading the draft. #}
+    <form method="post" action="/people/{{ draft.entity_id }}/touch" style="margin:0">
+      <input type="hidden" name="kind" value="sent">
+      <input type="hidden" name="note" value="Sent: {{ draft.subject }}">
+      <button class="btn ok" type="submit">I sent this</button>
+    </form>
     <details class="addform">
       <summary class="lbl">Where each part came from</summary>
       {% for line in draft.evidence %}

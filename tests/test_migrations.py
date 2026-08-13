@@ -233,6 +233,9 @@ FROZEN_CHECKSUMS = {
     "0022_embedding_kinds.sql": (
         "8214f6d861f21314859ebe8d984b747a35a284d17da2b667b5565df16190d276"
     ),
+    "0023_touchpoint.sql": (
+        "e95943e0213f82b51cfa694d8bf4e08136f1492dea9345805cbd96ab618af041"
+    ),
 }
 
 
