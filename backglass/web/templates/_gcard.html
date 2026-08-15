@@ -41,11 +41,18 @@
         {% if t['weekly_count'] and t['done_this_week'] < t['weekly_count'] %}
           {{ m.chip('slipping') }}
         {% endif %}
+        {# A repeating obligation is late or it is not; there is no partial week to
+           show. Reusing the existing vocabulary rather than minting a sixth ink:
+           reaching the cadence is `due_today` in black, and only twice the cadence
+           earns vermilion, which §8 reserves for overdue and nothing else. #}
+        {% if t['level'] == 'overdue' %}{{ m.chip('overdue') }}
+        {%- elif t['level'] == 'due' %}{{ m.chip('due') }}{% endif %}
       </div>
       {# Absence is an em-dash, not a sentence: seven rows of "no checkpoints
          yet" was wallpaper, and "last —" says the same thing in one glyph. #}
       <p class="tgt">
         {% if t['kind'] == 'total' and t['total_count'] %}{{ t['lifetime_done'] }}/{{ t['total_count'] }} logged ·
+        {%- elif t['kind'] == 'periodic' %}{{ t['chip_text'] }}, every {{ t['every_days'] }} days ·
         {%- elif t['weekly_count'] %}{{ t['done_this_week'] }}/{{ t['weekly_count'] }} this week ·{% endif %}
         {%- if t['last_checkpoint'] %} last {{ t['last_checkpoint'][:10] }}
         {%- else %} last —{% endif %}

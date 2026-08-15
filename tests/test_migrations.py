@@ -236,6 +236,9 @@ FROZEN_CHECKSUMS = {
     "0023_touchpoint.sql": (
         "e95943e0213f82b51cfa694d8bf4e08136f1492dea9345805cbd96ab618af041"
     ),
+    "0024_periodic_targets.sql": (
+        "d1d50851458b0b4938ebb0775f59cca4974a00c945064a9285ec1d2719efce48"
+    ),
 }
 
 

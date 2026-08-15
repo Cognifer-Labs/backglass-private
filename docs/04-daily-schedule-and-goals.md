@@ -169,6 +169,33 @@ A target is the weekly countable that a goal needs. Three kinds:
 | **milestone** | "ship the schema migration" | boolean, dated |
 | **maintenance** | "inbox to zero twice" | count, resets weekly |
 
+Two kinds were added later and are deliberately not weekly:
+
+| kind | example | how it completes |
+|---|---|---|
+| **total** | "200 research hours" | lifetime `SUM(delta)`, no week clamp (Phase 10) |
+| **periodic** | "see your academic advisor, every 182 days" | a checkpoint resets the clock (migration 0024) |
+
+`periodic` exists for the one class of obligation the ledger structurally cannot see.
+Every other record in this system arrives from somewhere — an email carries a deadline,
+Canvas carries an assignment, a calendar carries a meeting. Nobody sends mail to say six
+months have passed since your last advising appointment, that the internship cycle has
+reopened, or that it is time to find a research placement. Those are reached by a clock
+or by nobody, and the lead times are long enough that missing one costs a year.
+
+It holds a cadence in days (`target.every_days`) — the same primitive as
+`entity.touch_every_days`, and one unit rather than two arithmetics. **Due** at the
+cadence, **overdue** at twice it, which is the ruling `people/touch.py` already made for
+the same question about people: one number for the owner to choose rather than a
+warn/cold pair. The clock is anchored on the newest checkpoint, falling back to the
+target's `created_at`, so a target written today is not instantly overdue.
+
+G2–G7 do not apply to it. It does not reset weekly, it is never missed by a week, and it
+contributes zero to the §2.3 capacity check — a six-month obligation amortises to about
+two minutes a week, and a capacity gap that includes it is a gap nobody can act on. The
+daily brief raises it when it comes due, with the day count; the Monday brief skips it,
+for the same reason it skips totals and milestones.
+
 | ID | Requirement |
 |----|-------------|
 | G1 | Every active goal has at least one target. A goal with no target is inert and the Monday brief says so. |
@@ -284,8 +311,9 @@ goal
   created_at, closed_at
 
 target
-  id, goal_id, kind(cadence|milestone|maintenance), title,
-  weekly_count, estimated_minutes_each, active, created_at
+  id, goal_id, kind(cadence|milestone|maintenance|total|periodic), title,
+  weekly_count, estimated_minutes_each, total_count, every_days,
+  active, created_at
 
 checkpoint
   id, target_id, occurred_at, source(block|commitment|manual|extraction),

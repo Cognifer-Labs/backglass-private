@@ -1,0 +1,21 @@
+-- Obligations that repeat on a clock nobody sends mail about.
+--
+-- The goal engine has three target kinds and none of them repeats on a multi-month
+-- clock. `cadence` is a weekly count. `total` is a lifetime accumulator. `milestone`
+-- fires once and is done. So "see your academic advisor, it has been six months",
+-- "the internship cycle opens again", "find a research placement for next year" have
+-- no home in the ledger — and unlike a deadline in an email, nothing upstream will
+-- ever generate them. Canvas does not carry them, no inbox produces them, and the
+-- owner remembers them exactly until they do not.
+--
+-- `every_days` is the cadence, and days rather than months on purpose: `entity.
+-- touch_every_days` (0023) already established the primitive two days ago, and one
+-- unit means one arithmetic. Six months is 182 days and the drift is irrelevant at a
+-- scale where the obligation itself is fuzzy.
+--
+-- Nothing else changes. The clock is reset by a `checkpoint`, so progress still comes
+-- from checkpoints summed on read (G3, G10) and there is no stored counter to go stale
+-- — a deleted checkpoint moves the due date back the next time anything asks. NULL for
+-- every existing row and read only when `kind = 'periodic'`, so no reader that predates
+-- this sees a behaviour change.
+ALTER TABLE target ADD COLUMN every_days INTEGER;

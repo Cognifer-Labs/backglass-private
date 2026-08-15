@@ -41,6 +41,7 @@ from fastapi.templating import Jinja2Templates
 from backglass.config import Settings
 from backglass.db import query
 from backglass.goals import checklist, checkpoints, health
+from backglass.goals import targets as targets_mod
 from backglass.ledger import USER_ID
 from backglass.plan import timezones
 from backglass.web import actions
@@ -359,6 +360,14 @@ def goal_cards(conn: sqlite3.Connection, settings: Settings, today: date) -> Car
     ).fetchall()
     staleness = {s.goal_id: s for s in health.staleness(conn, settings, today)}
     risks = {r.goal_id: r for r in health.risk(conn, settings, today)}
+    # The clock a periodic target is read against is one rule (`TargetProgress.level`),
+    # and the page reads it rather than restating it in SQL or in Jinja. A due date
+    # computed in two places is a due date that disagrees with the brief.
+    clocks = {
+        p.target_id: p
+        for p in targets_mod.progress(conn, settings, today)
+        if p.kind == "periodic"
+    }
     # The two pages cross-reference instead of merging: a roadmap-backed goal carries a
     # text link to its roadmap, where the step ledger and clinical context live.
     roadmaps = {
@@ -393,7 +402,14 @@ def goal_cards(conn: sqlite3.Connection, settings: Settings, today: date) -> Car
                     roadmap_title=roadmap[1] if roadmap else None,
                 )
             )
-        cards[-1].targets.append(dict(row))
+        target = dict(row)
+        clock = clocks.get(int(row["target_id"]))
+        if clock is not None:
+            target["every_days"] = clock.every_days
+            target["days_since"] = clock.days_since
+            target["level"] = clock.level
+            target["chip_text"] = clock.chip()
+        cards[-1].targets.append(target)
     return Cards(cards=cards, inert=inert)
 
 

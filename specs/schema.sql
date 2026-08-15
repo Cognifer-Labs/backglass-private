@@ -89,7 +89,7 @@ CREATE TABLE target (
   estimated_minutes_each INTEGER,          -- feeds the weekly capacity check
   active                 INTEGER NOT NULL DEFAULT 1,
   created_at             TEXT    NOT NULL
-, total_count INTEGER, user_id INTEGER NOT NULL DEFAULT 1);
+, total_count INTEGER, user_id INTEGER NOT NULL DEFAULT 1, every_days INTEGER);
 
 CREATE TABLE commitment (
   id                    INTEGER PRIMARY KEY,

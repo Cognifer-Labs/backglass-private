@@ -1267,3 +1267,226 @@ words become a manual `source_item`, and the record cites it.
 Out of scope, deliberately: no snooze (logging a touch resets the clock, editing the
 cadence covers "not now"), no new launchd job and no push channel (the 06:00 brief and
 the sidebar are the delivery mechanisms, and both already exist).
+
+---
+
+# Periodic targets: the reminders nobody sends you (2026-08-14)
+
+## Why
+
+Audited Canvas today. It is fully wired and working — `canvas_ics.py` on the ICS
+fallback (ASU disables student tokens), 4 assignments → 4 open `i_owe` commitments,
+provenance intact. Nothing to fix there beyond a transient `ConnectionResetError` that
+clears itself and an `audit_sources.py` label false positive.
+
+The gap is the other half of the question. "Apply to internships this cycle." "See your
+advisor — it has been six months." "Start looking for a research placement." None of
+these exist anywhere in the ledger, and they cannot: **nobody emails you to say you are
+overdue.** No Canvas assignment carries them, no inbox generates them, and the goal
+engine cannot hold them either, because a target has exactly three kinds and none of
+them repeats on a multi-month clock:
+
+| kind | shape |
+|---|---|
+| `cadence` | a **weekly** count — `weekly_count` |
+| `total` | a lifetime accumulator — Shadowing 60h, Research 200h |
+| `milestone` | one dated event |
+
+A six-month obligation is none of those. Modelled as a milestone it fires once and dies.
+Modelled as a cadence it demands a weekly count that does not exist. So it goes
+unmodelled, and the one class of college obligation with the longest lead time and the
+worst consequences for missing it is the one class the system is blind to.
+
+## The shape
+
+`touchpoint` / `entity.touch_every_days` (migration 0023, two days ago) already solved
+this problem for people. Same shape, reused deliberately:
+
+- a cadence in **days**, not months — one primitive, one arithmetic, and `touch_every_days`
+  already set the precedent. "Every 6 months" is 182 days and the drift is irrelevant at
+  that scale.
+- **due** at `every_days`, **overdue** at twice it. One number for the owner to choose
+  rather than a warn/cold pair, which is the ruling touch.py already made.
+- the clock is reset by a **checkpoint**, so progress still comes from checkpoints and
+  never from a stored counter (G3, G10).
+- anchored at the last checkpoint, falling back to `target.created_at`. A target created
+  today is not instantly overdue — touch.py's "never interacted is young data, not a
+  lapsed relationship", applied to obligations.
+
+## Steps
+
+- [x] **Migration 0024** — `ALTER TABLE target ADD COLUMN every_days INTEGER`. NULL for
+      every existing row; only `kind='periodic'` reads it.
+- [x] **Pre-empt the migration guards** rather than discovering them one test run at a
+      time (2026-08-12 lesson): add the file's sha256 to `FROZEN_CHECKSUMS`, and regen
+      `specs/schema.sql` with `uv run python -m tests.test_schema_reference` — generated,
+      never hand-edited. No new table, so the `REFERENCES source_item` / `REFERENCES
+      entity` enumerations do not apply.
+- [x] **`goals/targets.py`** — `TargetProgress` gains `every_days`, `days_since`,
+      `level` (new|fresh|due|overdue). `complete` is true for a periodic target that is
+      not yet due. `weekly_minutes` returns 0: a semiannual obligation is not weekly
+      load and must not distort the §2.3 capacity check.
+- [x] **`goals/checkpoints.py::_default_target`** — exclude `periodic`. Today the fallback
+      is `ORDER BY CASE kind WHEN 'cadence' THEN 0 ELSE 1 END, id`, so a goal whose oldest
+      active target is periodic would have its advising clock silently reset every time
+      any goal-linked commitment is resolved. Wrong row, no error — the 2026-08-12 failure
+      mode exactly. A test pins it.
+- [x] **`brief/daily.py::goal_section`** — the delivery mechanism. Emit a line only when
+      due or overdue, with the day count in the text (G12: a day count, never a bare
+      colour), `LedgerRef` provenance, silent when fresh (B3). The branch goes **before**
+      `if not target.weekly_count: continue`, which would otherwise skip every periodic
+      target in silence.
+- [x] **`brief/weekly.py`** — `continue` for periodic in "Last week", commented. A week is
+      not the unit a six-month obligation is scored in, same reasoning the `total` and
+      `milestone` branches already carry.
+- [x] **CLI** — `goals add-periodic <goal_id> <title> <every_days>` mirroring `add-total`,
+      and `goals did <target_id> [--on YYYY-MM-DD]` writing a `source='manual'` checkpoint.
+      `--on` reuses touch.py's bare-date → local-noon validation so a non-date cannot land
+      in a column the readers sort by.
+- [x] **Goals page** — the chip, so the dashboard shows what the brief says.
+- [x] **Seed the actual reminders** the owner asked for, on the medical goal: academic
+      advising (182d), internship applications (365d), research placement (365d).
+- [x] **Tests** — new/due/overdue including the `created_at` anchor; `_default_target`
+      never returns periodic; daily brief prints when due and is silent when fresh; one
+      Phoenix ↔ Kolkata day-count case.
+- [x] **docs/04** — the kind table.
+- [~] **Rebuild the sidecar.** Migration 0024 applies to the shared db on the next launchd
+      sync, and `/Applications/Backglass.app` was frozen before it: the next launch dies
+      with `MigrationError: schema_version records migration(s) 24 that are not on disk`.
+      This is the 2026-08-13 lesson on a delay fuse — the app keeps serving until it is
+      restarted, and then it does not start.
+
+## Out of scope, deliberately
+
+- **No launchd job, no push channel.** The 06:00 brief and the goals page are the delivery
+  mechanisms and both already exist — the same scope-out the touchpoint feature recorded.
+- **No planner or capacity integration.** A periodic target contributes 0 weekly minutes
+  and does not compete for a block. If the owner wants advising on the calendar they add
+  a commitment, which already works.
+- **No web log endpoint.** `routes/goals.py:514/:551` filter by kind, so v1 logs from the
+  CLI. The chip renders; the button is a follow-up.
+- **`audit_sources.py`'s credential-label false positive** (`CanvasIcsConnector: no
+  credential row exists yet`, when `canvas:ics` plainly has one) is a separate fix. Listed
+  so it is not folded in silently — a warning nobody trusts is a warning nobody reads.
+
+---
+
+# Chat commitments that can close themselves (2026-08-14)
+
+**Goal (owner):** "fully integrate messages with friends by dynamically deciding whether
+or not a commitment still exists."
+
+## The miss, measured
+
+84 open commitments come from `imessage`, across 16 monitored conversations. **79 of them
+have later messages in the same chat**, and not one has ever closed from one. Two
+`imessage` rows are `superseded`, one is `done`; everything else is open, some since
+2026-05-06.
+
+The reason is structural, not a bug. Closure today has exactly one path: prompt v9's
+`resolves`/`resolves_what`, which fires only when a *new* message announces that it
+completes an earlier promise ("here's that deck I owed you"). Mail works that way. Friends
+do not: "bring dress shoes" is answered by bringing dress shoes, and the thread moves on.
+So a forward-only signal can never reach the obligations that live in chat, and the board
+fills with dead favours — "come over", "pick them up", "bring bedsheet to wash" — which is
+exactly the noise that makes an owner stop trusting a board.
+
+The read is therefore **backwards**: given a promise and the conversation that happened
+*after* it, is the promise still live?
+
+## Shape
+
+One pass, `backglass/extract/recheck.py`, after extraction.
+
+**Batched per conversation, not per commitment.** One call is given a chat's open
+commitments *with their ledger ids* and the messages since that chat's last check. 16
+chats is the ceiling; 84 per-commitment calls at the measured 17.5c extract tier is not,
+and the same conversation window would be re-sent once per commitment. This is not the
+"second careful pass per item" the backend plan rules out — it is one call per
+conversation per sync, on conversations that have said something new.
+
+**Ids in, ids back.** Because the model is handed the open list with ids, its verdict is
+keyed by id and no similarity matcher is needed — no tenth entry in the dedup census, no
+dependency on Phase R. Two guards from the 2026-08-12 wrong-table-id lesson: a returned id
+is intersected with the set actually sent, and `status = 'open'` is re-read at write time.
+
+**Silence is not evidence.** A closure must cite a message. Each line in the window is
+printed with its `source_item.id`, and a `done`/`dropped` verdict must name one of them
+plus a verbatim quote; a verdict with no citation is discarded, not applied. "Nobody
+mentioned it again" is exactly the reasoning that would close every real obligation the
+owner has been quietly failing to do.
+
+**Asymmetric by consequence,** the same asymmetry step 4 of `commitments.apply` already
+uses: above `confidence_threshold` the commitment closes through `actions.resolve`/`drop`
+with the citation recorded; below it, the verdict is stored `pending` and shown on the
+review fragment for one click. A wrong open row is visible and dismissible; a wrong close
+is silent data loss, and this file has four entries about paying for that.
+
+**Idempotent by watermark.** `monitored_chat.rechecked_through` holds the highest
+`source_item.id` a chat has been checked through. No new messages → no call → zero writes,
+which is rule 3's test.
+
+## Steps
+
+- [ ] 1. Migration `0024_commitment_recheck.sql`: `commitment_recheck` +
+      `monitored_chat.rechecked_through`. Guard checklist first (2026-08-12 lesson):
+      `REFERENCES source_item` test, `imessage.DEPENDENTS`, `FROZEN_CHECKSUMS`,
+      regenerate `specs/schema.sql`.
+- [ ] 2. `specs/extraction-prompts/recheck-commitments.md@1` + fixtures, negatives
+      included: a still-open promise, a vague "sounds good", a group member closing
+      somebody else's obligation, a plan that moved rather than died.
+- [ ] 3. `RecheckVerdict` / `RecheckResponse` in `extract/schemas.py`.
+- [ ] 4. `extract/recheck.py` — candidates, window, render, parse, apply.
+- [ ] 5. `_recheck_pass` in `sync.py`: after extraction, per-chat `try/except` (rule 5's
+      unit is the loop item), metered under a new `recheck` tier so `state` prices it,
+      inside the same `SpendCap`.
+- [ ] 6. `backglass recheck` CLI — `--dry-run`, `--chat`, `--json`.
+- [ ] 7. Pending verdicts on the existing review fragment, with confirm / keep-open
+      routed through `actions`. No new page.
+- [ ] 8. `tests/test_recheck.py`: the fixture set through one ledger in pipeline order,
+      the zero-writes second run, the uncited verdict, the foreign id, the
+      already-closed commitment, both sides of the threshold.
+
+## Deliberately not
+
+- **Commitments only.** Engagements have `advance_engagement` and a status machine of
+  their own; giving them a second closer is how two policies disagree.
+- **No merge or dedup verdicts.** The duplicate clusters in this ledger are re-extraction
+  artefacts, and closing the underlying obligation clears them. Merge heuristics are the
+  most-relitigated thing in this file.
+- **No new page.**
+- The 10 undecided iMessage conversations stay undecided; that is the owner's call on
+  `/chats`, not something this pass should widen.
+
+## Built, 2026-08-14
+
+Migration 0024 is applied to the live ledger and three targets are seeded on goal 1:
+
+| id | title | cadence | first fires |
+|---|---|---|---|
+| 59 | Academic advising check-in | 182d | 2027-02-13 |
+| 60 | Internship & summer research applications | 365d | 2026-11-02 |
+| 61 | Research placement review — is this still the right lab | 365d | 2027-08-14 |
+
+Proved against the owner's own db, not a fixture: `goal_section` is silent on
+2026-08-14, prints the internship line on 2026-11-02, and prints both it and advising
+on 2027-02-13. 1,951 tests pass.
+
+Target 59's clock is anchored at creation, so it first speaks in February. If the owner
+saw an advisor recently, `backglass goals did 59 --on <date>` moves the anchor to the
+truth; if it has already been six months, backdating brings it forward instead.
+
+Target 60 is anchored at 2025-11-01 deliberately, so a 365-day cadence lands on the
+opening of the application cycle rather than 365 days after the day this was built.
+
+**Left undone: `/Applications/Backglass.app` is still the old bundle.** The new one is
+built, signed and verified to carry both migration 0024 and the updated card template
+(`desktop/src-tauri/target/release/bundle/macos/Backglass.app`). Installing it means
+quitting the app that is running right now, which is the owner's call. Until then the
+running process keeps serving and dies on its next launch — the 2026-08-13 fuse.
+
+## Found, not fixed
+
+`tests/test_reachout.py::TestTouchOnThePage::test_recording_a_touch_moves_the_chip`
+fails on `main` and failed before any of this — confirmed by stashing. Unrelated to
+periodic targets; it belongs to the touchpoint work from two days ago.

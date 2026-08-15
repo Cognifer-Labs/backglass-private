@@ -76,6 +76,13 @@ def monday(conn: sqlite3.Connection, settings: Settings, day: date) -> Brief:
             if target.done_this_week:
                 scored.lines.append(Line(text=f"{label}: reached.", provenance=source))
             continue
+        if target.kind == "periodic":
+            # A week is not the unit a six-month obligation is scored in. Reporting one
+            # here would print "0 missed" fifty-one weeks out of fifty-two for something
+            # that was never owed in any of them — and the daily brief already raises it
+            # on the week it actually comes due, with the day count that makes it mean
+            # something. Same reasoning as the two branches below.
+            continue
         if target.kind == "total":
             # A lifetime accumulator reports movement, never a weekly verdict — a week
             # with no entry is not a missed week against a total with no cadence.

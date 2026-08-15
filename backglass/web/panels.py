@@ -282,9 +282,17 @@ def goals_panel(conn: sqlite3.Connection, settings: Settings, today: date) -> Pa
     # show as rows; untouched milestones collapse to one counted line. Their full
     # list lives on /goals — fourteen "no checkpoints yet" rows here was the
     # wallpaper the audit condemned, doubled by every started roadmap.
+    # A periodic target is exempt from the collapse. It has no weekly_count and, until
+    # the first time it is done, no checkpoint either — so it matches the "not started"
+    # shape exactly while being the one kind whose whole point is that the clock has run
+    # without it. Counting it as quiet wallpaper would hide an overdue advising
+    # check-in behind the words "14 milestones not started".
     quiet = [
         r for r in targeted
-        if not r["weekly_count"] and not r["done_this_week"] and not r["last_checkpoint"]
+        if r["kind"] != "periodic"
+        and not r["weekly_count"]
+        and not r["done_this_week"]
+        and not r["last_checkpoint"]
     ]
     quiet_ids = {r["target_id"] for r in quiet}
 

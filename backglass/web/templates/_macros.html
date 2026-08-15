@@ -3,10 +3,17 @@
 
 {% macro chip(state) -%}
   {#- design-system.md §4. Every chip is icon plus label plus ink, never colour alone
-      (§8 rule 3), and every fill carries a black keyline (§8 rule 2). -#}
+      (§8 rule 3), and every fill carries a black keyline (§8 rule 2).
+
+      `due` is `due_today` for things that have no single due date: a periodic target
+      is owed from the day it reaches its cadence until it is done, which for a
+      semiannual obligation is half a year. Same ink and same glyph, because it is the
+      same state — only the label differs, and "Due today" printed on day 200 of 182
+      would be a claim that is false. Not a sixth ink; a second label on k-black. -#}
   {%- set map = {
     'overdue':      ('k-verm',  '▲', 'Overdue'),
     'due_today':    ('k-black', '●', 'Due today'),
+    'due':          ('k-black', '●', 'Due'),
     'slipping':     ('k-gold',  '◆', 'Slipping'),
     'awaiting':     ('k-turq',  '○', 'Awaiting'),
     'done':         ('k-green', '✓', 'Done'),

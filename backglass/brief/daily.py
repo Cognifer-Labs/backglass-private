@@ -437,6 +437,24 @@ def goal_section(conn: sqlite3.Connection, today: date, settings: Settings) -> S
     for target in targets_mod.progress(conn, settings, today):
         if target.complete:
             continue
+        # A periodic target is the one thing in this section nothing upstream can
+        # generate: no one emails to say six months have passed since advising. It is
+        # reached only by the clock, so it is handled before the weekly-count guard
+        # below, which would otherwise skip it in silence for having no weekly_count.
+        # `complete` above already kept it quiet for the whole fresh stretch (B3).
+        if target.kind == "periodic":
+            every = target.every_days or 0
+            section.lines.append(
+                Line(
+                    text=f"{target.goal_title} — {target.title}: "
+                    f"{target.chip()}, due every {every} days.",
+                    provenance=LedgerRef(
+                        "goals", str(target.goal_id), f"goal · {target.goal_title}"
+                    ),
+                    status="overdue" if target.level == "overdue" else "slipping",
+                )
+            )
+            continue
         # Weekly progress is a cadence concept. A milestone target ("sit the MCAT")
         # has no meaningful "0 this week" — it reaches the brief through staleness
         # and risk below, not through a weekly count it will never have. Without

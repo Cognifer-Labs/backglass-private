@@ -8,7 +8,7 @@
 SELECT
   g.id AS goal_id, g.title AS goal_title, g.horizon, g.target_date, g.definition_of_done,
   t.id AS target_id, t.kind, t.title AS target_title, t.weekly_count,
-  t.estimated_minutes_each, t.total_count,
+  t.estimated_minutes_each, t.total_count, t.every_days,
   (SELECT COUNT(*) FROM checkpoint cp
     WHERE cp.target_id = t.id AND date(cp.occurred_at) >= date(:week_start)) AS done_this_week,
   -- kind='total' progress: lifetime SUM(delta), no week clamp (Phase 10).

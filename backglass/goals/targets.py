@@ -14,6 +14,12 @@
 G4's framing is the load-bearing part: "Lowering a target is a legitimate outcome, and
 framing it as one is the difference between a system that gets used and one that generates
 guilt." So `unrealistic` is a question, never a verdict, and nothing here lowers anything.
+
+A fourth kind, `periodic` (migration 0024), sits outside every rule above on purpose. It
+is an obligation that repeats on a multi-month clock — academic advising, an internship
+cycle, a research placement — and none of G2–G7 applies to it: it does not reset weekly,
+it is never missed by a week, and it contributes nothing to the capacity check. It has a
+cadence in days and a level, and that is all. See `TargetProgress.level`.
 """
 
 from __future__ import annotations
@@ -50,6 +56,35 @@ class TargetProgress:
     # number to reach; lifetime_done is SUM(delta) with no week clamp.
     total_count: int | None = None
     lifetime_done: int = 0
+    # kind='periodic' only (migration 0024). every_days is the cadence; days_since counts
+    # from the last checkpoint, or from the target's creation when there has never been
+    # one. Both None for every other kind, so a reader that predates this sees nothing.
+    every_days: int | None = None
+    days_since: int | None = None
+
+    @property
+    def level(self) -> str:
+        """`new` | `fresh` | `due` | `overdue`, for periodic targets only.
+
+        Due at the cadence, overdue at twice it — one number for the owner to choose
+        rather than a warn/cold pair, which is the ruling `people/touch.py` already made
+        for the same question about people.
+        """
+        if self.kind != "periodic" or not self.every_days:
+            return "fresh"
+        if self.days_since is None:
+            return "new"
+        if self.days_since >= self.every_days * 2:
+            return "overdue"
+        if self.days_since >= self.every_days:
+            return "due"
+        return "fresh"
+
+    def chip(self) -> str:
+        """G12. A day count, never a bare colour."""
+        if self.days_since is None:
+            return "never done"
+        return f"{self.days_since} days since last"
 
     @property
     def complete(self) -> bool:
@@ -57,12 +92,20 @@ class TargetProgress:
             return self.done_this_week > 0
         if self.kind == "total":
             return self.total_count is not None and self.lifetime_done >= self.total_count
+        if self.kind == "periodic":
+            # "Complete" for a repeating obligation means *not yet owed*. It is the flag
+            # every surface already filters on to stay quiet, so mapping it to the clock
+            # is what keeps a semiannual target silent for the 175 days it should be.
+            return self.level in ("fresh", "new")
         return self.weekly_count is not None and self.done_this_week >= self.weekly_count
 
     @property
     def weekly_minutes(self) -> int:
         """The implied weekly time cost, for the §2.3 capacity check."""
-        if self.kind == "milestone" or not self.weekly_count:
+        if self.kind in ("milestone", "periodic") or not self.weekly_count:
+            # A six-month obligation is not weekly load. Amortising it would add ~2
+            # minutes a week to the capacity check and make G6's "name the gap in hours"
+            # answer with a number nobody can act on.
             return 0
         return self.weekly_count * (self.estimated_minutes_each or 0)
 
@@ -77,7 +120,7 @@ def progress(conn: sqlite3.Connection, settings: Settings, day: date) -> list[Ta
     tz = timezones.active_tz(settings, day)
     rows = conn.execute(
         "SELECT t.id, t.goal_id, t.kind, t.title, t.weekly_count, t.estimated_minutes_each, "
-        "       t.total_count, g.title AS goal_title "
+        "       t.total_count, t.every_days, t.created_at, g.title AS goal_title "
         "FROM target t JOIN goal g ON g.id = t.goal_id "
         "WHERE g.user_id = ? AND g.status = 'active' AND t.active = 1 "
         "ORDER BY g.id, t.id",
@@ -102,9 +145,46 @@ def progress(conn: sqlite3.Connection, settings: Settings, day: date) -> list[Ta
                 lifetime_done=_lifetime_done(conn, int(row["id"]))
                 if row["kind"] == "total"
                 else 0,
+                every_days=row["every_days"] if row["kind"] == "periodic" else None,
+                days_since=_days_since(conn, row, day, tz)
+                if row["kind"] == "periodic"
+                else None,
             )
         )
     return out
+
+
+def _days_since(
+    conn: sqlite3.Connection, row: dict[str, Any], day: date, tz: str
+) -> int | None:
+    """Days since this periodic target was last done, anchored on its creation if never.
+
+    Anchoring on `created_at` rather than returning None is the difference between a
+    target the owner just wrote and a lapsed obligation. `people/touch.py` made the same
+    call for people — "never interacted is young data, not a lapsed relationship" — and
+    the alternative here is worse: every periodic target would render overdue the second
+    it is created, which is a wall of alarm ink over nothing having gone wrong yet.
+
+    The anchor is read as a *local* date, not the UTC date prefix. A checkpoint written
+    at 22:00 in Phoenix is stored as tomorrow in UTC, and taking `[:10]` would report a
+    negative or off-by-one gap — the same bug `count_between` documents for weeks, one
+    scale up.
+    """
+    last = conn.execute(
+        "SELECT occurred_at FROM checkpoint WHERE target_id = ? "
+        "ORDER BY datetime(occurred_at) DESC LIMIT 1",
+        (int(row["id"]),),
+    ).fetchone()
+    anchor = str(last["occurred_at"]) if last else str(row["created_at"] or "")
+    if not anchor:
+        return None
+    try:
+        since = timezones.local_date_of(anchor, tz)
+    except ValueError:
+        return None
+    # A future anchor (a checkpoint backdated forward, or a clock that moved) is zero
+    # days ago, never a negative count. The chip prints this number verbatim.
+    return max((day - since).days, 0)
 
 
 def _lifetime_done(conn: sqlite3.Connection, target_id: int) -> int:

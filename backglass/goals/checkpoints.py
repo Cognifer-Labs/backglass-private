@@ -197,9 +197,16 @@ def _default_target(conn: sqlite3.Connection, goal_id: int) -> int | None:
     kind. A goal usually has one cadence target and this is unambiguous; where it has
     several, guessing between them would make progress uninterpretable in exactly the way
     G8 warns about, so the owner links explicitly with `record(...)` instead.
+
+    `periodic` is excluded from the fallback outright, not merely deprioritised. A
+    checkpoint on a periodic target *is* the thing that resets its clock, so a goal whose
+    only other targets are inactive would have had "see your advisor" marked done every
+    time any goal-linked commitment closed — silently, with no error, because the id was
+    valid and the row was real. That is the 2026-08-12 failure written into the schema
+    rather than into a call site, and the reason this is a WHERE and not an ORDER BY.
     """
     row = conn.execute(
-        "SELECT id FROM target WHERE goal_id = ? AND active = 1 "
+        "SELECT id FROM target WHERE goal_id = ? AND active = 1 AND kind != 'periodic' "
         "ORDER BY CASE kind WHEN 'cadence' THEN 0 ELSE 1 END, id LIMIT 1",
         (goal_id,),
     ).fetchone()

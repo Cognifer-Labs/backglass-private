@@ -163,6 +163,31 @@ def add_total(conn: sqlite3.Connection, goal_id: int, title: str, total_count: i
     return _last_id(conn)
 
 
+def add_periodic(
+    conn: sqlite3.Connection,
+    goal_id: int,
+    title: str,
+    every_days: int,
+    *,
+    created_at: str | None = None,
+) -> int:
+    """Public: attach a repeating obligation to a goal (migration 0024).
+
+    `created_at` is the clock's anchor until the first checkpoint, so it is settable —
+    an advising visit that happened in March is the honest starting point, and without
+    it the owner's only way to say so is to log a checkpoint for a meeting they are not
+    re-recording.
+    """
+    if every_days < 1:
+        raise ValueError("a cadence is a number of days, at least 1")
+    conn.execute(
+        "INSERT INTO target (goal_id, kind, title, every_days, active, created_at) "
+        "VALUES (?, 'periodic', ?, ?, 1, ?)",
+        (goal_id, title, every_days, created_at or now_iso()),
+    )
+    return _last_id(conn)
+
+
 def _insert_steps(
     conn: sqlite3.Connection, preset: Preset, roadmap_id: int, goal_id: int, start_date: date
 ) -> None:
