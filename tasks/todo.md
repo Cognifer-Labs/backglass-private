@@ -1490,3 +1490,225 @@ running process keeps serving and dies on its next launch — the 2026-08-13 fus
 `tests/test_reachout.py::TestTouchOnThePage::test_recording_a_touch_moves_the_chip`
 fails on `main` and failed before any of this — confirmed by stashing. Unrelated to
 periodic targets; it belongs to the touchpoint work from two days ago.
+
+---
+
+# Audit: the daily planner, and why its failures are not in the planner (2026-08-15)
+
+Asked to improve the app, improve how it gets source information, and audit the daily
+planner. Those turned out to be one question. The planner's code is largely sound; what
+is broken sits on either side of it — the machine it runs on, and the ledger it reads.
+
+## The finding that outranks the rest: the morning surfaces do not run in the morning
+
+Both scheduled jobs fire, and both fire late enough that they miss the thing they exist
+for.
+
+| job | scheduled | last actually ran |
+|---|---|---|
+| `com.backglass.plan` | 05:45 | **17:22** |
+| `com.backglass.brief` | 06:00 | **17:37** |
+| `com.backglass.backup` | 02:00 | 13:39 |
+| `com.backglass.shutdown` | 22:00 | 09:33 |
+
+Read from the log mtimes, and corroborated by the ledger: `day_plan` 36 covers
+2026-08-15 and was generated at `2026-08-16T00:22Z` — 17:22 Phoenix. The day it plans is
+over.
+
+The cause is not launchd misconfiguration. `StartCalendarInterval` fires on the next
+wake when the machine was asleep at the scheduled time, and this machine is asleep at
+05:45. So the morning brief — the product's first surface, the two-minute read at 06:00
+that `docs/01` opens with — is silently not delivered on any night the lid is shut. It
+arrives at dinner.
+
+`plan-catchup` was built for exactly this and does not cover it: it is `RunAtLoad`, so it
+fires at **login**, not at lid-open wake. A machine that sleeps and wakes never triggers
+it, and the late calendar job is what produces the plan instead.
+
+Worse, the two can fight. `plan --if-missing` exits without writing when a live plan
+exists, which is what makes catch-up safe. The 05:45 job carries no such flag. So a
+catch-up that does produce a morning plan can be superseded at 17:22 by a fresh one whose
+blocks are all in the past.
+
+**The planner has no concept of "now".** `propose(conn, settings, day)` takes a date and
+plans the whole working window from the start of it. Run at 17:22 it emits a 07:30
+breakfast and a 10:00 protected block. Nothing is wrong with the packing; it is answering
+a question about a day that already happened.
+
+## What the ledger hands the planner is not schedulable
+
+Today's plan and its overflow list, verbatim from `data/plan.log` and `data/plan.err`:
+
+```
+1:15pm–1:45pm  review agreement form and accept scholarship award
+1:45pm–2:30pm  accept Academic Excellence Scholarship award
+3:15pm–4:00pm  complete AES scholarship acceptance and agreement form
+```
+
+```
+· did not fit: submit volunteer application on HOV website (45m)
+· did not fit: submit volunteer application online (45m)
+· did not fit: Submit Hospice of the Valley volunteer application at volunteers.hov.org (45m)
+· did not fit: Reply sent to HOV — confirm next college orientation date and submit before it (15m)
+· did not fit: Log 6 lunch conversations into Backglass (45m)
+· did not fit: Log the six McKenna lunch conversations — name + one thing each (15m)
+```
+
+One scholarship acceptance is booked as three blocks and eats two hours of a 281-minute
+day. One volunteer application appears four times in the overflow. `commitment_distinct`
+holds 7 rows against 287 open commitments, so the dedup path exists and is barely used.
+
+**The planner is faithfully scheduling duplicates, and any timing fix ships that
+faithfulness earlier in the day.** This is why "how it gets source information" and "audit
+the planner" are the same work item: the planner is a report over the ledger, and the
+ledger has the same obligation written down three ways because three emails mentioned it.
+
+## The capacity numbers are arithmetic over invented inputs
+
+| estimate_source | open commitments | mean minutes |
+|---|---|---|
+| `type_default` | **266** | 44.5 |
+| `manual` | 17 | 78.8 |
+| `extracted` | 4 | 8.75 |
+
+256 of 287 open commitments are estimated at exactly 45 minutes, because `classify()` in
+`plan/estimates.py` has four patterns — `meeting_prep`, `decision`, `review`, `draft` —
+and the backlog is made of verbs none of them match: *submit, apply, complete, call,
+email, log, RSVP, register, attend, pay*. Everything falls to `unknown` → 45m.
+
+So "77 item(s) did not fit" means 77 × a number nobody chose. The overflow count, the
+capacity gap and the Monday "something has to give" sentence are all real arithmetic over
+a fabricated column.
+
+**The correction loop for this is dead.** `ratio_report` compares estimated against
+actual over blocks marked `done` and needs 30 of them. Across 36 plans and 445 blocks
+there is exactly **one** `done` block; 429 are still `pending`. It will never reach
+sample. And `docs/04 §1.3` forbids auto-retuning, correctly — so the only path is
+widening the type table by hand.
+
+## Nobody is using the output
+
+- **0 of 36 day plans have ever been accepted** (`accepted_at IS NULL`, all `proposed`).
+- **1 of 445 blocks has ever been marked done.** 429 `pending`, 15 `rolled`.
+- 106 of the 122 dated open commitments are already overdue.
+
+This is the number that should govern what gets built next. A planner nobody accepts and
+a block nobody ticks is not a planner with a ranking problem. Before adding capability,
+the honest move is to make the thing arrive when it is useful and stop it proposing work
+that is already done or duplicated — which is P1 and P2 below, and nothing more clever.
+
+Note also that `checkpoints.from_completed_block` only fires on `outcome='done'`, so the
+goal engine receives essentially no signal from the planner at all.
+
+## The source side
+
+- `apple-notes` last produced an item **16 days ago** — a parked cursor, per the audit
+  script's own warning. Worth the skill's 6-step debug.
+- **Embedding backlog is growing**: 36 documents unindexed, up from 8 last week. Retrieval
+  is additive by CLAUDE.md's ruling, so nothing is wrong-answering, but the gap widens.
+- `facts` has 23 rows and **`with_provenance: 0`**. Every durable fact about the owner
+  carries no `source_item_id`. That is rule 1 unmet in the knowledge base;
+  `people/touch.py`'s manual-source-item pattern is the template for fixing it.
+- `calendar:asu` holds 200 items with no connector — nothing will ever refresh them.
+- `audit_sources.py` still reports `CanvasIcsConnector: no credential row exists yet`
+  when `canvas:ics` has one. Carried from yesterday.
+
+## Ranked plan
+
+- [x] **P1 — the morning surfaces fire in the morning.** Add `--if-missing` to the 05:45
+      `plan` template so a late firing can never supersede a catch-up's morning plan, and
+      have the every-1800s `sync` job (which *does* run on wake) backfill the brief and
+      the plan when they are missing and their hour has passed. Templates live in
+      `launchd/templates/`, are generated, and are applied with `backglass schedule
+      install` — never hand-edit the installed plists. A true 06:00-with-the-lid-shut
+      needs `sudo pmset repeat wake`, which is the owner's machine-level call and is
+      offered, not done.
+- [x] **P2 — dedupe the backlog.** `backglass commitments dedupe --dry-run` prints
+      clusters and writes nothing. Applying is gated on the owner reading the list: this
+      is live-db surgery on 287 rows, and the 2026-08-12 lesson is that a wrong-table id
+      validates and writes to the wrong row. Print the exact rows before any write, use
+      commitment ids only, and close duplicates through the existing supersede path with
+      a note naming the survivor. Extraction-side prevention is a follow-up, not this
+      round.
+- [x] **P3 — teach `classify()` the verbs this ledger actually uses.** submit, apply,
+      complete, call, email, log, rsvp, register, attend, pay. Each new kind needs an
+      entry in `settings.estimate_defaults`. Nothing cleverer — the feedback loop is dead
+      and the docs forbid silent retuning.
+- [ ] **P4 — source hygiene**: the parked `apple-notes` cursor, the growing embedding
+      backlog, and the `audit_sources.py` label false positive.
+
+Deliberately not this round: no schema migration (nothing above needs one, and each one
+re-arms the sidecar fuse), no planner rewrite, no feature built to manufacture engagement.
+Open question, not investigated: several days show `capacity_minutes: 0` while still
+persisting 19 blocks.
+
+## Built, 2026-08-15
+
+**P1 — the deferred run now plans the day that is left.** The fix is not the one the
+audit proposed. Adding `--if-missing` to the 05:45 job was tried and reverted: a test
+already pins that job to always regenerate, and names why — it is the run built on the
+overnight batch collect, and it has to be able to replace a thinner plan a pre-dawn login
+wrote. Skipping the run was never the right answer.
+
+The defect was that `propose()` had no concept of *now*. It took a date and packed the
+whole working window from the start of it, so a run launchd deferred to 17:22 emitted a
+07:30 breakfast. `capacity.compute` now takes `not_before` and `propose` takes `now`,
+clamping the window to the hours that remain. It defaults to None, so every test and
+every what-if still measures a whole deterministic window; only the callers that know the
+wall clock — the CLI and the catch-up net — opt in.
+
+`backglass/catchup.py` is the net proper, hung off the every-1800s sync job because that
+is the only scheduled job that runs on wake. It fills a hole and never replaces anything:
+a live plan or an existing brief is left alone, and it never fires before the hour the
+surface is owed at. It generates the brief and deliberately does not send it — the owner
+agreed to receive mail at 06:00, not whenever a sync noticed the gap.
+
+`plan_at` joined `brief_at` in settings; 05:45 was frozen in the launchd template, which
+is the exact drift `schedule.render` exists to prevent, and it is now also the hour the
+net measures "the morning already passed" against. One number, one place.
+
+*Found while verifying on the live ledger:* the clamp made `no_window` lie. It was derived
+from `window_minutes == 0` on the documented grounds that only the non-working-day branch
+could produce that — and the first thing the clamp did was report a Saturday the owner
+works as "not a working day". A zero window now has three causes, and `window_closed` is
+the third: *"The working window closed at 18:00 — nothing left to plan today."*
+
+**P3 — estimates, measured rather than guessed.** 273 of 287 open commitments classified
+as `unknown`. Counting the leading verbs of that set gave the five new types — message,
+call, form, errand, log — and `send`, the single most common verb, was missing from the
+first draft until a test caught it. `backfill` now re-derives rows already marked
+`type_default` as well as filling NULLs, which is what makes a change to the table
+actually reach the backlog; manual and extracted estimates are still untouchable.
+
+| | before | after |
+|---|---|---|
+| open commitments at exactly 45m | 256 of 287 | 77 |
+| estimated backlog | ~215 hours | 154 hours |
+
+**P2 — clusters, not pairs.** `dedup.suspects` was already finding these; it returned 264
+open pairs and every duplicate costing planner time was in there. Its own docstring named
+the failure — *"a queue of 261 is one nobody reaches the end of"* — so the gap was the
+review surface, not the detection. `backglass duplicates` collapses the suspect graph into
+connected components: **264 pairs became 53 clusters over 215 commitments.**
+
+It writes nothing without `--apply`, and `--apply` only touches clusters where every
+member is the same sentence *and* the shape is not a fan-out. That guard is not
+theoretical: 4 of the 6 identical-text clusters on this ledger are one message promising
+an intro email to three different instructors, and collapsing them would have destroyed
+eight real commitments.
+
+## Found while building, not fixed
+
+- **Entity duplication is upstream of some of these clusters.** `UW–Madison Financial Aid
+  Office` and `University of Wisconsin–Madison` are one organisation the `entity` table
+  holds twice, and the pair wears the fan-out shape because of it. `backglass people
+  merge` fixes the cause. Worth a pass — it would resolve several clusters without any
+  judgment about the commitments themselves.
+- **A working day with a full window and zero capacity.** 2026-08-14 was a Friday with a
+  720-minute window and `capacity 0m`. Fixed events consumed all of it. Not investigated;
+  it is the audit's open question and it is real.
+- **The planner still has no consumer.** 0 of 36 plans accepted, 1 of 445 blocks marked
+  done. Nothing built this round changes that, deliberately — the honest first move was to
+  make the plan arrive while the day is still ahead and stop it proposing work that is
+  duplicated or mis-sized. Whether it then gets used is the question the next round should
+  ask, and it should be asked by looking rather than by building.

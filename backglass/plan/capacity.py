@@ -108,6 +108,10 @@ class Capacity:
     review_minutes: int = 0
     slots: list[Slot] = field(default_factory=list)
     fixed: list[FixedEvent] = field(default_factory=list)
+    #: The window existed today and has already closed — set only when `not_before`
+    #: clamped it past the end. A third fact, and stored rather than derived because it
+    #: is the one thing a zero window cannot tell you about itself.
+    window_closed: bool = False
 
     @property
     def plannable(self) -> bool:
@@ -121,11 +125,17 @@ class Capacity:
         Both end at zero capacity and they are opposite facts. "Fully booked" tells the
         owner their meetings ate the day and the fix is to decline one; a day that is
         simply not in `working_days` is not booked at all, and telling them it is booked
-        sends them looking for meetings that do not exist. Derived rather than stored:
-        the non-working branch of `compute` is the only one that returns a zero window,
-        so the distinction cannot drift out of sync with the thing it describes.
+        sends them looking for meetings that do not exist.
+
+        This was derived from `window_minutes == 0` alone, on the stated grounds that the
+        non-working branch was the only one that could return a zero window. `not_before`
+        made that false — a run at 20:47 against a window that closed at 18:00 zeroes it
+        too — and the first thing the clamp did on the live ledger was report a Saturday
+        the owner works as "not a working day". `window_closed` is the third fact, and it
+        is excluded here rather than folded in, because "the day is over" and "there is no
+        such day" send the owner to different places.
         """
-        return self.window_minutes == 0
+        return self.window_minutes == 0 and not self.window_closed
 
     _min_capacity: int = 60
 
@@ -549,10 +559,27 @@ def compute(
     day: date,
     *,
     events: list[FixedEvent] | None = None,
+    not_before: datetime | None = None,
 ) -> Capacity:
-    """P1. Compute capacity before selecting any work. Never select past it."""
+    """P1. Compute capacity before selecting any work. Never select past it.
+
+    `not_before` clamps the start of the window, which is how a plan built at four in the
+    afternoon describes the afternoon rather than the morning. It is passed by the CLI
+    and the catch-up net, both of which know the wall clock; it defaults to None so that
+    every test and every what-if measures a whole, deterministic window.
+
+    Hours that have already happened are not capacity. Without the clamp a run at 17:22
+    reported 281 minutes of a 480-minute window and then packed breakfast at 07:30 —
+    arithmetic that is internally consistent and describes a day that is over.
+    """
     tz = timezones.active_tz(settings, day)
     window_start, window_end = timezones.window_on(settings, day)
+    window_closed = False
+    if not_before is not None and window_start < not_before:
+        # Clamped, never extended: a run before the window opens still plans the whole
+        # window, because the morning has not been spent yet.
+        window_start = min(not_before, window_end)
+        window_closed = window_start >= window_end
     window_minutes = int((window_end - window_start).total_seconds() // 60)
 
     if not timezones.is_working_day(settings, day):
@@ -650,6 +677,7 @@ def compute(
         review_minutes=review_minutes,
         slots=slots,
         fixed=fixed,
+        window_closed=window_closed,
         _min_capacity=settings.min_capacity_minutes,
     )
 

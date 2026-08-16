@@ -233,10 +233,25 @@ def propose(
     *,
     at_risk_goals: set[int] | None = None,
     events: list[capacity_mod.FixedEvent] | None = None,
+    now: datetime | None = None,
 ) -> Proposal:
-    """Build the proposed day. Writes nothing — `persist` does that."""
+    """Build the proposed day. Writes nothing — `persist` does that.
+
+    `now` is the wall clock, and it only ever matters when it falls on `day`: it clamps
+    capacity to the hours that are left. launchd defers a missed calendar interval to the
+    next wake, so on a machine that sleeps through 05:45 this runs in the evening, and
+    without the clamp it answered by packing a morning that had already gone — a plan
+    with breakfast at 07:30, written at 17:22. Callers that know the clock (the CLI, the
+    catch-up net) pass it; tests and what-ifs leave it None and get the whole window.
+    """
     estimates.backfill(conn, settings)
-    cap = capacity_mod.compute(conn, settings, day, events=events)
+    cap = capacity_mod.compute(
+        conn,
+        settings,
+        day,
+        events=events,
+        not_before=now if (now is not None and now.date() == day) else None,
+    )
     proposal = Proposal(day=day, tz=cap.tz, capacity=cap)
 
     change = timezones.changed_on(settings, day)
@@ -268,7 +283,19 @@ def propose(
         # P3. "Say the day is fully booked and list only what is due."
         proposal.overflow = order(candidates(conn, settings, day, at_risk_goals or set()))
         proposal.due_now = [c for c in proposal.overflow if c.priority <= PRIORITY_DUE_TODAY]
-        if cap.no_window:
+        if cap.window_closed:
+            # The day was workable and is now over. Distinct from both neighbours: there
+            # is nothing to decline and nothing wrong with the calendar, the hours are
+            # simply gone. This is the ordinary case for a run launchd deferred to the
+            # evening, so it must not read as a fault.
+            # Read back from the day itself, not from `working_window`: a Saturday runs
+            # on `weekend_window`, and naming the weekday's hour on a weekend would be a
+            # precise-looking sentence that is false.
+            closed_at = timezones.window_on(settings, day)[1].strftime("%H:%M")
+            proposal.notes.append(
+                f"The working window closed at {closed_at} — nothing left to plan today."
+            )
+        elif cap.no_window:
             # Not booked — not a working day. Saying "fully booked" here sends the owner
             # looking for meetings that are not there, and it is what hid a move-in.
             proposal.notes.append(

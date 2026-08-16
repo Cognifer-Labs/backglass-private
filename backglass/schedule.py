@@ -63,6 +63,7 @@ def render(
     """
     settings = settings or Settings()
     brief_hour, brief_minute = _hhmm(settings.brief_at)
+    plan_hour, plan_minute = _hhmm(settings.plan_at)
     shutdown_hour, shutdown_minute = shutdown_time(settings)
     tokens = {
         "{{REPO_DIR}}": str(repo_dir),
@@ -70,6 +71,8 @@ def render(
         "{{HOME}}": str(home),
         "{{BRIEF_HOUR}}": str(brief_hour),
         "{{BRIEF_MINUTE}}": str(brief_minute),
+        "{{PLAN_HOUR}}": str(plan_hour),
+        "{{PLAN_MINUTE}}": str(plan_minute),
         "{{SHUTDOWN_HOUR}}": str(shutdown_hour),
         "{{SHUTDOWN_MINUTE}}": str(shutdown_minute),
     }

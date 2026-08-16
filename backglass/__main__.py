@@ -17,6 +17,7 @@ from typing import Annotated, Any
 
 import typer
 
+from backglass import catchup
 from backglass.brief import model
 from backglass.config import Settings, get_settings
 from backglass.connectors import credentials
@@ -423,6 +424,13 @@ def sync_command(
         typer.echo(f"{locked}; skipped")
         raise typer.Exit(0) from None
     _print_report(report, dry_run=dry_run)
+    if not dry_run:
+        # The net under the morning jobs. This is the only scheduled job that runs on
+        # wake, so on a laptop that sleeps through 05:45 it is the thing that notices
+        # the plan and the brief were never produced. It fills a hole and never
+        # replaces anything — see backglass/catchup.py.
+        for produced in catchup.run(conn, settings):
+            typer.echo(f"caught up {produced.surface} for {produced.day}: {produced.detail}")
     raise typer.Exit(report.exit_code)
 
 
@@ -808,7 +816,12 @@ def plan(
         return
 
     proposal = planner.propose(
-        conn, settings, day, at_risk_goals=health.at_risk_goal_ids(conn, settings, day)
+        conn,
+        settings,
+        day,
+        at_risk_goals=health.at_risk_goal_ids(conn, settings, day),
+        # The wall clock, so a run that launchd deferred to the evening plans the evening.
+        now=timezones.local_now(settings),
     )
     plan_id = planner.persist(conn, settings, proposal)
     if accept:
@@ -1707,6 +1720,76 @@ def _anchor_iso(settings: Settings, value: str | None) -> str:
         typer.echo(f"{raw[:40]!r} is not a date; use YYYY-MM-DD", err=True)
         raise typer.Exit(code=1) from exc
     return raw
+
+
+@app.command("duplicates")
+def duplicates_command(
+    apply: Annotated[
+        bool,
+        typer.Option("--apply", help="Drop the losers in every cluster shown as certain"),
+    ] = False,
+    limit: Annotated[int, typer.Option("--limit", help="Clusters to print")] = 12,
+) -> None:
+    """Review likely-duplicate open commitments, clustered.
+
+    The planner schedules whatever the ledger holds, so one scholarship acceptance
+    written down three ways costs two hours of a real day. `dedup.suspects` has always
+    found these — 264 open pairs on this ledger — but a pairwise queue that long is one
+    nobody finishes, which is why they are still here.
+
+    Prints nothing but a report unless `--apply` is passed, and even then it only touches
+    clusters where every member is the same sentence *and* the shape is not a fan-out.
+    A fan-out — one message promising an intro email to three instructors — is three real
+    promises with identical text, and is always left for the owner.
+    """
+    from backglass import duplicates as dup_mod
+    from backglass.web import actions
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    found = dup_mod.clusters(conn)
+    if not found:
+        typer.echo("no duplicate suspects")
+        return
+
+    certain = [c for c in found if c.identical and c.kind != dup_mod.FAN_OUT]
+    typer.echo(
+        f"{len(found)} cluster(s) over {sum(len(c.members) for c in found)} open "
+        f"commitments — {len(certain)} identical and safe to collapse"
+    )
+    for cluster in found[:limit]:
+        mark = "certain" if cluster in certain else cluster.kind
+        typer.echo(f"\n[{mark}]  weakest pair {cluster.weakest:.2f}")
+        keep = int(cluster.survivor["id"])
+        for member in cluster.members:
+            lead = "keep " if int(member["id"]) == keep else "drop "
+            who = f"  · {member['who']}" if member["who"] else ""
+            typer.echo(f"  {lead}{member['id']:>5}  {str(member['what'])[:66]}{who}")
+        if cluster.kind == dup_mod.FAN_OUT:
+            # The fact that decides the question, printed rather than acted on.
+            typer.echo(
+                "        one message, several counterparties — several real promises, "
+                "or one org the entity table holds twice (`people merge`)"
+            )
+    if len(found) > limit:
+        typer.echo(f"\n… {len(found) - limit} more; --limit to see them")
+
+    if not apply:
+        typer.echo(
+            "\nnothing written. `--apply` drops the losers in the certain clusters; "
+            "everything else is a question only you can answer:\n"
+            "  backglass board  (or /commitments) to merge or keep apart"
+        )
+        return
+
+    dropped = 0
+    for cluster in certain:
+        for loser in cluster.losers:
+            actions.drop(conn, int(loser["id"]), cluster.note())
+            dropped += 1
+    conn.commit()
+    typer.echo(f"\ndropped {dropped} duplicate(s); each tombstoned with the survivor's id")
 
 
 @app.command()

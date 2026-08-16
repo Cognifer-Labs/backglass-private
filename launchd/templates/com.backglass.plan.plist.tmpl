@@ -15,7 +15,14 @@
     <string>plan</string>
   </array>
 
-  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>45</integer></dict>
+  <!-- Deliberately WITHOUT the if-missing flag the catch-up job carries: this is the run
+       built on the overnight batch collect, and it must be able to replace a thinner
+       plan a pre-dawn login wrote. launchd defers a missed calendar interval to the next
+       wake, so on a machine that sleeps through this hour the job fires in the evening;
+       that is handled in the planner, which packs the day from the current time rather
+       than from the start of a window that has already passed, not by skipping the run.
+       (No double hyphen appears in this comment on purpose: XML forbids it.) -->
+  <key>StartCalendarInterval</key><dict><key>Hour</key><integer>{{PLAN_HOUR}}</integer><key>Minute</key><integer>{{PLAN_MINUTE}}</integer></dict>
 
   <!-- docs/02 §Failure policy: the process exits non-zero at the end so a scheduled run
        reports failure. These logs are where that lands. -->

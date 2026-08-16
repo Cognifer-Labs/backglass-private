@@ -68,6 +68,17 @@ def parse_ranges(entries: list[str]) -> list[Stay]:
     return stays
 
 
+def local_now(settings: Settings) -> datetime:
+    """Owner-local now, zone-aware. The clock the planner and the catch-up net read.
+
+    Separate from `local_now_iso` because those callers want an instant to compare
+    against a window, not a string to store — and formatting it only to parse it back
+    was how the two would have drifted.
+    """
+    zone = active_tz(settings, datetime.now().date())
+    return datetime.now(ZoneInfo(zone))
+
+
 def local_now_iso(settings: Settings, day: date | None = None) -> str:
     """Owner-local now, second precision, with the active zone's offset.
 

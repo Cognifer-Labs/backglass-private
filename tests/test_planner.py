@@ -636,13 +636,19 @@ def test_regenerating_supersedes_and_keeps_the_prior_plan(conn, sett: Settings) 
 
 
 def test_type_defaults_match_docs04(sett: Settings) -> None:
-    """ "review 30, draft 60, decision 15, meeting-prep 30, unknown 45"."""
+    """ "review 30, draft 60, decision 15, meeting-prep 30, message 15, call 20,
+    form 30, errand 30, log 10, unknown 45"."""
     table = estimates.defaults(sett)
     assert table == {
         "review": 30,
         "draft": 60,
         "decision": 15,
         "meeting_prep": 30,
+        "message": 15,
+        "call": 20,
+        "form": 30,
+        "errand": 30,
+        "log": 10,
         "unknown": 45,
     }
 

@@ -153,6 +153,12 @@ class Settings(BaseSettings):
     week_start: str = "monday"
     daily_reserve_minutes: int = 45
     brief_at: str = "06:00"
+    #: When the day plan is built. It was frozen into the launchd template while
+    #: `brief_at` came from here, which is the exact drift `schedule.render` was written
+    #: to stop — and it is also the hour `catchup` measures "the morning already passed"
+    #: against, so a second copy would let the net and the job disagree about when the
+    #: hole opens. Ahead of `brief_at` on purpose: the brief reports the plan.
+    plan_at: str = "05:45"
     #: docs/04 §1.2: the working window is "configured per weekday". Days absent here have
     #: no working window at all, which is how a weekend gets zero capacity rather than a
     #: plan nobody asked for.
@@ -201,6 +207,15 @@ class Settings(BaseSettings):
             "draft:60",
             "decision:15",
             "meeting_prep:30",
+            # The five student-shaped types (2026-08-15). A message is a message, not
+            # three quarters of an hour; a form is the ~30 minutes a portal actually
+            # takes; an errand is mostly travel. `unknown` stays 45 so anything still
+            # unmatched keeps the old, deliberately pessimistic number.
+            "message:15",
+            "call:20",
+            "form:30",
+            "errand:30",
+            "log:10",
             "unknown:45",
         ]
     )

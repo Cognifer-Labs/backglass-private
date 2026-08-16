@@ -71,10 +71,25 @@ day.
 - Extraction proposes an estimate when the source text supports one ("this'll take an
   hour," "quick review").
 - Otherwise the default is by commitment type, configurable: review 30, draft 60,
-  decision 15, meeting-prep 30, unknown 45.
+  decision 15, meeting-prep 30, message 15, call 20, form 30, errand 30, log 10,
+  unknown 45.
 - The owner can override on any item, and an override is sticky for that item.
 - Track actuals. After 30 completed items, report the ratio of estimated to actual in the
   weekly review, and let the owner adjust the type defaults. Do not auto-adjust silently.
+
+The last five types were added on 2026-08-15 after measuring the ledger rather than
+reasoning about it: 273 of 287 open commitments were classifying as `unknown`, so 256 of
+them carried an identical 45-minute estimate and every capacity number the planner
+printed was arithmetic over a figure nobody had chosen. The leading verbs of that
+unclassified set were *send, complete, submit, pick, bring, ask, apply, accept, confirm,
+get, call, follow, notify, reply, email* — a student's ledger of forms, applications and
+short messages, which the original four types describe none of.
+
+Applying the table is not the auto-adjustment this section forbids. A `type_default` is a
+pure function of the commitment's text and this table, so `estimates.backfill` re-derives
+those rows on every planner run and a change here reaches the whole open backlog. What
+stays forbidden is moving the *numbers* from measured actuals; `ratio_report` reports the
+ratio and writes nothing.
 
 ### 1.4 Deep work protection
 

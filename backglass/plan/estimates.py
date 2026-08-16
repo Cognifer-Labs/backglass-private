@@ -41,6 +41,27 @@ TYPE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
         "draft",
         re.compile(r"\b(draft|write|prepare|put together|scope|plan|proposal|spec)\b", re.I),
     ),
+    # ── The five below were added 2026-08-15, from measurement rather than taste.
+    #
+    # 273 of 287 open commitments classified as `unknown`, so 256 of them carried an
+    # identical 45-minute estimate and every capacity number the planner produced was
+    # arithmetic over a figure nobody chose. The leading verbs of that unclassified set,
+    # counted: send 30, complete 29, submit 21, pick 10, bring 10, ask 9, apply 9,
+    # accept 9, confirm 8, get 8, call 7, follow 7, notify 5, reply 5, email 4.
+    #
+    # This is a student's ledger, not a manager's: it is made of forms, applications and
+    # short messages, and the four types above describe none of them. They stay ahead of
+    # these because "review the agreement form" is a review of a form and reads better as
+    # 30 minutes than as one; first match wins, so order is the ranking.
+    ("message", re.compile(r"\b(send|share|forward|email|e-mail|reply|respond|notify|"
+                           r"text|message|ask|confirm|invite|follow[- ]?up|chase|ping|"
+                           r"thank)\b", re.I)),
+    ("call", re.compile(r"\b(call|phone|ring|voicemail|dial)\b", re.I)),
+    ("form", re.compile(r"\b(submit|apply|application|complete|fill (in|out)|enroll|"
+                        r"enrol|register|sign up|accept|rsvp|renew|upload)\b", re.I)),
+    ("errand", re.compile(r"\b(pick up|pick-up|drop off|drop-off|bring|collect|buy|"
+                          r"pay|order|return|mail|ship)\b", re.I)),
+    ("log", re.compile(r"\b(log|record|track|jot|note down)\b", re.I)),
 ]
 
 #: docs/04 §1.3: "After 30 completed items, report the ratio of estimated to actual."
@@ -99,24 +120,48 @@ def estimate_for(
 
 
 def backfill(conn: sqlite3.Connection, settings: Settings) -> int:
-    """Give every open commitment an estimate. Returns how many were filled.
+    """Give every open commitment an estimate. Returns how many rows changed.
 
-    Only touches rows where `estimated_minutes` is NULL, so manual and extracted values
-    survive. Run by the planner before it packs a day, because P1 says capacity is a hard
+    Manual and extracted values survive untouched — those are numbers somebody chose or
+    the source text supported, and `estimate_for` already refuses to overwrite them.
+    Run by the planner before it packs a day, because P1 says capacity is a hard
     constraint and an unestimated item cannot be measured against it.
+
+    It also **re-derives rows already marked `type_default`**, which is why this is not
+    just a NULL fill. A type default is a pure function of the commitment's text and the
+    defaults table, so a row carrying one is a row nobody chose a number for — and when
+    the table or the patterns change, leaving the old value behind means the planner
+    keeps packing days against a figure the configuration no longer claims. That is not
+    the silent auto-tuning docs/04 §1.3 forbids: §1.3 rules out adjusting the *table*
+    from measured actuals, and this only ever applies the table as it currently reads.
+
+    It matters because it is the difference between a fix and a fix that arrives. When
+    the five student-shaped types were added, 256 open commitments were already sitting
+    on `type_default:45` from the old four-pattern table; a NULL-only fill would have
+    left every one of them at 45 minutes forever, and the capacity model would have gone
+    on being arithmetic over a number nobody picked.
     """
     rows = conn.execute(
         "SELECT id, what, estimated_minutes, estimate_source FROM commitment "
-        "WHERE user_id = ? AND status = 'open' AND estimated_minutes IS NULL",
+        "WHERE user_id = ? AND status = 'open' "
+        "  AND (estimated_minutes IS NULL OR estimate_source = 'type_default')",
         (USER_ID,),
     ).fetchall()
+    changed = 0
     for row in rows:
         estimate = estimate_for(str(row["what"]), settings)
+        if (
+            row["estimated_minutes"] == estimate.minutes
+            and row["estimate_source"] == estimate.source
+        ):
+            # Rule 3: two runs with no upstream change produce zero writes.
+            continue
         conn.execute(
             "UPDATE commitment SET estimated_minutes = ?, estimate_source = ? WHERE id = ?",
             (estimate.minutes, estimate.source, row["id"]),
         )
-    return len(rows)
+        changed += 1
+    return changed
 
 
 @dataclass(frozen=True)
