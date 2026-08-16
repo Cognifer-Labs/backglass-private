@@ -20,6 +20,12 @@ Two properties make it safe to run on every sync:
 
 It is deliberately not a scheduler. The scheduled jobs remain the primary path and this
 is the net underneath them; if the machine is awake at 05:45 nothing here ever fires.
+
+The retrieval index is caught up here too, for the same reason rather than by analogy: it
+was work that had no job at all. `search index` was manual-only — nothing in `sync.py`,
+nothing in any launchd template, ever called it — so the backlog grew from 8 documents to
+36 in a week and the only thing that noticed was a `state` field nobody runs unprompted.
+Unlike the two surfaces above it has no hour, so it runs on every sync.
 """
 
 from __future__ import annotations
@@ -98,7 +104,38 @@ def run(
         except Exception as exc:  # noqa: BLE001 - rule 5, and B6 one layer up
             filled.append(Filled("brief", day, f"failed: {type(exc).__name__}: {exc}"))
 
+    indexed = _index_backlog(conn, settings)
+    if indexed:
+        filled.append(Filled("retrieval", day, f"{indexed} document(s) indexed"))
+
     return filled
+
+
+def _index_backlog(conn: sqlite3.Connection, settings: Settings) -> int:
+    """Embed whatever retrieval cannot reach yet. Returns how many were added.
+
+    `search index` was a manual command and nothing ever called it — not `sync.py`, not
+    any launchd template. That is the whole reason the backlog grew from 8 documents to
+    36 in a week while nobody did anything wrong: the drop folder's contracts and letters
+    were being collected and never became findable, and the only thing that noticed was
+    `backglass state`, which nobody runs unprompted.
+
+    Safe on a thirty-minute timer by construction rather than by care: `index()` is
+    bounded per call, `INSERT OR IGNORE` against a unique index, and resumable because
+    that index *is* the watermark — interrupting it costs nothing and re-running it
+    continues. The model is local, so this cannot touch the spend cap.
+
+    Silent on failure, deliberately. Retrieval is additive by CLAUDE.md's ruling: if the
+    embedding endpoint is down, every existing surface must still be correct, and a sync
+    that fails because ollama is not running would be the additive layer becoming
+    load-bearing through the back door.
+    """
+    try:
+        from backglass import search
+
+        return search.index(conn, settings)
+    except Exception:  # noqa: BLE001 — no endpoint, no model, no vectors: all the same
+        return 0
 
 
 def _fill_plan(

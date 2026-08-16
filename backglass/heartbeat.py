@@ -22,11 +22,10 @@ from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from backglass.config import Settings
+from backglass import schedule
 from backglass.ledger import USER_ID
 from backglass.plan import timezones
 
-#: launchd/templates/com.backglass.plan.plist.tmpl fires the planner at 05:45 local.
-PLAN_AT = time(5, 45)
 #: How long the plan job is given to finish before its absence is an alert. Generous:
 #: the planner makes model calls, and a false alarm at 05:46 trains the owner to ignore
 #: the alert entirely, which is the one failure mode worse than not having it.
@@ -191,7 +190,13 @@ def _plan_due(settings: Settings, today: date, moment: datetime, tz: str) -> boo
     zone = ZoneInfo(tz)
     if moment.astimezone(zone).date() != today:
         return False
-    deadline = datetime.combine(today, PLAN_AT, tzinfo=zone) + timedelta(
+    # Read from the setting the launchd template is rendered from, never from a copy.
+    # This was `time(5, 45)` with a comment saying the template fires then — true when it
+    # was written and false the moment `plan_at` became configurable, at which point
+    # changing the hour would have moved the job and left the alarm watching the old one.
+    # It is the same two-copies failure `schedule.render` exists to end, one module over.
+    hour, minute = schedule._hhmm(settings.plan_at)
+    deadline = datetime.combine(today, time(hour, minute), tzinfo=zone) + timedelta(
         minutes=PLAN_GRACE_MINUTES
     )
     return moment >= deadline

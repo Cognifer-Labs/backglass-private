@@ -1712,3 +1712,135 @@ eight real commitments.
   make the plan arrive while the day is still ahead and stop it proposing work that is
   duplicated or mis-sized. Whether it then gets used is the question the next round should
   ask, and it should be asked by looking rather than by building.
+
+---
+
+# Autonomy: the system should notice its own drift (2026-08-16)
+
+Every defect the last two rounds found failed silently. The plan job firing eleven hours
+late, a cursor that looked parked, an embedding backlog doubling, an installed app running
+last week's Python — none of them raised anything. That is the thread: autonomy here is
+not "do more unattended", it is **notice when unattended work stopped working, and say so
+in a sentence that is true.**
+
+## First, the thing that worked
+
+P1 is verified in production, unattended. `data/sync.log`:
+
+```
+caught up plan for 2026-08-16: 9 block(s), 73 did not fit
+caught up brief for 2026-08-16: 170 words, generated not sent
+```
+
+The machine slept through 05:45, woke, and the net filled both holes on the first sync —
+and `day_plan` 40 carries `capacity_minutes: 131` against a 480-minute window, so the
+clamp did its job too. Nobody typed anything.
+
+## The alarm I am NOT building, and why
+
+The obvious autonomy feature here was a quiet-source detector: a source whose credential
+says `ok` while nothing new has arrived is exactly the "reads green, is dead" failure
+`heartbeat.py`'s own docstring is about. `apple-notes` was the candidate — 16 days without
+producing a row, flagged by the audit script as "check the cursor is not parked".
+
+Probed the store before building the detector around it. It holds 65 notes; the newest was
+modified **2026-07-05**; the cursor is `2026-07-05T14:21:21.000Z`; notes newer than the
+cursor: **zero**. The cursor is exactly where it should be. The owner has not touched a
+note in six weeks, and that is all this ever was.
+
+So a threshold on "days since last row" would have painted a healthy source red, on the
+only instance available to calibrate it. `heartbeat.py` says a false alarm is the one
+failure worse than no alarm, and it is right. **The honest version of this feature is not a
+timestamp comparison but a liveness probe — is the cursor behind what the upstream store
+actually holds — which is a per-connector question the `Connector` protocol cannot answer
+today.** Recorded as a design note, not built. What ships instead is removing the two
+false positives that already exist.
+
+## Steps
+
+- [x] **`heartbeat.PLAN_AT` reads `settings.plan_at`.** A drift I introduced yesterday:
+      `plan_at` became a setting and the launchd template now renders from it, while
+      `heartbeat.py:29` still hardcodes `time(5, 45)`. Change the hour and heartbeat
+      silently alerts against the old one — the same two-copies bug `schedule.render` was
+      written to end, one module over.
+- [x] **The sync tail indexes the retrieval backlog.** `search index` is manual-only:
+      nothing in `sync.py`, nothing in any launchd template, calls it. That is the entire
+      reason the backlog grew 8 → 36 while nobody did anything wrong. `index()` is bounded
+      (200/call), resumable by construction, and `INSERT OR IGNORE` on a unique index, so
+      it is safe on a 30-minute timer; wrapped in rule 5's degrade so a stopped embedding
+      endpoint never takes the sync with it. Local model, so no spend-cap interaction.
+- [x] **`audit_sources.py`: both false positives.** The credential-label bug promised in
+      the last two rounds (`CanvasIcsConnector: no credential row exists yet` when
+      `canvas:ics` has one), and the parked-cursor warning that fires on a source that is
+      simply quiet. A warning that is wrong twice is a warning nobody reads.
+- [x] **`state`'s `matches_source` covers Python.** It globs CSS, templates and scripts
+      and reports `matches_source: True` about an app whose entire codebase it never
+      hashed — which is how this session installed and then re-installed the desktop app
+      while the tool said it already matched. `state.py`'s own comments describe this
+      failure twice at one level down ("a list nobody remembers to extend reports
+      matches_source: True about a surface it never looked at"); the level it misses is
+      the code. `build-sidecar.sh` writes a sha256 manifest of the frozen Python into the
+      bundle and `state` compares it.
+
+## Out of scope
+
+- **`BRIEF_TO` is unset, so the brief has never been emailed** — 15 briefs, every one
+  `sent_at IS NULL`. The product's headline promise is "pushed at 06:00" and it has only
+  ever been pulled. Configuring an outbound channel is the owner's decision, not one to
+  make for them; surfaced as a question instead.
+- No plan-acceptance or engagement features. Round 2's ruling stands: ask by looking.
+- No migration, so no sidecar fuse this round either.
+
+## Built, 2026-08-16
+
+All four landed. Two verified themselves in production before the round was over, because
+the launchd jobs run `uv run` from the checkout and therefore pick up a change the moment
+it is saved.
+
+**The retrieval catch-up ran unattended within minutes of being written.** `data/sync.log`:
+
+```
+caught up retrieval for 2026-08-16: 39 document(s) indexed
+```
+
+`backglass state` went from `indexed: 1283 of 1319, pending 36` to `1322 of 1322,
+pending 0`. Nobody typed `search index` — which was the whole problem, since nothing ever
+had.
+
+**`heartbeat.PLAN_AT` is gone.** It reads `settings.plan_at`, the same value
+`schedule.render` puts in the plist. A test moves the hour to 11:00 and asserts the alarm
+moves with it — that test fails against yesterday's code, which is the point of writing it.
+
+**Both false positives in `audit_sources.py` are gone**, and the script now reports
+`0 failing, 0 warning(s)` on a healthy installation for the first time. The credential
+matcher is structural rather than an alias table — `_keys` flattens `:`, `_`, `-` and
+spaces so `canvas_ics.py` ↔ `canvas:ics` and `apple_calendar.py` ↔ `calendar:apple` both
+resolve without anyone remembering to add an entry. The parked-cursor warning is now an
+INFO phrased as a question, because it was wrong about the one source it fired on.
+
+**`state` compares the deployed Python.** `build-sidecar.sh` records a sha256 manifest of
+every `backglass/**/*.py` into the bundle and `_stale_python` compares it, naming the
+modules that drifted. An app built before the manifest reports `unknown` with the reason
+rather than passing — the module's own contract, applied to itself.
+
+## The alarm not built, restated for whoever reads this next
+
+A quiet-source detector was the obvious autonomy feature and the evidence killed it.
+`apple-notes` looked like the case for it: `ok` for weeks, no new rows, flagged by the
+audit script. The store holds 65 notes, the newest modified 2026-07-05, the cursor sits at
+exactly that instant, and nothing newer exists. Healthy. A days-since-last-row threshold
+would have painted it red.
+
+The honest version needs a liveness probe — *is my cursor behind what the upstream store
+holds* — which is a question only each connector can answer and which the `Connector`
+protocol has no way to ask. That is a real, scoped piece of work: add an optional
+`behind() -> int | None` beside `health()`, implement it where it is cheap (Notes,
+Reminders, Calendar all enumerate locally anyway), and let heartbeat alarm on a fact
+instead of a guess. Not started.
+
+## Still open
+
+- **`BRIEF_TO` is unset; 15 briefs, every one `sent_at IS NULL`.** The brief has never
+  been pushed anywhere. Owner's call, not a defect to fix unilaterally.
+- Friday's 720-minute window with zero capacity (round 2's open question).
+- The planner still has no consumer: 0 of 40 plans accepted, 1 of 445 blocks done.

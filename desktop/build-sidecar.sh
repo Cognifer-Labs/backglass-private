@@ -51,6 +51,17 @@ echo "── staging into the Tauri bundle"
 rsync -a --delete desktop/sidecar-dist/backglass-server/ desktop/src-tauri/sidecar/backglass-server/
 chmod +x desktop/src-tauri/sidecar/backglass-server/backglass-server
 
+# What Python went into this build, so `backglass state` can answer the question it was
+# already claiming to answer. It hashes the frozen CSS, templates and scripts and then
+# reports `matches_source: True` — about an app whose entire codebase it never looked at,
+# because PyInstaller compiles the modules into an archive there is nothing to hash.
+# On 2026-08-16 that reported a match against an installed app running the previous
+# week's planner. The bundle cannot describe its own Python, so the build records it.
+echo "── recording the Python manifest"
+MANIFEST="$ROOT/desktop/src-tauri/sidecar/backglass-server/backglass-python.sha256"
+( cd "$ROOT" && find backglass -name '*.py' -type f | sort | xargs shasum -a 256 ) > "$MANIFEST"
+echo "   $(wc -l < "$MANIFEST" | tr -d ' ') python files recorded"
+
 echo "── tauri build"
 cd desktop && npx tauri build
 

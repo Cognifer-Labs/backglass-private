@@ -59,6 +59,11 @@ FROZEN_TEMPLATE_DIR = "backglass/web/templates"
 #: covered without anyone deciding to cover it.
 FROZEN_SCRIPT_DIR = "backglass/web/static"
 
+#: Written into the bundle by `desktop/build-sidecar.sh`, because PyInstaller compiles
+#: the modules into an archive and leaves nothing on disk to hash. Without it the code —
+#: the largest frozen surface there is — was the one this file never compared.
+PYTHON_MANIFEST = "backglass-python.sha256"
+
 
 def frozen_surfaces() -> tuple[str, ...]:
     """Every repo-relative path the sidecar bundles, found rather than remembered.
@@ -184,13 +189,63 @@ def _deployed(state: State) -> None:
             missing.append(relative)
         elif theirs != ours:
             stale.append(relative)
+    code_stale, code_note = _stale_python(INSTALLED_APP)
     state.add(
         "deployed", "matches_source",
-        Claim(not stale and not missing,
-              f"sha256 of {len(surfaces)} frozen surfaces vs the checkout",
-              "; ".join(f"{p} not found in the bundle" for p in missing) or None),
+        Claim(not stale and not missing and not code_stale and code_note is None,
+              f"sha256 of {len(surfaces)} frozen surfaces and the Python manifest "
+              "vs the checkout",
+              "; ".join(f"{p} not found in the bundle" for p in missing) or code_note),
     )
     state.add("deployed", "stale_surfaces", Claim(stale, "sha256 mismatch vs the checkout"))
+    state.add(
+        "deployed", "stale_python",
+        Claim(code_stale, f"sha256 vs {PYTHON_MANIFEST} recorded at build time", code_note),
+    )
+
+
+def _stale_python(app: Path) -> tuple[list[str], str | None]:
+    """Which frozen Python modules differ from this checkout.
+
+    The gap this closes: everything above hashes CSS, templates and scripts, and then
+    `matches_source` reported True about an app running the previous week's planner —
+    because PyInstaller compiles the modules into an archive, so there is nothing in the
+    bundle to hash and nothing here ever looked. `state.py` already carries two comments
+    about a list that reports a match on a surface it never examined; the surface it was
+    itself missing was the code.
+
+    A bundle cannot describe its own Python, so `build-sidecar.sh` records it at build
+    time and this compares that record. An older app predating the manifest says so
+    rather than passing — `unknown` over a confident answer assembled from a missing
+    input is this module's whole contract.
+    """
+    manifest = app / "Contents/Resources/sidecar/backglass-server" / PYTHON_MANIFEST
+    if not manifest.exists():
+        return [], (
+            f"{PYTHON_MANIFEST} is not in the bundle — it predates the manifest, so "
+            "whether its code matches this checkout is unknown; rebuild to find out"
+        )
+    recorded: dict[str, str] = {}
+    for line in manifest.read_text().splitlines():
+        digest, _, relative = line.partition("  ")
+        if digest and relative:
+            recorded[relative.strip()] = digest.strip()
+    if not recorded:
+        return [], f"{PYTHON_MANIFEST} is empty"
+
+    drifted = [
+        relative for relative, digest in sorted(recorded.items())
+        if _sha256(REPO_ROOT / relative) != digest
+    ]
+    # A file added to the checkout since the build is drift too: the app cannot be
+    # running a module it was never given.
+    here = {
+        str(path.relative_to(REPO_ROOT))
+        for path in (REPO_ROOT / "backglass").rglob("*.py")
+        if "__pycache__" not in path.parts
+    }
+    drifted.extend(sorted(here - set(recorded)))
+    return drifted, None
 
 
 def _schema(conn: sqlite3.Connection, state: State) -> None:

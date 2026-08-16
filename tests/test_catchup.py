@@ -321,3 +321,76 @@ class TestTheDayIsOver:
         cap = capacity_mod.compute(conn, weekday_only, DAY, events=[])
         assert cap.no_window
         assert not cap.window_closed
+
+
+class TestRetrievalCatchesUp:
+    """`search index` was manual-only — nothing in sync.py, nothing in any launchd
+    template, ever called it. The backlog grew 8 → 36 in a week with nobody doing
+    anything wrong, and the only thing that noticed was a `state` field nobody runs."""
+
+    def test_the_backlog_is_indexed_on_every_sync(
+        self, conn: sqlite3.Connection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from backglass import search
+
+        monkeypatch.setattr(search, "index", lambda *_a, **_k: 7)
+        filled = catchup.run(conn, settings, now=_at(4, 0))
+        assert [(f.surface, f.detail) for f in filled] == [
+            ("retrieval", "7 document(s) indexed")
+        ]
+
+    def test_it_runs_even_before_the_morning_hours(
+        self, conn: sqlite3.Connection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Unlike the plan and the brief, indexing has no hour it is owed at."""
+        from backglass import search
+
+        calls: list[int] = []
+        monkeypatch.setattr(search, "index", lambda *_a, **_k: calls.append(1) or 0)
+        catchup.run(conn, settings, now=_at(3, 0))
+        assert calls
+
+    def test_an_empty_backlog_says_nothing(
+        self, conn: sqlite3.Connection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from backglass import search
+
+        monkeypatch.setattr(search, "index", lambda *_a, **_k: 0)
+        assert catchup.run(conn, settings, now=_at(4, 0)) == []
+
+    def test_a_dead_embedding_endpoint_does_not_take_the_sync_with_it(
+        self, conn: sqlite3.Connection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Retrieval is additive by CLAUDE.md's ruling. A sync that fails because ollama
+        is not running would be the additive layer becoming load-bearing."""
+        from backglass import search
+
+        def boom(*_a: object, **_k: object) -> int:
+            raise OSError("connection refused")
+
+        monkeypatch.setattr(search, "index", boom)
+        assert catchup.run(conn, settings, now=_at(4, 0)) == []
+
+
+class TestHeartbeatReadsTheSetting:
+    """The drift introduced on 2026-08-15: `plan_at` became a setting and the launchd
+    template renders from it, while heartbeat kept its own `time(5, 45)`."""
+
+    def test_moving_the_plan_hour_moves_the_alarm(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        from backglass import heartbeat
+
+        late = settings.model_copy(update={"plan_at": "11:00"})
+        # 10:00 is after the old hardcoded 05:45 + grace and before 11:00 + grace.
+        beat = heartbeat.read(conn, late, DAY, _at(10, 0))
+        assert not beat.plan_due, "alarmed against the old hardcoded hour"
+        assert heartbeat.read(conn, late, DAY, _at(11, 45)).plan_due
+
+    def test_the_default_hour_still_behaves(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        from backglass import heartbeat
+
+        assert not heartbeat.read(conn, settings, DAY, _at(5, 50)).plan_due
+        assert heartbeat.read(conn, settings, DAY, _at(6, 30)).plan_due

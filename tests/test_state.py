@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from pathlib import Path
 
 from backglass import state as state_mod
 from backglass.config import Settings
@@ -102,12 +103,25 @@ class TestTheDeployedComparison:
         byte changed to stand for a build that has fallen behind."""
         from backglass.config import REPO_ROOT
 
-        internal = root / "Contents/Resources/sidecar/backglass-server/_internal"
+        sidecar = root / "Contents/Resources/sidecar/backglass-server"
+        internal = sidecar / "_internal"
         for relative in state_mod.frozen_surfaces():
             target = internal / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             body = (REPO_ROOT / relative).read_text()
             target.write_text(body if matching else body + "\n/* older build */\n")
+        # A real build records what Python went into it (build-sidecar.sh), because
+        # PyInstaller leaves nothing on disk to hash. A fake install without one is an
+        # app that predates the manifest, which `state` reports as unknown — correct, and
+        # not what these two cases are about.
+        sidecar.mkdir(parents=True, exist_ok=True)
+        (sidecar / state_mod.PYTHON_MANIFEST).write_text(
+            "".join(
+                f"{state_mod._sha256(path)}  {path.relative_to(REPO_ROOT)}\n"
+                for path in sorted((REPO_ROOT / "backglass").rglob("*.py"))
+                if "__pycache__" not in path.parts
+            )
+        )
         return root
 
     def test_a_bundle_built_from_this_checkout_matches(
@@ -281,3 +295,77 @@ class TestTheScheduleIsAClaimThatCanBeChecked:
         schedule = state_mod.collect(conn, settings).sections["schedule"]
         assert schedule["jobs"].unknown is not None
         assert "drifting" not in schedule
+
+
+class TestTheDeployedPythonIsCompared:
+    """`matches_source` hashed CSS, templates and scripts and then reported True about an
+    app running the previous week's planner. PyInstaller compiles the modules into an
+    archive, so there is nothing in the bundle to hash — `build-sidecar.sh` records the
+    manifest at build time and this compares it."""
+
+    @staticmethod
+    def _bundle(tmp_path: Path, lines: str | None) -> Path:
+        from backglass import state as state_mod
+
+        app = tmp_path / "Backglass.app"
+        sidecar = app / "Contents/Resources/sidecar/backglass-server"
+        sidecar.mkdir(parents=True)
+        if lines is not None:
+            (sidecar / state_mod.PYTHON_MANIFEST).write_text(lines)
+        return app
+
+    def test_an_app_without_a_manifest_says_unknown_rather_than_matching(
+        self, tmp_path: Path
+    ) -> None:
+        """The contract this module exists for: a confident answer assembled from a
+        missing input is the failure it prevents."""
+        from backglass import state as state_mod
+
+        drifted, note = state_mod._stale_python(self._bundle(tmp_path, None))
+        assert drifted == []
+        assert note is not None and "predates the manifest" in note
+
+    def test_a_matching_manifest_reports_no_drift(self, tmp_path: Path) -> None:
+        from backglass import state as state_mod
+
+        here = sorted(
+            str(p.relative_to(state_mod.REPO_ROOT))
+            for p in (state_mod.REPO_ROOT / "backglass").rglob("*.py")
+            if "__pycache__" not in p.parts
+        )
+        lines = "".join(
+            f"{state_mod._sha256(state_mod.REPO_ROOT / rel)}  {rel}\n" for rel in here
+        )
+        drifted, note = state_mod._stale_python(self._bundle(tmp_path, lines))
+        assert note is None
+        assert drifted == []
+
+    def test_a_changed_module_is_named(self, tmp_path: Path) -> None:
+        from backglass import state as state_mod
+
+        here = sorted(
+            str(p.relative_to(state_mod.REPO_ROOT))
+            for p in (state_mod.REPO_ROOT / "backglass").rglob("*.py")
+            if "__pycache__" not in p.parts
+        )
+        lines = "".join(
+            f"{state_mod._sha256(state_mod.REPO_ROOT / rel)}  {rel}\n" for rel in here
+        )
+        stale = lines.replace(
+            f"{state_mod._sha256(state_mod.REPO_ROOT / 'backglass/catchup.py')}  ",
+            f"{'0' * 64}  ",
+        )
+        drifted, note = state_mod._stale_python(self._bundle(tmp_path, stale))
+        assert note is None
+        assert "backglass/catchup.py" in drifted
+
+    def test_a_module_added_since_the_build_counts_as_drift(self, tmp_path: Path) -> None:
+        """The app cannot be running a file it was never given."""
+        from backglass import state as state_mod
+
+        one = "backglass/catchup.py"
+        lines = f"{state_mod._sha256(state_mod.REPO_ROOT / one)}  {one}\n"
+        drifted, note = state_mod._stale_python(self._bundle(tmp_path, lines))
+        assert note is None
+        assert one not in drifted
+        assert "backglass/state.py" in drifted
