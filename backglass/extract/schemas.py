@@ -129,6 +129,34 @@ class CommitmentExtraction(Strict):
     engagements: list[ExtractedEngagement] = Field(default_factory=list)
 
 
+class RecheckVerdict(Strict):
+    """One re-read of one open commitment against the conversation that followed it.
+
+    `commitment_id` is the ledger id the pass handed the model, returned so the verdict
+    needs no similarity matcher — and intersected with the set actually sent before
+    anything is written, because every id in this codebase is a bare int and the tables
+    overlap in range (tasks/lessons.md 2026-08-12).
+
+    `cites` and `quote` are what separate this from guessing. A `done` or `dropped`
+    verdict without both is discarded rather than stored: silence is not evidence, and
+    "nobody mentioned it again" would close every obligation the owner has been quietly
+    failing to do.
+    """
+
+    commitment_id: int
+    verdict: Literal["done", "dropped", "open"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    #: `source_item.id` of the message that settles it. None is only valid for `open`.
+    cites: int | None = None
+    #: Verbatim, from that message. Checked against it before the verdict is applied.
+    quote: str | None = None
+    reason: str | None = None
+
+
+class RecheckResponse(Strict):
+    verdicts: list[RecheckVerdict] = Field(default_factory=list)
+
+
 def json_schema(model: type[BaseModel]) -> dict[str, Any]:
     """A self-contained JSON Schema for `--json-schema` / a tool `input_schema`.
 

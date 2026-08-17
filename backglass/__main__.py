@@ -1765,6 +1765,71 @@ def _check_reconciles(
     )
 
 
+@app.command("recheck")
+def recheck_command(
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Print the verdicts, write nothing")
+    ] = False,
+    chat: Annotated[
+        str | None, typer.Option("--chat", help="One conversation, by key or display name")
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable")] = False,
+) -> None:
+    """Re-read chat commitments against what the conversation said next.
+
+    84 open commitments came from `imessage` across 16 conversations and not one had ever
+    closed from a later message in the same chat. That is structural: closure only ever
+    fired forward, when a message announced it completed an earlier promise, and friends
+    do not talk that way — "bring dress shoes" is answered by bringing dress shoes.
+
+    Runs inside `sync` on every pass. This command is for looking at it: `--dry-run`
+    prints what it would do and writes nothing, which is how the first live pass should
+    always be read.
+    """
+    import json as _json
+
+    from backglass.extract import prompts, recheck as recheck_mod
+    from backglass.telemetry import Metered
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    calls: list[Any] = []
+    report = recheck_mod.run(
+        conn,
+        settings,
+        Metered(_build_model_client(settings), "recheck", calls),
+        prompt=prompts.load("recheck-commitments"),
+        dry_run=dry_run,
+        only=chat,
+    )
+    if not dry_run:
+        conn.commit()
+
+    if as_json:
+        typer.echo(_json.dumps({
+            "checked": report.checked, "applied": report.applied,
+            "pending": report.pending, "discarded": report.discarded,
+            "cost_usd": round(report.cost_usd, 4), "errors": report.errors,
+        }, indent=2))
+        raise typer.Exit(1 if report.errors else 0)
+
+    if not report.checked:
+        typer.echo("no conversation has anything new to re-read")
+        return
+    typer.echo(f"re-read {len(report.checked)} conversation(s): {', '.join(report.checked)}")
+    typer.echo(
+        f"  {report.applied} closed, {report.pending} waiting on review, "
+        f"{report.discarded} discarded (uncited or unverifiable)"
+    )
+    typer.echo(f"  spend {round(report.cost_usd * 100)}c")
+    if dry_run:
+        typer.echo("  nothing written")
+    for error in report.errors:
+        typer.echo(f"  {error}", err=True)
+    raise typer.Exit(1 if report.errors else 0)
+
+
 @app.command("duplicates")
 def duplicates_command(
     apply: Annotated[

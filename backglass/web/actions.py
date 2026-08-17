@@ -214,6 +214,54 @@ def different(conn: sqlite3.Connection, a_id: int, b_id: int) -> Result:
     return Result(ok=True, detail="kept apart")
 
 
+def confirm_recheck(conn: sqlite3.Connection, recheck_id: int) -> Result:
+    """Apply a recheck verdict the pass was not confident enough to apply itself.
+
+    Separate path from `resolve`/`drop` because the citation has to travel with it: the
+    whole point of the pass is that a closed commitment says which message closed it, and
+    an owner clicking confirm is agreeing with that evidence, not replacing it.
+    """
+    row = conn.execute(
+        "SELECT commitment_id, verdict, quote, source_item_id, status"
+        "  FROM commitment_recheck WHERE id = ? AND user_id = ?",
+        (recheck_id, USER_ID),
+    ).fetchone()
+    if row is None:
+        raise ActionError(f"no recheck {recheck_id}")
+    if str(row["status"]) != "pending":
+        raise ActionError("already decided")
+    # Re-read at write time, the same guard the pass itself uses: this row may have sat on
+    # the page for a week, and the owner may have closed the commitment by hand meanwhile.
+    _require_open(conn, int(row["commitment_id"]))
+    note = f'recheck: "{str(row["quote"] or "").strip()}" (msg {row["source_item_id"]})'
+    if str(row["verdict"]) == "done":
+        resolve(conn, int(row["commitment_id"]), note)
+    else:
+        drop(conn, int(row["commitment_id"]), note)
+    conn.execute(
+        "UPDATE commitment_recheck SET status = 'applied', decided_at = ? WHERE id = ?",
+        (now_iso(), recheck_id),
+    )
+    return Result(ok=True, detail=str(row["verdict"]))
+
+
+def dismiss_recheck(conn: sqlite3.Connection, recheck_id: int) -> Result:
+    """The owner says the promise is still live. Remembered, so it is not asked twice.
+
+    The row stays `dismissed` rather than being deleted for the reason `commitment_distinct`
+    exists: an unremembered "no" re-surfaces every morning forever, and the unique index
+    means the same message can never raise the same verdict again.
+    """
+    changed = conn.execute(
+        "UPDATE commitment_recheck SET status = 'dismissed', decided_at = ?"
+        " WHERE id = ? AND user_id = ? AND status = 'pending'",
+        (now_iso(), recheck_id, USER_ID),
+    ).rowcount
+    if not changed:
+        raise ActionError(f"no pending recheck {recheck_id}")
+    return Result(ok=True, detail="kept open")
+
+
 # ── 2. accept / reject a review-queue item ────────────────────────────────
 
 

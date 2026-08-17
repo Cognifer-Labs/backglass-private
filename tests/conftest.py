@@ -246,6 +246,7 @@ class FakeModel:
         triage: dict[str, dict[str, Any]] | None = None,
         *,
         triage_batch: dict[str, dict[str, Any]] | None = None,
+        recheck: dict[str, dict[str, Any]] | None = None,
         cost_usd: float = 0.001,
     ):
         # Keyed per tier, not per marker alone: the same subject line appears in both the
@@ -254,6 +255,7 @@ class FakeModel:
         self.extract = extract or {}
         self.triage = triage or {}
         self.triage_batch = triage_batch or {}
+        self.recheck = recheck or {}
         self.cost_usd = cost_usd
         self.calls: list[tuple[str, str]] = []
 
@@ -266,6 +268,8 @@ class FakeModel:
             tier = "triage"
         elif "items" in props:
             tier = "triage_batch"
+        elif "verdicts" in props:
+            tier = "recheck"
         else:
             tier = "extract"
         self.calls.append((tier, model))
@@ -273,6 +277,7 @@ class FakeModel:
             "triage": self.triage,
             "triage_batch": self.triage_batch,
             "extract": self.extract,
+            "recheck": self.recheck,
         }[tier]
         for key, response in table.items():
             if key in user:
@@ -281,6 +286,11 @@ class FakeModel:
         if tier == "triage":
             # triage.md: "When genuinely uncertain, return keep=true."
             default = {"keep": True, "reason": "no fixture matched; defaulting to keep"}
+        elif tier == "recheck":
+            # No fixture matched: every commitment stays open, which is the pass's own
+            # default and the only safe one. A fake that closed things by omission would
+            # hide exactly the bug the citation guard exists to catch.
+            default = {"verdicts": []}
         elif tier == "triage_batch":
             # An empty batch response escalates every item to the per-item pass, where
             # the existing `triage` fixtures apply — batch-unaware tests keep working.

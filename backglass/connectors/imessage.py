@@ -385,6 +385,7 @@ def _parse(cursor: Cursor) -> int:
 DEPENDENTS = (
     "engagement_evidence",
     "commitment_evidence",
+    "commitment_recheck",
     "engagement",
     "commitment",
     "checkpoint",

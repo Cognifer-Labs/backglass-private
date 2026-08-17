@@ -72,6 +72,11 @@ class SyncReport:
     #: Identifiers the address book attached to people this run, so a conversation the
     #: page could only call `+14802411748` now has a name on it.
     contacts_linked: int = 0
+    #: Chat commitments the conversation itself settled (migration 0025). `applied` closed
+    #: outright; `pending` is waiting on the review fragment because the verdict landed
+    #: under the confidence threshold — a wrong close is silent, so it asks first.
+    recheck_applied: int = 0
+    recheck_pending: int = 0
     review_queue: int = 0
     writes: int = 0
     spend_cents: int = 0
@@ -312,6 +317,16 @@ def _sync(
     if extract and not report.rate_limited:
         _extract_pass(
             conn, ledger, settings, Metered(client, "extract", report.calls), cap, report
+        )
+
+    # Chat commitments re-read against what the conversation said next. After extraction
+    # because it asks about commitments this run may have just created, and skipped on the
+    # same rate-limit condition for the same reason: it calls the backend that just
+    # refused. Its own per-chat try/except is rule 5's unit — one dead conversation must
+    # not cost the other fifteen.
+    if extract and not report.rate_limited and not dry_run:
+        _recheck_pass(
+            conn, settings, Metered(client, "recheck", report.calls), cap, report
         )
 
     # Review-day tallies → checkpoints. Deterministic — the data arrives structured,
@@ -1087,3 +1102,31 @@ def _record_run(conn: sqlite3.Connection, report: SyncReport, started_at: str) -
     # so the run stamps its calls. A crash between the two leaves the calls unstamped
     # rather than lost — run_id is nullable for exactly that.
     write_calls(conn, report.calls, run_id)
+
+
+def _recheck_pass(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    client: Any,
+    cap: Any,
+    report: Any,
+) -> None:
+    """Close the chat commitments the conversation has already settled.
+
+    Bounded by the same spend cap as every other tier — when it is reached the pass does
+    not run at all, which is CLAUDE.md rule 7's "degrade to triage-only" applied to the
+    newest tier rather than an exception carved out for it.
+    """
+    if cap.reached:
+        return
+    from backglass.extract import prompts, recheck
+
+    try:
+        prompt = prompts.load("recheck-commitments")
+    except Exception as exc:  # noqa: BLE001 — rule 5: a missing prompt degrades the pass
+        report.errors.append(f"recheck: {type(exc).__name__}: {exc}")
+        return
+    result = recheck.run(conn, settings, client, prompt=prompt)
+    report.errors.extend(result.errors)
+    report.recheck_applied = result.applied
+    report.recheck_pending = result.pending

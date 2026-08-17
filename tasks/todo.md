@@ -228,16 +228,16 @@ checker that is green while blind is worse than no checker — that is exactly h
 
 ## Steps
 
-- [ ] 1. `scripts/truth.py`: registry, extractors, git line-recency, classify, `--fix`.
-- [ ] 2. Seed the registry: paper, the five inks, neutral-500, the three radius steps, the
+- [x] 1. `scripts/truth.py`: registry, extractors, git line-recency, classify, `--fix`.
+- [x] 2. Seed the registry: paper, the five inks, neutral-500, the three radius steps, the
       border weight — across `tokens.css` (authority), `tokens.json`, `design-system.md`,
       `preview.html`, `wordmark.svg`, `render.py`, `validate-palette.mjs`, `CLAUDE.md`.
-- [ ] 3. Run it on the clean tree. **It must find `RADIUS_CHIP` as STALE** — that is the
+- [x] 3. Run it on the clean tree. **It must find `RADIUS_CHIP` as STALE** — that is the
       tool's acceptance test, and it is why the fix ships *with* the tool rather than before.
-- [ ] 4. `--fix` it, and fix `test_brief.py` to assert against the authority rather than the
+- [x] 4. `--fix` it, and fix `test_brief.py` to assert against the authority rather than the
       mirror it is supposed to be checking.
-- [ ] 5. `tests/test_truth.py` so drift fails the suite like everything else.
-- [ ] 6. Prove both directions by mutation: seed a stale mirror → STALE; commit a mirror
+- [x] 5. `tests/test_truth.py` so drift fails the suite like everything else.
+- [x] 6. Prove both directions by mutation: seed a stale mirror → STALE; commit a mirror
       change newer than the authority → ASK.
 
 ## Also registering, because it claims authority it does not have
@@ -714,7 +714,7 @@ Verified against the live ledger, not only fixtures. Sunday 2026-08-09 now propo
 282-minute day with move-in on it; the Early Start programme runs as a numbered banner
 across its days and takes nothing from any of them; the three dinners render as two.
 
-- [ ] **Rebuild the desktop sidecar.** Deliberately not done in this session. The app
+- [x] **Rebuild the desktop sidecar.** Deliberately not done in this session. The app
       freezes templates and CSS at build time and is already stale on `dashboard.css`,
       and this change touches `_today.html`, `schedule.html`, `schedule_week.html` and
       the stylesheet. But the shared checkout is on another session's branch with
@@ -1428,22 +1428,22 @@ which is rule 3's test.
 
 ## Steps
 
-- [ ] 1. Migration `0024_commitment_recheck.sql`: `commitment_recheck` +
+- [x] 1. Migration `0025_commitment_recheck.sql`: `commitment_recheck` +
       `monitored_chat.rechecked_through`. Guard checklist first (2026-08-12 lesson):
       `REFERENCES source_item` test, `imessage.DEPENDENTS`, `FROZEN_CHECKSUMS`,
       regenerate `specs/schema.sql`.
-- [ ] 2. `specs/extraction-prompts/recheck-commitments.md@1` + fixtures, negatives
+- [x] 2. `specs/extraction-prompts/recheck-commitments.md@1` + fixtures, negatives
       included: a still-open promise, a vague "sounds good", a group member closing
       somebody else's obligation, a plan that moved rather than died.
-- [ ] 3. `RecheckVerdict` / `RecheckResponse` in `extract/schemas.py`.
-- [ ] 4. `extract/recheck.py` — candidates, window, render, parse, apply.
-- [ ] 5. `_recheck_pass` in `sync.py`: after extraction, per-chat `try/except` (rule 5's
+- [x] 3. `RecheckVerdict` / `RecheckResponse` in `extract/schemas.py`.
+- [x] 4. `extract/recheck.py` — candidates, window, render, parse, apply.
+- [x] 5. `_recheck_pass` in `sync.py`: after extraction, per-chat `try/except` (rule 5's
       unit is the loop item), metered under a new `recheck` tier so `state` prices it,
       inside the same `SpendCap`.
-- [ ] 6. `backglass recheck` CLI — `--dry-run`, `--chat`, `--json`.
-- [ ] 7. Pending verdicts on the existing review fragment, with confirm / keep-open
+- [x] 6. `backglass recheck` CLI — `--dry-run`, `--chat`, `--json`.
+- [x] 7. Pending verdicts on the existing review fragment, with confirm / keep-open
       routed through `actions`. No new page.
-- [ ] 8. `tests/test_recheck.py`: the fixture set through one ledger in pipeline order,
+- [x] 8. `tests/test_recheck.py`: the fixture set through one ledger in pipeline order,
       the zero-writes second run, the uncited verdict, the foreign id, the
       already-closed commitment, both sides of the threshold.
 
@@ -1634,7 +1634,7 @@ goal engine receives essentially no signal from the planner at all.
       complete, call, email, log, rsvp, register, attend, pay. Each new kind needs an
       entry in `settings.estimate_defaults`. Nothing cleverer — the feedback loop is dead
       and the docs forbid silent retuning.
-- [ ] **P4 — source hygiene**: the parked `apple-notes` cursor, the growing embedding
+- [x] **P4 — source hygiene**: the parked `apple-notes` cursor, the growing embedding
       backlog, and the `audit_sources.py` label false positive.
 
 Deliberately not this round: no schema migration (nothing above needs one, and each one
@@ -1887,3 +1887,95 @@ ledger 65, fully ingested".
 Still not implemented for `reminders` (ingests only completed items) or `calendar:apple`
 (windowed) — both would reconcile to a number that means nothing, which is exactly the
 condition `Countable`'s docstring rules out.
+
+---
+
+# Finishing todo: what got done, and the honest remainder (2026-08-17)
+
+Asked to finish all of `tasks/todo.md`. It held 48 unchecked items. Sixteen are now done;
+32 remain and they are not a session's work, so they are sized rather than promised.
+
+## Eight were already done and never checked off
+
+The design-truth phase (all six steps) ships: `scripts/truth.py` runs clean over **20
+facts and 87 mirrors**, `tests/test_truth.py` has 17 passing, and the `RADIUS_CHIP` drift
+it was written to catch is fixed. The sidecar rebuild and the P4 source-hygiene items were
+done earlier this week. Also corrected: the recheck phase specified migration `0024`,
+which `periodic_targets` had taken — it is `0025`.
+
+Bookkeeping, but the kind that matters: a todo list carrying eight false negatives is one
+nobody trusts, which is the same failure as a warning that fires on a healthy source.
+
+## Eight built: chat commitments that close themselves
+
+The whole phase, steps 1–8. 84 open commitments came from `imessage` across 16
+conversations, 79 had later messages in the same chat, and **not one had ever closed from
+one** — because closure only fired forward, when a message announced it completed an
+earlier promise, and friends do not talk that way. "Bring dress shoes" is answered by
+bringing dress shoes.
+
+Migration 0025 (`commitment_recheck` + `monitored_chat.rechecked_through`), prompt
+`recheck-commitments@1`, `extract/recheck.py`, the sync pass under a new `recheck` tier,
+`backglass recheck --dry-run/--chat/--json`, pending verdicts on the review fragment with
+confirm / still-open, and 21 tests.
+
+**The guards are the feature.** Four ways a verdict is discarded rather than applied: an
+id the pass never sent, a closure with no citation, a citation outside the window, and a
+quote that is not actually in the message it names. The last is the one that matters most
+— it is the difference between evidence and a fluent paraphrase, and it costs one
+substring test. Below `confidence_threshold` nothing closes at all; the verdict waits for
+a click. A wrong open row is visible and dismissible; a wrong close is silent.
+
+**First live reads, before trusting it.** Two conversations, real model, nothing written:
+
+| chat | open | verdicts |
+|---|---|---|
+| plague spreaders | 1 | `open` 0.9, no citation |
+| Family | 6 | all `open`, 0.55–0.75, no citations |
+
+It closed nothing without evidence, which is the only property worth checking first. It
+runs inside `sync` from now on; 12 conversations and 74 commitments are in scope.
+
+## The 32 that remain, sized honestly
+
+**Phases R / S / L / P / D / C** (`# Plan: one reading, six ledgers…`) — 28 items. This is
+one architecture, not a list: `resolve.py` and a `conflict` table, four new prompt
+versions (`goal_signal` v9, `step_signal` v10, `decision_signal` v11, `fact_signal` v12)
+each needing a fixture set, a `record_link` table, an obligation pool that makes Monday's
+arithmetic and the daily plan agree, `decision_scope`, and a `/conflicts` page. Five or
+more migrations, and every one re-arms the sidecar. **Multi-session, and it wants its own
+plan-mode pass before anyone writes code** — starting it piecemeal is how it would end up
+half-built.
+
+Evidence for Phase R found while working today, worth recording: **23 engagements about
+one move-in**, and three separate commitments for one car-insurance copy. The dedup census
+that phase describes has more to work with than it knew.
+
+**Two owner actions, not code.** Two past-dated events on the Family calendar that EventKit
+can no longer see and must be deleted in Calendar.app by hand; and `commitment` #8, whose
+move-in happened on 2026-08-09 and which is still open.
+
+**One pre-existing test failure**, `test_reachout.py::TestTouchOnThePage::
+test_recording_a_touch_moves_the_chip`, which fails on a clean tree and predates all of
+this week's work.
+
+## Next session starts here (owner's call, 2026-08-17)
+
+Phases R/S/L/P/D/C get a **plan-mode pass before any code**. It is one architecture and
+starting it piecemeal is how it ends up half-built — five-plus migrations, four prompt
+versions each needing a fixture set, two new tables and a page, all of which have to agree
+about what a "record" is before the first one is written.
+
+Starting material for Phase R's dedup census, measured today rather than assumed:
+
+- **23 engagements describing one move-in** (ids 2, 3, 4, 6, 7, 194, 212, 217, 288, 292,
+  294, 295, 296, 312, 313, 317, 322, 379, 383, 389, 390, 391, 394), with `starts_at`
+  disagreeing across them — some `2026-08-05`, some `2026-08-09T08:00:00`, some NULL.
+- **Three commitments for one car-insurance copy** (130, 251, 324), all in the Family
+  chat, all still open.
+- `commitment_distinct` holds 7 rows against 287 open commitments, so the existing dedup
+  path is barely used — which Phase R's resolver is meant to replace rather than extend.
+
+The engagement duplication is the more interesting half: `duplicates` covers commitments
+and nothing covers engagements, and 23 rows for one event is what the capacity model has
+been reading all along.

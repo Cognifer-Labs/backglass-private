@@ -324,6 +324,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         _run(actions.reject_plan, conn, engagement_id)
         return review_fragment(request, conn)
 
+    # The recheck half of the queue. Third separate path for the reason the plan half is
+    # separate: these ids come from `commitment_recheck`, and a mixed-up id would close
+    # the wrong record silently.
+    @app.post("/review/recheck/{recheck_id}/confirm", response_class=HTMLResponse)
+    def confirm_recheck(
+        recheck_id: RowId, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+    ) -> Any:
+        _run(actions.confirm_recheck, conn, recheck_id)
+        return review_fragment(request, conn)
+
+    @app.post("/review/recheck/{recheck_id}/dismiss", response_class=HTMLResponse)
+    def dismiss_recheck(
+        recheck_id: RowId, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+    ) -> Any:
+        _run(actions.dismiss_recheck, conn, recheck_id)
+        return review_fragment(request, conn)
+
     @app.post("/checklist/{item_id}/tick", response_class=HTMLResponse)
     def tick(
         item_id: RowId, request: Request, conn: sqlite3.Connection = Depends(get_conn)

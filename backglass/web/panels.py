@@ -382,6 +382,24 @@ def review_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:
             conn, "brief_needs_review_plans", {**params, "floor": _review_floor(settings)}
         )
     ]
+    # Verdicts the pass found but would not act on alone (migration 0025). They belong
+    # here rather than on a page of their own for the reason the plan rows do: this is
+    # already the queue of "the machine is unsure, one click settles it", and a second
+    # queue is a second thing to remember to open.
+    rows += [
+        dict(row, record="recheck")
+        for row in conn.execute(
+            "SELECT r.id, r.commitment_id, r.verdict, r.confidence, r.quote,"
+            "       c.what, s.author, s.occurred_at"
+            "  FROM commitment_recheck r"
+            "  JOIN commitment c ON c.id = r.commitment_id"
+            "  JOIN source_item s ON s.id = r.source_item_id"
+            " WHERE r.user_id = ? AND r.status = 'pending' AND c.status = 'open'"
+            " ORDER BY r.created_at DESC",
+            (USER_ID,),
+        ).fetchall()
+    ]
+
     # What the header says instead of a bare total. A plan counts when it falls inside
     # the same week the commitments are measured against — an accepted engagement in
     # October changes nothing about now, and counting every plan as pressing put 150 of

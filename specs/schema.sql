@@ -453,7 +453,7 @@ CREATE TABLE monitored_chat (
   messages_seen INTEGER NOT NULL DEFAULT 0,
   first_seen_at TEXT    NOT NULL,
   last_seen_at  TEXT    NOT NULL,
-  decided_at    TEXT,
+  decided_at    TEXT, rechecked_through INTEGER,
   UNIQUE (user_id, source, key)
 );
 
@@ -551,3 +551,24 @@ CREATE UNIQUE INDEX idx_touchpoint_once
   ON touchpoint(user_id, entity_id, kind, substr(occurred_at, 1, 10));
 
 CREATE INDEX idx_touchpoint_person ON touchpoint(user_id, entity_id, occurred_at);
+
+CREATE TABLE commitment_recheck (
+  id             INTEGER PRIMARY KEY,
+  user_id        INTEGER NOT NULL DEFAULT 1,
+  commitment_id  INTEGER NOT NULL REFERENCES commitment(id),
+  verdict        TEXT    NOT NULL,          -- done|dropped|open
+  confidence     REAL    NOT NULL,
+  -- The message that settles it. NOT NULL: see above.
+  source_item_id INTEGER NOT NULL REFERENCES source_item(id),
+  quote          TEXT    NOT NULL,          -- verbatim, from that message
+  reason         TEXT,
+  status         TEXT    NOT NULL DEFAULT 'pending',  -- pending|applied|dismissed
+  created_at     TEXT    NOT NULL,
+  decided_at     TEXT
+);
+
+CREATE UNIQUE INDEX idx_recheck_once
+  ON commitment_recheck(user_id, commitment_id, source_item_id);
+
+CREATE INDEX idx_recheck_pending
+  ON commitment_recheck(user_id, status, created_at);

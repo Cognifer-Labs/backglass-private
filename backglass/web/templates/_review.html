@@ -27,7 +27,25 @@
           <p class="dnote">Below here, a decision changes no plan this week — undated
             promises, and work owed to you, which the planner never schedules.</p>
         {% endif %}
-        {% if r['record'] == 'plan' %}
+        {% if r['record'] == 'recheck' %}
+          {# The conversation appears to have settled this. Shown with the words that
+             say so and who said them, because the owner is being asked to agree with
+             evidence — a bare "close this?" would be the machine asking them to trust
+             it, which is the thing the citation exists to avoid. #}
+          <div class="rrow">
+            <p class="what">{{ r['what'] }}</p>
+            <p class="why">{{ r['author'] }} said &ldquo;{{ r['quote'] }}&rdquo;
+              &middot; {{ r['occurred_at'][:10] }}</p>
+            <div class="acts">
+              <button class="btn accept"
+                      hx-post="/review/recheck/{{ r['id'] }}/confirm"
+                      hx-target="#panel-review" hx-swap="outerHTML">Mark {{ r['verdict'] }}</button>
+              <button class="btn reject"
+                      hx-post="/review/recheck/{{ r['id'] }}/dismiss"
+                      hx-target="#panel-review" hx-swap="outerHTML">Still open</button>
+            </div>
+          </div>
+        {% elif r['record'] == 'plan' %}
         {# A plan asks a different question from a commitment — "is this a real plan?"
            rather than "did you promise this?" — so it says so, and its buttons post to
            the engagement endpoints. Rejecting declines it, which is already the status
