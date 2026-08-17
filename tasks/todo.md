@@ -1704,7 +1704,7 @@ eight real commitments.
   holds twice, and the pair wears the fan-out shape because of it. `backglass people
   merge` fixes the cause. Worth a pass — it would resolve several clusters without any
   judgment about the commitments themselves.
-- **A working day with a full window and zero capacity.** 2026-08-14 was a Friday with a
+- [x] **A working day with a full window and zero capacity** — answered 2026-08-17, see below. 2026-08-14 was a Friday with a
   720-minute window and `capacity 0m`. Fixed events consumed all of it. Not investigated;
   it is the audit's open question and it is real.
 - **The planner still has no consumer.** 0 of 36 plans accepted, 1 of 445 blocks marked
@@ -1979,3 +1979,87 @@ Starting material for Phase R's dedup census, measured today rather than assumed
 The engagement duplication is the more interesting half: `duplicates` covers commitments
 and nothing covers engagements, and 23 rows for one event is what the capacity model has
 been reading all along.
+
+---
+
+# Chasing the duplication to its cause (2026-08-17)
+
+## The Friday zero-capacity day: answered, and it is not a bug
+
+Open since the planner audit. 2026-08-14 had a 720-minute window and `capacity 0m`, and
+the arithmetic is correct — the day was genuinely full:
+
+```
+10:00-18:00  McKenna program, eight blocks, 535m fixed + 40m travel
+             one free slot: 20:00-22:00 (120m)
+             120m − 45m reserve − 79m review load = 0
+```
+
+Checked off. Worth the owner knowing as a standing fact rather than a defect: **about 124
+minutes come off every day before any work is scheduled** — 45 of reserve and, on a day
+like this one, 79 of spaced-repetition review load. Both are deliberate (docs/04 §1.2, and
+§1.3 forbids retuning them silently), but on a day with two free hours they are the whole
+of it.
+
+## Verified negative: duplicates do not double-charge capacity
+
+Worth retiring as a worry. `_span_minutes` merges overlapping spans before measuring, so
+two copies of an 18:00–20:00 dinner cost 120 minutes, not 240 — confirmed directly. The
+duplication is a trust problem on the schedule page, not an arithmetic one in the plan.
+
+## Why the insert-time dedup misses these — measured, not guessed
+
+Engagements *do* dedup at insert (`extract/engagements.py` step 5), so six rows for one
+kickoff dinner needed an explanation. Scored the live pairs:
+
+| pair | similarity | outcome |
+|---|---|---|
+| 182 vs 185 | **0.879** (above the 0.85 threshold) | **entity-blocked** |
+| 185 vs 195 | 0.657 | below threshold |
+| 184 vs 293 | 0.700 | below threshold |
+
+182 and 185 should have merged. They did not because `_agrees` refuses a match when both
+sides name people and share none — correct in principle, "dinner with Priya" is not
+"dinner with Sam" — and their entity sets are `[76, 77]` against `[82, 83]`. Reading those
+rows:
+
+- **77 = "Mark and Sheri McKenna"** — one entity row holding two people
+- **82 = "Mark McKenna", 83 = "Sheri McKenna"** — the same two, split correctly
+- 76 = "family" — a common noun promoted to a person
+
+So a compound name and its split form share no ids, the guard fires, and one dinner
+becomes two rows. The cause is in entity resolution, not in the engagement dedup.
+
+**Not fixed, deliberately.** Compound *people* are n=1 on this ledger. The four other
+`and`-containing entities are organisations — "ASU Financial Aid and Scholarship
+Services", "The College of Liberal Arts and Sciences" — and a split-on-"and" rule would
+destroy all four to fix one. That is the quiet-source detector's mistake in a new place.
+It belongs in Phase R, which is about exactly this: one resolver, per-type policy.
+
+## A second verified negative: entity kind is wrong everywhere and reaches nothing
+
+**All 202 entities are `kind='person'`** — `ledger.py:250` hardcodes it and the schema's
+`org` and `project` have never been written. At least 31 are plainly organisations.
+
+But it is inert: `touch.cold` only considers curated profiles (role, org or tags set), so
+**zero organisations appear on the People page and zero in the brief's follow-up nags**.
+A classifier would be work with no user-visible effect. Recorded for Phase R, not built.
+
+## Built: `backglass duplicates` now covers engagements
+
+Report-only, and that boundary is deliberate — closing an engagement automatically is
+per-type resolution policy, which is the resolver phase's job, not a report's.
+
+**39 days carrying 130 duplicate engagements**, plus 127 undated rows counted separately
+because there is no day to anchor them in. Two rules that keep it honest:
+
+- **Within one day only.** A weekly standing arrangement is the same sentence every week;
+  clustering across days would fuse every occurrence into one row. This is the engagement
+  equivalent of the fan-out trap.
+- **The day is `substr(starts_at, 1, 10)`, never `datetime()`.** That column holds bare
+  dates, naive local datetimes and offset-bearing strings side by side, and normalising
+  marches a 19:00 Phoenix dinner into the next day — the 2026-08-01 failure. Pinned by a
+  test.
+
+The survivor shown is a display suggestion: `confirmed` over `proposed`, then the row that
+says the most.

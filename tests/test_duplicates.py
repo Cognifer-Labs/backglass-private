@@ -164,3 +164,92 @@ class TestTheCommandWritesNothingByDefault:
             (USER_ID,),
         ).fetchone()["n"]
         assert open_now == 2
+
+
+def _engagement(
+    conn: sqlite3.Connection,
+    what: str,
+    starts_at: str | None,
+    *,
+    status: str = "confirmed",
+    ends_at: str | None = None,
+    location: str | None = None,
+) -> int:
+    item = _item(conn, f"eng-{what}-{starts_at}-{status}")
+    conn.execute(
+        "INSERT INTO engagement (user_id, kind, what, starts_at, ends_at, location,"
+        " status, confidence, source_item_id, created_at)"
+        " VALUES (1, 'social', ?, ?, ?, ?, ?, 0.9, ?, '2026-08-01T00:00:00Z')",
+        (what, starts_at, ends_at, location, status, item),
+    )
+    return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+
+class TestPlanClusters:
+    """Engagements had no review surface at all, and the duplication is worse there: six
+    rows describe one kickoff dinner, twenty-three describe one move-in."""
+
+    def test_one_dinner_written_three_ways_is_one_cluster(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        for what in (
+            "McKenna Program Welcome Dinner",
+            "McKenna Program welcome dinner",
+            "McKenna Program Welcome Dinner tonight",
+        ):
+            _engagement(conn, what, "2026-08-09T18:00:00")
+        clusters, _ = duplicates.plan_clusters(conn)
+        assert len(clusters) == 1
+        assert len(clusters[0].members) == 3
+        assert clusters[0].day == "2026-08-09"
+
+    def test_the_same_words_on_another_day_are_a_series_not_a_duplicate(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """The engagement equivalent of the fan-out trap. A weekly standing arrangement
+        is the same sentence every week; fusing them would swallow every occurrence."""
+        _engagement(conn, "pickleball at Pecos", "2026-08-03T18:30:00")
+        _engagement(conn, "pickleball at Pecos", "2026-08-10T18:30:00")
+        _engagement(conn, "pickleball at Pecos", "2026-08-17T18:30:00")
+        clusters, _ = duplicates.plan_clusters(conn)
+        assert clusters == []
+
+    def test_undated_rows_are_counted_not_silently_dropped(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Most of the move-in rows have no date, so there is no day to anchor them in —
+        and a report that omits them reads as though it covered everything."""
+        _engagement(conn, "ASU dorm move-in", None)
+        _engagement(conn, "ASU move-in", None)
+        clusters, undated = duplicates.plan_clusters(conn)
+        assert clusters == []
+        assert undated == 2
+
+    def test_a_confirmed_plan_outranks_a_proposal(self, conn: sqlite3.Connection) -> None:
+        """A plan the owner agreed to is the one worth keeping."""
+        _engagement(conn, "McKenna kickoff dinner tonight", "2026-08-09T18:00:00",
+                    status="proposed")
+        keep = _engagement(conn, "McKenna kickoff dinner", "2026-08-09T18:00:00",
+                           status="confirmed", location="Armstrong Hall")
+        [cluster] = duplicates.plan_clusters(conn)[0]
+        assert int(cluster.survivor["id"]) == keep
+
+    def test_the_day_is_a_string_prefix_and_never_a_normalized_instant(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """`engagement.starts_at` holds bare dates, naive local datetimes and
+        offset-bearing strings side by side. SQLite's `datetime()` would normalise the
+        offset-bearing rows to UTC and march a 19:00 Phoenix dinner into the next day —
+        the failure recorded for 2026-08-01."""
+        _engagement(conn, "college dinner", "2026-08-09T19:00:00-07:00")
+        _engagement(conn, "college dinner tonight", "2026-08-09T19:00:00-07:00")
+        [cluster] = duplicates.plan_clusters(conn)[0]
+        # 2026-08-09T19:00-07:00 is 2026-08-10T02:00 UTC. The local day is what matters.
+        assert cluster.day == "2026-08-09"
+
+    def test_a_declined_plan_is_not_a_duplicate_of_a_live_one(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        _engagement(conn, "early move-in", "2026-08-09T08:00:00")
+        _engagement(conn, "early move-in", "2026-08-09T08:00:00", status="declined")
+        assert duplicates.plan_clusters(conn)[0] == []

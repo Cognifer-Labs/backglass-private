@@ -50,6 +50,126 @@ def _normalized(what: str) -> str:
 
 
 @dataclass
+class PlanCluster:
+    """Several rows describing one thing that is happening on one day.
+
+    Engagements have no review surface at all — `dedup.suspects` and everything built on
+    it covers commitments — and the duplication is worse there: six rows describe the
+    McKenna kickoff dinner on 2026-08-09, and twenty-three describe one move-in. They
+    reach the schedule page and the day plan, so the owner sees one dinner three times.
+
+    Capacity is *not* wrong because of it — `_span_minutes` merges overlapping spans
+    before measuring, so two copies of an 18:00–20:00 dinner cost 120 minutes and not
+    240. This is a trust problem rather than an arithmetic one, which is why it reports
+    and never writes.
+    """
+
+    day: str
+    members: list[dict[str, Any]] = field(default_factory=list)
+    weakest: float = 1.0
+
+    @property
+    def ids(self) -> list[int]:
+        return [int(m["id"]) for m in self.members]
+
+    @property
+    def survivor(self) -> dict[str, Any]:
+        """A display suggestion, never a write. `confirmed` outranks `proposed` — a plan
+        the owner agreed to is the one worth keeping — then the row that says the most.
+        """
+        return sorted(
+            self.members,
+            key=lambda m: (
+                0 if str(m["status"]) == "confirmed" else 1,
+                -sum(1 for k in ("ends_at", "location") if m[k]),
+                -len(str(m["what"])),
+                int(m["id"]),
+            ),
+        )[0]
+
+
+def plan_clusters(conn: sqlite3.Connection) -> tuple[list[PlanCluster], int]:
+    """Same-day engagement duplicates, and how many undated look-alikes were left out.
+
+    **Within one day only.** A weekly standing arrangement is the same words on many
+    days and is emphatically not a duplicate — that is the engagement equivalent of the
+    fan-out trap, and clustering across days would fuse every occurrence of a recurring
+    dinner into one row.
+
+    The day is `substr(starts_at, 1, 10)` and never `datetime()`. That column holds bare
+    dates, naive local datetimes and offset-bearing strings side by side, because the
+    resolver deliberately never converts zones — handing the mixture to SQLite's
+    `datetime()` normalises the offset-bearing rows to UTC and marches a 19:00 Phoenix
+    dinner into the next day, which is the failure recorded for 2026-08-01.
+
+    Undated rows are counted and returned separately rather than clustered. Most of the
+    twenty-three move-in rows have no `starts_at` at all, so there is no day to anchor
+    them in and no honest way to tell one move-in from another — reporting the number
+    keeps them visible instead of silently dropping them.
+    """
+    from backglass.extract import entities
+
+    rows = [
+        dict(r)
+        for r in conn.execute(
+            "SELECT id, what, starts_at, ends_at, location, status, confidence"
+            "  FROM engagement"
+            " WHERE user_id = ? AND status IN ('confirmed', 'proposed')"
+            " ORDER BY id",
+            (USER_ID,),
+        )
+    ]
+    dated: dict[str, list[dict[str, Any]]] = {}
+    undated = 0
+    for row in rows:
+        start = str(row["starts_at"] or "")
+        if not start:
+            undated += 1
+            continue
+        dated.setdefault(start[:10], []).append(row)
+
+    out: list[PlanCluster] = []
+    for day, group in sorted(dated.items()):
+        parent: dict[int, int] = {}
+
+        def find(x: int) -> int:
+            parent.setdefault(x, x)
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        scores: dict[tuple[int, int], float] = {}
+        for i, a in enumerate(group):
+            for b in group[i + 1 :]:
+                score = entities.similar(str(a["what"]), str(b["what"]))
+                if score < dedup.SUSPECT_FLOOR:
+                    continue
+                scores[(int(a["id"]), int(b["id"]))] = score
+                ra, rb = find(int(a["id"])), find(int(b["id"]))
+                if ra != rb:
+                    parent[rb] = ra
+
+        grouped: dict[int, PlanCluster] = {}
+        by_id = {int(r["id"]): r for r in group}
+        for member in parent:
+            grouped.setdefault(find(member), PlanCluster(day=day)).members.append(
+                by_id[member]
+            )
+        for cluster in grouped.values():
+            if len(cluster.members) < 2:
+                continue
+            ids = set(cluster.ids)
+            inside = [s for (a, b), s in scores.items() if a in ids and b in ids]
+            cluster.weakest = min(inside) if inside else 0.0
+            cluster.members.sort(key=lambda m: int(m["id"]))
+            out.append(cluster)
+
+    out.sort(key=lambda c: (c.day, -len(c.members)))
+    return out, undated
+
+
+@dataclass
 class Cluster:
     """One decision, and everything needed to make it without opening the ledger."""
 
