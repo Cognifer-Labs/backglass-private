@@ -1175,3 +1175,40 @@ class TestTheReviewQueueLeadsWithWhatADecisionChanges:
         assert panel.meta["total"] == 3
         # The commitment due this week and the plan this week; not October.
         assert panel.meta["pressing"] == 2
+
+
+def test_a_work_block_is_reachable_without_a_mouse(client: TestClient, conn) -> None:  # type: ignore[no-untyped-def]
+    """The timetable's Done/Roll buttons were mouse-hover-only for their whole life.
+
+    The 2026-08-05 ruling asked for them to "surface only on the row under the cursor or
+    holding focus", and the CSS says `:focus-within` — but the buttons sit inside
+    `display:none`, which removes them from the tab order, so focus could never enter the
+    subtree that focus was meant to reveal. The board had already hit this exact class of
+    bug and solved it with `[data-selected]` plus j/k; the timetable never got the same
+    treatment, and the numbers followed: 1 block marked done in 493, against 46
+    commitments resolved by hand on the board.
+
+    So the row has to be selectable. Asserted on the markup rather than the CSS because
+    this is the half that a template rewrite would quietly drop.
+    """
+    conn.execute(
+        "INSERT INTO day_plan (user_id, local_date, tz, capacity_minutes, generated_at) "
+        "VALUES (?, ?, 'America/Phoenix', 480, ?)",
+        (USER_ID, TODAY.isoformat(), now_iso()),
+    )
+    plan_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    for kind, title in (("work", "Draft the plan"), ("routine", "Lunch")):
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (plan_id, f"{TODAY}T09:00:00-07:00", f"{TODAY}T10:00:00-07:00", kind, title),
+        )
+    page = client.get("/").text
+    from tests.conftest import panel_slice
+
+    today = panel_slice(page, "panel-today")
+    assert 'tabindex="0"' in today, "a work row that cannot take focus cannot be selected"
+    assert "data-block=" in today, "the register selects on this attribute"
+    # Routines carry no verbs by ruling — "Roll" on lunch is a question nobody asked —
+    # so they must not join the register either.
+    assert today.count("data-block=") == 1

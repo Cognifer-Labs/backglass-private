@@ -53,7 +53,14 @@
             <p class="b1"><span>{{ b['title'] }}</span></p>
           </div>
         {% else %}
-          <div class="row sched k-{{ b['kind'] }}">
+          {# tabindex, like a board card. The 2026-08-05 ruling asked for the actions to
+             "surface only on the row under the cursor or holding focus", and the CSS says
+             `:focus-within` — but `display:none` takes the buttons out of the tab order
+             entirely, so nothing could ever focus into them and the reveal was
+             mouse-only. The board solved this once already (`[data-selected]` plus j/k);
+             this is the same register extended to the timetable, which is why the row
+             carries the same attribute and not a second mechanism. #}
+          <div class="row sched k-{{ b['kind'] }}" tabindex="0" data-block="{{ b['id'] }}">
             <span class="time">{{ b['starts_at']|t12 }}–{{ b['ends_at']|t12 }}</span>
             <p class="b1"><span>{{ b['title'] }}</span>
               {%- if b['pinned'] %} <span class="kbd">pinned</span>{% endif %}

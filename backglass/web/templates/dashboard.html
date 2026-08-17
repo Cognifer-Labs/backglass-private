@@ -53,7 +53,11 @@
    point of the stack choice is that there is no client framework to host this in. */
 (function () {
   let index = -1;
-  const cards = () => Array.from(document.querySelectorAll('.card'));
+  /* Both registers, in document order — the timetable sits above the board, so j walks
+     the day and then the promises. One list rather than two so a single index can never
+     point into the wrong surface, and so `x` means the same thing everywhere: act on
+     what is selected. On a block that is Done; on a card it is resolve. */
+  const cards = () => Array.from(document.querySelectorAll('.card, .row.sched[data-block]'));
   function select(next) {
     const list = cards();
     if (!list.length) return;
@@ -92,7 +96,7 @@
      controls inside a card keep their own behavior. */
   document.addEventListener('click', (event) => {
     if (event.target.closest('button, a, input, select, textarea, summary, label')) return;
-    const card = event.target.closest('.card');
+    const card = event.target.closest('.card, .row.sched[data-block]');
     if (!card) return;
     select(cards().indexOf(card));
   });

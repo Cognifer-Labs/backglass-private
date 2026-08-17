@@ -2063,3 +2063,52 @@ because there is no day to anchor them in. Two rules that keep it honest:
 
 The survivor shown is a display suggestion: `confirmed` over `proposed`, then the row that
 says the most.
+
+## Why nothing in the planner gets ticked — looked at, 2026-08-17
+
+Round 2 deferred this with "ask by looking, not building". Looking produced one retraction
+and one real defect.
+
+### Retraction: "0 of 42 plans accepted" was never a signal
+
+I have quoted it in three rounds as evidence the planner has no consumer. It is not
+evidence of anything. **Nothing reads `day_plan.accepted_at`, and nothing distinguishes
+`accepted` from `proposed`** — every consumer (`rollover.py`, `planner.current_plan_id`,
+both brief queries) filters on `status != 'superseded'`. The column is set in exactly one
+place, `backglass plan --accept`, and the dashboard has no accept control at all.
+
+So the count is zero because the button does not exist and would change nothing if it did.
+Adding one would be ceremony. Retracted rather than quietly dropped, because a number
+repeated three times deserves to be corrected out loud.
+
+### The real defect: the timetable was mouse-only
+
+| surface | keyboard path | usage |
+|---|---|---|
+| board (`.card`) | `[data-selected]` + j/k, plus click-to-select | **46** commitments resolved by hand |
+| timetable (`.row.sched`) | none | **1** block marked done in 493 |
+
+The 2026-08-05 ruling asked for the Done/Roll buttons to "surface only on the row under
+the cursor or holding focus", and the CSS duly says
+`.row.sched:hover .acts,.row.sched:focus-within .acts{display:flex}`. But the buttons live
+inside `display:none`, which removes them from the tab order — **so focus can never enter
+the subtree that focus was supposed to reveal.** `:focus-within` has never fired once. The
+reveal was hover-only for its entire life, and on a surface reached mostly through a
+frozen desktop window that is close to no reveal at all.
+
+The board hit this exact class of bug already and its own comment records the fix —
+*"WebKit never gives a tabindex div focus on mouse click, so the CSS :focus-within reveal
+only ever fired from the keyboard"* — solved with `[data-selected]` plus j/k. The timetable
+never got the same treatment.
+
+Fixed by extending that register rather than inventing a second one: work rows carry
+`tabindex="0"` and `data-block`, the selection query is `.card, .row.sched[data-block]` in
+document order (the day above the promises), and `x` means the same thing on both — act on
+what is selected, which is Done on a block and resolve on a card. Routines stay out of the
+register, because "Roll" on lunch is a question nobody asked.
+
+Pinned by a test on the markup, since a template rewrite is what would quietly drop it.
+
+**Not claimed: that this fixes the usage.** It removes a cause. Whether the owner then
+ticks blocks is a question only the next few weeks answer, and the honest measurement is
+`plan_block.outcome` a month from now.
