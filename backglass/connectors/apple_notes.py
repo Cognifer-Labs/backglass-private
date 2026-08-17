@@ -88,6 +88,30 @@ class AppleNotesConnector:
             )
         return Health(name=self.name, ok=True)
 
+    def upstream_count(self) -> int | None:
+        """How many notes this connector would ingest if it started from nothing.
+
+        Compared against the ledger's row count, this answers the liveness question a
+        days-since-last-row threshold can only guess at — see `base.Countable`. Notes is
+        the store that motivated it: seventeen days quiet, two checks calling the cursor
+        parked, and 65 against 65 when someone finally looked.
+
+        Deliberately mirrors `fetch`'s filter rather than counting raw notes: a
+        boundary-excluded note is not stored, so counting it would report a permanent
+        one-item gap on a healthy source and re-create the false alarm in a new place.
+        The `since` watermark is *not* applied — the question is what the store holds in
+        total, not what is new.
+        """
+        try:
+            notes = json.loads(self.runner(_SCRIPT) or "[]")
+        except Exception:  # noqa: BLE001 — unknown is a real answer; see the protocol
+            return None
+        return sum(
+            1
+            for note in notes
+            if self.boundary.check(_EMAIL.findall(str(note.get("body") or ""))).allowed
+        )
+
     def fetch(self, since: Cursor) -> Iterator[SourceItem]:
         notes = json.loads(self.runner(_SCRIPT) or "[]")
         watermark = since or ""

@@ -11,7 +11,7 @@ import ipaddress
 import json
 import sqlite3
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -1722,6 +1722,49 @@ def _anchor_iso(settings: Settings, value: str | None) -> str:
     return raw
 
 
+def _check_reconciles(
+    conn: sqlite3.Connection,
+    connector: Any,
+    check: Callable[[str, bool, str], None],
+) -> None:
+    """Does the ledger hold everything this connector's store holds?
+
+    The liveness question two rounds of audit could not answer honestly. A credential
+    reading `ok` proves the last run did not raise; the age of the newest row proves
+    nothing at all, and a threshold over it called a healthy `apple-notes` parked because
+    the owner had not written a note in six weeks. `upstream_count` replaces the guess
+    with a count, and a count needs no calibration: 65 against 65 is health, 65 against
+    40 is a cursor parked past its data.
+
+    It lives in `doctor` rather than in `heartbeat` on purpose. Heartbeat's contract is a
+    small pure read that the dashboard and the brief both derive from, and this runs an
+    osascript or an HTTPS fetch — putting it there would put a subprocess in every page
+    render. `doctor` is where the live probes already are and where someone goes when
+    they suspect something.
+
+    Connectors that cannot answer are skipped in silence rather than reported as zero:
+    most sources are windowed or paged, `None` means unknown, and a check that prints a
+    line for every source it cannot check is a check nobody finishes reading.
+    """
+    count = getattr(connector, "upstream_count", None)
+    if count is None:
+        return
+    upstream = count()
+    if upstream is None:
+        return
+    stored = conn.execute(
+        "SELECT COUNT(*) AS n FROM source_item WHERE user_id = ? AND source = ?",
+        (USER_ID, connector.name),
+    ).fetchone()["n"]
+    check(
+        f"{connector.name} fully ingested",
+        stored >= upstream,
+        f"store has {upstream}, ledger has {stored} — {upstream - stored} never ingested; "
+        "the cursor may be parked ahead of the data "
+        f"(clear it: UPDATE credential SET cursor = NULL WHERE source = '{connector.name}')",
+    )
+
+
 @app.command("duplicates")
 def duplicates_command(
     apply: Annotated[
@@ -3418,6 +3461,7 @@ def doctor() -> None:
     for connector in [*_all_connectors(conn, settings), *filter(None, [contacts_source])]:
         health = connector.health()
         check(f"connector {connector.name}", health.ok, health.detail or "")
+        _check_reconciles(conn, connector, check)
 
     # Informational, never failures: stores this machine has that one
     # `backglass setup` run would hook up (Phase A2).

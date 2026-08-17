@@ -162,6 +162,23 @@ class CanvasIcsConnector:
             )
         return Health(name=self.name, ok=True)
 
+    def upstream_count(self) -> int | None:
+        """Assignments the feed currently publishes — see `base.Countable`.
+
+        Exact for the same reason `fetch` needs no server-side filter: the feed is one
+        document and this reads all of it, applying the same `_to_item` rule so a class
+        meeting is not counted as an obligation the ledger is missing. The watermark is
+        not applied; the question is what the feed holds, not what is new.
+
+        Worth having here specifically because this connector runs the *degraded* Canvas
+        path — the ICS feed carries no submission state, so it is the source most likely
+        to drift quietly, and the one whose silence is hardest to interpret by eye.
+        """
+        try:
+            return sum(1 for event in _events(self._get()) if self._to_item(event))
+        except Exception:  # noqa: BLE001 — a revoked feed is unknown, not zero
+            return None
+
     def fetch(self, since: Cursor) -> Iterator[SourceItem]:
         """Assignments in the feed, newest-first watermark on the due date.
 

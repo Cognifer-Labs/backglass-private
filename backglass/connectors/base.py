@@ -67,6 +67,47 @@ class Connector(Protocol):
 
     def fetch(self, since: Cursor) -> Iterator[SourceItem]: ...
 
+    # `upstream_count` is optional; `getattr(connector, "upstream_count", None)` is how
+    # callers ask for it, so no existing connector has to grow a stub that returns None.
+
+
+@runtime_checkable
+class Countable(Protocol):
+    """A connector that can say how many items its store holds, cheaply and exactly.
+
+    This exists because "is a source still working?" had no honest answer. A credential
+    reading `ok` proves the last run did not raise; it says nothing about whether the
+    run ingested anything, and neither does the age of the newest row. On 2026-08-16
+    `apple-notes` had been silent for seventeen days and two separate checks called its
+    cursor parked. The store held 65 notes, the newest modified 2026-07-05, the cursor
+    sat at exactly that instant, and the owner had simply not written a note. A
+    days-since threshold would have been wrong about the only case available to test it.
+
+    The question a threshold is guessing at is answerable directly: **does the store
+    hold items the ledger does not have?** 65 against 65 is health, stated as a fact and
+    with nothing to tune. 65 against 40 is a cursor parked past its data, which is the
+    real failure mode and is otherwise invisible.
+
+    Implemented only where the connector enumerates a bounded local store and ingests all
+    of it, because those are the conditions that make the comparison exact. A windowed or
+    paged source (mail, a remote API) would need a query it cannot afford on every check
+    and would reconcile to a number that means nothing, so it simply does not implement
+    this and callers get None. Not on `Connector` for the same reason: a method three
+    quarters of the connectors would have to stub is a method that teaches nobody
+    anything.
+    """
+
+    @property
+    def name(self) -> str: ...
+
+    def upstream_count(self) -> int | None:
+        """Items the store holds that this connector would ingest, or None if unknown.
+
+        None is a real answer and must be reported as unknown rather than as zero — the
+        distinction `backglass state` is built on.
+        """
+        ...
+
 
 def content_hash(
     *, author: str | None, title: str | None, body_text: str | None, occurred_at: str

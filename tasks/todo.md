@@ -1844,3 +1844,46 @@ instead of a guess. Not started.
   been pushed anywhere. Owner's call, not a defect to fix unilaterally.
 - Friday's 720-minute window with zero capacity (round 2's open question).
 - The planner still has no consumer: 0 of 40 plans accepted, 1 of 445 blocks done.
+
+## The liveness probe, built (2026-08-16, later)
+
+The alarm the previous section declined to build, built properly — as a count rather than
+a threshold.
+
+`base.Countable` is an optional protocol beside `Connector`: `upstream_count() -> int |
+None`, "how many items does your store hold that you would ingest". Callers ask with
+`getattr(connector, "upstream_count", None)`, so no existing connector grows a stub. It is
+implemented only where the connector enumerates a bounded local store and ingests all of
+it — `apple_notes` and `canvas_ics` — because those are the conditions that make the
+comparison exact. A windowed or paged source returns nothing and is skipped in silence.
+
+Compared against `COUNT(*) FROM source_item`, this answers the question a days-since
+threshold was guessing at, and needs no calibration: **65 against 65 is health; 65 against
+40 is a cursor parked past its data.** The second is the real failure and was invisible
+from every surface.
+
+Two traps, both closed by a test:
+
+- **The boundary.** An excluded note is never stored, so counting raw notes would report a
+  permanent one-item gap on a healthy source — the same false alarm in a new place.
+  `upstream_count` applies the same filter `fetch` does.
+- **The feed's other events.** Canvas publishes one VEVENT per assignment *and* per class
+  meeting; counting meetings would report the ledger permanently behind. It reuses
+  `_to_item`, so only obligations count.
+
+It lives in `backglass doctor`, not `heartbeat`. Heartbeat's contract is a small pure read
+that the dashboard and the brief both derive from, and this runs an osascript or an HTTPS
+fetch — putting it there would put a subprocess in every page render. `doctor` is where
+live probes already are and where someone goes when they suspect something.
+
+`None` is reported as unknown and never as zero, so an unreadable store says nothing
+rather than claiming to be empty — `health()` already covers unreachable, and saying it
+twice in different words trains the reader to skim both.
+
+The audit script's quiet-source INFO now points at `doctor` instead of guessing, so the
+loop closes: the script says "quiet for 17 days, ask doctor", doctor says "store 65,
+ledger 65, fully ingested".
+
+Still not implemented for `reminders` (ingests only completed items) or `calendar:apple`
+(windowed) — both would reconcile to a number that means nothing, which is exactly the
+condition `Countable`'s docstring rules out.
