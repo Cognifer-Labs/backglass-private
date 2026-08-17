@@ -109,3 +109,22 @@ def test_the_shared_fixture_cannot_inherit_a_live_env(tmp_path, monkeypatch) -> 
     assert settings.brief_at == "06:00"
     assert settings.daily_reserve_minutes == 45
     assert "nap" not in settings.routines
+
+
+def test_an_unpatched_command_cannot_reach_the_ledger_on_disk() -> None:
+    """The other half of the same property, for the path the fixture cannot cover.
+
+    `get_settings()` runs *inside* CLI commands, so a test that invokes one gets whatever
+    database the environment names: the owner's live ledger in their checkout, and a
+    freshly created `./data/backglass.db` anywhere else. That is how
+    `test_dry_run_leaves_every_row_open` came to assert against an empty database — and
+    the same path would have let a `--apply` in a test write to real data.
+
+    conftest's autouse `_never_the_real_ledger` fixture points `DB_PATH` at a per-test
+    path. This asserts it, because the failure it prevents is silent in both directions:
+    a test that reads nothing passes for the wrong reason, and a test that writes
+    something does damage nothing checks.
+    """
+    from backglass.config import get_settings
+
+    assert "unpatched-cli.db" in str(get_settings().db_path)

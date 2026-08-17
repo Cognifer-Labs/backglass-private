@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from backglass import duplicates
+from backglass.config import Settings
 from backglass.ledger import USER_ID
 
 
@@ -148,15 +151,28 @@ class TestFanOut:
 
 
 class TestTheCommandWritesNothingByDefault:
-    def test_dry_run_leaves_every_row_open(self, conn: sqlite3.Connection) -> None:
+    def test_dry_run_leaves_every_row_open(
+        self,
+        conn: sqlite3.Connection,
+        settings: Settings,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         from typer.testing import CliRunner
 
-        from backglass.__main__ import app
+        import backglass.__main__ as cli
+
+        # Without this the command builds its own `Settings()` and reads whichever
+        # database the environment names — the live ledger in the owner's checkout, a
+        # freshly migrated empty one anywhere else. It printed "no duplicate suspects"
+        # about a database that had never seen these two rows, and the test failed in
+        # every checkout without a `.env`. conftest's `_never_the_real_ledger` keeps an
+        # unpatched command away from real data; seeing the fixture's rows takes this.
+        monkeypatch.setattr(cli, "get_settings", lambda: settings)
 
         _commitment(conn, "Upload ASU ID photo and verify identity")
         _commitment(conn, "upload ASU ID photo and verify identity")
         conn.commit()
-        result = CliRunner().invoke(app, ["duplicates"])
+        result = CliRunner().invoke(cli.app, ["duplicates"])
         assert result.exit_code == 0, result.output
         assert "nothing written" in result.output
         open_now = conn.execute(

@@ -505,14 +505,22 @@ class TestTouchOnThePage:
     def test_recording_a_touch_moves_the_chip(
         self, conn: sqlite3.Connection, settings: Settings, client
     ) -> None:  # type: ignore[no-untyped-def]
-        del settings
+        # Yesterday, computed rather than typed. This asserted "1 days since last touch"
+        # against a hard-coded 2026-08-11, which is one day ago only on 2026-08-12 — the
+        # day it was written. The chip is `today - last_touch`, so a literal date here is
+        # a test with an expiry date, and it expired quietly six days later.
+        from datetime import timedelta
+
+        from backglass.brief.daily import today_in
+
+        yesterday = today_in(settings.default_tz) - timedelta(days=1)
         pid = _person(conn, "Felipe Batalini", tags=["connection"])
         conn.commit()
         assert "no interactions yet" in client.get(f"/people/{pid}").text
 
         posted = client.post(
             f"/people/{pid}/touch",
-            data={"kind": "met", "on": "2026-08-11", "note": "McKenna dinner"},
+            data={"kind": "met", "on": yesterday.isoformat(), "note": "McKenna dinner"},
             follow_redirects=False,
         )
 

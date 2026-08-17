@@ -934,3 +934,16 @@ deterministic given the id.
   writer can choose between values, the guard must not name just one of them. Fixture days
   hide this: a net that runs every day needs at least one test on a day whose shape
   differs (week start, week end).
+
+- 2026-08-17 | Two tests were failing on `main` and had been for days, neither noticed:
+  one asserted "1 days since last touch" against a hard-coded date that was yesterday only
+  on the day it was written, and one invoked a CLI command without patching
+  `get_settings`, so the command opened whatever database the environment named — an empty
+  `./data/backglass.db` in a worktree, and the owner's live ledger in their own checkout.
+  It printed "no duplicate suspects" and the assertion failed everywhere except the
+  machine it was authored on. | A date literal in an assertion about "days since" is a
+  test with an expiry date: compute it from the same clock the code reads. And a test that
+  invokes a CLI command must point `get_settings` at its own settings — conftest's autouse
+  `_never_the_real_ledger` now bounds the damage by forcing `DB_PATH` to a per-test file,
+  with `tests/test_config.py` asserting that guard, but it cannot make an unpatched
+  command see the fixture's rows.
