@@ -2043,6 +2043,18 @@ Phoenix and Kolkata, stop letting the day depend on launchd's wall clock.
   now, and the evening-pass guard goes live for the launchd jobs on merge, because those
   run this checkout through `uv`.
 
+## Also on this branch (3e58d85)
+
+The two failures that were red on `main` when this started are fixed: a touch-chip test
+that asserted a hard-coded date (true only on the day it was written) and a CLI test that
+never patched `get_settings`, so it read whichever database the environment named. Plus an
+autouse conftest fixture that forces `DB_PATH` to a per-test path, because that second hole
+let *any* test's command reach real data — `duplicates --apply` drops commitments.
+
+Note for whoever merges another branch after this: a test that invokes a CLI command and
+quietly relied on the old leak will now see an empty per-test database. The fix is the same
+one `tests/test_duplicates.py` carries — `monkeypatch.setattr(cli, "get_settings", …)`.
+
 ## Not in scope, deliberately
 
 - Reloading/reinstalling the launchd jobs is already done and is not the fix; the restart
