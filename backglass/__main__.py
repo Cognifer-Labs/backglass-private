@@ -29,7 +29,7 @@ from backglass.extract import client as model_client
 from backglass.extract import prompts
 from backglass.goals import activities as activities_mod
 from backglass.ledger import USER_ID
-from backglass.sync import EXTRACT_PROMPT, SyncLocked, sync
+from backglass.sync import EXTRACT_PROMPT, SyncLocked, run_lock, sync
 
 app = typer.Typer(
     add_completion=False,
@@ -429,8 +429,19 @@ def sync_command(
         # wake, so on a laptop that sleeps through 05:45 it is the thing that notices
         # the plan and the brief were never produced. It fills a hole and never
         # replaces anything — see backglass/catchup.py.
-        for produced in catchup.run(conn, settings):
-            typer.echo(f"caught up {produced.surface} for {produced.day}: {produced.detail}")
+        #
+        # Under the lock, because the app-open trigger takes it too: the sync releases the
+        # lock before this line, and an app opened in that window would otherwise propose
+        # the same day a second time. Whichever side gets the lock fills the hole; the
+        # other finds nothing missing, or skips.
+        try:
+            with run_lock(settings):
+                for produced in catchup.run(conn, settings):
+                    typer.echo(
+                        f"caught up {produced.surface} for {produced.day}: {produced.detail}"
+                    )
+        except SyncLocked:
+            pass
     raise typer.Exit(report.exit_code)
 
 
@@ -905,21 +916,50 @@ def shutdown(
     ] = None,
     learned: Annotated[str | None, typer.Option("--learned")] = None,
     blocked: Annotated[str | None, typer.Option("--blocked")] = None,
+    force: Annotated[
+        bool,
+        typer.Option("--force", help="Close today even though the working window is open"),
+    ] = False,
 ) -> None:
     """The evening pass. docs/04 §1.8.
 
     Optional and skippable. If no `--done` is given, completion is inferred from ledger
     state and the rest rolls over. Nothing here nags about a skipped shutdown — docs/04:
     "A productivity system that scolds gets deleted."
+
+    Refuses to close today while the working window is still open, unless `--force`. This
+    is a pass that decides what did not get done and rolls it into tomorrow; run at 09:30
+    it makes that judgement about a day with twelve hours left in it. That is not a
+    hypothetical — the launchd job asks at 22:00 and, on a machine whose calendar agent
+    still holds the timezone it booted in, fired at 09:30 for weeks (2026-08-17). A
+    scheduled job that can be pointed at the wrong hour needs the wrong hour to be
+    harmless, and the hour a pass belongs after is something this program already knows.
     """
 
     from backglass.brief import weekly
-    from backglass.plan import rollover
+    from backglass.plan import rollover, timezones
 
     settings = get_settings()
     conn = _open(settings)
     migrate(conn)
-    day = _day_option(for_date, "--date") or _today(settings)
+    # One clock for both the day and the guard below. `_today` reads `default_tz` while the
+    # window is measured in the day's *active* zone, and a guard that compares two clocks
+    # is a guard that disagrees with itself the week the owner is in Coimbatore.
+    now = timezones.local_now(settings)
+    day = _day_option(for_date, "--date") or now.date()
+
+    # Only today can be premature; a `--date` in the past is a day that is genuinely over,
+    # and the evening pass on a finished day is the ordinary catch-up case.
+    _, window_end = timezones.window_on(settings, day)
+    if not force and day == now.date() and now < window_end:
+        # Exit 0: this is a designed skip, not a failure. A non-zero exit would turn every
+        # misfire into a red line in a log nobody reads, which is how a real failure gets
+        # missed. Same reasoning as the `SyncLocked` skip in `sync`.
+        typer.echo(
+            f"{day}: the working window is open until {window_end.strftime('%H:%M')} — "
+            f"not closing the day at {now.strftime('%H:%M')}. Pass --force to override."
+        )
+        return
 
     ids = {int(part) for part in done.split(",") if part.strip()} if done else None
     report = rollover.close_day(conn, settings, day, done_block_ids=ids)

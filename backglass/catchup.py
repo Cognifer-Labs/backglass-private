@@ -21,6 +21,22 @@ Two properties make it safe to run on every sync:
 It is deliberately not a scheduler. The scheduled jobs remain the primary path and this
 is the net underneath them; if the machine is awake at 05:45 nothing here ever fires.
 
+Since 2026-08-17 the net has a second trigger: opening the app. That morning the owner
+asked why the day was not planned, and the answer was that the 05:45 job had not fired
+for weeks — the Mac last booted in Kolkata, and `com.apple.UserEventAgent-Aqua` reads the
+timezone once at start and never again, so every `StartCalendarInterval` was being
+evaluated against IST and firing 12h30 late. Reloading the jobs does not clear it (a job
+registered seconds ago inherits the stale zone), SIP refuses to restart that agent, and
+only a reboot fixes it — see `state.py`. The 30-minute sync timer was the only thing still
+counting honestly, and it *is* what produced that day's plan, at 08:18.
+
+So the trigger the owner actually controls is the one that had no hook: opening the app.
+`spawn_on_open` runs the same net when the dashboard starts, and the dashboard calls
+`hole_exists` on each full-page load to catch an app left open across midnight. Nothing
+about the net's guarantees changes — it still only fills a hole, still never runs early —
+which is exactly why it was safe to give it a second caller rather than a second
+implementation.
+
 The retrieval index is caught up here too, for the same reason rather than by analogy: it
 was work that had no job at all. `search index` was manual-only — nothing in `sync.py`,
 nothing in any launchd template, ever called it — so the backlog grew from 8 documents to
@@ -31,6 +47,8 @@ Unlike the two surfaces above it has no hour, so it runs on every sync.
 from __future__ import annotations
 
 import sqlite3
+import sys
+import threading
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -72,8 +90,23 @@ def plan_is_missing(conn: sqlite3.Connection, day: date) -> bool:
 
 
 def brief_is_missing(conn: sqlite3.Connection, day: date) -> bool:
+    """Is there a brief for `day` of any kind?
+
+    Any kind, not `kind = 'daily'`, which is what this asked until 2026-08-17 and is a
+    question `build_for` does not answer. A week-start day produces the Monday brief
+    (`kind = 'monday'`) and *replaces* the daily one — docs/04 §2.7 W1, "two emails on
+    Monday means neither is read" — and a Friday with a non-empty retro is stored as
+    `kind = 'friday'`. So on every Monday and most Fridays the row was written, the check
+    still said the brief was missing, and the net rebuilt it on every single sync.
+
+    Seen in the live ledger the day it was found: two "caught up brief for 2026-08-17"
+    lines thirty minutes apart in data/sync.log, and one `kind = 'monday'` row. Rule 3
+    says two consecutive runs with no upstream change write nothing; this wrote a brief
+    every half hour, all Monday, and nothing was watching. The trigger this commit adds
+    would have made it worse — a rebuild on every page load — which is how it surfaced.
+    """
     row = conn.execute(
-        "SELECT 1 FROM brief WHERE user_id = ? AND generated_for_date = ? AND kind = 'daily'",
+        "SELECT 1 FROM brief WHERE user_id = ? AND generated_for_date = ?",
         (USER_ID, day.isoformat()),
     ).fetchone()
     return row is None
@@ -109,6 +142,98 @@ def run(
         filled.append(Filled("retrieval", day, f"{indexed} document(s) indexed"))
 
     return filled
+
+
+# ── the app-open trigger ──────────────────────────────────────────────────────
+# The net above answers "did the morning happen?". These three answer "who asks?", and
+# the answer that was missing is the owner opening the app.
+
+#: One catch-up at a time inside this process. The dashboard can be asked for the same
+#: page by two tabs in the same second, and each would otherwise start its own planner.
+_running = threading.Lock()
+
+
+def hole_exists(
+    conn: sqlite3.Connection, settings: Settings, *, now: datetime | None = None
+) -> bool:
+    """Is a surface the day is owed by now missing? Two indexed reads, nothing else.
+
+    This is the cheap question the request path is allowed to ask. `run` is the expensive
+    answer: it makes model calls and talks to the embedding endpoint, so a page load must
+    never wait on it and must not trigger it when there is nothing to fill.
+
+    Deliberately no "already checked today" marker. The obvious version of that flag is
+    also wrong: a check at 05:00 finds nothing missing (the hours are not owed yet), and a
+    marker stamped then would suppress the 09:00 check that would have found the hole.
+    The two queries are cheaper than the bug.
+
+    Retrieval is not consulted here. It has no hour, its backlog is normal rather than
+    exceptional, and making every page load ask ollama for a verdict would put the
+    additive layer on the request path — CLAUDE.md's ruling forbids exactly that. It still
+    rides along whenever a real hole triggers a run, and the 30-minute sync owns it
+    otherwise.
+    """
+    now = now or _local_now(settings)
+    day = now.date()
+    if _owed(now, settings.plan_at) and plan_is_missing(conn, day):
+        return True
+    return _owed(now, settings.brief_at) and brief_is_missing(conn, day)
+
+
+def on_open(settings: Settings, *, now: datetime | None = None) -> list[Filled]:
+    """Run the net for an app that has just been opened, on its own connection.
+
+    Takes the sync lock. Without it, an app opened at :18 while the 30-minute sync is
+    mid-run produces a second proposal for the same day — one of them immediately
+    superseded, both of them paid for. A held lock means another run is already doing this
+    work, so the answer is to skip, which is the same conclusion `sync` reaches (see
+    `SyncLocked` in `__main__`).
+    """
+    from backglass.db import connect
+    from backglass.sync import SyncLocked, run_lock
+
+    try:
+        with run_lock(settings):
+            conn = connect(settings.db_path)
+            try:
+                filled = run(conn, settings, now=now)
+                conn.commit()
+            finally:
+                conn.close()
+    except SyncLocked:
+        return []
+    return filled
+
+
+def spawn_on_open(settings: Settings) -> None:
+    """Fire `on_open` on a daemon thread and return immediately.
+
+    Fire and forget, for two reasons that are the same reason. The dashboard is what the
+    desktop shell opens, so anything synchronous here is time the owner spends looking at
+    a window that has not painted — and generating a plan is model calls, seconds of them.
+    And by CLAUDE.md rule 5 a failure to catch up must degrade: the page still renders,
+    the ledger is still correct, the plan is simply still missing and `heartbeat` still
+    says so in the sidebar.
+
+    Daemon, so quitting the app never waits on it; anything half-written is a proposal the
+    next open regenerates, never a partial commit — `run` commits once, at the end.
+    """
+    if not _running.acquire(blocking=False):
+        return
+
+    def work() -> None:
+        try:
+            for produced in on_open(settings):
+                print(
+                    f"caught up {produced.surface} for {produced.day}: {produced.detail}",
+                    file=sys.stderr,
+                )
+        except Exception as exc:  # noqa: BLE001 - rule 5: never take the dashboard down
+            print(f"catch-up on open failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        finally:
+            _running.release()
+
+    threading.Thread(target=work, name="backglass-catchup", daemon=True).start()
 
 
 def _index_backlog(conn: sqlite3.Connection, settings: Settings) -> int:

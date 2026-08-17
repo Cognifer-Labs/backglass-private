@@ -911,3 +911,26 @@ deterministic given the id.
   every table naming them, and `FROZEN_CHECKSUMS` needs the new file's sha256. Do the
   same for the mirror: `uv run python -m tests.test_schema_reference` regenerates
   `specs/schema.sql`, which is generated, never hand-edited.
+
+- 2026-08-17 | The owner asked why today was not planned. It was — the sync's catch-up net
+  built it at 08:18 — and the 05:45 job had simply not fired for weeks. Diagnosed the
+  cause from log mtimes alone (every calendar job exactly +12:30, which is IST − MST) and
+  then tried to fix it by reloading the jobs, which did nothing: a probe job registered
+  fresh for 09:32 never fired. The stale zone lives in `UserEventAgent-Aqua`, SIP refuses
+  to restart it, and `state.py` already said so in a comment written on 2026-08-11. |
+  Before reaching for a remedy on this machine's schedule, read what `state.py`'s
+  `_schedule` docstring already concluded — it names both causes and the one remedy per
+  cause. And a launchd fix is not verified by `launchctl print` agreeing with the plist:
+  arm a throwaway job for two minutes from now and watch for its log. The plist and the
+  live registration agreed all along; the firing was what lied.
+
+- 2026-08-17 | `catchup.brief_is_missing` asked `WHERE kind = 'daily'` while `build_for`
+  writes `kind = 'monday'` on a week-start day and `'friday'` on a retro day. So on
+  Mondays and Fridays the hole never closed: the net rebuilt the brief on every sync, all
+  day, and the only visible trace was two "caught up brief" lines thirty minutes apart in
+  a log nobody reads. Every test passed, because the tests only ever exercised a Tuesday. |
+  A "does this exist yet?" guard has to ask the question its writer answers. When adding
+  one, read the INSERT it is guarding — not the column names, the *values* — and if the
+  writer can choose between values, the guard must not name just one of them. Fixture days
+  hide this: a net that runs every day needs at least one test on a day whose shape
+  differs (week start, week end).

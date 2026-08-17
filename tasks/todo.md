@@ -1979,3 +1979,74 @@ Starting material for Phase R's dedup census, measured today rather than assumed
 The engagement duplication is the more interesting half: `duplicates` covers commitments
 and nothing covers engagements, and 23 rows for one event is what the capacity model has
 been reading all along.
+
+# The day has to plan itself without launchd's help
+
+2026-08-17. The owner asked why today was not planned. Today *was* planned — at 08:18,
+by the catch-up net hung off the 30-minute sync — but the 05:45 plan job never fired and
+has not fired on time for weeks.
+
+## What is actually wrong (measured, not inferred)
+
+`uptime` says 37 days: the Mac last booted around 11 July, while the owner was on IST.
+Every `StartCalendarInterval` job is still evaluated against Asia/Kolkata:
+
+| job | plist says | observed last fire (Phoenix) |
+|---|---|---|
+| backup | 02:00 | 13:30 |
+| shutdown | 22:00 | 09:30 |
+| plan | 05:45 | 17:15 → 18:16 (sleep-deferred) |
+| brief | 06:00 | 17:30 → 18:16 |
+
+Exactly +12:30 on each, which is IST − MST. `sync` is `StartInterval`, counts seconds,
+and is the only job that stayed right — which is why the catch-up net is the thing that
+produced today's plan at all.
+
+Unload + reload of every job (done 2026-08-17 09:29–09:31) did **not** fix it: a probe
+job registered fresh for 09:32 local never fired (`runs = 0` at 09:33). The stale zone
+is held by `com.apple.UserEventAgent-Aqua`, which reads it at start and never again, and
+SIP refuses `launchctl kickstart -k` on it. `backglass/state.py` already documents this:
+only a restart clears it. That is the owner's call, not something this repo can do.
+
+## What this branch changes
+
+Given the OS side cannot be fixed from here and will drift again on every flight between
+Phoenix and Kolkata, stop letting the day depend on launchd's wall clock.
+
+- [x] **App-open catch-up.** The net already exists (`catchup.run`) and is only reachable
+      from the sync job's 30-minute timer. Trigger it when the owner opens the app too:
+      once when the dashboard server starts (which is what the Tauri shell does on open),
+      and again on the first full-page GET of a day the process has not yet caught up on
+      (the app can outlive midnight). Off the request path — a fire-and-forget thread with
+      its own connection, so a slow planner never delays a page and a failure never 500s.
+      Guarded by a process-local day marker + lock so N tabs do not start N planners.
+- [x] **The evening pass refuses to run in the morning.** `shutdown` closes the day and
+      rolls what did not get done. Fired at 09:30 by the stale zone, it closes a day that
+      has twelve hours left in it. Refuse when the target day is today and the working
+      window has not ended, unless `--force`. A past `--date` stays allowed.
+- [x] Tests for both, including: a second open writes nothing (rule 3), a failing planner
+      degrades and never reaches the page (rule 5), and the guard's own hour comes from
+      `working_window` rather than a second copy of 22:00.
+- [x] **Found while checking the new trigger against the live ledger:** the net's brief
+      check asked `kind = 'daily'`, and `build_for` writes `'monday'` on a week-start day
+      and `'friday'` on a retro day. On those days the hole never closed and every sync
+      rebuilt the brief — twice in today's log, thirty minutes apart. Wiring the trigger to
+      page loads would have made it every page load, which is how it surfaced.
+
+## Still owed by the owner, not by this branch
+
+- **A restart.** Until then every calendar job stays on IST wall-clock: plan at 17:15,
+  brief at 17:30, the evening pass at 09:30 (now harmless — it refuses).
+- **A sidecar rebuild** (`desktop/build-sidecar.sh`) before the installed app gets the
+  app-open trigger. The release app runs a frozen PyInstaller build, and `state` already
+  reports it as behind the checkout. The dev path (`uv run backglass dashboard`) is live
+  now, and the evening-pass guard goes live for the launchd jobs on merge, because those
+  run this checkout through `uv`.
+
+## Not in scope, deliberately
+
+- Reloading/reinstalling the launchd jobs is already done and is not the fix; the restart
+  is the fix and only the owner can take it.
+- Surfacing "your calendar agent holds a stale timezone" in the dashboard. `state`
+  reports it and `heartbeat` already alarms on a missing plan; with the net now covering
+  app-open, the drift stops costing the owner a day. Worth doing later, not today.
