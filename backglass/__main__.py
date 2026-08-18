@@ -444,6 +444,15 @@ def sync_command(
                 typer.echo(f"{asked} new question(s) for you — answer at /ask")
         except Exception:  # noqa: BLE001 — rule 5: degrade, never block
             pass
+        # And say what the day demands, inside the owner's notify window. Same
+        # best-effort stance; the notification ledger is the record either way.
+        try:
+            from backglass import notify as notify_mod
+
+            for note in notify_mod.run(conn, settings):
+                typer.echo(f"notified: {note.title} ({note.delivered})")
+        except Exception:  # noqa: BLE001 — rule 5
+            pass
     raise typer.Exit(report.exit_code)
 
 
@@ -3940,6 +3949,27 @@ def memory_context() -> None:
     migrate(conn)
     block = context_mod.assemble(conn, settings)
     typer.echo(block if block else "(empty — the ledger has no facts, people or open items)")
+
+
+@app.command("notifications")
+def notifications_command(
+    limit: Annotated[int, typer.Option("--limit", help="How many to show")] = 20,
+) -> None:
+    """What the system has told the owner, newest first — the notification ledger.
+
+    Delivery is best-effort osascript; this table is the record that survives it.
+    """
+    from backglass import notify as notify_mod
+
+    conn = _open(get_settings())
+    migrate(conn)
+    rows = notify_mod.recent(conn, limit=limit)
+    if not rows:
+        typer.echo("nothing sent yet")
+        return
+    for r in rows:
+        typer.echo(f"  {r['local_date']} [{r['kind']}] {r['title']} — {r['body']}"
+                   f"  ({r['delivered']})")
 
 
 decisions_app = typer.Typer(

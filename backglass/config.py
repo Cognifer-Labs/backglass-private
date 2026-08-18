@@ -159,6 +159,12 @@ class Settings(BaseSettings):
     #: against, so a second copy would let the net and the job disagree about when the
     #: hole opens. Ahead of `brief_at` on purpose: the brief reports the plan.
     plan_at: str = "05:45"
+    #: The hours a notification banner may interrupt (backglass/notify.py). Outside
+    #: them nothing is delivered AND nothing is recorded — the owed-at pattern from
+    #: catchup: before the window opens the notification is not yet owed, so a 06:00
+    #: sync leaves it for the 08:30 one rather than burning the day's dedup slot on a
+    #: banner nobody saw.
+    notify_window: str = "08:00-22:00"
     #: docs/04 §1.2: the working window is "configured per weekday". Days absent here have
     #: no working window at all, which is how a weekend gets zero capacity rather than a
     #: plan nobody asked for.

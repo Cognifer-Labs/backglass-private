@@ -60,20 +60,20 @@ the ledger stays primary, and a second copy of the truth would drift from the fi
       landed (17b27b1): `ExtractedFact` in schemas v10, `facts.propose()` + citation gate in
       `tier2.apply`, `facts accept/reject` CLI, proposed-facts review on the Memory
       page, migration 0026 (`confidence REAL`), 19 tests.
-- [ ] 3. **Staleness beyond chat** — recheck covers conversations; the mail-shaped
+- [x] 3. **Staleness beyond chat** — recheck covers conversations; the mail-shaped
       version is decay: a commitment overdue N days with no later evidence, or
       superseded in substance by a newer one, becomes a *question or review item*,
       never an auto-close — in mail, silence is even weaker evidence than in chat.
       Auto-close continues to require a citation (recheck's rule, unchanged).
-      deliverable: `stale_commitments` detector in questions.py (overdue ≥14d + evidence
+      landed (6dd613b): `_stale_commitments` detector in questions.py (overdue ≥14d + evidence
       silence ≥14d, per-commitment ask-once identity, newest evidence cited, batch
       answers via existing questions UI). 8 tests.
-- [ ] 4. **Preferences → planner** — preference facts (`preferences/…`) get a typed
+- [x] 4. **Preferences → planner** — preference facts (`preferences/…`) get a typed
       lane the planner reads in `order()`/`select()`: protected blocks (gym, sleep),
       priority order between lanes (school > social), owner-stated rules. A conflict
       the rules cannot settle raises an `open_question` (surface exists) rather than
       guessing — never guess in the meantime.
-      deliverable: `plan/preferences.py` (`priority:` and `protect:` lanes parsed from
+      landed: `plan/preferences.py` (`priority:` and `protect:` lanes parsed from
       `preferences/planner.*` facts with malformed-value guard), lane classification +
       preference-aware ordering in `planner.order()`, protected-lane conflict question
       via `questions.protected_conflicts` (ask-once, HORIZON_DAYS window). 21 tests.

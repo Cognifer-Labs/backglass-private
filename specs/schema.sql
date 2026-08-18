@@ -572,3 +572,16 @@ CREATE UNIQUE INDEX idx_recheck_once
 
 CREATE INDEX idx_recheck_pending
   ON commitment_recheck(user_id, status, created_at);
+
+CREATE TABLE notification (
+  id             INTEGER PRIMARY KEY,
+  user_id        INTEGER NOT NULL DEFAULT 1,
+  kind           TEXT    NOT NULL,  -- overdue-today|questions-waiting|plan-replaced|plan-drift
+  subject_key    TEXT    NOT NULL,  -- dedup identity within (kind, local_date)
+  local_date     TEXT    NOT NULL,  -- the owner's local day this belongs to
+  title          TEXT    NOT NULL,
+  body           TEXT    NOT NULL,
+  delivered      TEXT    NOT NULL,  -- osascript|failed: <why>
+  created_at     TEXT    NOT NULL,
+  UNIQUE (user_id, kind, subject_key, local_date)
+);

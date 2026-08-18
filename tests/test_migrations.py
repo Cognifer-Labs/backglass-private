@@ -245,6 +245,9 @@ FROZEN_CHECKSUMS = {
     "0026_fact_confidence.sql": (
         "cbb993bb4badd33490908c0806c481aaabfe471098bfe7ebea82b61cd322bb98"
     ),
+    "0027_notification.sql": (
+        "31fce64d742cb8c9394c6209b49546839fba657f4b0402cfc5b908561d91a368"
+    ),
 }
 
 
