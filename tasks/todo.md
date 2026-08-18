@@ -2033,15 +2033,40 @@ Phoenix and Kolkata, stop letting the day depend on launchd's wall clock.
       rebuilt the brief — twice in today's log, thirty minutes apart. Wiring the trigger to
       page loads would have made it every page load, which is how it surfaced.
 
+## The prediction, checked the same evening
+
+The +12:30 reading was made at 09:30 from log mtimes. By 18:30 the day had tested it,
+and every job landed on the predicted minute:
+
+| job | plist | fired today |
+|---|---|---|
+| shutdown | 22:00 | 09:30 |
+| plan | 05:45 | 17:15 |
+| brief | 06:00 | 17:30 |
+
+It was not free. `data/shutdown.log` line 16 reads `2026-08-17: 0 done, 8 rolled` — the
+evening pass ran at 09:30 and rolled eight items into tomorrow while the day had twelve
+hours left, incrementing `rollover_count` on each. Three of them now read "rolled 3x",
+which is the threshold that triggers the drop-or-do question. That is the ledger damage
+the guard in 4cb2c0a prevents, recorded here because the guard cannot undo what already
+happened and somebody should decide whether to decrement those eight.
+
+The 17:15 plan run proposed nothing ("fully booked, no plan proposed"), so it did not
+supersede the good plan the app-open net had already written at 08:18. The clamp did its
+job; the day was simply over by the time the job it belonged to fired.
+
 ## Still owed by the owner, not by this branch
 
 - **A restart.** Until then every calendar job stays on IST wall-clock: plan at 17:15,
-  brief at 17:30, the evening pass at 09:30 (now harmless — it refuses).
-- **A sidecar rebuild** (`desktop/build-sidecar.sh`) before the installed app gets the
-  app-open trigger. The release app runs a frozen PyInstaller build, and `state` already
-  reports it as behind the checkout. The dev path (`uv run backglass dashboard`) is live
-  now, and the evening-pass guard goes live for the launchd jobs on merge, because those
-  run this checkout through `uv`.
+  brief at 17:30, the evening pass at 09:30 (harmless once this branch is merged — it
+  refuses, exit 0).
+- **The merge**, which is what puts the evening-pass guard and `app-update` in front of
+  the launchd jobs: they run the main checkout through `uv`, not this worktree.
+- **`backglass schedule install`** after that, to register `com.backglass.app-update`.
+- The sidecar rebuild is **done** — built from the merged tree and installed on
+  2026-08-17 at 18:32 by `backglass app-update --now`, with the previous app kept at
+  `~/Library/Application Support/Backglass/app-backups/`. From here the hourly job keeps
+  it level on its own.
 
 ## Also on this branch (3e58d85)
 
