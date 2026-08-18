@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from backglass import context as context_mod
 from backglass.config import Settings
 from backglass.connectors.base import Connector
 from backglass.db import now_iso, query
@@ -119,7 +120,11 @@ def _submit(
     pending = list(
         conn.execute(
             query("pending_extraction_unbatched"),
-            {"user_id": USER_ID, "extraction_version": prompt.stamp, "cutoff": cutoff},
+            {
+                "user_id": USER_ID,
+                "compatible_versions": ",".join(prompt.stamps),
+                "cutoff": cutoff,
+            },
         )
     )
 
@@ -152,6 +157,10 @@ def _submit(
 
     model_id = pricing.resolve(settings.model_extract)
     schema = json_schema(CommitmentExtraction)
+    # Once per submission, like the live pass builds it once per pass: the ledger does
+    # not change mid-run, and the block must be byte-identical across items or a caching
+    # backend sees a different prompt every time.
+    owner_ctx = context_mod.assemble(conn, settings)
     requests = []
     for item in eligible:
         system, user = tier2.render_parts(
@@ -161,6 +170,7 @@ def _submit(
             # The batch path renders the same prompt as the live one, so it needs the
             # same context or an overnight run would read every reply blind.
             context=tier2.conversation_context(conn, int(item["id"])),
+            owner_context=owner_ctx,
         )
         requests.append(
             {

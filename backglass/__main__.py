@@ -1822,7 +1822,8 @@ def recheck_command(
     """
     import json as _json
 
-    from backglass.extract import prompts, recheck as recheck_mod
+    from backglass.extract import prompts
+    from backglass.extract import recheck as recheck_mod
     from backglass.telemetry import Metered
 
     settings = get_settings()
@@ -3849,6 +3850,24 @@ def memory_export(
         typer.echo(f"wrote {out}")
     else:
         typer.echo(doc)
+
+
+@memory_app.command("context")
+def memory_context() -> None:
+    """The assembled block every model call now carries: facts, people, situation.
+
+    Exactly what backglass/context.py hands triage and extraction — printed so the
+    owner can read what the models are being told about them, and so a wrong line can
+    be traced to its table (facts → `memory`, people → the entity ledger, situation →
+    the board) instead of guessed about.
+    """
+    from backglass import context as context_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    block = context_mod.assemble(conn, settings)
+    typer.echo(block if block else "(empty — the ledger has no facts, people or open items)")
 
 
 decisions_app = typer.Typer(

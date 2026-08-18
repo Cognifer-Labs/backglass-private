@@ -1,9 +1,20 @@
 ---
 id: extract-commitments
-version: 9
+version: 10
+compatible: extract-commitments@9
 model: careful
 output: strict JSON, schema-validated, one retry on malformed
 ---
+
+<!-- v10 (2026-08-18): the model learns whose life it is reading about. A BACKGROUND
+     block ({{owner_context}}) now rides with the message: the owner's fact table, the
+     people around them with roles and orgs, and the current situation (overdue counts,
+     the week's plans) — assembled deterministically from the ledger by
+     backglass/context.py. Same block triage has carried since its v3; extraction was
+     still reading "can you send that to Priya" without knowing who Priya is. Rules for
+     it sit in the static half (cacheable); the block itself is dynamic. `compatible:`
+     names v9 because the change is additive — v9's rows stay done, and re-extraction
+     is the owner's deliberate call, not this bump's side effect. -->
 
 <!-- v9 (2026-08-10): three placeholders moved, no instruction reworded. `Prompt.split`
      marks everything before the first placeholder as cacheable, and the owner line sat at
@@ -198,7 +209,18 @@ Do not extract:
   - commitments between two other people that do not involve the user
   - restatements of a commitment already made in an earlier quoted message
 
+A BACKGROUND section may appear below — the user's own recorded facts, the
+people around them, and their current situation. Use it the way you use the
+conversation context: to resolve who a name refers to, which "she" is the
+user's advisor, whether a deadline collides with something already due. Never
+extract from it — it describes what the ledger already knows, and returning it
+again is how one obligation becomes two rows. It is background, not the
+message; the `evidence` you return must still be a sentence from the MESSAGE.
+
 The user is {{owner_name}} <{{owner_email}}>.
+
+BACKGROUND
+{{owner_context}}
 
 EARLIER IN THIS CONVERSATION (context only, oldest first)
 {{context}}

@@ -218,7 +218,7 @@ def test_a_backfill_extracts_oldest_first_so_supersession_can_fire(
 
     pending = conn.execute(
         query("pending_extraction"),
-        {"user_id": USER_ID, "extraction_version": prompts.load(EXTRACT_PROMPT).stamp},
+        {"user_id": USER_ID, "compatible_versions": ",".join(prompts.load(EXTRACT_PROMPT).stamps)},
     ).fetchall()
 
     assert [row["external_id"] for row in pending] == ["c01", "c05"], (

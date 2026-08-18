@@ -83,6 +83,7 @@ def render_parts(
     prompt: Prompt,
     settings: Settings,
     context: str = "",
+    owner_context: str = "",
 ) -> tuple[str, str]:
     """(system, user) for one item — the static instruction prefix rides in `system`
     for prompt caching (prompts.Prompt.split). Shared with the batch path
@@ -112,6 +113,11 @@ def render_parts(
         title=item.get("title") or "",
         body_text=item.get("body_text") or "",
         context=context or "(no earlier messages)",
+        # v10's BACKGROUND block: the assembled memory (backglass/context.py). Rendered
+        # as "(none)" rather than "" so the labelled section is never an empty heading
+        # the model might read as "the ledger knows nothing" — which is true on a fresh
+        # install and exactly what "(none)" says.
+        owner_context=owner_context or "(none)",
     )
     return system, rendered
 
@@ -125,8 +131,11 @@ def extract(
     budget_usd: float,
     settings: Settings,
     context: str = "",
+    owner_context: str = "",
 ) -> tuple[CommitmentExtraction, float]:
-    system, rendered = render_parts(item, prompt=prompt, settings=settings, context=context)
+    system, rendered = render_parts(
+        item, prompt=prompt, settings=settings, context=context, owner_context=owner_context
+    )
     result = client.complete(
         system=system, user=rendered, schema=SCHEMA, model=model, budget_usd=budget_usd
     )

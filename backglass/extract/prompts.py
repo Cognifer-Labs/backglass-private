@@ -35,11 +35,24 @@ class Prompt:
     model_hint: str
     text: str
     path: Path
+    #: Older stamps this version does NOT invalidate, from the frontmatter's
+    #: `compatible:` line (comma-separated). A bump used to mean "re-extract every kept
+    #: item" with no way to say otherwise — v9's own changelog complains about it — so
+    #: an additive change (more context, an extra output field) either forced hours of
+    #: re-reads or never shipped. Naming the old version here says: rows stamped with it
+    #: stay done; only new items get the new prompt. Re-extraction becomes a deliberate
+    #: owner decision (delete the line), never a side effect.
+    compatible: tuple[str, ...] = ()
 
     @property
     def stamp(self) -> str:
         """What gets written to source_item.extraction_version."""
         return f"{self.id}@{self.version}"
+
+    @property
+    def stamps(self) -> tuple[str, ...]:
+        """Every stamp that counts as extracted: the current one, then `compatible`."""
+        return (self.stamp, *self.compatible)
 
     def placeholders(self) -> set[str]:
         return set(_PLACEHOLDER.findall(self.text))
@@ -112,10 +125,14 @@ def load(name: str, directory: Path | None = None) -> Prompt:
     if not block:
         raise PromptError(f"{path.name} has no fenced block under a '## Prompt' heading")
 
+    compatible = tuple(
+        s.strip() for s in meta.get("compatible", "").split(",") if s.strip()
+    )
     return Prompt(
         id=meta["id"],
         version=meta["version"],
         model_hint=meta.get("model", ""),
         text=block.group(1).strip(),
         path=path,
+        compatible=compatible,
     )

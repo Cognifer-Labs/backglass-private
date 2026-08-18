@@ -27,7 +27,7 @@ from typing import Any
 
 from backglass import chats as chats_mod
 from backglass import contacts as contacts_mod
-from backglass import facts
+from backglass import context as context_mod
 from backglass.config import Settings
 from backglass.connectors import base, credentials
 from backglass.connectors.base import Connector
@@ -620,16 +620,17 @@ def _triage_pass(
             cap,
             report,
             pending,
-            facts.owner_context(conn),
+            context_mod.assemble(conn, settings),
         )
         if not pending or report.rate_limited:
             return
 
-    # Built once for the pass. The knowledge base does not change mid-run, and it has
+    # Built once for the pass. The ledger does not change mid-run, and the block has
     # to be identical across calls or a caching backend sees a different prompt every
     # time. Read here rather than in `work` — that runs in the pool, and this connection
-    # is not shared across threads.
-    context = facts.owner_context(conn)
+    # is not shared across threads. Since 2026-08-18 this is the full assembled memory
+    # (facts + people + situation), not the fact table alone.
+    context = context_mod.assemble(conn, settings)
 
     def work(item: dict[str, Any]) -> tuple[int, tier1.TriageOutcome | Exception]:
         try:
@@ -778,7 +779,7 @@ def _extract_pass(
     pending = list(
         conn.execute(
             query("pending_extraction_unbatched"),
-            {"user_id": USER_ID, "extraction_version": prompt.stamp, "cutoff": cutoff},
+            {"user_id": USER_ID, "compatible_versions": ",".join(prompt.stamps), "cutoff": cutoff},
         )
     )
     if not pending:
@@ -799,6 +800,9 @@ def _extract_pass(
         int(item["id"]): tier2.conversation_context(conn, int(item["id"]))
         for item in pending
     }
+    # One block for the whole pass, same rule as the per-item conversation contexts
+    # above: main thread, byte-identical across calls.
+    owner_ctx = context_mod.assemble(conn, settings)
 
     def work(
         item: dict[str, Any],
@@ -818,6 +822,7 @@ def _extract_pass(
                 budget_usd=settings.per_call_budget_usd,
                 settings=settings,
                 context=contexts.get(int(item["id"]), ""),
+                owner_context=owner_ctx,
             )
         except Exception as exc:  # noqa: BLE001
             return item, exc
