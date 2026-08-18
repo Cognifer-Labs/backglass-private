@@ -42,7 +42,6 @@ import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
 
 from backglass.connectors.base import Cursor, Health, SourceItem, content_hash, safe_error
 from backglass.connectors.boundary import Boundary

@@ -21,8 +21,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from backglass.config import Settings
 from backglass import schedule
+from backglass.config import Settings
 from backglass.ledger import USER_ID
 from backglass.plan import timezones
 
