@@ -1923,6 +1923,33 @@ def duplicates_command(
     if len(found) > limit:
         typer.echo(f"\n… {len(found) - limit} more; --limit to see them")
 
+    plans, undated = dup_mod.plan_clusters(conn)
+    if plans:
+        # Engagements have never had a review surface — `dedup.suspects` and everything
+        # built on it covers commitments only — and the duplication is worse there.
+        # Report-only: closing an engagement automatically is per-type resolution policy,
+        # which belongs to the resolver phase and not to a report.
+        typer.echo(
+            f"\n{len(plans)} day(s) with duplicate plans "
+            f"({sum(len(c.members) for c in plans)} engagements)"
+        )
+        for cluster in plans[:limit]:
+            typer.echo(f"\n[plans · {cluster.day}]  weakest pair {cluster.weakest:.2f}")
+            keep = int(cluster.survivor["id"])
+            for member in cluster.members:
+                lead = "keep " if int(member["id"]) == keep else "dup  "
+                when = str(member["starts_at"] or "")[11:16] or "--:--"
+                typer.echo(
+                    f"  {lead}{member['id']:>5}  {when}  {str(member['status'])[:9]:9}"
+                    f"  {str(member['what'])[:54]}"
+                )
+    if undated:
+        # Named rather than dropped: most of the twenty-three move-in rows have no date
+        # at all, and a report that silently omits them reads as "covered everything".
+        typer.echo(
+            f"\n{undated} undated engagement(s) not clustered — no day to anchor them in"
+        )
+
     if not apply:
         typer.echo(
             "\nnothing written. `--apply` drops the losers in the certain clusters; "

@@ -256,7 +256,15 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
 .row.sched .b2i{font-size:12px;color:var(--ink-muted)}
 .row.sched:hover{background:var(--fill-mild)}
 .row.sched .acts{display:none;flex-basis:100%}
-.row.sched:hover .acts,.row.sched:focus-within .acts{display:flex}
+/* `:focus-within` alone was unreachable: `display:none` removes the buttons from the
+   tab order, so focus could never enter the subtree that focus was supposed to reveal.
+   `[data-selected]` is the board's register, and it is what makes the timetable
+   keyboard-operable — the schedule had one block marked done in 493 while the board,
+   which has this, had 46 commitments resolved by hand. */
+.row.sched:hover .acts,.row.sched:focus-within .acts,
+.row.sched[data-selected="true"] .acts{display:flex}
+.row.sched[data-selected="true"]{background:var(--fill-mild)}
+.row.sched:focus-visible{outline:2px solid var(--rule);outline-offset:-2px}
 /* design-system.md §4: protected keeps its 2px keyline and 45° hatch, one row tall. */
 .row.sched.k-protected{border:2px solid var(--rule);border-radius:var(--radius-2);
   padding:var(--sp-2) var(--sp-3);
