@@ -304,3 +304,214 @@ class TestTheAskPage:
 
         assert 'href="/ask"' in body
         assert "only you can answer" in body
+
+
+def _open_commitment(
+    conn: sqlite3.Connection,
+    what: str,
+    *,
+    due: str,
+    occurred: str,
+) -> int:
+    conn.execute(
+        "INSERT INTO source_item (user_id, source, external_id, fetched_at, occurred_at,"
+        " title, body_text, content_hash, triage_verdict)"
+        " VALUES (?, 'apple-mail', ?, ?, ?, 'Subject', 'body', ?, 'keep')",
+        (USER_ID, f"m-{what}", occurred, occurred, f"h-{what}"),
+    )
+    sid = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    conn.execute(
+        "INSERT INTO commitment (user_id, direction, what, due_at, confidence, status,"
+        " source_item_id, created_at) VALUES (?, 'i_owe', ?, ?, 0.9, 'open', ?, ?)",
+        (USER_ID, what, due, sid, occurred),
+    )
+    return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+
+class TestStaleCommitments:
+    """Overdue plus silence is a QUESTION, never a close — in mail, silence is even
+    weaker evidence than in chat, and a wrong close is silent data loss."""
+
+    def test_long_overdue_and_unmentioned_raises_a_question(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        cid = _open_commitment(
+            conn, "send the transcript", due="2026-07-01", occurred="2026-06-20T10:00:00Z"
+        )
+        found = questions._stale_commitments(conn, sett, MONDAY)
+        assert len(found) == 1
+        q = found[0]
+        assert q.kind == "stale" and q.subject_key == str(cid)
+        assert "send the transcript" in q.question
+        assert "apple-mail · 2026-06-20" in q.detail
+        # And nothing changed on the board: detection is read-only.
+        status = conn.execute("SELECT status FROM commitment WHERE id = ?", (cid,)).fetchone()
+        assert status["status"] == "open"
+
+    def test_recent_evidence_resets_the_silence_clock(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """A restatement two days ago means somebody still cares, however overdue —
+        the newest sighting is judged, not the original message."""
+        cid = _open_commitment(
+            conn, "send the transcript", due="2026-07-01", occurred="2026-06-20T10:00:00Z"
+        )
+        conn.execute(
+            "INSERT INTO source_item (user_id, source, external_id, fetched_at,"
+            " occurred_at, title, body_text, content_hash, triage_verdict)"
+            " VALUES (?, 'apple-mail', 'm-nudge', ?, '2026-08-22T09:00:00Z', 'Re:',"
+            " 'any update?', 'h-nudge', 'keep')",
+            (USER_ID, now_iso()),
+        )
+        nudge = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO commitment_evidence (user_id, commitment_id, source_item_id,"
+            " kind, seen_at) VALUES (?, ?, ?, 'restated', ?)",
+            (USER_ID, cid, nudge, now_iso()),
+        )
+        assert questions._stale_commitments(conn, sett, MONDAY) == []
+
+    def test_newest_evidence_is_chosen_by_instant_not_by_text_order(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """The mixed-offset trap (2026-08-02): the two sightings straddle the silence
+        floor (2026-08-10 for a 2026-08-24 run) with instant order and text order
+        INVERTED. The Kolkata line "2026-08-11T01:00+05:30" is the textual max but
+        the earlier instant (Aug 10 19:30Z); the Phoenix line "2026-08-10T23:50-07:00"
+        is the true newest (Aug 11 06:50Z) and its stated local day sits ON the
+        floor. Ranked by datetime() the newest sighting's day is 08-10 → silence
+        holds and the question fires, citing that day; ranked by text the 08-11 line
+        wins and the detector wrongly stays quiet."""
+        cid = _open_commitment(
+            conn, "send the transcript", due="2026-07-01", occurred="2026-06-20T10:00:00Z"
+        )
+        for ext, occurred in (
+            ("m-kolkata", "2026-08-11T01:00:00+05:30"),
+            ("m-phoenix", "2026-08-10T23:50:00-07:00"),
+        ):
+            conn.execute(
+                "INSERT INTO source_item (user_id, source, external_id, fetched_at,"
+                " occurred_at, title, body_text, content_hash, triage_verdict)"
+                " VALUES (?, 'apple-mail', ?, ?, ?, 'Re:', 'nudge', ?, 'keep')",
+                (USER_ID, ext, now_iso(), occurred, f"h-{ext}"),
+            )
+            sid = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            conn.execute(
+                "INSERT INTO commitment_evidence (user_id, commitment_id, source_item_id,"
+                " kind, seen_at) VALUES (?, ?, ?, 'restated', ?)",
+                (USER_ID, cid, sid, now_iso()),
+            )
+        found = questions._stale_commitments(conn, sett, MONDAY)
+        assert len(found) == 1 and found[0].subject_key == str(cid)
+        assert "2026-08-10" in found[0].detail  # the true newest sighting is cited
+
+    def test_merely_overdue_is_not_stale(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """The board already nags inside two weeks; this detector is for decay."""
+        _open_commitment(
+            conn, "reply to advisor", due="2026-08-15", occurred="2026-08-14T10:00:00Z"
+        )
+        assert questions._stale_commitments(conn, sett, MONDAY) == []
+
+    def test_a_flooded_board_is_asked_about_in_installments(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        for i in range(questions.STALE_BATCH_LIMIT + 3):
+            _open_commitment(
+                conn, f"dead favour {i}", due=f"2026-06-{10 + i:02d}",
+                occurred="2026-06-01T10:00:00Z",
+            )
+        found = questions._stale_commitments(conn, sett, MONDAY)
+        assert len(found) == questions.STALE_BATCH_LIMIT
+        # Oldest due first: the longest-dead is asked about first.
+        assert "dead favour 0" in found[0].question
+
+    def test_the_answer_acts_through_the_boards_own_actions(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        cid = _open_commitment(
+            conn, "send the transcript", due="2026-07-01", occurred="2026-06-20T10:00:00Z"
+        )
+        questions.refresh(conn, sett, MONDAY)
+        qid = int(conn.execute(
+            "SELECT id FROM open_question WHERE kind = 'stale'"
+        ).fetchone()["id"])
+
+        questions.answer(conn, sett, qid, option=questions.STALE_DONE)
+
+        row = conn.execute("SELECT status, resolution_note FROM commitment WHERE id = ?",
+                           (cid,)).fetchone()
+        assert row["status"] == "done"
+        assert "owner confirmed" in row["resolution_note"]
+
+    def test_drop_drops_and_keep_keeps(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        first = _open_commitment(
+            conn, "dead favour", due="2026-07-01", occurred="2026-06-20T10:00:00Z"
+        )
+        second = _open_commitment(
+            conn, "still real", due="2026-07-02", occurred="2026-06-20T10:00:00Z"
+        )
+        questions.refresh(conn, sett, MONDAY)
+        by_key = {
+            str(r["subject_key"]): int(r["id"])
+            for r in conn.execute("SELECT id, subject_key FROM open_question")
+        }
+
+        questions.answer(conn, sett, by_key[str(first)], option=questions.STALE_DROP)
+        questions.answer(conn, sett, by_key[str(second)], option=questions.STALE_KEEP)
+
+        statuses = {
+            int(r["id"]): str(r["status"])
+            for r in conn.execute("SELECT id, status FROM commitment")
+        }
+        assert statuses[first] == "dropped"
+        assert statuses[second] == "open"
+
+    def test_free_text_records_but_never_guesses(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """The owner's own words are a complete answer AND not a license to act:
+        "done I think, check with mom" is not a resolution."""
+        cid = _open_commitment(
+            conn, "dead favour", due="2026-07-01", occurred="2026-06-20T10:00:00Z"
+        )
+        questions.refresh(conn, sett, MONDAY)
+        qid = int(conn.execute("SELECT id FROM open_question").fetchone()["id"])
+
+        questions.answer(conn, sett, qid, text="done I think, check with mom")
+
+        status = conn.execute("SELECT status FROM commitment WHERE id = ?", (cid,)).fetchone()
+        assert status["status"] == "open"
+
+    def test_an_answered_stale_question_is_not_reasked(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        _open_commitment(
+            conn, "still real", due="2026-07-01", occurred="2026-06-20T10:00:00Z"
+        )
+        questions.refresh(conn, sett, MONDAY)
+        qid = int(conn.execute("SELECT id FROM open_question").fetchone()["id"])
+        questions.answer(conn, sett, qid, option=questions.STALE_KEEP)
+
+        assert questions.refresh(conn, sett, MONDAY) == 0
+
+    def test_a_commitment_closed_since_asking_is_a_no_op_answer(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        cid = _open_commitment(
+            conn, "dead favour", due="2026-07-01", occurred="2026-06-20T10:00:00Z"
+        )
+        questions.refresh(conn, sett, MONDAY)
+        qid = int(conn.execute("SELECT id FROM open_question").fetchone()["id"])
+        from backglass.web import actions
+
+        actions.resolve(conn, cid, note="board click")
+
+        questions.answer(conn, sett, qid, option=questions.STALE_DROP)  # no raise
+        row = conn.execute("SELECT status, resolution_note FROM commitment WHERE id = ?",
+                           (cid,)).fetchone()
+        assert row["status"] == "done"          # the board's click stands
+        assert row["resolution_note"] == "board click"

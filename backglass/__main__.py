@@ -431,6 +431,19 @@ def sync_command(
         # replaces anything — see backglass/catchup.py.
         for produced in catchup.run(conn, settings):
             typer.echo(f"caught up {produced.surface} for {produced.day}: {produced.detail}")
+        # Auto-recognition runs where the data arrives, not only when the owner opens
+        # /ask: a sync that ingested the evidence is the moment a conflict, a stale
+        # commitment or a contradiction becomes detectable. Best-effort (rule 5) — a
+        # detector down must not take the sync's exit code with it.
+        try:
+            from backglass import questions as questions_mod
+            from backglass.plan import timezones as tz_mod
+
+            asked = questions_mod.refresh(conn, settings, tz_mod.local_now(settings).date())
+            if asked:
+                typer.echo(f"{asked} new question(s) for you — answer at /ask")
+        except Exception:  # noqa: BLE001 — rule 5: degrade, never block
+            pass
     raise typer.Exit(report.exit_code)
 
 

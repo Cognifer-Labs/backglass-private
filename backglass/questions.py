@@ -310,6 +310,107 @@ def _priority(conn: sqlite3.Connection, settings: Settings, today: date) -> list
 DETECTORS = ("conflict", "untitled", "duplicate_entity", "contradiction", "priority")
 
 
+#: A commitment this far past due, with nothing in the ledger mentioning it since,
+#: is a candidate for "quietly no longer true". Two weeks, because the board already
+#: nags inside that window and the recheck pass owns conversations; this detector is
+#: for the mail-shaped obligation that decays with no thread to re-read.
+STALE_OVERDUE_DAYS = 14
+STALE_SILENCE_DAYS = 14
+
+#: New stale questions per refresh. The first run against a neglected board would
+#: otherwise raise a hundred at once, and a wall of questions is how an owner stops
+#: answering any (the overflow-list lesson, 2026-08-09). Oldest first; the rest queue
+#: behind answers.
+STALE_BATCH_LIMIT = 5
+
+#: The stale question's options, matched EXACTLY by the answer hook — a reworded
+#: option is an answer the hook cannot act on, so these are constants, not prose.
+STALE_DONE = "Done — mark it resolved"
+STALE_DROP = "No longer relevant — drop it"
+STALE_KEEP = "Still on my plate — keep it open"
+
+
+def _stale_commitments(
+    conn: sqlite3.Connection, settings: Settings, today: date
+) -> list[Question]:
+    """Open commitments long past due that nothing has mentioned since.
+
+    The chat recheck reads a conversation backwards to see whether a promise was
+    answered; mail has no such thread, and silence there is even weaker evidence — so
+    this NEVER closes anything. It asks, with the newest evidence cited, and the
+    owner's click acts through the same actions the board uses (docs/11: proposals,
+    not actions — the click is the owner's).
+
+    Newest evidence is MAX over datetime() of the commitment's own source item and
+    every commitment_evidence sighting — datetime(), not the raw column, because
+    occurred_at keeps each sender's own offset and MAX over text picks the wrong
+    message across the owner's two zones (lessons, 2026-08-02).
+    """
+    del settings
+    overdue_floor = (today - timedelta(days=STALE_OVERDUE_DAYS)).isoformat()
+    silence_floor = (today - timedelta(days=STALE_SILENCE_DAYS)).isoformat()
+    rows = conn.execute(
+        """
+        SELECT c.id, c.what, substr(c.due_at, 1, 10) AS due_day, c.direction,
+               last.seen_day, last.source, last.title
+        FROM commitment c
+        JOIN (
+          SELECT ranked.commitment_id,
+                 substr(ranked.occurred_at, 1, 10) AS seen_day,
+                 ranked.source AS source, ranked.title AS title
+          FROM (
+            SELECT c2.id AS commitment_id, si.occurred_at, si.source, si.title,
+                   ROW_NUMBER() OVER (
+                     PARTITION BY c2.id ORDER BY datetime(si.occurred_at) DESC
+                   ) AS rn
+            FROM commitment c2
+            JOIN source_item si
+              ON si.id = c2.source_item_id
+              OR si.id IN (
+                   SELECT ce.source_item_id FROM commitment_evidence ce
+                   WHERE ce.commitment_id = c2.id AND ce.user_id = c2.user_id
+                 )
+            WHERE c2.user_id = :user_id AND c2.status = 'open'
+          ) ranked
+          WHERE ranked.rn = 1
+        ) last ON last.commitment_id = c.id
+        WHERE c.user_id = :user_id
+          AND c.status = 'open'
+          AND c.due_at IS NOT NULL
+          AND substr(c.due_at, 1, 10) <= :overdue_floor
+          AND last.seen_day <= :silence_floor
+        ORDER BY substr(c.due_at, 1, 10) ASC, c.id ASC
+        LIMIT :limit
+        """,
+        {
+            "user_id": USER_ID,
+            "overdue_floor": overdue_floor,
+            "silence_floor": silence_floor,
+            "limit": STALE_BATCH_LIMIT,
+        },
+    ).fetchall()
+
+    out: list[Question] = []
+    for row in rows:
+        whose = "you owe" if row["direction"] == "i_owe" else "owed to you"
+        out.append(
+            Question(
+                kind="stale",
+                subject_key=str(row["id"]),
+                question=(
+                    f'"{row["what"]}" ({whose}) was due {row["due_day"]} and nothing '
+                    "has mentioned it since. Still real?"
+                ),
+                detail=(
+                    f"Newest evidence: {row['source']} · {row['seen_day']}"
+                    + (f" · {row['title']}" if row["title"] else "")
+                ),
+                options=[STALE_DONE, STALE_DROP, STALE_KEEP],
+            )
+        )
+    return out
+
+
 def detect(conn: sqlite3.Connection, settings: Settings, today: date) -> list[Question]:
     """Every detector, each failing on its own.
 
@@ -324,6 +425,7 @@ def detect(conn: sqlite3.Connection, settings: Settings, today: date) -> list[Qu
         lambda: _duplicate_entities(conn),
         lambda: _contradictions(conn),
         lambda: _priority(conn, settings, today),
+        lambda: _stale_commitments(conn, settings, today),
     ):
         try:
             found.extend(detector())
@@ -411,6 +513,33 @@ def answer(
         choice=text or option or "",
         reasoning=f"answered in the questions surface · {row['kind']}",
     )
+    _apply_stale_answer(conn, row, option)
+
+
+def _apply_stale_answer(conn: sqlite3.Connection, row: Any, option: str | None) -> None:
+    """A stale answer acts on the board — the click is the owner's (docs/11).
+
+    Matched EXACTLY against the option constants: a free-text answer, or any option
+    this function does not recognize, records the answer and touches nothing — never
+    guess in the meantime. The actions re-read `status = 'open'` at write time, so a
+    commitment closed since the question was asked is a no-op, not a crash.
+    """
+    if str(row["kind"]) != "stale" or option not in (STALE_DONE, STALE_DROP):
+        return
+    from backglass.web import actions
+
+    try:
+        commitment_id = int(str(row["subject_key"]))
+    except ValueError:
+        return
+    note = "stale question: owner confirmed"
+    try:
+        if option == STALE_DONE:
+            actions.resolve(conn, commitment_id, note=note)
+        else:
+            actions.drop(conn, commitment_id, note=note)
+    except actions.ActionError:
+        pass  # already closed by another surface; the recorded answer still stands
 
 
 def dismiss(conn: sqlite3.Connection, question_id: int) -> None:

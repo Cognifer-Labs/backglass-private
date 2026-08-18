@@ -29,7 +29,7 @@ the ledger stays primary, and a second copy of the truth would drift from the fi
 ## Increments (each lands tested + committed before the next starts)
 
 - [x] 0. Baseline: commit inherited state-verdicts + catchup work (2acf92d).
-- [ ] 1. **`backglass/context.py`** — one assembler, three tiers, char-budgeted,
+- [x] 1. **`backglass/context.py`** — one assembler, three tiers, char-budgeted,
       deterministic, empty-per-section when there is no data:
       1. long-term: `facts.owner_context` (exists, reused);
       2. people: the handful of entities with recent evidence — role, org, tags,
@@ -43,12 +43,12 @@ the ledger stays primary, and a second copy of the truth would drift from the fi
       ledger is NOT force-re-extracted; new items get the new prompt. This decouples
       "the prompt improved" from "everything must be re-read", which v9's history
       complained about in a comment.
-      deliverable: `context.assemble` (short-term + people over the ledger, long-term via
+      landed (e39fd8c): `context.assemble` (short-term + people over the ledger, long-term via
       `facts.owner_context`), `compatible:` frontmatter + `Prompt.stamps` +
       `:compatible_versions` in both pending queries, wired into triage/batch-triage
       (assembled context) and extraction v10 (`{{owner_context}}` in the dynamic half),
       `backglass context` CLI. 21 tests.
-- [ ] 2. **Fact writeback** — extraction (same v10 bump) emits fact candidates with an
+- [x] 2. **Fact writeback** — extraction (same v10 bump) emits fact candidates with an
       evidence quote + `source_item_id`. Quote verified against the body (recheck's
       citation rule); verified + confident → `fact` active via `remember()` (which
       supersedes); unverified or hesitant → `status='proposed'`, surfaced for review,
@@ -57,7 +57,7 @@ the ledger stays primary, and a second copy of the truth would drift from the fi
       the point. Same-value re-emission is a no-write (rule 3). Migration 0026 adds
       `confidence` to `fact`; run the new-table checklist (FROZEN_CHECKSUMS, schema
       regen) BEFORE the first suite run; sidecar rebuild re-armed.
-      deliverable: `FactCandidate` in schemas v10, `facts.propose()` + citation gate in
+      landed (17b27b1): `ExtractedFact` in schemas v10, `facts.propose()` + citation gate in
       `tier2.apply`, `facts accept/reject` CLI, proposed-facts review on the Memory
       page, migration 0026 (`confidence REAL`), 19 tests.
 - [ ] 3. **Staleness beyond chat** — recheck covers conversations; the mail-shaped
