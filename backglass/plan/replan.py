@@ -90,7 +90,9 @@ def run(
         conn, settings,
         kind="plan-drift", subject_key=day.isoformat(),
         title="Your day changed after you accepted the plan",
-        body="Something new landed. The accepted plan stands — replan from /schedule"
+        # `backglass plan` is the rebuild path that actually exists — /schedule shows
+        # the plan and offers no regenerate control (checked 2026-08-18).
+        body="Something new landed. The accepted plan stands — run `backglass plan`"
              " if you want it rebuilt.",
         now=now,
     )

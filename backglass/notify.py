@@ -165,15 +165,30 @@ def _due_today(
 def _questions_waiting(
     conn: sqlite3.Connection, now: datetime
 ) -> tuple[str, str, str, str] | None:
-    """Questions the system is holding instead of guessing — the owner unblocks it."""
+    """Questions the system is holding instead of guessing — the owner unblocks it.
+
+    Only when something was ASKED since the last banner. A queue the owner has seen
+    and is sitting on must not re-banner every morning — a notification that fires
+    every day is one that gets turned off, and with eleven long-lived questions on
+    the live ledger "n > 0" would have been exactly that. Both timestamps come from
+    now_iso(), so the comparison is one clock against itself.
+    """
     del now
     row = conn.execute(
-        "SELECT COUNT(*) AS n FROM open_question WHERE user_id = ? AND status = 'open'",
+        "SELECT COUNT(*) AS n, MAX(asked_at) AS newest FROM open_question"
+        " WHERE user_id = ? AND status = 'open'",
         (USER_ID,),
     ).fetchone()
     n = int(row["n"] or 0)
     if not n:
         return None
+    last = conn.execute(
+        "SELECT created_at FROM notification WHERE user_id = ?"
+        " AND kind = 'questions-waiting' ORDER BY id DESC LIMIT 1",
+        (USER_ID,),
+    ).fetchone()
+    if last is not None and str(row["newest"] or "") <= str(last["created_at"]):
+        return None  # nothing new since the owner was last told
     return (
         "questions-waiting",
         "digest",

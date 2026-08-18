@@ -515,3 +515,38 @@ class TestStaleCommitments:
                            (cid,)).fetchone()
         assert row["status"] == "done"          # the board's click stands
         assert row["resolution_note"] == "board click"
+
+    def test_the_stale_option_survives_the_ask_page_round_trip(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """Drive the REAL door (2026-08-02 lesson): the option string rides from the
+        detector into ask.html's button value, back through the form POST, and must
+        still match _apply_stale_answer's exact comparison — an em-dash mangled
+        anywhere in that loop would record the answer and silently leave the
+        commitment open, which is this feature's one unforgivable failure."""
+        from fastapi.testclient import TestClient
+
+        from backglass.web.app import create_app
+
+        cid = _open_commitment(
+            conn, "send the transcript", due="2026-07-01", occurred="2026-06-20T10:00:00Z"
+        )
+        conn.commit()
+        client = TestClient(create_app(sett), base_url="http://127.0.0.1:8765")
+
+        page = client.get("/ask").text  # GET runs refresh(), which asks the question
+        assert questions.STALE_DONE in page  # the button carries the exact string
+
+        qid = int(conn.execute(
+            "SELECT id FROM open_question WHERE kind = 'stale'"
+        ).fetchone()["id"])
+        posted = client.post(
+            f"/ask/{qid}/answer", data={"option": questions.STALE_DONE},
+            follow_redirects=True,
+        )
+        assert posted.status_code == 200
+
+        row = conn.execute(
+            "SELECT status FROM commitment WHERE id = ?", (cid,)
+        ).fetchone()
+        assert row["status"] == "done"

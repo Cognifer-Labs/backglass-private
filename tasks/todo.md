@@ -77,24 +77,24 @@ the ledger stays primary, and a second copy of the truth would drift from the fi
       `preferences/planner.*` facts with malformed-value guard), lane classification +
       preference-aware ordering in `planner.order()`, protected-lane conflict question
       via `questions.protected_conflicts` (ask-once, HORIZON_DAYS window). 21 tests.
-- [ ] 5. **Notifications** — a `notification` ledger table (idempotent: notify once
+- [x] 5. **Notifications** — a `notification` ledger table (idempotent: notify once
       per (kind, subject, day); provenance per rule 1; quiet hours), delivered from
       the sync path with catchup's owed-at pattern, via macOS `osascript` (the JXA
       bridge connectors already use). Timezone tests specifically — owed-at-an-hour
       is exactly the UTC-7/+05:30 surface the lessons cover.
-      deliverable: migration 0027 (`notification` table, UNIQUE dedup key),
+      landed (85b08a1): migration 0027 (`notification` table, UNIQUE dedup key),
       `backglass/notify.py` (deciders: overdue-today, plan-replaced, stale-questions;
       quiet hours 08:00–22:00 via active-tz local time; osascript delivery best-effort,
       row is provenance), `notify_pass` in sync after catchup, `backglass
       notifications` CLI. 22 tests incl. both-zones quiet-hours cases.
-- [ ] 6. **Dynamic replan** — persist a fingerprint of the inputs a plan was built
+- [x] 6. **Dynamic replan** — persist a fingerprint of the inputs a plan was built
       from (open commitments + engagements + capacity); on sync, material drift +
       plan still `proposed` → regenerate and supersede; plan `accepted` (the owner
       touched it) → notify and ask, never clobber. This is the decided resolution of
       the conflict between "dynamic scheduling" and catchup's "never replace a live
       plan": *proposed plans are the system's and it may re-plan them; accepted plans
       are the owner's and it may only knock.*
-      deliverable: migration 0028 (`inputs_fingerprint` on day_plan), deterministic
+      landed: migration 0028 (`inputs_fingerprint` on day_plan), deterministic
       fingerprint over (commitments, engagements, capacity, tz) computed inside
       `propose()`, `replan_pass` in sync (fingerprint drift → supersede+regenerate
       proposed plans; `plan-changed` notification via notify's dedup; accepted plans

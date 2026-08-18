@@ -163,6 +163,35 @@ class TestWhatItSays:
         assert [s.kind for s in sent] == ["questions-waiting"]
         assert "1 question(s) waiting" in sent[0].title
 
+    def test_a_queue_the_owner_is_sitting_on_does_not_rebanner_daily(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """Eleven long-lived questions on the live ledger must not mean a banner
+        every morning forever — only something newly ASKED re-banners. A
+        notification that fires every day is one that gets turned off."""
+        conn.execute(
+            "INSERT INTO open_question (user_id, kind, subject_key, question, asked_at)"
+            " VALUES (?, 'conflict', 'k', 'Which?', '2026-08-18T00:00:00Z')",
+            (USER_ID,),
+        )
+        assert [s.kind for s in notify.run(conn, settings, now=_at(9))] == [
+            "questions-waiting"
+        ]
+
+        day2 = datetime(2026, 8, 19, 9, 0, tzinfo=PHOENIX)
+        assert notify.run(conn, settings, now=day2) == []  # same queue, silence
+
+        # A new question re-banners: asked_at after the last banner's created_at.
+        conn.execute(
+            "INSERT INTO open_question (user_id, kind, subject_key, question, asked_at)"
+            " VALUES (?, 'stale', 'k2', 'Still real?', ?)",
+            (USER_ID, datetime(2026, 8, 20, 8, 0).isoformat()),
+        )
+        day3 = datetime(2026, 8, 20, 9, 0, tzinfo=PHOENIX)
+        sent = notify.run(conn, settings, now=day3)
+        assert [s.kind for s in sent] == ["questions-waiting"]
+        assert "2 question(s) waiting" in sent[0].title
+
 
 class TestTheRowIsTheRecord:
     def test_a_failed_banner_still_leaves_its_row(
