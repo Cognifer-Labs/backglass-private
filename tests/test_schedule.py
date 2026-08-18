@@ -1,7 +1,7 @@
 """B6: `backglass schedule install`. launchd/templates/*.plist.tmpl -> real files.
 
 `render()` reads the actual shipped templates (no override for the template
-directory), so most of these exercise the real eight files with fake substitution
+directory), so most of these exercise the real nine files with fake substitution
 values — the fastest way to catch a template that silently doesn't fill in.
 
 The last class covers the other thing called "schedule": the Schedule *page*, and
@@ -25,7 +25,7 @@ from backglass.web.routes import schedule as schedule_page
 
 def test_every_template_renders_with_no_placeholder_left() -> None:
     rendered = schedule.render(Path("/fake/repo/backglass"), "/fake/bin/uv", Path("/fake/home"))
-    assert len(rendered) == 8
+    assert len(rendered) == 9
     for filename, text in rendered.items():
         assert filename.endswith(".plist")
         assert not filename.endswith(".plist.tmpl")
@@ -176,7 +176,7 @@ def test_dry_run_renders_but_writes_and_loads_nothing(monkeypatch) -> None:
 
     rendered = schedule.install(dry_run=True, uv_bin="/fake/uv")
 
-    assert len(rendered) == 8
+    assert len(rendered) == 9
     assert writes == []
     assert loads == []
 
@@ -193,7 +193,7 @@ def test_real_run_writes_and_loads_each_job(monkeypatch, tmp_path) -> None:
     written_dir = tmp_path / "LaunchAgents"
     for filename in rendered:
         assert (written_dir / filename).read_text() == rendered[filename]
-    assert len(loads) == 16  # unload then load, per job
+    assert len(loads) == 2 * len(rendered)  # unload then load, per job
     assert all(cmd[:2] in (["launchctl", "unload"], ["launchctl", "load"]) for cmd in loads)
 
 

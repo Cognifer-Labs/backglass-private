@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
+  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.backglass.app-update</string>
+
+  <!-- Absolute paths: launchd has no shell and no useful PATH. -->
+  <key>WorkingDirectory</key><string>{{REPO_DIR}}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{UV_BIN}}</string>
+    <string>run</string>
+    <string>backglass</string>
+    <string>app-update</string>
+  </array>
+
+  <!-- StartInterval, not StartCalendarInterval, and not by preference: the calendar
+       agent on this machine evaluates fire times in the zone the Mac booted in and
+       cannot be corrected without a restart, which is how the plan job came to run at
+       17:15 for weeks. An interval counts seconds, and seconds are the same in every
+       zone. Hourly because the work is almost always a hash comparison that costs
+       milliseconds; the nine-minute rebuild only happens when the bundle actually
+       differs from the checkout, and never while the app is open.
+       (No double hyphen appears in this comment on purpose: XML forbids it.) -->
+  <key>StartInterval</key><integer>3600</integer>
+
+  <!-- False deliberately: a login is when the owner is most likely to open the app, and
+       a rebuild racing that would defer anyway. The first interval is soon enough. -->
+  <key>RunAtLoad</key><false/>
+
+  <key>StandardOutPath</key><string>{{REPO_DIR}}/data/app-update.log</string>
+  <key>StandardErrorPath</key><string>{{REPO_DIR}}/data/app-update.err</string>
+</dict>
+</plist>

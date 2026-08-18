@@ -702,6 +702,42 @@ def state_command(
             typer.echo(f"      via {claim['how']}")
 
 
+@app.command("app-update")
+def app_update_command(
+    check: Annotated[
+        bool, typer.Option("--check", help="Say what would happen; build nothing")
+    ] = False,
+    now: Annotated[
+        bool,
+        typer.Option("--now", help="Quit a running app, install, and start it again"),
+    ] = False,
+) -> None:
+    """Rebuild and reinstall the desktop app when the checkout has moved past it.
+
+    The app freezes its Python, templates and CSS at build time, so every merge leaves
+    /Applications behind the code until someone rebuilds by hand — and nothing said so
+    until `state` learned to hash the frozen surfaces. This is that check on a timer,
+    with the rebuild attached.
+
+    It builds only when the bundle demonstrably differs from the checkout, refuses a
+    dirty tree, and defers while the app is open. `--now` overrides the last of those.
+    """
+    from backglass import appupdate
+
+    result = appupdate.run(now=now, check_only=check)
+    lead = "would rebuild: " if check and result.decision.build else ""
+    typer.echo(lead + result.decision.reason)
+    for surface in result.decision.stale[:8]:
+        typer.echo(f"  · {surface}")
+    if len(result.decision.stale) > 8:
+        typer.echo(f"  · … {len(result.decision.stale) - 8} more")
+    if result.installed:
+        typer.echo(f"installed; previous app kept at {result.backup}")
+    for note in result.notes:
+        typer.echo(f"  {note}")
+    raise typer.Exit(result.exit_code)
+
+
 @app.command("purge-boundary")
 def purge_boundary(
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Report, delete nothing")] = False,
