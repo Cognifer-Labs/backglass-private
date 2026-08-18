@@ -268,7 +268,12 @@ def _prompts(conn: sqlite3.Connection, state: State) -> None:
     stamps: dict[str, str] = {}
     for path in sorted(prompt_mod.PROMPTS_DIR.glob("*.md")):
         try:
-            stamps[path.stem] = prompt_mod.load(path.stem).stamp
+            # Every stamp the file answers for: the current version plus its
+            # `compatible:` list. A row stamped with a compatible old version is done
+            # by that prompt's own declaration, so the citation check below must not
+            # call it missing — @9 rows under a v10 file are the designed state, not
+            # an edited-under-rows accident.
+            stamps[path.stem] = ",".join(prompt_mod.load(path.stem).stamps)
         except Exception as exc:  # noqa: BLE001 - a malformed prompt is itself the news
             stamps[path.stem] = f"unreadable: {exc}"
     state.add("prompts", "on_disk",
@@ -686,7 +691,11 @@ def verdicts(state: State, conn: sqlite3.Connection, settings: Settings) -> list
 
     # A version the ledger has extracted with but that is no longer on disk: the prompt
     # was edited or renamed under rows that cite it, so nothing can reproduce them.
-    on_disk_versions = set((_value(state, "prompts", "on_disk") or {}).values())
+    on_disk_versions = {
+        stamp
+        for joined in (_value(state, "prompts", "on_disk") or {}).values()
+        for stamp in str(joined).split(",")
+    }
     ledger_versions = [
         v for v in (_value(state, "prompts", "versions_in_the_ledger") or [])
         if v and v != "manual"
