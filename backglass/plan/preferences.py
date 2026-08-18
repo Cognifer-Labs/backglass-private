@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 #: The fact key `lanes()` reads. Written like any fact:
 #:   backglass memory set preferences planner.priority "school: class > social"

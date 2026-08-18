@@ -240,6 +240,34 @@ def _peak_slot(cap: Capacity, settings: Settings, day: date) -> Slot | None:
     return None
 
 
+def tomorrow_preview(conn: sqlite3.Connection, day: date) -> list[str]:
+    """What the day AFTER holds, as lines a note or a banner can carry.
+
+    The morning plan answers "what do I do today" and stayed silent about the 8am exam
+    tomorrow — which is decided today, by leaving room to prepare. Confirmed
+    engagements only (a proposal is not yet an obligation) and open commitments due
+    tomorrow; both compared on substr(…, 1, 10) for the usual mixed-shape reason.
+    """
+    tomorrow = (day + timedelta(days=1)).isoformat()
+    lines: list[str] = []
+    for r in conn.execute(
+        "SELECT what, starts_at FROM engagement WHERE user_id = ?"
+        " AND status = 'confirmed' AND starts_at IS NOT NULL"
+        " AND substr(starts_at, 1, 10) = ?"
+        " ORDER BY substr(starts_at, 1, 10), starts_at, id",
+        (USER_ID, tomorrow),
+    ):
+        clock = str(r["starts_at"])[11:16]
+        lines.append(f"{r['what']} at {clock}" if clock else str(r["what"]))
+    for r in conn.execute(
+        "SELECT what FROM commitment WHERE user_id = ? AND status = 'open'"
+        " AND due_at IS NOT NULL AND substr(due_at, 1, 10) = ? ORDER BY id",
+        (USER_ID, tomorrow),
+    ):
+        lines.append(f'"{r["what"]}" due')
+    return lines
+
+
 def inputs_fingerprint(
     conn: sqlite3.Connection,
     settings: Settings,
@@ -316,6 +344,13 @@ def propose(
     if change:
         # P15. The brief leads with this; the plan records it so the brief can.
         proposal.notes.append(f"Timezone changed {change[0]} → {change[1]}.")
+
+    ahead = tomorrow_preview(conn, day)
+    if ahead:
+        # Placed before the plannable early-returns on purpose: a fully-booked day is
+        # exactly the day that needs to hear the 8am exam is tomorrow.
+        shown = "; ".join(ahead[:3]) + ("…" if len(ahead) > 3 else "")
+        proposal.notes.append(f"Tomorrow holds: {shown} — leave room to prepare.")
 
     # Fixed events sit where they sit (docs/04 §1.5 rule 1). The whole day's picture,
     # not the window-clipped list capacity computed with: a 7:15pm dinner and a 7:30am

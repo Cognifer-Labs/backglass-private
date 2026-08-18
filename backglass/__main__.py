@@ -882,6 +882,18 @@ def plan(
         typer.echo(f"{day}: already planned — nothing to do")
         return
 
+    # The morning ask: refresh the detectors BEFORE proposing, so a conflict that
+    # exists this morning is a question this morning — not whenever the owner happens
+    # to open /ask. Best-effort (rule 5): a detector down must not cost the plan.
+    waiting = 0
+    try:
+        from backglass import questions as questions_mod
+
+        questions_mod.refresh(conn, settings, day)
+        waiting = len(questions_mod.open_questions(conn))
+    except Exception:  # noqa: BLE001 — rule 5: degrade, never block
+        pass
+
     proposal = planner.propose(
         conn,
         settings,
@@ -915,6 +927,11 @@ def plan(
         typer.echo(f"  {start}–{end}  {block['title']}{mark}")
     for note in proposal.notes:
         typer.echo(f"  · {note}")
+    if waiting:
+        typer.echo(
+            f"  · {waiting} question(s) waiting — answer at /ask; "
+            "the plan is planned AROUND them until you do"
+        )
     _echo_overflow(proposal, all_overflow)
 
 

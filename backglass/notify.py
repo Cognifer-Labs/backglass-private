@@ -63,7 +63,7 @@ def run(
         return []
 
     sent: list[Sent] = []
-    for decider in (_due_today, _questions_waiting):
+    for decider in (_due_today, _questions_waiting, _tomorrow_prep):
         try:
             candidate = decider(conn, now)
         except Exception:  # noqa: BLE001 — rule 5: degrade, never block
@@ -194,6 +194,31 @@ def _questions_waiting(
         "digest",
         f"{n} question(s) waiting",
         "Backglass is planning around them until you answer — /ask",
+    )
+
+
+def _tomorrow_prep(
+    conn: sqlite3.Connection, now: datetime
+) -> tuple[str, str, str, str] | None:
+    """What tomorrow holds, said today — preparing is a today activity.
+
+    An 8am exam tomorrow is decided this evening: the banner exists so the owner hears
+    it while there is still a today to prepare in, not at 7:40 the next morning. Same
+    lines the plan's own "Tomorrow holds" note carries, so the two surfaces cannot
+    disagree about what is coming.
+    """
+    from backglass.plan import planner
+
+    lines = planner.tomorrow_preview(conn, now.date())
+    if not lines:
+        return None
+    shown = "; ".join(lines[:NAME_LIMIT])
+    more = f" (+{len(lines) - NAME_LIMIT} more)" if len(lines) > NAME_LIMIT else ""
+    return (
+        "tomorrow-prep",
+        "digest",
+        f"Tomorrow: {len(lines)} thing(s) to be ready for",
+        f"{shown}{more}",
     )
 
 

@@ -156,6 +156,15 @@ def _fill_plan(
     from backglass.goals import health
     from backglass.plan import planner
 
+    # The deferred morning gets the same morning ask the 05:45 job now runs: the plan
+    # and its questions arrive together, whenever "morning" actually happens.
+    try:
+        from backglass import questions
+
+        questions.refresh(conn, settings, day)
+    except Exception:  # noqa: BLE001 — rule 5: a detector down must not cost the plan
+        pass
+
     proposal = planner.propose(
         conn,
         settings,
