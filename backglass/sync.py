@@ -28,6 +28,7 @@ from typing import Any
 from backglass import chats as chats_mod
 from backglass import contacts as contacts_mod
 from backglass import context as context_mod
+from backglass import facts as facts_mod
 from backglass.config import Settings
 from backglass.connectors import base, credentials
 from backglass.connectors.base import Connector
@@ -779,7 +780,11 @@ def _extract_pass(
     pending = list(
         conn.execute(
             query("pending_extraction_unbatched"),
-            {"user_id": USER_ID, "compatible_versions": ",".join(prompt.stamps), "cutoff": cutoff},
+            {
+                "user_id": USER_ID,
+                "compatible_versions": ",".join(prompt.stamps),
+                "cutoff": cutoff,
+            },
         )
     )
     if not pending:
@@ -886,6 +891,16 @@ def _extract_pass(
                 occurred_at=str(item["occurred_at"]),
                 ledger=ledger,
                 settings=settings,
+            )
+            # Third record type from the same read (v10): durable facts, through the
+            # poison gate in facts.apply_extracted. Same transaction for the same
+            # reason as the two above — one response is one read of one message.
+            facts_mod.apply_extracted(
+                conn,
+                settings,
+                extraction.facts,
+                source_item_id=item_id,
+                body_text=str(item.get("body_text") or ""),
             )
             ledger.record_extraction_version(item_id, prompt.stamp)
         except Exception as exc:  # noqa: BLE001 - rule 5: degrade, never block

@@ -331,7 +331,7 @@ CREATE TABLE fact (
   status         TEXT    NOT NULL DEFAULT 'active', -- active|superseded|retracted
   superseded_by  INTEGER REFERENCES fact(id),
   created_at     TEXT    NOT NULL
-);
+, confidence REAL);
 
 CREATE INDEX idx_fact_active ON fact(user_id, subject, key) WHERE status = 'active';
 

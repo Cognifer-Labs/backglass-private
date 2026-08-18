@@ -15,6 +15,30 @@
         <span class="kbd">backglass memory set &lt;subject&gt; &lt;key&gt; &lt;value&gt;</span>.</p>
     {% endif %}
 
+    {% if pending %}
+      <p class="lane">proposed by extraction — not yet part of memory</p>
+      {% for f in pending %}
+        <div class="row" id="proposed-{{ f.fact_id }}">
+          <span class="time">{{ f.subject }}/{{ f.key }}</span>
+          <div class="grow">
+            <p class="b1">{{ f.value }}</p>
+            <p class="b2">{% if f.note %}&ldquo;{{ f.note }}&rdquo; · {% endif -%}
+              {% if f.confidence is not none %}confidence {{ '%.2f' % f.confidence }} · {% endif -%}
+              {% if f.source_item_id %}<a href="/source/{{ f.source_item_id }}">source</a> · {% endif -%}
+              {{ f.created_at[:10] }}</p>
+          </div>
+          <form hx-post="/memory/{{ f.fact_id }}/accept" hx-target="#memory"
+                hx-swap="outerHTML" style="margin:0">
+            <button class="lnk" type="submit">Accept</button>
+          </form>
+          <form hx-post="/memory/{{ f.fact_id }}/reject" hx-target="#memory"
+                hx-swap="outerHTML" style="margin:0">
+            <button class="lnk" type="submit">Reject</button>
+          </form>
+        </div>
+      {% endfor %}
+    {% endif %}
+
     {% for subject, rows in subjects.items() %}
       <p class="lane">{{ subject }}</p>
       {% for f in rows %}

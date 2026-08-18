@@ -3762,6 +3762,9 @@ def memory_list(ctx: typer.Context) -> None:
     migrate(conn)
     current = None
     rows = facts.recall(conn)
+    waiting = len(facts.proposed(conn))
+    if waiting:
+        typer.echo(f"{waiting} proposed fact(s) waiting — `backglass memory proposed`")
     if not rows:
         typer.echo("nothing remembered yet")
         return
@@ -3832,6 +3835,62 @@ def memory_forget(fact_id: int) -> None:
         raise typer.Exit(code=1) from exc
     conn.commit()
     typer.echo(f"fact {fact_id} retracted")
+
+
+@memory_app.command("proposed")
+def memory_proposed() -> None:
+    """Fact candidates the pipeline extracted but may not write on its own.
+
+    Nothing here reaches owner_context or any model call until accepted — the poison
+    gate for memory. Accept with `backglass memory accept <id>`, discard with
+    `backglass memory reject <id>`.
+    """
+    from backglass import facts
+
+    conn = _open(get_settings())
+    migrate(conn)
+    rows = facts.proposed(conn)
+    if not rows:
+        typer.echo("nothing proposed — the pipeline has no facts waiting on you")
+        return
+    for f in rows:
+        conf = f"conf {f.confidence:.2f}" if f.confidence is not None else "no confidence"
+        src = f" · source item #{f.source_item_id}" if f.source_item_id else ""
+        typer.echo(f"  #{f.fact_id} {f.subject}/{f.key}: {f.value}  ({conf}{src})")
+        if f.note:
+            typer.echo(f'      "{f.note}"')
+
+
+@memory_app.command("accept")
+def memory_accept(fact_id: int) -> None:
+    """Accept a proposed fact into active memory (supersedes any current value)."""
+    from backglass import facts
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    try:
+        new_id = facts.accept(conn, settings, fact_id)
+    except facts.FactError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    typer.echo(f"accepted as fact #{new_id}")
+
+
+@memory_app.command("reject")
+def memory_reject(fact_id: int) -> None:
+    """Discard a proposed fact. It keeps its row (retracted), and a later message
+    restating it may propose it again — wrong in June can be true in September."""
+    from backglass import facts
+
+    conn = _open(get_settings())
+    migrate(conn)
+    try:
+        facts.reject(conn, fact_id)
+    except facts.FactError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(1) from exc
+    typer.echo("rejected")
 
 
 @memory_app.command("export")

@@ -351,6 +351,10 @@ def _knowledge_base(conn: sqlite3.Connection, settings: Settings, state: State) 
     )
     state.add("knowledge_base", "with_provenance",
               Claim(sourced, "active facts whose source_item_id is not NULL"))
+    state.add("knowledge_base", "proposed",
+              Claim(len(facts_mod.proposed(conn)),
+                    "fact WHERE status = 'proposed' — extraction candidates waiting on"
+                    " the owner, invisible to owner_context until accepted"))
     state.add("knowledge_base", "config_drift",
               Claim(facts_mod.config_drift(conn, settings), "facts.config_drift"))
     context = facts_mod.owner_context(conn)

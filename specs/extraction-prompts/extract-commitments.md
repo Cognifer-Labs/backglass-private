@@ -14,7 +14,16 @@ output: strict JSON, schema-validated, one retry on malformed
      still reading "can you send that to Priya" without knowing who Priya is. Rules for
      it sit in the static half (cacheable); the block itself is dynamic. `compatible:`
      names v9 because the change is additive — v9's rows stay done, and re-extraction
-     is the owner's deliberate call, not this bump's side effect. -->
+     is the owner's deliberate call, not this bump's side effect.
+
+     Same bump: the read now also returns durable FACTS — the owner's knowledge base
+     was hand-typed only, zero of twenty-three facts pipeline-written, while the
+     pipeline read nine thousand items. Third question, same call, same one-read
+     price (the v4 argument for engagements, verbatim). Candidates are gated in
+     facts.apply_extracted: verified citation + confidence over the threshold lands
+     active, anything else waits as proposed — because a fact feeds owner_context,
+     which feeds every future call, a wrong one compounds in a way a wrong
+     commitment cannot. -->
 
 <!-- v9 (2026-08-10): three placeholders moved, no instruction reworded. `Prompt.split`
      marks everything before the first placeholder as cacheable, and the owner line sat at
@@ -66,7 +75,8 @@ is worth spending.
 ## Prompt
 
 ```
-Extract two kinds of record from this message: commitments and engagements.
+Extract three kinds of record from this message: commitments, engagements,
+and durable facts.
 
 A commitment is a specific obligation with an owner. Two directions:
   i_owe        the user promised to do or provide something
@@ -77,6 +87,15 @@ conference, an interview, office hours, a call, a move-in slot, a lab check-in.
 Nobody owes anybody an artifact; the substance is being there. Other people are
 usual but not required: an appointment the user must keep alone is still an
 engagement, because what it occupies is an hour of their day.
+
+A durable fact is a small claim about the user's life that will still be true
+and useful months from now — which college they enrolled at, which dorm they
+were assigned, a program they joined or declined, who their advisor is, a
+standing preference they state ("I lift Tuesday and Thursday mornings"). Not
+tasks, not one-off events, not other people's news, not anything the message
+only implies. If it would belong in a biography sidebar rather than a to-do
+list, it is a fact; when in doubt, return nothing — a missed fact costs one
+re-read, a wrong fact poisons every future read.
 
 For each commitment, return:
   direction          i_owe | owed_to_me
@@ -105,6 +124,22 @@ For each engagement, return:
                      8601 or null if the message does not say
   confidence         0.0 to 1.0
   evidence           the exact sentence you extracted it from, verbatim
+
+For each fact, return:
+  subject            one of: identity | education | housing | preferences |
+                     people | family | work | health | orgtruth | other
+  key                short kebab-case name within that lane ("dorm",
+                     "advisor", "gym-days")
+  value              the claim, one line, concrete, self-contained
+  confidence         0.0 to 1.0
+  evidence           the exact sentence you extracted it from, verbatim
+
+FACTS, PRECISELY
+  Only about the user's own life. The BACKGROUND block shows what is already
+  known — do not return a fact it already states unless this message CHANGES
+  it (a new dorm, a withdrawal, a decision reversed). A changed fact is
+  exactly what you should return: the ledger supersedes, it never edits.
+  Never invent a subject outside the list; use "other" if none fits.
 
 SOCIAL OR PROFESSIONAL
   social         friends, family, anything whose purpose is the company
@@ -274,6 +309,15 @@ Subject: {{title}}
       "replaces_start_at": null,
       "confidence": 0.88,
       "evidence": "Friday works — 7pm at Ravi's on 5th, Sam's coming too."
+    }
+  ],
+  "facts": [
+    {
+      "subject": "housing",
+      "key": "dorm",
+      "value": "Assigned to Willow Hall room 502 for fall 2026",
+      "confidence": 0.95,
+      "evidence": "Your housing assignment is confirmed: Willow Hall, Room 502."
     }
   ]
 }

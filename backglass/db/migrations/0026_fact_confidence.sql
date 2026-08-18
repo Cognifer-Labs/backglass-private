@@ -1,0 +1,17 @@
+-- The pipeline learns to write the knowledge base (tasks/todo.md increment 2).
+--
+-- Extraction v10 emits fact candidates beside commitments and engagements. A candidate
+-- whose evidence sentence verifies against the source body AND clears the confidence
+-- threshold lands `active` through the same supersession path the CLI uses; anything
+-- hesitant or unverifiable lands `proposed` — a status the readers already ignore,
+-- because recall() filters on 'active'. That filter is the poison gate: an extracted
+-- fact feeds owner_context, owner_context feeds every future model call, so a wrong
+-- fact would compound. Nothing proposed reaches a prompt until the owner accepts it.
+--
+-- `confidence` is the model's own number, NULL for facts typed by hand — a hand-typed
+-- fact is not "confidence 1.0", it is simply not an extraction, and pretending
+-- otherwise would let a threshold change reclassify the owner's own words.
+--
+-- status gains 'proposed' beside active|superseded|retracted; TEXT column, no
+-- constraint to alter.
+ALTER TABLE fact ADD COLUMN confidence REAL;

@@ -26,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from backglass import context as context_mod
+from backglass import facts as facts_mod
 from backglass.config import Settings
 from backglass.connectors.base import Connector
 from backglass.db import now_iso, query
@@ -315,7 +316,8 @@ def _collect(
         for custom_id, item_id, message in sorted(succeeded, key=_occurred):
             batch_usd += pricing.cost_usd(str(row["model"]), message.usage) * DISCOUNT
             current = conn.execute(
-                "SELECT occurred_at, extraction_version FROM source_item WHERE id = ?",
+                "SELECT occurred_at, extraction_version, body_text FROM source_item"
+                " WHERE id = ?",
                 (item_id,),
             ).fetchone()
             if current is None:
@@ -369,6 +371,13 @@ def _collect(
                     occurred_at=str(current["occurred_at"]),
                     ledger=ledger,
                     settings=settings,
+                )
+                facts_mod.apply_extracted(
+                    conn,
+                    settings,
+                    extraction.facts,
+                    source_item_id=item_id,
+                    body_text=str(current["body_text"] or ""),
                 )
                 ledger.record_extraction_version(item_id, str(row["prompt_stamp"]))
                 conn.execute(

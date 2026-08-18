@@ -37,7 +37,14 @@ def build_router(
         return templates.TemplateResponse(
             request,
             "memory.html",
-            {"subjects": subjects, "count": len(all_facts), "settings": settings},
+            {
+                "subjects": subjects,
+                "count": len(all_facts),
+                # Extraction candidates behind the poison gate: visible here,
+                # invisible to owner_context until accepted (rule 2 for memory).
+                "pending": facts.proposed(conn),
+                "settings": settings,
+            },
         )
 
     @router.get("/memory", response_class=HTMLResponse)
@@ -57,6 +64,26 @@ def build_router(
             facts.remember(conn, settings, subject, key, value, note=note, source="manual")
         except facts.FactError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
+        return page(request, conn)
+
+    @router.post("/memory/{fact_id}/accept", response_class=HTMLResponse)
+    def accept(
+        fact_id: RowId, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+    ) -> Any:
+        try:
+            facts.accept(conn, settings, fact_id)
+        except facts.FactError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        return page(request, conn)
+
+    @router.post("/memory/{fact_id}/reject", response_class=HTMLResponse)
+    def reject(
+        fact_id: RowId, request: Request, conn: sqlite3.Connection = Depends(get_conn)
+    ) -> Any:
+        try:
+            facts.reject(conn, fact_id)
+        except facts.FactError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
         return page(request, conn)
 
     @router.post("/memory/{fact_id}/forget", response_class=HTMLResponse)

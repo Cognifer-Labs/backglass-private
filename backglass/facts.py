@@ -52,8 +52,12 @@ def remember(
     note: str | None = None,
     source: str = "manual",
     source_item_id: int | None = None,
+    confidence: float | None = None,
 ) -> int:
-    """Store a fact; the previous active fact for this (subject, key) is superseded."""
+    """Store a fact; the previous active fact for this (subject, key) is superseded.
+
+    `confidence` is the model's number and only an extraction has one — NULL for a
+    hand-typed fact, which is not "1.0", it is simply not an extraction (0026)."""
     subject, key, value = subject.strip().lower(), key.strip().lower(), value.strip()
     if not subject or not key or not value:
         raise FactError("a fact needs a subject, a key and a value")
@@ -62,7 +66,7 @@ def remember(
 
     cur = conn.execute(
         "INSERT INTO fact (user_id, subject, key, value, note, source, source_item_id,"
-        " status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'active', ?)",
+        " confidence, status, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)",
         (
             USER_ID,
             subject,
@@ -71,6 +75,7 @@ def remember(
             (note or "").strip() or None,
             source,
             source_item_id,
+            confidence,
             timezones.local_now_iso(settings),
         ),
     )
@@ -107,6 +112,177 @@ def recall(conn: sqlite3.Connection, subject: str | None = None) -> list[Fact]:
         )
         for r in rows
     ]
+
+
+#: Lanes the extractor may write into — the closed list the prompt states. A model
+#: inventing lanes forks the knowledge base into near-duplicates no reader groups
+#: together; anything that fits nowhere lands in "other", visibly.
+EXTRACTABLE_SUBJECTS = (
+    "identity", "education", "housing", "preferences", "people", "family",
+    "work", "health", "orgtruth", "other",
+)
+
+#: What an extracted fact must clear to land active without the owner's click. Below
+#: it (or with an unverifiable citation) the candidate waits as `proposed` — visible
+#: on the Memory page, invisible to owner_context, harmless until accepted.
+AUTO_ACCEPT_CONFIDENCE = 0.8
+
+
+def apply_extracted(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    candidates: list[Any],
+    *,
+    source_item_id: int,
+    body_text: str,
+) -> int:
+    """Write extraction v10's fact candidates through the poison gate. Returns writes.
+
+    The gate, in order:
+
+    1. **Unknown lane → proposed.** The prompt states the closed list; a candidate
+       outside it is a candidate that did not follow instructions, which is itself
+       evidence about the rest of it.
+    2. **Citation check.** `evidence` must appear verbatim in the source body
+       (whitespace-normalized), the same rule recheck applies before closing a
+       commitment. A model that cannot quote the sentence it read does not get to
+       write memory.
+    3. **Confidence.** At or above AUTO_ACCEPT_CONFIDENCE, and with 1–2 passed, the
+       fact lands `active` through remember() — supersession included, provenance
+       attached. Otherwise `proposed`.
+    4. **Same-value re-emission is a no-write** (rule 3): a re-extraction that says
+       what the ledger already says leaves no row behind, active or proposed.
+
+    Why the asymmetry: a missing fact costs one re-read; a wrong active fact rides
+    owner_context into every future model call and compounds. Proposed is the cheap
+    failure mode, so everything doubtful lands there.
+    """
+    flat = " ".join(str(body_text or "").split()).lower()
+    written = 0
+    for cand in candidates:
+        subject = str(cand.subject).strip().lower()
+        key = str(cand.key).strip().lower()
+        value = str(cand.value).strip()
+        if not subject or not key or not value:
+            continue
+
+        current = conn.execute(
+            "SELECT value FROM fact WHERE user_id = ? AND subject = ? AND key = ?"
+            " AND status = 'active'",
+            (USER_ID, subject, key),
+        ).fetchone()
+        if current is not None and str(current["value"]).strip() == value:
+            continue  # rule 3: the ledger already says this
+        pending = conn.execute(
+            "SELECT 1 FROM fact WHERE user_id = ? AND subject = ? AND key = ?"
+            " AND value = ? AND status = 'proposed'",
+            (USER_ID, subject, key, value),
+        ).fetchone()
+        if pending is not None:
+            continue  # already waiting on the owner; asking twice is nagging
+
+        quote = " ".join(str(cand.evidence or "").split()).lower()
+        cited = bool(quote) and quote in flat
+        confident = float(cand.confidence) >= AUTO_ACCEPT_CONFIDENCE
+        known_lane = subject in EXTRACTABLE_SUBJECTS
+
+        if cited and confident and known_lane:
+            remember(
+                conn, settings, subject, key, value,
+                note=str(cand.evidence).strip(),
+                source="extraction",
+                source_item_id=source_item_id,
+                confidence=float(cand.confidence),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO fact (user_id, subject, key, value, note, source,"
+                " source_item_id, confidence, status, created_at)"
+                " VALUES (?, ?, ?, ?, ?, 'extraction', ?, ?, 'proposed', ?)",
+                (
+                    USER_ID, subject, key, value,
+                    str(cand.evidence or "").strip() or None,
+                    source_item_id, float(cand.confidence),
+                    timezones.local_now_iso(settings),
+                ),
+            )
+        written += 1
+    return written
+
+
+@dataclass(frozen=True)
+class Proposed:
+    fact_id: int
+    subject: str
+    key: str
+    value: str
+    note: str | None
+    confidence: float | None
+    source_item_id: int | None
+    created_at: str
+
+
+def proposed(conn: sqlite3.Connection) -> list[Proposed]:
+    """Candidates waiting on the owner, oldest first — the review queue for memory."""
+    rows = conn.execute(
+        "SELECT id, subject, key, value, note, confidence, source_item_id, created_at"
+        " FROM fact WHERE user_id = ? AND status = 'proposed' ORDER BY id",
+        (USER_ID,),
+    ).fetchall()
+    return [
+        Proposed(
+            fact_id=int(r["id"]),
+            subject=str(r["subject"]),
+            key=str(r["key"]),
+            value=str(r["value"]),
+            note=r["note"],
+            confidence=r["confidence"],
+            source_item_id=r["source_item_id"],
+            created_at=str(r["created_at"]),
+        )
+        for r in rows
+    ]
+
+
+def accept(conn: sqlite3.Connection, settings: Settings, fact_id: int) -> int:
+    """Owner accepts a proposed fact: it becomes active through the supersession path.
+
+    Re-written via remember() rather than UPDATEd to active, so the previous active
+    fact for the (subject, key) is superseded exactly as a CLI write would — one code
+    path for "a fact becomes current", whoever triggers it. The proposed row itself is
+    marked superseded by the accepted one: history survives, and re-accepting is inert.
+    """
+    row = conn.execute(
+        "SELECT subject, key, value, note, source_item_id, confidence FROM fact"
+        " WHERE id = ? AND user_id = ? AND status = 'proposed'",
+        (fact_id, USER_ID),
+    ).fetchone()
+    if row is None:
+        raise FactError(f"no proposed fact {fact_id}")
+    new_id = remember(
+        conn, settings, str(row["subject"]), str(row["key"]), str(row["value"]),
+        note=row["note"], source="extraction",
+        source_item_id=row["source_item_id"], confidence=row["confidence"],
+    )
+    conn.execute(
+        "UPDATE fact SET status = 'superseded', superseded_by = ? WHERE id = ?",
+        (new_id, fact_id),
+    )
+    return new_id
+
+
+def reject(conn: sqlite3.Connection, fact_id: int) -> None:
+    """Owner rejects a candidate — retracted, kept, and never re-proposed: the
+    same-value guard in apply_extracted only checks active and proposed rows, so add
+    nothing here; a rejected value CAN come back if a later message re-states it,
+    because a fact wrong in June can be true in September."""
+    cur = conn.execute(
+        "UPDATE fact SET status = 'retracted' WHERE id = ? AND user_id = ?"
+        " AND status = 'proposed'",
+        (fact_id, USER_ID),
+    )
+    if cur.rowcount == 0:
+        raise FactError(f"no proposed fact {fact_id}")
 
 
 def forget(conn: sqlite3.Connection, fact_id: int) -> None:

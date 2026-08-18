@@ -114,6 +114,30 @@ class ExtractedEngagement(Strict):
     evidence: str
 
 
+class ExtractedFact(Strict):
+    """A durable claim about the owner's life, as the model returns it.
+
+    The knowledge base was hand-typed only until v10: a pipeline that had read nine
+    thousand items had contributed zero facts (state's `with_provenance: 0`). This is
+    the writeback — but a fact feeds `owner_context`, which feeds every future model
+    call, so unlike a commitment a wrong fact COMPOUNDS. The citation gate in
+    facts.apply_extracted decides whether a candidate may become active on its own or
+    waits as `proposed` for the owner; the model only ever nominates.
+    """
+
+    #: Kebab lane, from the closed list in the prompt (identity, education, housing,
+    #: preferences, people, family, work, health, orgtruth, other). Closed because a
+    #: model inventing lanes forks the knowledge base into near-duplicates no reader
+    #: groups together.
+    subject: str
+    key: str
+    value: str
+    #: The exact sentence, verbatim — rule 1 at the sentence level, and what the
+    #: citation gate verifies against the body before anything lands active.
+    evidence: str
+    confidence: float = Field(ge=0.0, le=1.0)
+
+
 class CommitmentExtraction(Strict):
     """One tier-2 read produces both record types.
 
@@ -127,6 +151,10 @@ class CommitmentExtraction(Strict):
 
     commitments: list[ExtractedCommitment] = Field(default_factory=list)
     engagements: list[ExtractedEngagement] = Field(default_factory=list)
+    #: v10: durable facts, same call — a third question over the same text for the
+    #: same one-read price. Old (v9) responses simply have none; the default keeps
+    #: every stored fixture and batch reply parseable.
+    facts: list[ExtractedFact] = Field(default_factory=list)
 
 
 class RecheckVerdict(Strict):

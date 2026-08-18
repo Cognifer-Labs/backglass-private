@@ -242,6 +242,9 @@ FROZEN_CHECKSUMS = {
     "0025_commitment_recheck.sql": (
         "2fccf3183ebdbeb7be02291f95eacf7f5b0f324e8b6307822aa7780e0569070b"
     ),
+    "0026_fact_confidence.sql": (
+        "cbb993bb4badd33490908c0806c481aaabfe471098bfe7ebea82b61cd322bb98"
+    ),
 }
 
 
