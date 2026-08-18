@@ -431,6 +431,17 @@ def sync_command(
         # replaces anything — see backglass/catchup.py.
         for produced in catchup.run(conn, settings):
             typer.echo(f"caught up {produced.surface} for {produced.day}: {produced.detail}")
+        # The mirror of the net: catchup fills the plan that is missing, replan
+        # refreshes the plan that exists when the day has changed under it. Proposed
+        # plans are regenerated; accepted plans only get a knock. Best-effort (rule 5).
+        try:
+            from backglass.plan import replan as replan_mod
+
+            replanned = replan_mod.run(conn, settings)
+            if replanned is not None:
+                typer.echo(f"plan {replanned.action} for {replanned.day}: {replanned.detail}")
+        except Exception:  # noqa: BLE001 — rule 5
+            pass
         # Auto-recognition runs where the data arrives, not only when the owner opens
         # /ask: a sync that ingested the evidence is the moment a conflict, a stale
         # commitment or a contradiction becomes detectable. Best-effort (rule 5) — a

@@ -248,6 +248,9 @@ FROZEN_CHECKSUMS = {
     "0027_notification.sql": (
         "31fce64d742cb8c9394c6209b49546839fba657f4b0402cfc5b908561d91a368"
     ),
+    "0028_plan_fingerprint.sql": (
+        "978932a6b624a16688131d8f68c98d15f100bd616d43b21757be020a6b80d9e1"
+    ),
 }
 
 

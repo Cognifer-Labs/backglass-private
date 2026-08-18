@@ -70,6 +70,9 @@ class Proposal:
     overflow: list[Candidate] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     protected_placed: bool = False
+    #: Hash of what this plan was built from (inputs_fingerprint, 0028). Stamped by
+    #: propose(), persisted beside the plan, compared by the replanner.
+    fingerprint: str = ""
     #: P3's "list only what is due", as a list rather than as an adjective on a pile of
     #: forty-eight. On a day the planner declines to plan, this is the subset a reader
     #: must not miss: overdue, or due today. It is a view of `overflow`, never a second
@@ -237,6 +240,49 @@ def _peak_slot(cap: Capacity, settings: Settings, day: date) -> Slot | None:
     return None
 
 
+def inputs_fingerprint(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    day: date,
+    at_risk_goals: set[int] | None = None,
+) -> str:
+    """A deterministic hash of everything a plan for `day` is built from.
+
+    Deliberately CLOCK-FREE: the `now` clamp is how a plan describes the hours that
+    are left, but two plans built at 05:45 and 14:00 from the same world must hash
+    the same, or every afternoon sync would report drift that is only the time
+    passing. What goes in: the candidate pool (ids, texts, minutes, dues, priority,
+    rollovers), the day's fixed events, the working window, the timezone, and the
+    owner's stated lanes. What a sync changes, this changes; what the clock changes,
+    it does not.
+    """
+    import hashlib
+    import json
+
+    pool = candidates(conn, settings, day, at_risk_goals or set())
+    tz = timezones.active_tz(settings, day)
+    events = capacity_mod.day_events(conn, settings, day)
+    prefs = preferences_mod.load(conn)
+    window = timezones.window_on(settings, day)
+    payload = {
+        "candidates": sorted(
+            (c.commitment_id, c.what, c.minutes, c.due_at or "", c.priority,
+             c.rollover_count, c.blocked_on_others)
+            for c in pool
+        ),
+        "events": sorted(
+            (e.starts_at.isoformat(), e.ends_at.isoformat(), e.title, e.kind)
+            for e in events
+        ),
+        "window": [t.isoformat() for t in window] if window else [],
+        "tz": tz,
+        "lanes": [[lane.name, list(lane.keywords)] for lane in prefs.lanes],
+    }
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()
+    ).hexdigest()[:16]
+
+
 def propose(
     conn: sqlite3.Connection,
     settings: Settings,
@@ -264,6 +310,7 @@ def propose(
         not_before=now if (now is not None and now.date() == day) else None,
     )
     proposal = Proposal(day=day, tz=cap.tz, capacity=cap)
+    proposal.fingerprint = inputs_fingerprint(conn, settings, day, at_risk_goals)
 
     change = timezones.changed_on(settings, day)
     if change:
@@ -434,7 +481,8 @@ def persist(conn: sqlite3.Connection, settings: Settings, proposal: Proposal) ->
     )
     conn.execute(
         "INSERT INTO day_plan (user_id, local_date, tz, capacity_minutes, planned_minutes, "
-        " overflow_count, generated_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed')",
+        " overflow_count, generated_at, status, inputs_fingerprint)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', ?)",
         (
             USER_ID,
             proposal.day.isoformat(),
@@ -443,6 +491,7 @@ def persist(conn: sqlite3.Connection, settings: Settings, proposal: Proposal) ->
             proposal.planned_minutes,
             len(proposal.overflow),
             now_iso(),
+            proposal.fingerprint or None,
         ),
     )
     plan_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])

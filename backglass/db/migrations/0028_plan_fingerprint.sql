@@ -1,0 +1,14 @@
+-- Dynamic replanning needs to know what a plan was BUILT FROM (todo.md increment 6).
+--
+-- `inputs_fingerprint` is a deterministic hash over the plan's inputs — the candidate
+-- pool, the day's fixed events, the working window, the timezone, the owner's stated
+-- lanes — computed clock-free, so a morning plan and an afternoon recomputation of
+-- the same world hash identically. When a sync changes that world (a new commitment
+-- lands, a plan moves, a preference changes), the stored hash stops matching and the
+-- replanner knows the plan describes a day that no longer exists.
+--
+-- The decided rule it enables: a plan still `proposed` is the system's and may be
+-- regenerated; an `accepted` plan is the owner's and only gets a knock (a plan-drift
+-- notification). NULL means "built before fingerprints existed" and is never treated
+-- as drift — old plans are not all suddenly stale on migration day.
+ALTER TABLE day_plan ADD COLUMN inputs_fingerprint TEXT;
