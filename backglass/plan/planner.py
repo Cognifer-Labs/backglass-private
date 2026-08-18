@@ -31,6 +31,7 @@ from backglass.db import now_iso
 from backglass.ledger import USER_ID
 from backglass.plan import capacity as capacity_mod
 from backglass.plan import estimates, timezones
+from backglass.plan import preferences as preferences_mod
 from backglass.plan.capacity import Capacity, Slot
 
 #: docs/04 §1.5. "Priority is derived, not entered."
@@ -147,25 +148,35 @@ def _is_an_ask(what: str) -> bool:
     )
 
 
-def order(items: list[Candidate]) -> list[Candidate]:
+def order(
+    items: list[Candidate], prefs: preferences_mod.Preferences | None = None
+) -> list[Candidate]:
     """docs/04 §1.5, everything after rule 1 (fixed events, which the planner cannot move).
 
     Rollover first (P10: "Rollover items appear at the top of the next day's proposal,
-    above newly selected work"), then asks-of-others, then derived priority, then age.
+    above newly selected work"), then asks-of-others, then derived priority, then the
+    owner's stated lanes (plan/preferences.py), then age. The lane sits INSIDE the
+    priority band on purpose: "school beats social" is a statement about what matters,
+    not a licence to plan next week's homework over today's overdue favour.
     """
+    lane_rank = prefs.rank if prefs is not None else (lambda _what: 0)
     return sorted(
         items,
         key=lambda c: (
             0 if c.rollover_count else 1,
             0 if c.blocked_on_others else 1,
             c.priority,
+            lane_rank(c.what),
             -c.age_days,
         ),
     )
 
 
 def select(
-    items: list[Candidate], cap: Capacity, settings: Settings
+    items: list[Candidate],
+    cap: Capacity,
+    settings: Settings,
+    prefs: preferences_mod.Preferences | None = None,
 ) -> tuple[list[Candidate], list[Candidate], list[Candidate]]:
     """P1 and P2. Returns (scheduled, small, overflow).
 
@@ -178,7 +189,7 @@ def select(
     small: list[Candidate] = []
     overflow: list[Candidate] = []
 
-    for item in order(items):
+    for item in order(items, prefs):
         minutes = max(1, item.minutes)
         if minutes > remaining:
             overflow.append(item)
@@ -281,7 +292,9 @@ def propose(
 
     if not cap.plannable:
         # P3. "Say the day is fully booked and list only what is due."
-        proposal.overflow = order(candidates(conn, settings, day, at_risk_goals or set()))
+        proposal.overflow = order(
+            candidates(conn, settings, day, at_risk_goals or set()), preferences_mod.load(conn)
+        )
         proposal.due_now = [c for c in proposal.overflow if c.priority <= PRIORITY_DUE_TODAY]
         if cap.window_closed:
             # The day was workable and is now over. Distinct from both neighbours: there
@@ -317,7 +330,12 @@ def propose(
         return proposal
 
     pool = candidates(conn, settings, day, at_risk_goals or set())
-    scheduled, small, overflow = select(pool, cap, settings)
+    prefs = preferences_mod.load(conn)
+    for warning in prefs.warnings:
+        # A preference silently ignored is worse than none — the owner believes it is
+        # being applied. Same register as the fragmented-calendar sentence.
+        proposal.notes.append(warning)
+    scheduled, small, overflow = select(pool, cap, settings, prefs)
     proposal.overflow = overflow
 
     protected = _peak_slot(cap, settings, day)

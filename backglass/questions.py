@@ -411,6 +411,67 @@ def _stale_commitments(
     return out
 
 
+#: Options for the protected-time question, matched exactly like the stale ones.
+PROTECTED_GIVE = "Give it the protected time this once"
+PROTECTED_HOLD = "The routine holds — it waits or overflows"
+
+
+def _protected_conflicts(
+    conn: sqlite3.Connection, settings: Settings, today: date
+) -> list[Question]:
+    """The goal's own example: school priority versus gym time, recognized, asked.
+
+    When something due today (or overdue) did not fit the day, and a configured
+    routine held at least that many minutes of it, the collision is between two things
+    the owner has stated — the obligation and the standing routine — and no date rule
+    can rank them. Never guessed: the planner keeps planning around routines until the
+    owner answers. Ask-once identity is (commitment, routine name), not the day — a
+    weekly gym slot colliding with the same problem set is one question, not one per
+    week (the same-guest lesson: a signal constant across instances belongs in the
+    identity, not asked repeatedly).
+    """
+    from backglass.plan import capacity as capacity_mod
+    from backglass.plan import planner, timezones
+
+    proposal = planner.propose(conn, settings, today)
+    urgent = [c for c in proposal.overflow if c.priority <= 1]  # overdue or due today
+    if not urgent:
+        return []
+    tz = timezones.active_tz(settings, today)
+    routines = [
+        e for e in capacity_mod.routine_events(settings, today, tz) if e.minutes > 0
+    ]
+    if not routines:
+        return []
+
+    out: list[Question] = []
+    for cand in urgent[:3]:
+        need = max(1, cand.minutes)
+        blocker = next((r for r in routines if r.minutes >= need), None)
+        if blocker is None:
+            continue
+        out.append(
+            Question(
+                kind="priority",
+                subject_key=f"protected|{cand.commitment_id}|{blocker.title.lower()}",
+                question=(
+                    f'"{cand.what}" is due and did not fit today, while '
+                    f"{blocker.title} holds {blocker.minutes}m. Which wins?"
+                ),
+                detail=(
+                    f"Did not fit: {cand.what} ({need}m, "
+                    f"{'overdue' if cand.priority == 0 else 'due today'})\n"
+                    f"Routine: {blocker.title} "
+                    f"{blocker.starts_at.strftime('%H:%M')}–"
+                    f"{blocker.ends_at.strftime('%H:%M')}\n"
+                    "The planner keeps planning around the routine until you answer."
+                ),
+                options=[PROTECTED_GIVE, PROTECTED_HOLD],
+            )
+        )
+    return out
+
+
 def detect(conn: sqlite3.Connection, settings: Settings, today: date) -> list[Question]:
     """Every detector, each failing on its own.
 
@@ -426,6 +487,7 @@ def detect(conn: sqlite3.Connection, settings: Settings, today: date) -> list[Qu
         lambda: _contradictions(conn),
         lambda: _priority(conn, settings, today),
         lambda: _stale_commitments(conn, settings, today),
+        lambda: _protected_conflicts(conn, settings, today),
     ):
         try:
             found.extend(detector())
