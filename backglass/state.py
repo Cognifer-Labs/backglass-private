@@ -569,5 +569,208 @@ def collect(conn: sqlite3.Connection, settings: Settings) -> State:
     return state
 
 
-def as_json(state: State) -> str:
-    return json.dumps(state.as_dict(), indent=2, sort_keys=True, default=str)
+# ── verdicts ──────────────────────────────────────────────────────────────
+#
+# `state` collected forty claims and judged none of them, so every reader — a person at
+# a terminal, or an assistant told by CLAUDE.md to run this first — had to know which
+# fields matter and what a bad value looks like. That knowledge lived nowhere. Six
+# readings of this output in one session, each one hand-graded, is what a checker is for.
+#
+# Three boundaries keep it from becoming a different tool:
+#
+#   * **Additive.** The report is unchanged. Verdicts read the claims already collected;
+#     nothing here re-derives a fact or adds a probe.
+#   * **No live probes.** Everything above is an offline read — git, file hashes, db
+#     counts, plists. A check that opened a socket or drove osascript would be `doctor`
+#     wearing this file's name, and the three-tool line would blur: `status` is the human
+#     glance, this is ground truth and the verdicts on it, `doctor` is the live probe.
+#   * **Operational drift only.** A check earns its place by having a remedy someone can
+#     run now. A standing design gap — the knowledge base's missing provenance, say — is
+#     true, unfixable by a command, and would be red forever; a permanently red line is
+#     one nobody reads, which is the failure this whole idea is trying to prevent.
+#
+# Deliberately NOT checked, each for a measured reason:
+#
+#   `schedule.drifting`   Non-empty every day on a machine that sleeps through 05:45 —
+#                         that is the condition the catch-up net exists for, not a fault.
+#                         The outcome is checked instead: does today have its plan and
+#                         its brief, once their hour has passed.
+#   `code.uncommitted`    Another session owns `tasks/lessons.md` on this checkout.
+#   `commits_ahead`       Repo policy is never to push unprompted, so ahead is normal.
+#   `retrieval.pending`   Transiently non-zero between syncs by design, and any threshold
+#                         over it would be a number nobody chose.
+
+
+@dataclass(frozen=True)
+class Verdict:
+    """One judgement, and the command that would clear it."""
+
+    name: str
+    ok: bool
+    detail: str = ""
+    remedy: str = ""
+    #: A probe that could not run. Reported apart from a failure because they mean
+    #: different things — but both exit non-zero, because this module's founding contract
+    #: is that a confident answer assembled from a missing input is the thing to prevent.
+    unknown: bool = False
+
+    def line(self) -> str:
+        mark = "[????]" if self.unknown else ("[ ok ]" if self.ok else "[FAIL]")
+        text = f"{mark} {self.name}"
+        if self.detail:
+            text += f" — {self.detail}"
+        if not self.ok and self.remedy:
+            text += f"\n       fix: {self.remedy}"
+        return text
+
+
+def _value(state: State, section: str, name: str) -> Any:
+    claim = state.sections.get(section, {}).get(name)
+    return claim.value if claim else None
+
+
+def verdicts(state: State, conn: sqlite3.Connection, settings: Settings) -> list[Verdict]:
+    """Grade the collected claims. Pure — reads `state`, opens nothing new."""
+    out: list[Verdict] = []
+
+    # Any probe that raised took a whole section with it, so the fields it would have
+    # graded are absent rather than green.
+    for name, claim in state.sections.get("errors", {}).items():
+        out.append(Verdict(f"{name} probe", ok=False, unknown=True,
+                           detail=claim.unknown or "probe raised",
+                           remedy="re-run; if it persists the section's reader is broken"))
+
+    # An `unknown` anywhere is the founding case: the value is meaningless and must not
+    # be read as a pass. Its own string is the remedy, which is why probes are required
+    # to say why rather than merely that.
+    for section, claims in state.sections.items():
+        if section == "errors":
+            continue
+        for name, claim in claims.items():
+            if claim.unknown:
+                out.append(Verdict(f"{section}.{name}", ok=False, unknown=True,
+                                   detail=claim.unknown))
+
+    applied = _value(state, "schema", "applied")
+    on_disk = _value(state, "schema", "on_disk")
+    if isinstance(applied, int) and isinstance(on_disk, int):
+        if applied < on_disk:
+            out.append(Verdict("schema is current", ok=False,
+                               detail=f"{on_disk - applied} migration(s) on disk not applied",
+                               remedy="any `backglass` command applies them at startup"))
+        elif applied > on_disk:
+            # The 2026-08-13 crash, before it crashes: the db has run a migration this
+            # checkout does not have, so whatever is reading it will refuse to start.
+            out.append(Verdict("schema is current", ok=False,
+                               detail=f"the database has {applied - on_disk} migration(s) "
+                                      "this checkout does not, so migrate() will refuse",
+                               remedy="check out the newer code, or restore the db backup"))
+        else:
+            out.append(Verdict("schema is current", ok=True, detail=f"{applied} applied"))
+
+    if _value(state, "deployed", "app") is not None:
+        stale = list(_value(state, "deployed", "stale_surfaces") or [])
+        stale += list(_value(state, "deployed", "stale_python") or [])
+        if stale:
+            out.append(Verdict("installed app matches this checkout", ok=False,
+                               detail=f"{len(stale)} stale: {', '.join(stale[:3])}"
+                                      + ("…" if len(stale) > 3 else ""),
+                               remedy="./desktop/build-sidecar.sh, then copy the bundle "
+                                      "over /Applications/Backglass.app"))
+        elif _value(state, "deployed", "matches_source") is True:
+            out.append(Verdict("installed app matches this checkout", ok=True))
+
+    # A version the ledger has extracted with but that is no longer on disk: the prompt
+    # was edited or renamed under rows that cite it, so nothing can reproduce them.
+    on_disk_versions = set((_value(state, "prompts", "on_disk") or {}).values())
+    ledger_versions = [
+        v for v in (_value(state, "prompts", "versions_in_the_ledger") or [])
+        if v and v != "manual"
+    ]
+    missing = sorted(v for v in ledger_versions if v not in on_disk_versions)
+    out.append(Verdict(
+        "every prompt the ledger cites is on disk",
+        ok=not missing,
+        detail=", ".join(missing) if missing else f"{len(ledger_versions)} in use",
+        remedy="restore the prompt file, or re-extract the rows citing it",
+    ))
+
+    for field, label in (("untriaged", "triaged"), ("kept_not_extracted", "extracted")):
+        count = _value(state, "ledger", field)
+        if isinstance(count, int):
+            out.append(Verdict(
+                f"every kept item is {label}",
+                ok=count == 0,
+                detail=f"{count} waiting" if count else "nothing waiting",
+                remedy="`backglass sync` — or the spend cap stopped the run short",
+            ))
+
+    last = _value(state, "pipeline", "last_run") or {}
+    if last:
+        out.append(Verdict(
+            "last run completed without degrading",
+            ok=not last.get("degraded"),
+            detail=str(last.get("degrade_reason") or "") or f"run {last.get('id')}",
+            remedy="raise MAX_SPEND_PER_RUN_USD, or let the cap reset",
+        ))
+
+    drift = _value(state, "knowledge_base", "config_drift") or []
+    out.append(Verdict("config agrees with the knowledge base", ok=not drift,
+                       detail="; ".join(str(d) for d in drift[:2]),
+                       remedy="`backglass memory` — the drift line names the field"))
+
+    out.extend(_morning_verdicts(conn, settings))
+    return out
+
+
+def _morning_verdicts(
+    conn: sqlite3.Connection, settings: Settings
+) -> list[Verdict]:
+    """Did today's surfaces actually arrive?
+
+    The outcome, deliberately, rather than the mechanism. `schedule.drifting` is
+    non-empty every single day on a machine that sleeps through 05:45 — launchd defers a
+    missed calendar interval to the next wake — and a check on it would be red forever
+    while the product worked fine, because the catch-up net fills the hole on the first
+    sync. What matters is not whether the job fired at 05:45 but whether the plan and the
+    brief exist now that their hour has passed.
+    """
+    from backglass import catchup, heartbeat
+    from backglass.plan import timezones
+
+    out: list[Verdict] = []
+    try:
+        now = timezones.local_now(settings)
+        today = now.date()
+        beat = heartbeat.read(conn, settings, today, now)
+    except Exception as exc:  # noqa: BLE001 — unknown, never a silent pass
+        return [Verdict("today's plan and brief", ok=False, unknown=True,
+                        detail=f"{type(exc).__name__}: {exc}")]
+
+    if beat.plan_due:
+        out.append(Verdict(
+            "today has a plan",
+            ok=not beat.plan_missing,
+            detail="none for " + today.isoformat() if beat.plan_missing else "",
+            remedy="`backglass plan` — or the next sync's catch-up will fill it",
+        ))
+    if catchup._owed(now, settings.brief_at) and timezones.is_working_day(settings, today):
+        missing = catchup.brief_is_missing(conn, today)
+        out.append(Verdict(
+            "today has a brief",
+            ok=not missing,
+            detail="none for " + today.isoformat() if missing else "",
+            remedy="`backglass brief` — or the next sync's catch-up will fill it",
+        ))
+    return out
+
+
+def as_json(state: State, checks: list[Verdict] | None = None) -> str:
+    payload = state.as_dict()
+    if checks is not None:
+        payload["verdicts"] = [
+            {"name": v.name, "ok": v.ok, "unknown": v.unknown,
+             "detail": v.detail, "remedy": v.remedy}
+            for v in checks
+        ]
+    return json.dumps(payload, indent=2, sort_keys=True, default=str)

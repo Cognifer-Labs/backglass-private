@@ -660,6 +660,9 @@ def state_command(
     as_json: Annotated[
         bool, typer.Option("--json", help="Machine-readable, every claim with its derivation")
     ] = False,
+    quiet: Annotated[
+        bool, typer.Option("--quiet", help="The verdicts alone, without the full report")
+    ] = False,
 ) -> None:
     """Ground truth about this installation, with how each claim was derived.
 
@@ -670,6 +673,19 @@ def state_command(
     cannot run says `unknown` and why, because a confident answer assembled from a
     missing input is the failure this exists to prevent.
 
+    It also grades what it collected, and **exits non-zero when something needs doing**.
+    Reporting forty fields and judging none of them left every reader to know which ones
+    matter and what a bad value looks like, and that knowledge was written down nowhere.
+    The verdicts read the claims above and add no probe of their own: `status` stays the
+    human glance, this is ground truth plus the judgement on it, and `doctor` remains the
+    only one that touches a live surface.
+
+    An `unknown` exits non-zero too. The value is meaningless, and treating "I could not
+    tell" as a pass is precisely the failure this module was written to prevent.
+
+    `--quiet` prints the verdicts alone, for a pre-flight that only cares whether
+    anything is wrong.
+
     Nothing here is cached. Every field is read at call time.
     """
     from backglass import state as state_mod
@@ -678,17 +694,35 @@ def state_command(
     conn = _open(settings)
     migrate(conn)
     snapshot = state_mod.collect(conn, settings)
+    checks = state_mod.verdicts(snapshot, conn, settings)
+    failed = [v for v in checks if not v.ok]
+
     if as_json:
-        typer.echo(state_mod.as_json(snapshot))
-        return
-    for section, claims in snapshot.as_dict().items():
-        typer.echo(section)
-        for name, claim in claims.items():
-            if claim.get("unknown"):
-                typer.echo(f"  {name}: unknown — {claim['unknown']}")
-            else:
-                typer.echo(f"  {name}: {claim['value']}")
-            typer.echo(f"      via {claim['how']}")
+        typer.echo(state_mod.as_json(snapshot, checks))
+        raise typer.Exit(1 if failed else 0)
+
+    if not quiet:
+        for section, claims in snapshot.as_dict().items():
+            typer.echo(section)
+            for name, claim in claims.items():
+                if claim.get("unknown"):
+                    typer.echo(f"  {name}: unknown — {claim['unknown']}")
+                else:
+                    typer.echo(f"  {name}: {claim['value']}")
+                typer.echo(f"      via {claim['how']}")
+        typer.echo("")
+
+    for verdict in checks:
+        typer.echo(verdict.line())
+    unknown = sum(1 for v in failed if v.unknown)
+    if failed:
+        typer.echo(
+            f"\n{len(failed) - unknown} failing, {unknown} unknown, "
+            f"{len(checks) - len(failed)} ok"
+        )
+    else:
+        typer.echo(f"\nall {len(checks)} checks pass")
+    raise typer.Exit(1 if failed else 0)
 
 
 @app.command("purge-boundary")

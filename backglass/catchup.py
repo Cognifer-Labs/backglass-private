@@ -72,8 +72,20 @@ def plan_is_missing(conn: sqlite3.Connection, day: date) -> bool:
 
 
 def brief_is_missing(conn: sqlite3.Connection, day: date) -> bool:
+    """Any brief for the day, of any kind.
+
+    Not `kind = 'daily'`, which is what this asked for its first day alive. docs/05 W1
+    says the Monday brief *replaces* the daily one, and Friday's retro does the same — so
+    on those two days `build_for` writes `monday` or `friday`, the daily-only lookup found
+    nothing, and the net regenerated the brief on every sync. Measured on 2026-08-17, a
+    Monday: **13 regenerations**, one per half-hour since 05:45. `persist` upserts, so it
+    overwrote one row rather than growing the table, which is exactly why nothing
+    complained — a rule 3 violation that costs no rows is one only a check can see.
+
+    Found by `backglass state`'s verdicts on their first run, against this.
+    """
     row = conn.execute(
-        "SELECT 1 FROM brief WHERE user_id = ? AND generated_for_date = ? AND kind = 'daily'",
+        "SELECT 1 FROM brief WHERE user_id = ? AND generated_for_date = ?",
         (USER_ID, day.isoformat()),
     ).fetchone()
     return row is None

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
@@ -510,9 +510,12 @@ class TestTouchOnThePage:
         conn.commit()
         assert "no interactions yet" in client.get(f"/people/{pid}").text
 
+        # The page computes days-since against the wall clock, so the fixture date has
+        # to be relative — a hardcoded "yesterday" is 1 day old exactly once.
+        yesterday = (date.today() - timedelta(days=1)).isoformat()
         posted = client.post(
             f"/people/{pid}/touch",
-            data={"kind": "met", "on": "2026-08-11", "note": "McKenna dinner"},
+            data={"kind": "met", "on": yesterday, "note": "McKenna dinner"},
             follow_redirects=False,
         )
 

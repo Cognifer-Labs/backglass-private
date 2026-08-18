@@ -394,3 +394,56 @@ class TestHeartbeatReadsTheSetting:
 
         assert not heartbeat.read(conn, settings, DAY, _at(5, 50)).plan_due
         assert heartbeat.read(conn, settings, DAY, _at(6, 30)).plan_due
+
+
+class TestTheWeeklyBriefCountsAsTodaysBrief:
+    """docs/05 W1: the Monday brief *replaces* the daily one, and Friday's retro does the
+    same. The net looked for `kind = 'daily'` and so never saw them."""
+
+    def _monday(self) -> date:
+        return date(2026, 8, 17)
+
+    def test_a_monday_brief_satisfies_the_net(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        monday = self._monday()
+        conn.execute(
+            "INSERT INTO brief (user_id, generated_for_date, kind, content_md,"
+            " items_json, word_count) VALUES (1, ?, 'monday', 'x', '[]', 10)",
+            (monday.isoformat(),),
+        )
+        assert not catchup.brief_is_missing(conn, monday)
+
+    def test_a_friday_retro_does_too(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        friday = date(2026, 8, 14)
+        conn.execute(
+            "INSERT INTO brief (user_id, generated_for_date, kind, content_md,"
+            " items_json, word_count) VALUES (1, ?, 'friday', 'x', '[]', 10)",
+            (friday.isoformat(),),
+        )
+        assert not catchup.brief_is_missing(conn, friday)
+
+    def test_it_does_not_regenerate_on_every_sync(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The measured symptom: 13 regenerations in one Monday, one per half-hour,
+        each overwriting the last — a rule 3 violation that cost no rows and so went
+        unnoticed until something checked.
+
+        The day gets a live plan too, so the plan half of the net is satisfied and the
+        run's emptiness speaks only about the brief."""
+        monday = self._monday()
+        conn.execute(
+            "INSERT INTO day_plan (user_id, local_date, tz, capacity_minutes,"
+            " generated_at) VALUES (1, ?, 'America/Phoenix', 240, ?)",
+            (monday.isoformat(), f"{monday.isoformat()}T05:45:00-07:00"),
+        )
+        conn.execute(
+            "INSERT INTO brief (user_id, generated_for_date, kind, content_md,"
+            " items_json, word_count) VALUES (1, ?, 'monday', 'x', '[]', 10)",
+            (monday.isoformat(),),
+        )
+        at_nine = datetime(monday.year, monday.month, monday.day, 9, 0, tzinfo=PHOENIX)
+        assert [f.surface for f in catchup.run(conn, settings, now=at_nine)] == []

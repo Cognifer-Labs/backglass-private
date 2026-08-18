@@ -911,3 +911,24 @@ deterministic given the id.
   every table naming them, and `FROZEN_CHECKSUMS` needs the new file's sha256. Do the
   same for the mirror: `uv run python -m tests.test_schema_reference` regenerates
   `specs/schema.sql`, which is generated, never hand-edited.
+
+- 2026-08-13 | The Bash tool's working directory persists between calls, so a `cd` into
+  App Support two calls earlier made `sqlite3 data/backglass.db` read the sidecar's
+  local db instead of the repo's. It answered `11` where the real answer was `23`, and
+  it answered without error — a plausible number for the exact question being asked
+  about migration drift. The wrong number would have said the db was BEHIND the frozen
+  app, which is the opposite diagnosis and the opposite fix. | Relative paths are only
+  safe within one call. Any path that decides something — a db to query, a file to
+  compare against a build — gets written absolute, because a shell that quietly moved
+  is indistinguishable from one that did not until the answer is already wrong.
+
+- 2026-08-13 | Restarting Backglass.app to pick up a config change surfaced a crash
+  that had been latent for a day: `MigrationError: schema_version records migration(s)
+  23 that are not on disk`. Migration 23 landed in the checkout and `backglass sync`
+  applied it to the shared db; the frozen sidecar, built before it, could not. The
+  running process was fine only because `migrate()` runs once at startup — it would
+  have died at the next reboot with nothing connecting the two events. | `uv run
+  backglass state` reports `deployed.matches_source` and `schema.applied` vs `on_disk`,
+  and would have shown this in a second. Run it BEFORE restarting the app, not after
+  the restart fails: a frozen app that is still serving is not evidence it can start.
+  Every migration applied from the checkout re-arms this until the sidecar is rebuilt.
