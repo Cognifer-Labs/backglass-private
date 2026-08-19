@@ -200,3 +200,17 @@ the ledger stays primary, and a second copy of the truth would drift from the fi
 - Cost tracks output, not input (2026-08-07 audit) — richer context per call is
   affordable; do not pre-optimize it away.
 - No test calls a live API; every new prompt gets fixtures.
+
+## Goal 2 (2026-08-19): no terminal, everything looped, paths volunteer
+
+- [x] 7. **Self-healing schedule** — `schedule.ensure_loaded()` bootstraps unloaded
+      com.backglass plists at dashboard startup; `unloaded_jobs()` (None when
+      launchctl unaskable); state verdict "every scheduled job is loaded". Root
+      cause: sync plist on disk, never loaded — 13 silent hours on 08-18. (7990034)
+- [x] 8. **Plan lifecycle on the page** — Accept / Replan / "Plan this day" buttons
+      on /schedule; drift knock points at /schedule again. (7990034)
+- [x] 9. **Roadmaps volunteer** — `signals:` preset frontmatter; roadmap question at
+      ≥3 word-boundary matches over open commitments+plans; Start instantiates,
+      decline never re-asks, any roadmap row (even dropped) means decided. (7990034)
+- Commitments/facts/engagements autodetect: already automatic via the sync loop
+  (goal 1). Questions-only-when-necessary: ask-once + floors + only-news banners.

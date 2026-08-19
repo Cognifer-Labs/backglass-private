@@ -3,6 +3,7 @@ id: company-revenue
 version: 2
 title: Turn a registered company into a revenue business
 horizon: annual
+signals: invoice, first customer, revenue, stripe, pricing page
 definition_of_done: Revenue covers infrastructure and the company files a real tax return
 ---
 

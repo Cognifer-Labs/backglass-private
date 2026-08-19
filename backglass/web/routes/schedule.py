@@ -20,7 +20,7 @@ from zoneinfo import ZoneInfo
 
 from annotated_types import Ge, Le
 from fastapi import APIRouter, Depends, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from backglass.config import Settings
@@ -577,10 +577,16 @@ def build_router(
         # is what /brief/{on_date} has always done by virtue of typing its parameter.
         day = date_ or today()
         view = day_view(conn, settings, day)
+        plan_row = conn.execute(
+            "SELECT id, status FROM day_plan WHERE user_id = ? AND local_date = ?"
+            " AND status != 'superseded' ORDER BY id DESC LIMIT 1",
+            (USER_ID, day.isoformat()),
+        ).fetchone()
         return templates.TemplateResponse(
             request,
             "schedule.html",
             {
+                "plan": dict(plan_row) if plan_row else None,
                 "view": view,
                 "tl": timeline(view, today=today()),
                 "cap": view.blocks[0] if view.blocks else None,
@@ -615,5 +621,42 @@ def build_router(
                 "settings": settings,
             },
         )
+
+    @router.post("/schedule/{on_date}/accept")
+    def accept_plan(
+        on_date: DayParam, conn: sqlite3.Connection = Depends(get_conn)
+    ) -> Any:
+        """The owner takes the proposed plan. From here the replanner may only knock
+        (plan/replan.py's boundary) — which is exactly why this needs a button: the
+        boundary is meaningless if accepting requires a terminal."""
+        from backglass.db import now_iso
+
+        conn.execute(
+            "UPDATE day_plan SET status = 'accepted', accepted_at = ?"
+            " WHERE user_id = ? AND local_date = ? AND status = 'proposed'",
+            (now_iso(), USER_ID, on_date.isoformat()),
+        )
+        return RedirectResponse(f"/schedule?date={on_date.isoformat()}", status_code=303)
+
+    @router.post("/schedule/{on_date}/replan")
+    def replan_day(
+        on_date: DayParam, conn: sqlite3.Connection = Depends(get_conn)
+    ) -> Any:
+        """Rebuild the day from the current world — the owner's own click, so it may
+        replace even an accepted plan (superseding, never deleting; docs/04 §3). This
+        is the door the plan-drift knock points at."""
+        from backglass.goals import health
+        from backglass.plan import planner, timezones
+
+        now = timezones.local_now(settings)
+        proposal = planner.propose(
+            conn,
+            settings,
+            on_date,
+            at_risk_goals=health.at_risk_goal_ids(conn, settings, on_date),
+            now=now,
+        )
+        planner.persist(conn, settings, proposal)
+        return RedirectResponse(f"/schedule?date={on_date.isoformat()}", status_code=303)
 
     return router
