@@ -442,6 +442,22 @@ def sync_command(
                 typer.echo(f"plan {replanned.action} for {replanned.day}: {replanned.detail}")
         except Exception:  # noqa: BLE001 — rule 5
             pass
+        # Before asking anything, throw out what the record already contradicts: an
+        # obligation whose own text says it happened, a question about a day that ended.
+        # Ahead of detection on purpose — a question mooted here is one the owner never
+        # has to read, and a commitment resolved here is one nothing re-asks about.
+        try:
+            from backglass import logic as logic_mod
+            from backglass.plan import timezones as tz_mod
+
+            disposed = logic_mod.run(conn, settings, tz_mod.local_now(settings).date())
+            if disposed.applied:
+                typer.echo(
+                    f"logic check disposed of {disposed.applied} item(s): "
+                    + ", ".join(f"{rule} ×{n}" for rule, n in disposed.by_rule().items())
+                )
+        except Exception:  # noqa: BLE001 — rule 5
+            pass
         # Auto-recognition runs where the data arrives, not only when the owner opens
         # /ask: a sync that ingested the evidence is the moment a conflict, a stale
         # commitment or a contradiction becomes detectable. Best-effort (rule 5) — a
@@ -1908,6 +1924,70 @@ def recheck_command(
         f"{report.discarded} discarded (uncited or unverifiable)"
     )
     typer.echo(f"  spend {round(report.cost_usd * 100)}c")
+    if dry_run:
+        typer.echo("  nothing written")
+    for error in report.errors:
+        typer.echo(f"  {error}", err=True)
+    raise typer.Exit(1 if report.errors else 0)
+
+
+@app.command("logic")
+def logic_command(
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Print what it would dispose of, write nothing")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable")] = False,
+) -> None:
+    """Throw out what the record already contradicts.
+
+    Not a judgement call and not a guess: every rule points at the row that disagrees with
+    the row it closes — an obligation whose own text reports it done, a question about a
+    day that has ended, a question about a commitment that is no longer open. Silence
+    never closes anything here; that is `staleness`, and it asks.
+
+    Runs inside `sync`. This command is for looking at it, and `--dry-run` is how the
+    first pass on a real ledger should be read. Everything it does is reversible: dropped
+    rows are tombstoned, resolved rows keep the rule in `resolution_note`, and every
+    disposal is a `decision` you can read back with `backglass decisions`.
+    """
+    import json as _json
+
+    from backglass import logic as logic_mod
+    from backglass.plan import timezones as tz_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    report = logic_mod.run(
+        conn, settings, tz_mod.local_now(settings).date(), dry_run=dry_run
+    )
+    if not dry_run:
+        conn.commit()
+
+    if as_json:
+        typer.echo(_json.dumps({
+            "applied": report.applied,
+            "by_rule": report.by_rule(),
+            "disposals": [
+                {
+                    "kind": d.kind, "subject_id": d.subject_id, "rule": d.rule,
+                    "action": d.action, "reason": d.reason,
+                }
+                for d in report.disposals
+            ],
+            "errors": report.errors,
+        }, indent=2))
+        raise typer.Exit(1 if report.errors else 0)
+
+    if not report.disposals:
+        typer.echo("nothing the record contradicts")
+    for disposal in report.disposals:
+        typer.echo(f"  {disposal.line()}")
+    if report.disposals:
+        typer.echo(
+            f"{report.applied} disposed of: "
+            + ", ".join(f"{rule} ×{n}" for rule, n in report.by_rule().items())
+        )
     if dry_run:
         typer.echo("  nothing written")
     for error in report.errors:

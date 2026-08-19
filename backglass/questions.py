@@ -453,17 +453,27 @@ def detect(conn: sqlite3.Connection, settings: Settings, today: date) -> list[Qu
 def refresh(conn: sqlite3.Connection, settings: Settings, today: date) -> int:
     """Run the detectors and record anything not already asked. Returns the new count.
 
-    `INSERT OR IGNORE` against the (kind, subject_key) unique index is the whole
-    ask-once rule: a question already answered stays answered, and a question already
-    open is not duplicated.
+    The (kind, subject_key) unique index is the whole ask-once rule: a question already
+    answered stays answered, and a question already open is not duplicated.
+
+    One status is not final: `moot`. `logic.py` retires a question the world moved past —
+    a collision that left the calendar, a day that ended — and if the same collision
+    reappears in January it is a live question again, so re-detection revives that row in
+    place. An owner's `dismissed` is never revived; waving something away twice is the
+    owner saying it is noise, and the machine does not get to reopen that.
     """
     new = 0
     for question in detect(conn, settings, today):
         row = question.as_row()
         cursor = conn.execute(
-            "INSERT OR IGNORE INTO open_question"
+            "INSERT INTO open_question"
             " (user_id, kind, subject_key, question, detail, options_json, asked_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT (user_id, kind, subject_key) DO UPDATE SET"
+            "   status = 'open', question = excluded.question, detail = excluded.detail,"
+            "   options_json = excluded.options_json, asked_at = excluded.asked_at,"
+            "   answer_text = NULL, answered_at = NULL"
+            " WHERE open_question.status = 'moot'",
             (
                 USER_ID,
                 row["kind"],
