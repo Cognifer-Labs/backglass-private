@@ -2048,6 +2048,10 @@ def relevance_command(
     if not report.judged:
         typer.echo("nothing left to judge")
     else:
+        # The verdicts first, because a pass costs the same to read as to run: counts
+        # alone would make --dry-run pointless.
+        for line in report.verdicts:
+            typer.echo(f"  {line}")
         typer.echo(
             f"judged {report.judged}: {report.dropped} dropped, {report.asked} asked "
             f"about, {report.kept} kept, {report.discarded} discarded (uncited)"

@@ -91,6 +91,11 @@ class Report:
     discarded: int = 0
     cost_usd: float = 0.0
     errors: list[str] = field(default_factory=list)
+    #: One line per obligation this pass would retire or ask about, with the fact behind
+    #: it. Counts alone make `--dry-run` useless for the thing it exists for: reading a
+    #: pass costs the same money as running it, so "1 dropped" that cannot be inspected
+    #: buys nothing over just running it.
+    verdicts: list[str] = field(default_factory=list)
 
 
 def facts_for(conn: sqlite3.Connection) -> list[dict[str, Any]]:
@@ -234,6 +239,11 @@ def apply(
         fact = facts_by_id.get(int(j.cites_fact or 0), {})
         citation = f"{fact.get('subject')} · {fact.get('key')}: {fact.get('value')}"
         confident = j.confidence >= settings.relevance_drop_confidence
+        report.verdicts.append(
+            f"{'drop' if confident else 'ask'} [{j.commitment_id}] {row['what']}"
+            f"\n      against fact {j.cites_fact} — {citation}"
+            f"\n      quoting: {(j.quote or '').strip()[:100]}"
+        )
         if dry_run:
             report.dropped += confident
             report.asked += not confident
@@ -325,6 +335,7 @@ def run(
             report.dropped += written.dropped
             report.asked += written.asked
             report.kept += written.kept
+            report.verdicts.extend(written.verdicts)
         except Exception as exc:  # noqa: BLE001 — rule 5, per batch
             report.errors.append(f"batch {start // BATCH}: {type(exc).__name__}: {exc}")
     return report
