@@ -153,15 +153,22 @@ the ledger stays primary, and a second copy of the truth would drift from the fi
       mooted by re-detection. New `moot` status, revivable by `questions.refresh` — the
       owner's `dismissed` stays permanent. 16 tests. Live read-only probe: 14 disposals
       (8 reported-done, 3 dead priority questions, 3 dead conflict questions), no errors.
-      landed — the model half: migration 0029 (`logic_check`, judged once per commitment),
+      landed (6ff82ba) — the model half: migration 0029 (`logic_check`, judged once per
+      commitment),
       prompt `check-relevance@1`, `backglass/extract/relevance.py`, `backglass relevance`,
       a bounded slice per sync behind the same spend cap as recheck. A `nonsense` verdict
       must cite an active fact id AND quote the obligation's own source, both verified in
       code; ≥ `relevance_drop_confidence` (0.85, its own setting above the extraction
       threshold) drops with the citation in `resolution_note`, below it asks one question
       whose answer settles the `logic_check` row. 14 tests, every guard and both sides of
-      the asymmetry. Not yet run against the live ledger: it costs model calls and the
-      migration, so the first pass should be `--dry-run` after merge.
+      the asymmetry, plus the dismissal path: waving a `nonsense` question away settles
+      its `logic_check` row to `kept`, because the judge reads judged-once and a dismissed
+      question with a pending verdict would strand the obligation unasked-about forever.
+      Not yet run against the live ledger — it costs model calls, so the first pass there
+      should be `backglass relevance --dry-run` after merge.
+      Layer 1 verified end to end on a copy of the live 55 MB ledger: 0029 applied, the
+      first pass disposed of 14 (8 reported-done, 6 dead questions) writing 14 decision
+      rows, the second wrote nothing. Rule 3 on real data rather than fixtures.
 
 ## Constraints that bite
 

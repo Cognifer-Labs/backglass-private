@@ -288,6 +288,33 @@ class TestTheAsymmetry:
         assert relevance_mod.candidates(conn) == []
 
 
+    def test_waving_the_question_away_settles_it_rather_than_stranding_the_row(
+        self, conn: sqlite3.Connection, sett: Settings, prompt: Any
+    ) -> None:
+        """Dismissal is normally "nothing is recorded as settled". Here something is
+        waiting on the answer: the judge reads judged-once, so a dismissed question with
+        a `pending` verdict would leave the obligation open, unasked-about and unjudgeable
+        forever. Waving this one away means leave my row alone."""
+        from backglass import questions
+
+        fact = a_fact(conn, "education", "college", "ASU Tempe")
+        cid = an_obligation(conn, "complete AES scholarship acceptance")
+        relevance_mod.run(
+            conn,
+            sett,
+            FakeClient({"verdicts": [verdict(cid, fact=fact, confidence=0.6)]}),
+            prompt=prompt,
+        )
+        qid = int(conn.execute("SELECT id FROM open_question").fetchone()["id"])
+
+        questions.dismiss(conn, qid)
+
+        assert status_of(conn, cid) == "open"
+        assert conn.execute(
+            "SELECT status FROM logic_check WHERE commitment_id = ?", (cid,)
+        ).fetchone()["status"] == "kept"
+
+
 class TestJudgedOnce:
     def test_a_second_pass_over_an_unchanged_ledger_makes_no_call(
         self, conn: sqlite3.Connection, sett: Settings, prompt: Any

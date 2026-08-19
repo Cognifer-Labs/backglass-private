@@ -606,8 +606,29 @@ def _apply_relevance_answer(conn: sqlite3.Connection, row: Any, option: str | No
 
 def dismiss(conn: sqlite3.Connection, question_id: int) -> None:
     """Not now. Distinct from answered: nothing is recorded as settled, and the question
-    does not come back, because a question the owner has waved away twice is noise."""
+    does not come back, because a question the owner has waved away twice is noise.
+
+    One kind cannot simply be waved away, though, because something else is waiting on
+    it. A `nonsense` question exists because the relevance judge suspected a row and was
+    not confident enough to drop it; its `logic_check` row sits `pending` until an answer
+    settles it, and nothing re-asks (the judge reads judged-once). Dismissing without
+    settling would leave the obligation open, unjudgeable and unasked-about forever — so
+    waving this one away is read as what it plainly means: leave my row alone.
+    """
+    row = conn.execute(
+        "SELECT kind, subject_key FROM open_question WHERE id = ? AND user_id = ?",
+        (question_id, USER_ID),
+    ).fetchone()
     conn.execute(
-        "UPDATE open_question SET status = 'dismissed', answered_at = ? WHERE id = ? AND user_id = ?",
+        "UPDATE open_question SET status = 'dismissed', answered_at = ?"
+        " WHERE id = ? AND user_id = ?",
         (now_iso(), question_id, USER_ID),
     )
+    if row is None or str(row["kind"]) != "nonsense":
+        return
+    with contextlib.suppress(ValueError):
+        conn.execute(
+            "UPDATE logic_check SET status = 'kept', decided_at = ?"
+            " WHERE commitment_id = ? AND user_id = ? AND status = 'pending'",
+            (now_iso(), int(str(row["subject_key"])), USER_ID),
+        )
