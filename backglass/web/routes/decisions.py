@@ -33,6 +33,9 @@ def build_router(
 
     def page(request: Request, conn: sqlite3.Connection) -> Any:
         standing = decisions.active(conn)
+        # What the logic checker threw out, kept apart from what the owner decided but
+        # never hidden: a row that vanishes with nothing saying why reads as a bug.
+        disposed = decisions.disposals(conn)
         open_commitments = conn.execute(
             "SELECT id, what FROM commitment WHERE user_id = ? AND status = 'open'"
             " ORDER BY what",
@@ -44,6 +47,7 @@ def build_router(
             {
                 "decisions": standing,
                 "count": len(standing),
+                "disposals": disposed,
                 "open_commitments": open_commitments,
                 "settings": settings,
             },

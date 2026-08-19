@@ -59,6 +59,31 @@
       <p class="note">Recording the same title again replaces the standing decision and
         keeps its history. Changing your mind is recording the new decision.</p>
     </div>
+
+    {# The logic checker's own work, below the fold of the owner's decisions and in the
+       quieter ink. It has to be here — something that disappears with nothing anywhere
+       saying why is indistinguishable from a bug — and it must not be here as an equal:
+       the first live pass disposed of fourteen rows against four standing decisions, and
+       a page where the bookkeeping outnumbers the deliberation is no longer the record of
+       what the owner decided. #}
+    {% if disposals %}
+      <div class="addform" id="disposals">
+        <p class="lbl">Disposed of automatically — {{ disposals | length }}</p>
+        {% for d in disposals %}
+          <div class="row">
+            <span class="time">{{ d.decided_at[:10] }}</span>
+            <div class="grow">
+              <p class="b1">{{ d.commitment_title or d.title }} — {{ d.choice }}</p>
+              <p class="b2">{{ d.reasoning }}</p>
+            </div>
+          </div>
+        {% endfor %}
+        <p class="note">Contradicted by the record, not by silence. Nothing is deleted:
+          a disposed commitment keeps its row and its reason, and
+          <span class="kbd">backglass logic --dry-run</span> shows what the next pass
+          would touch before it touches it.</p>
+      </div>
+    {% endif %}
   </div>
 </section>
 {% endblock %}

@@ -137,15 +137,30 @@ def record(
     return new_id, closed
 
 
+#: What the logic checker writes its `reasoning` behind. Machine disposals are recorded
+#: here because this table is where provenance and supersession already live — but they
+#: are bookkeeping, not deliberation, and the first live pass wrote fourteen of them
+#: against the owner's four standing decisions. A page that files "Disposed of commitment
+#: 71" next to "DECLINED the Aug 5 early move-in" stops being the record of what the
+#: owner decided, so the two are separated on read rather than at write.
+MACHINE_PREFIX = "logic: "
+
+
 def active(conn: sqlite3.Connection) -> list[Decision]:
-    """Standing decisions, newest first — the list the page and the CLI both print."""
+    """Standing decisions the OWNER made, newest first — the page and the CLI's list.
+
+    Machine disposals are excluded and read back through `disposals()`. Same table, same
+    provenance; different question. This one answers "what have I decided", and an
+    automatic tidy-up is not an answer to it.
+    """
     rows = conn.execute(
         "SELECT d.id, d.title, d.choice, d.reasoning, d.commitment_id, d.decided_at,"
         " c.what AS commitment_title, c.resolution_note AS commitment_note"
         " FROM decision d LEFT JOIN commitment c ON c.id = d.commitment_id"
         " WHERE d.user_id = ? AND d.status = 'active'"
+        "   AND (d.reasoning IS NULL OR d.reasoning NOT LIKE ?)"
         " ORDER BY d.decided_at DESC, d.id DESC",
-        (USER_ID,),
+        (USER_ID, MACHINE_PREFIX + "%"),
     ).fetchall()
     return [
         Decision(
@@ -158,6 +173,37 @@ def active(conn: sqlite3.Connection) -> list[Decision]:
             closed_commitment=str(r["commitment_note"] or "").startswith(
                 f"decision:{r['id']} "
             ),
+            decided_at=str(r["decided_at"]),
+        )
+        for r in rows
+    ]
+
+
+def disposals(conn: sqlite3.Connection, limit: int = 20) -> list[Decision]:
+    """What the logic checker threw out, newest first.
+
+    The other half of `active()`, and the reason automatic disposal is survivable at all:
+    a row that disappears with nothing anywhere saying why is indistinguishable from a
+    bug, and the owner would be right to stop trusting the board. Each of these names the
+    rule and the contradiction, and the commitment behind it is tombstoned, not deleted.
+    """
+    rows = conn.execute(
+        "SELECT d.id, d.title, d.choice, d.reasoning, d.commitment_id, d.decided_at,"
+        " c.what AS commitment_title, c.resolution_note AS commitment_note"
+        " FROM decision d LEFT JOIN commitment c ON c.id = d.commitment_id"
+        " WHERE d.user_id = ? AND d.status = 'active' AND d.reasoning LIKE ?"
+        " ORDER BY d.decided_at DESC, d.id DESC LIMIT ?",
+        (USER_ID, MACHINE_PREFIX + "%", limit),
+    ).fetchall()
+    return [
+        Decision(
+            decision_id=int(r["id"]),
+            title=str(r["title"]),
+            choice=str(r["choice"]),
+            reasoning=r["reasoning"],
+            commitment_id=r["commitment_id"],
+            commitment_title=r["commitment_title"],
+            closed_commitment=False,
             decided_at=str(r["decided_at"]),
         )
         for r in rows

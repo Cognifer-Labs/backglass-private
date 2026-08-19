@@ -238,6 +238,34 @@ class TestDecisionsPage:
         assert "closed: Apply to Sallie Mae" not in added.text
 
 
+    def test_the_machines_tidying_is_shown_but_never_as_a_standing_decision(
+        self, client: TestClient, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The logic checker records its disposals here because this is where provenance
+        lives — and the first live pass wrote fourteen of them against the owner's four.
+        A page that files "Disposed of commitment 71" beside "DECLINED the Aug 5 early
+        move-in" has stopped being the record of what the owner decided, so the two are
+        separated on read: both visible, only one standing."""
+        from backglass import decisions
+
+        decisions.record(
+            conn, settings, title="Early move-in", choice="declined",
+            reasoning="BioBridge was not worth the extra week",
+        )
+        decisions.record(
+            conn, settings, title="Disposed of commitment 71", choice="resolved",
+            reasoning='logic: reported-done — "sent EIN screenshot" reports it done',
+        )
+        conn.commit()
+
+        page = client.get("/decisions").text
+
+        assert "Early move-in" in page and "Disposed of commitment 71" in page
+        assert "1 standing" in page  # the banner counts the owner's, not the machine's
+        assert "Disposed of automatically — 1" in page
+        assert [d.title for d in decisions.active(conn)] == ["Early move-in"]
+
+
 class TestCli:
     """The second door. A guard on one door is not a guard — same rules as the page."""
 

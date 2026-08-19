@@ -324,14 +324,13 @@ def run(
     return apply(conn, settings, check(conn, settings, today), dry_run=dry_run)
 
 
-def recent(conn: sqlite3.Connection, limit: int = 20) -> list[dict[str, Any]]:
-    """What the checker disposed of lately, for the surface that has to show its work."""
-    return [
-        dict(row)
-        for row in conn.execute(
-            "SELECT title, choice, reasoning, decided_at FROM decision"
-            " WHERE user_id = ? AND reasoning LIKE 'logic: %' AND superseded_by IS NULL"
-            " ORDER BY id DESC LIMIT ?",
-            (USER_ID, limit),
-        )
-    ]
+def recent(conn: sqlite3.Connection, limit: int = 20) -> list[Any]:
+    """What the checker disposed of lately, for the surface that has to show its work.
+
+    The rows live in `decision` with everything else the ledger can justify; `decisions`
+    owns the split between what the owner decided and what the machine tidied, so this is
+    a name in the checker's own vocabulary for the same read.
+    """
+    from backglass import decisions
+
+    return decisions.disposals(conn, limit=limit)

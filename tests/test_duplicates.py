@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from backglass import duplicates
+from backglass.config import Settings
 from backglass.ledger import USER_ID
 
 
@@ -148,11 +151,26 @@ class TestFanOut:
 
 
 class TestTheCommandWritesNothingByDefault:
-    def test_dry_run_leaves_every_row_open(self, conn: sqlite3.Connection) -> None:
+    def test_dry_run_leaves_every_row_open(
+        self,
+        conn: sqlite3.Connection,
+        settings: Settings,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """`get_settings` is monkeypatched for the same reason the `settings` fixture
+        passes `_env_file=None`: without it the CLI opens whatever database the ambient
+        configuration names. This test then passed only in the owner's own checkout,
+        where `data/backglass.db` happens to hold duplicate suspects, and failed in every
+        clone, worktree and CI run — the exact shape of the 2026-07-30 lesson, one door
+        further along. The fixture ledger is the one under test; the owner's is never
+        reachable from the suite.
+        """
         from typer.testing import CliRunner
 
+        from backglass import __main__ as cli_mod
         from backglass.__main__ import app
 
+        monkeypatch.setattr(cli_mod, "get_settings", lambda: settings)
         _commitment(conn, "Upload ASU ID photo and verify identity")
         _commitment(conn, "upload ASU ID photo and verify identity")
         conn.commit()

@@ -227,8 +227,12 @@ class TestWhatDisposalMeans:
 
         recorded = logic.recent(conn)
         assert len(recorded) == 1
-        assert str(recorded[0]["title"]).endswith(str(cid))
-        assert "reported-done" in str(recorded[0]["reasoning"])
+        assert recorded[0].title.endswith(str(cid))
+        assert "reported-done" in str(recorded[0].reasoning)
+        # And it is filed as the machine's work, not among the owner's own rulings.
+        from backglass import decisions
+
+        assert decisions.active(conn) == []
 
     def test_a_dry_run_writes_nothing(
         self, conn: sqlite3.Connection, sett: Settings
