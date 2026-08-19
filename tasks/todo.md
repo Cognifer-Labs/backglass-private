@@ -191,6 +191,20 @@ the ledger stays primary, and a second copy of the truth would drift from the fi
       the ambient config named and so passed only in the owner's checkout. Suite runs
       green with nothing deselected (2192).
 
+- [x] 10. **Landed on the live ledger, 2026-08-19** — owner said go ahead. Merged with
+      the concurrent autonomy work (both answer hooks kept), main fast-forwarded to
+      664a708 through `receive.denyCurrentBranch=updateInstead`, config restored; 2207
+      tests green. `backglass logic` disposed of 15 and the second pass wrote nothing.
+      `backglass relevance` judged all 198 unjudged obligations over four passes: 43
+      dropped citing a fact, 5 asked about, 150 kept, 0 discarded. Open commitments
+      276 → 226. Today's plan regenerated: no AES, ASU work only, with the held-back
+      count in the notes. ~$6.50 across the four passes, of which `model_call` recorded
+      only the sync-side one — the CLI's `Metered` calls list is never persisted (same
+      shape as the recheck CLI, pre-existing, noted not fixed), so a cap audit will
+      under-count CLI passes. One arguable drop: #215 "Submit FAFSA" (Simpson-sourced)
+      against fact 5, while the ASU-side money rows #189 and #309 stayed open —
+      tombstoned with its citation, one status flip to reopen.
+
 ## Constraints that bite
 
 - Any migration re-arms the frozen-sidecar crash (`matches_source` already false);
