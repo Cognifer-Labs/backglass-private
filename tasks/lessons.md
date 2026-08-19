@@ -932,3 +932,38 @@ deterministic given the id.
   and would have shown this in a second. Run it BEFORE restarting the app, not after
   the restart fails: a frozen app that is still serving is not evidence it can start.
   Every migration applied from the checkout re-arms this until the sidecar is rebuilt.
+- 2026-08-17 | The owner asked why today was not planned. It was — the sync's catch-up net
+  built it at 08:18 — and the 05:45 job had simply not fired for weeks. Diagnosed the
+  cause from log mtimes alone (every calendar job exactly +12:30, which is IST − MST) and
+  then tried to fix it by reloading the jobs, which did nothing: a probe job registered
+  fresh for 09:32 never fired. The stale zone lives in `UserEventAgent-Aqua`, SIP refuses
+  to restart it, and `state.py` already said so in a comment written on 2026-08-11. |
+  Before reaching for a remedy on this machine's schedule, read what `state.py`'s
+  `_schedule` docstring already concluded — it names both causes and the one remedy per
+  cause. And a launchd fix is not verified by `launchctl print` agreeing with the plist:
+  arm a throwaway job for two minutes from now and watch for its log. The plist and the
+  live registration agreed all along; the firing was what lied.
+
+- 2026-08-17 | `catchup.brief_is_missing` asked `WHERE kind = 'daily'` while `build_for`
+  writes `kind = 'monday'` on a week-start day and `'friday'` on a retro day. So on
+  Mondays and Fridays the hole never closed: the net rebuilt the brief on every sync, all
+  day, and the only visible trace was two "caught up brief" lines thirty minutes apart in
+  a log nobody reads. Every test passed, because the tests only ever exercised a Tuesday. |
+  A "does this exist yet?" guard has to ask the question its writer answers. When adding
+  one, read the INSERT it is guarding — not the column names, the *values* — and if the
+  writer can choose between values, the guard must not name just one of them. Fixture days
+  hide this: a net that runs every day needs at least one test on a day whose shape
+  differs (week start, week end).
+
+- 2026-08-17 | Two tests were failing on `main` and had been for days, neither noticed:
+  one asserted "1 days since last touch" against a hard-coded date that was yesterday only
+  on the day it was written, and one invoked a CLI command without patching
+  `get_settings`, so the command opened whatever database the environment named — an empty
+  `./data/backglass.db` in a worktree, and the owner's live ledger in their own checkout.
+  It printed "no duplicate suspects" and the assertion failed everywhere except the
+  machine it was authored on. | A date literal in an assertion about "days since" is a
+  test with an expiry date: compute it from the same clock the code reads. And a test that
+  invokes a CLI command must point `get_settings` at its own settings — conftest's autouse
+  `_never_the_real_ledger` now bounds the damage by forcing `DB_PATH` to a per-test file,
+  with `tests/test_config.py` asserting that guard, but it cannot make an unpatched
+  command see the fixture's rows.

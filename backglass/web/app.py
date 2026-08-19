@@ -13,6 +13,7 @@ else.
 from __future__ import annotations
 
 import sqlite3
+from collections.abc import Callable
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from backglass import catchup
 from backglass.config import REPO_ROOT, Settings, get_settings
 from backglass.db import connect, migrate
 from backglass.plan import timezones
@@ -45,7 +47,17 @@ PIXEL = bytes.fromhex(
 )
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None, *, on_open: Callable[[], None] | None = None
+) -> FastAPI:
+    """The app. `on_open`, when given, is called on the first full-page load of a day
+    whose plan or brief is missing — see the middleware below and `serve`.
+
+    Injected rather than imported so that constructing an app never starts background
+    work: every test in tests/test_dashboard.py and tests/test_web_pages.py builds one and
+    loads pages, and none of them should be able to launch a planner against its fixture
+    ledger. Only `serve` passes it, because only a served app has an owner opening it.
+    """
     resolved = settings or get_settings()
     app = FastAPI(title="Backglass", docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -87,6 +99,26 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             conn = connect(resolved.db_path)
             try:
                 request.state.sb = panels.sidebar(conn, resolved, today())
+                # The app-open net. The launchd morning jobs cannot be trusted to have
+                # fired — on 2026-08-17 they had been 12h30 late for weeks, because the
+                # agent that evaluates calendar intervals holds the timezone the machine
+                # booted in — so the owner opening the app is a trigger in its own right.
+                # This is the one place that already knows a full page is being served on
+                # the owner's behalf, and it already has a connection open.
+                #
+                # `hole_exists` is two indexed reads; the filling happens on a thread, so
+                # the page does not wait for a planner and a planner that fails does not
+                # reach the page. An app left open across midnight is covered here rather
+                # than at startup, which is why the check is per-load and not once.
+                if on_open is not None:
+                    try:
+                        if catchup.hole_exists(conn, resolved):
+                            on_open()
+                    except Exception:  # noqa: BLE001 - rule 5: the page is not the net's
+                        # A catch-up that cannot even be started is a missing plan, which
+                        # the sidebar already says out loud. It is not a 500 on the page
+                        # the owner opened to find out what today looks like.
+                        pass
             finally:
                 conn.close()
         return await call_next(request)
@@ -439,4 +471,11 @@ def serve(
             print(f"re-loaded scheduled job(s): {', '.join(healed)}")
     except Exception:  # noqa: BLE001 — rule 5: the dashboard must serve regardless
         pass
-    uvicorn.run(create_app(resolved), host=host, port=port, log_level="warning")
+    # And opening the app *is* starting this process: the desktop shell spawns
+    # `backglass dashboard` unless something is already listening on the port
+    # (desktop/src-tauri/src/main.rs), and kills it when the window closes. So the first
+    # open of the day lands here, before any request — the middleware's per-load check
+    # then covers the app that stays open into tomorrow.
+    catchup.spawn_on_open(resolved)
+    app = create_app(resolved, on_open=lambda: catchup.spawn_on_open(resolved))
+    uvicorn.run(app, host=host, port=port, log_level="warning")

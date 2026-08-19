@@ -303,6 +303,27 @@ class FakeModel:
 # ──────────────────────────────────────────────────────────────── fixtures
 
 
+@pytest.fixture(autouse=True)
+def _never_the_real_ledger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test opens the database named by the environment it happens to run in.
+
+    The `settings` fixture already refuses the owner's `.env`, but a test that invokes a
+    CLI command reaches `get_settings()` inside the command, which builds `Settings()`
+    fresh and reads whatever is on disk. In the owner's checkout that is the live ledger;
+    in a worktree or CI it is `./data/backglass.db`, created on the spot by the command's
+    own `migrate`. Both are wrong, and the second is why
+    `test_dry_run_leaves_every_row_open` asserted against an empty database and failed
+    everywhere except the machine it was written on.
+
+    `DB_PATH` in the environment outranks the `.env` file, so this bounds every such
+    command to a per-test path. It does not make an unpatched command see the `conn`
+    fixture's rows — a test that means to exercise a command still has to point
+    `get_settings` at its own settings — but it does mean the ledger cannot be touched by
+    a test that forgot.
+    """
+    monkeypatch.setenv("DB_PATH", str(tmp_path / "unpatched-cli.db"))
+
+
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     return build_settings(tmp_path)

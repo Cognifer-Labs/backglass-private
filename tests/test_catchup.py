@@ -201,6 +201,333 @@ class TestTheHourIsConfiguredOnce:
         assert catchup._owed(_at(23, 0), late.plan_at)
 
 
+class TestTheAppOpenTrigger:
+    """2026-08-17: the owner asked why the day was not planned. It was — at 08:18, by the
+    30-minute sync's net — but the 05:45 job had not fired on time for weeks. The Mac last
+    booted in Kolkata and `com.apple.UserEventAgent-Aqua` reads the timezone once at
+    start, so every calendar job was being evaluated against IST: 05:45 → 17:15, 22:00 →
+    09:30. Reloading a job does not clear it, SIP refuses to restart that agent, and only a
+    reboot does — so the trigger the owner controls, opening the app, gets a hook.
+    """
+
+    def test_a_hole_is_only_a_hole_after_the_hour(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        assert not catchup.hole_exists(conn, settings, now=_at(4, 0))
+        assert catchup.hole_exists(conn, settings, now=_at(8, 0))
+
+    def test_an_early_look_does_not_suppress_a_later_one(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The bug a "checked today already" marker would have: nothing is missing at
+        04:00 because nothing is owed yet, and a marker stamped then would skip the 09:00
+        check that finds the real hole."""
+        assert not catchup.hole_exists(conn, settings, now=_at(4, 0))
+        assert catchup.hole_exists(conn, settings, now=_at(9, 0))
+
+    def test_a_filled_day_is_not_a_hole(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        catchup.run(conn, settings, now=_at(8, 0))
+        assert not catchup.hole_exists(conn, settings, now=_at(8, 30))
+
+    def test_it_does_not_ask_the_embedding_endpoint(
+        self, conn: sqlite3.Connection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Retrieval is additive by CLAUDE.md's ruling; the request path must not depend on
+        it being reachable. The backlog rides along on a real fill and on the sync."""
+        from backglass import search
+
+        def boom(*_a: object, **_k: object) -> int:
+            raise AssertionError("the page asked ollama")
+
+        monkeypatch.setattr(search, "index", boom)
+        assert catchup.hole_exists(conn, settings, now=_at(8, 0))
+
+    def test_on_open_fills_the_hole_and_commits(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """It runs on its own connection, on a thread, so an uncommitted write would be
+        invisible to every reader including the page that triggered it."""
+        _commitment(conn, "email the signed waivers")
+        conn.commit()
+        filled = catchup.on_open(settings, now=_at(8, 0))
+        assert [f.surface for f in filled] == ["plan", "brief"]
+        fresh = sqlite3.connect(settings.db_path)
+        try:
+            row = fresh.execute(
+                "SELECT COUNT(*) FROM day_plan WHERE local_date = ?", (DAY.isoformat(),)
+            ).fetchone()
+        finally:
+            fresh.close()
+        assert row[0] == 1
+
+    def test_it_skips_while_another_process_holds_the_lock(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """An app opened at :18 while the timer's sync is mid-run must not propose the same
+        day a second time — one plan superseded a second later, both of them paid for.
+
+        The lock is taken here through a second file descriptor rather than through
+        `run_lock`, because that is the case being tested: flock excludes by open file
+        description, and `run_lock` is deliberately reentrant *within* a process so batch
+        submit can hold it around its own sync. The collision that matters is between the
+        launchd sync and this dashboard, which are two processes.
+        """
+        import fcntl
+        from pathlib import Path
+
+        db = Path(settings.db_path)
+        held = (db.parent / f"{db.name}.sync-lock").open("a+")
+        try:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            assert catchup.on_open(settings, now=_at(8, 0)) == []
+        finally:
+            fcntl.flock(held, fcntl.LOCK_UN)
+            held.close()
+        assert planner.current_plan_id(conn, DAY) is None
+
+    def test_a_second_open_does_not_start_a_second_planner(
+        self, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two tabs, one catch-up. The lock is held for the thread's whole life, so the
+        second call returns without starting anything."""
+        started: list[str] = []
+
+        class FakeThread:
+            def __init__(self, *_a: object, **kwargs: object) -> None:
+                self.target = kwargs["target"]
+
+            def start(self) -> None:
+                started.append("go")
+
+        monkeypatch.setattr(catchup.threading, "Thread", FakeThread)
+        catchup.spawn_on_open(settings)
+        catchup.spawn_on_open(settings)
+        assert started == ["go"]
+        catchup._running.release()
+
+
+class TestTheBriefHoleClosesOnEveryDayOfTheWeek:
+    """Found on the live ledger while wiring the app-open trigger: `data/sync.log` had two
+    "caught up brief for 2026-08-17" lines thirty minutes apart, and the ledger had one
+    brief row for that day with `kind = 'monday'`.
+
+    `build_for` returns the Monday brief on a week-start day — it replaces the daily one,
+    docs/04 §2.7 W1 — and a Friday retro is stored as `kind = 'friday'`. The net's check
+    asked for `kind = 'daily'`, so on those days the hole never closed and every sync
+    rebuilt the brief. A per-page-load trigger would have made that every page load.
+    """
+
+    def test_a_monday_brief_closes_the_hole(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        monday = date(2026, 8, 17)
+        assert monday.weekday() == 0
+        conn.execute(
+            "INSERT INTO brief (user_id, generated_for_date, kind, content_md, items_json,"
+            " word_count) VALUES (1, ?, 'monday', '# monday', '[]', 3)",
+            (monday.isoformat(),),
+        )
+        assert not catchup.brief_is_missing(conn, monday)
+
+    def test_a_friday_retro_closes_the_hole(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        friday = date(2026, 8, 21)
+        assert friday.weekday() == 4
+        conn.execute(
+            "INSERT INTO brief (user_id, generated_for_date, kind, content_md, items_json,"
+            " word_count) VALUES (1, ?, 'friday', '# friday', '[]', 3)",
+            (friday.isoformat(),),
+        )
+        assert not catchup.brief_is_missing(conn, friday)
+
+    def test_a_week_start_day_is_caught_up_exactly_once(
+        self, conn: sqlite3.Connection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The whole failure, end to end: run the net twice on a Monday morning and the
+        second pass must find nothing to do."""
+        from backglass.brief import weekly
+
+        monkeypatch.setattr(weekly, "is_week_start", lambda *_a, **_k: True)
+        first = catchup.run(conn, settings, now=_at(8, 0))
+        assert "brief" in [f.surface for f in first]
+        assert catchup.run(conn, settings, now=_at(8, 30)) == []
+        count = conn.execute(
+            "SELECT COUNT(*) AS n FROM brief WHERE generated_for_date = ?",
+            (DAY.isoformat(),),
+        ).fetchone()["n"]
+        assert count == 1
+
+    def test_it_is_still_missing_when_nothing_was_written(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        assert catchup.brief_is_missing(conn, DAY)
+
+
+class TestTheDashboardAsks:
+    """The wiring, tested at the seam rather than through a real planner: `create_app`
+    takes the trigger as an argument, so a test can count the calls and no test can
+    accidentally start background work against its fixture ledger."""
+
+    def _client(self, settings: Settings, calls: list[int]):  # type: ignore[no-untyped-def]
+        from fastapi.testclient import TestClient
+
+        from backglass.web.app import create_app
+
+        return TestClient(
+            create_app(settings, on_open=lambda: calls.append(1)),
+            base_url="http://127.0.0.1:8765",
+        )
+
+    def test_a_page_load_with_a_missing_plan_triggers_the_net(
+        self, conn: sqlite3.Connection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(catchup, "hole_exists", lambda *_a, **_k: True)
+        calls: list[int] = []
+        assert self._client(settings, calls).get("/").status_code == 200
+        assert calls == [1]
+
+    def test_a_page_load_with_nothing_missing_triggers_nothing(
+        self, conn: sqlite3.Connection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(catchup, "hole_exists", lambda *_a, **_k: False)
+        calls: list[int] = []
+        assert self._client(settings, calls).get("/").status_code == 200
+        assert calls == []
+
+    def test_an_htmx_fragment_is_not_an_open(
+        self, conn: sqlite3.Connection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A swap replaces a panel. The owner opened the app once, not once per click."""
+        monkeypatch.setattr(catchup, "hole_exists", lambda *_a, **_k: True)
+        calls: list[int] = []
+        client = self._client(settings, calls)
+        assert client.get("/", headers={"hx-request": "true"}).status_code == 200
+        assert calls == []
+
+    def test_a_default_app_never_starts_background_work(
+        self, conn: sqlite3.Connection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every other dashboard test builds `create_app(settings)`. None of them may
+        launch a planner, so the absence of a trigger has to be the default."""
+        from fastapi.testclient import TestClient
+
+        from backglass.web.app import create_app
+
+        def boom(*_a: object, **_k: object) -> bool:
+            raise AssertionError("an app with no trigger asked about holes")
+
+        monkeypatch.setattr(catchup, "hole_exists", boom)
+        client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
+        assert client.get("/").status_code == 200
+
+    def test_a_failing_trigger_still_serves_the_page(
+        self, conn: sqlite3.Connection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Rule 5. The catch-up is a net under the page, never a condition of it."""
+        monkeypatch.setattr(catchup, "hole_exists", lambda *_a, **_k: True)
+
+        def boom() -> None:
+            raise RuntimeError("no planner today")
+
+        from fastapi.testclient import TestClient
+
+        from backglass.web.app import create_app
+
+        client = TestClient(create_app(settings, on_open=boom), base_url="http://127.0.0.1:8765")
+        assert client.get("/").status_code == 200
+
+
+class TestTheEveningPassRefusesTheMorning:
+    """`shutdown` decides what did not get done and rolls it into tomorrow. Fired at 09:30
+    by the stale zone, it made that judgement about a day with twelve hours left in it."""
+
+    def _run(  # type: ignore[no-untyped-def]
+        self,
+        settings: Settings,
+        monkeypatch: pytest.MonkeyPatch,
+        now: datetime,
+        *args: str,
+    ):
+        from typer.testing import CliRunner
+
+        import backglass.__main__ as cli
+        from backglass.plan import timezones
+
+        monkeypatch.setattr(cli, "get_settings", lambda: settings)
+        monkeypatch.setattr(timezones, "local_now", lambda _s: now)
+        return CliRunner().invoke(cli.app, ["shutdown", *args])
+
+    def _closed(self, monkeypatch: pytest.MonkeyPatch) -> list[date]:
+        from backglass.plan import rollover
+
+        closed: list[date] = []
+
+        def record(_conn: object, _s: object, day: date, **_k: object):  # type: ignore[no-untyped-def]
+            closed.append(day)
+            return rollover.CloseReport(day=day)
+
+        monkeypatch.setattr(rollover, "close_day", record)
+        return closed
+
+    def test_it_refuses_while_the_window_is_open(
+        self, conn: sqlite3.Connection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        closed = self._closed(monkeypatch)
+        result = self._run(settings, monkeypatch, _at(9, 30))
+        assert result.exit_code == 0, result.output
+        assert "not closing the day" in result.output
+        assert closed == []
+
+    def test_it_closes_the_day_once_the_window_has_ended(
+        self, conn: sqlite3.Connection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """18:00 exactly, because that is when the job fires — `>` would refuse the one
+        run that is on time."""
+        closed = self._closed(monkeypatch)
+        result = self._run(settings, monkeypatch, _at(18, 0))
+        assert result.exit_code == 0, result.output
+        assert closed == [DAY]
+
+    def test_force_closes_it_anyway(
+        self, conn: sqlite3.Connection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        closed = self._closed(monkeypatch)
+        self._run(settings, monkeypatch, _at(9, 30), "--force")
+        assert closed == [DAY]
+
+    def test_a_past_day_is_never_premature(
+        self, conn: sqlite3.Connection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Closing a day that is genuinely over is the ordinary catch-up case."""
+        closed = self._closed(monkeypatch)
+        yesterday = DAY - timedelta(days=1)
+        self._run(settings, monkeypatch, _at(9, 30), "--date", yesterday.isoformat())
+        assert closed == [yesterday]
+
+    def test_the_hour_is_the_window_the_day_is_governed_by(
+        self, conn: sqlite3.Connection, settings: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A weekend runs on `weekend_window`, so the pass belongs after 18:00 that day
+        and not after the weekday 22:00 — the same two-copies failure `schedule.render`
+        exists to end, one command over."""
+        weekend = settings.model_copy(
+            update={
+                "working_window": "10:00-22:00",
+                "weekend_window": "10:00-18:00",
+                "working_days": ["mon", "tue", "wed", "thu", "fri", "sat", "sun"],
+            }
+        )
+        saturday = date(2026, 8, 22)
+        assert saturday.weekday() == 5
+        closed = self._closed(monkeypatch)
+        at = datetime(2026, 8, 22, 19, 0, tzinfo=PHOENIX)
+        self._run(weekend, monkeypatch, at, "--date", saturday.isoformat())
+        assert closed == [saturday], "19:00 is after the weekend window's 18:00"
+
+
 class TestUnchangedContract:
     def test_the_scheduled_job_still_regenerates(self) -> None:
         """Pinned by tests/test_schedule.py for a reason: the 05:45 run is built on the

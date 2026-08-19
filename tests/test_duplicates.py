@@ -225,23 +225,23 @@ class TestTheCommandWritesNothingByDefault:
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """`get_settings` is monkeypatched for the same reason the `settings` fixture
-        passes `_env_file=None`: without it the CLI opens whatever database the ambient
-        configuration names. This test then passed only in the owner's own checkout,
-        where `data/backglass.db` happens to hold duplicate suspects, and failed in every
-        clone, worktree and CI run — the exact shape of the 2026-07-30 lesson, one door
-        further along. The fixture ledger is the one under test; the owner's is never
-        reachable from the suite.
+        passes `_env_file=None`: without it the command builds its own `Settings()` and
+        opens whichever database the environment names — the live ledger in the owner's
+        checkout, a freshly migrated empty one anywhere else. It printed "no duplicate
+        suspects" about a database that had never seen these two rows, so the test passed
+        only where a `.env` pointed at real data: the 2026-07-30 lesson, one door further
+        along. conftest's `_never_the_real_ledger` keeps an unpatched command away from
+        the owner's ledger; seeing the fixture's rows takes this.
         """
         from typer.testing import CliRunner
 
-        from backglass import __main__ as cli_mod
-        from backglass.__main__ import app
+        import backglass.__main__ as cli
 
-        monkeypatch.setattr(cli_mod, "get_settings", lambda: settings)
+        monkeypatch.setattr(cli, "get_settings", lambda: settings)
         _commitment(conn, "Upload ASU ID photo and verify identity")
         _commitment(conn, "upload ASU ID photo and verify identity")
         conn.commit()
-        result = CliRunner().invoke(app, ["duplicates"])
+        result = CliRunner().invoke(cli.app, ["duplicates"])
         assert result.exit_code == 0, result.output
         assert "nothing written" in result.output
         open_now = conn.execute(
