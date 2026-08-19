@@ -218,6 +218,12 @@ def _stars(component: list[int], edges: dict[int, dict[int, float]]) -> list[lis
     whatever is left is split again — so a genuine group of seven survives intact while a
     chain of thirty-seven becomes the handful of real resemblances it was built from.
 
+    A leftover whose only neighbours went with an earlier centre forms nothing, and its
+    pair waits: `clusters` drops singletons, so that row is carded on the next read, after
+    the card holding its neighbour is answered and the graph changes. Deferred, not lost —
+    on the owner's ledger it is 7 rows of 194. Stated because a surface that quietly shows
+    less than it found is the failure this file was written about.
+
     Not a clustering algorithm chosen for its properties; a guard chosen for what it
     refuses to produce. The guarantee is exactly one hop — every member is a suspect of
     the centre — so a cluster spans two rows that never resembled each other only when

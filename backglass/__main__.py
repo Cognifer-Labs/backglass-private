@@ -4152,15 +4152,40 @@ decisions_app = typer.Typer(
 app.add_typer(decisions_app, name="decisions")
 
 
-@decisions_app.callback()
-def decisions_list(ctx: typer.Context) -> None:
-    """List standing decisions, newest first. Same read the Decisions page runs."""
+@decisions_app.callback(invoke_without_command=True)
+def decisions_list(
+    ctx: typer.Context,
+    disposals: Annotated[
+        bool,
+        typer.Option(
+            "--disposals", help="What the logic checker threw out, not what you decided"
+        ),
+    ] = False,
+) -> None:
+    """List standing decisions, newest first. Same read the Decisions page runs.
+
+    `--disposals` is the page's lower half: the logic checker's own work, which is
+    recorded in the same table and deliberately kept out of the standing list. A guard on
+    one door is not a guard, and neither is a surface — what the machine threw out has to
+    be readable from here too.
+    """
     if ctx.invoked_subcommand is not None:
         return
     from backglass import decisions
 
     conn = _open(get_settings())
     migrate(conn)
+    if disposals:
+        thrown = decisions.disposals(conn)
+        if not thrown:
+            typer.echo("the logic checker has disposed of nothing")
+            return
+        for d in thrown:
+            typer.echo(
+                f"  #{d.decision_id} [{d.decided_at[:10]}] "
+                f"{d.commitment_title or d.title}: {d.choice} — {d.reasoning}"
+            )
+        return
     rows = decisions.active(conn)
     if not rows:
         typer.echo("no decisions recorded yet")

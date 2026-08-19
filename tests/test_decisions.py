@@ -269,6 +269,34 @@ class TestDecisionsPage:
 class TestCli:
     """The second door. A guard on one door is not a guard — same rules as the page."""
 
+    def test_disposals_are_readable_from_the_cli_too(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The page shows the checker's work below the owner's decisions; the CLI has to
+        show it as well, or the standing list is the only view and the machine's tidying
+        is invisible from the terminal."""
+        from typer.testing import CliRunner
+
+        from backglass import decisions
+        from backglass.__main__ import app
+
+        decisions.record(
+            conn, settings, title="Disposed of commitment 71", choice="resolved",
+            reasoning='logic: reported-done — "sent EIN screenshot" reports it done',
+        )
+        decisions.record(
+            conn, settings, title="Early move-in", choice="declined", reasoning="",
+        )
+        conn.commit()
+
+        standing = CliRunner().invoke(app, ["decisions"])
+        thrown = CliRunner().invoke(app, ["decisions", "--disposals"])
+
+        assert "Early move-in" in standing.output
+        assert "Disposed of commitment 71" not in standing.output
+        assert "reported-done" in thrown.output
+        assert "Early move-in" not in thrown.output
+
     @pytest.fixture(autouse=True)
     def cli_settings(
         self, settings: Settings, conn: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
