@@ -91,7 +91,11 @@ class Proposal:
 
 
 def candidates(
-    conn: sqlite3.Connection, settings: Settings, day: date, at_risk_goals: set[int]
+    conn: sqlite3.Connection,
+    settings: Settings,
+    day: date,
+    at_risk_goals: set[int],
+    stale: set[int] | None = None,
 ) -> list[Candidate]:
     """Open commitments the planner may schedule, with derived priority.
 
@@ -106,8 +110,13 @@ def candidates(
     and half an hour scheduled for it is the system answering its own question with yes.
     Not silently dropped — a gated row is a question, and answering `STALE_KEEP` returns
     it to the very next plan.
+
+    `stale` is passed in by `propose`, which also counts it for the held-back note: the
+    set the note describes and the set the gate applies are then the same object, and the
+    windowed evidence query runs once per proposal rather than twice.
     """
-    stale = staleness.stale_ids(conn, day)
+    if stale is None:
+        stale = staleness.stale_ids(conn, day)
     rows = conn.execute(
         "SELECT c.id, c.what, c.due_at, c.estimated_minutes, c.direction, c.goal_id, "
         "       c.rollover_count, s.occurred_at "
@@ -424,8 +433,9 @@ def propose(
             )
         return proposal
 
-    pool = candidates(conn, settings, day, at_risk_goals or set())
-    held = len(staleness.stale_ids(conn, day))
+    stale = staleness.stale_ids(conn, day)
+    pool = candidates(conn, settings, day, at_risk_goals or set(), stale)
+    held = len(stale)
     if held:
         # P2's rule applied to the gate: a plan that quietly leaves out eighty-three
         # obligations reads as a plan that does not know about them. The sentence says

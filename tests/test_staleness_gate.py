@@ -189,6 +189,31 @@ class TestThePlannerGate:
         ]
         assert "finish the transfer-credit list" in titles
 
+    def test_keeping_it_drifts_the_fingerprint_so_the_board_changes_today(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """"Next plan" has to mean this afternoon's, not tomorrow's. `inputs_fingerprint`
+        hashes the post-gate pool (increment 6), so an answer that changes the gate is
+        drift, and `replan_pass` regenerates a still-proposed day on the next sync."""
+        cid = a_commitment(
+            conn,
+            "finish the transfer-credit list",
+            due="2026-05-01",
+            occurred="2026-04-20T10:00:00-07:00",
+        )
+        before = planner.inputs_fingerprint(conn, sett, TODAY)
+        questions.refresh(conn, sett, TODAY)
+        qid = int(
+            conn.execute(
+                "SELECT id FROM open_question WHERE kind = 'stale' AND subject_key = ?",
+                (str(cid),),
+            ).fetchone()["id"]
+        )
+
+        questions.answer(conn, sett, qid, option=questions.STALE_KEEP)
+
+        assert planner.inputs_fingerprint(conn, sett, TODAY) != before
+
     def test_dropping_it_is_not_the_same_as_keeping_it(
         self, conn: sqlite3.Connection, sett: Settings
     ) -> None:

@@ -100,7 +100,7 @@ the ledger stays primary, and a second copy of the truth would drift from the fi
       proposed plans; `plan-changed` notification via notify's dedup; accepted plans
       get `plan-drift` notification only). 12 tests.
 
-- [ ] 7. **A stale commitment leaves the plan, not just the board** — reported by the
+- [x] 7. **A stale commitment leaves the plan, not just the board** — reported by the
       owner on 2026-08-18: "the AES things on schedule make no sense because i go to
       asu". The 13:42 plan for today gave four of its twelve blocks to dead
       college-admissions work — UT Dallas scholarship acceptance (due 2026-05-01, from
@@ -124,6 +124,16 @@ the ledger stays primary, and a second copy of the truth would drift from the fi
       Out of scope, noted not fixed: commitments 64/69/73/83/178 are five extractions of
       one UT Dallas obligation (dedup), and nothing consumes fact 5 to moot a whole
       institution at once (relevance). Both are separate passes.
+      landed (bc423b4, on branch `stale-planner-gate`): `backglass/staleness.py` holds the
+      predicate and the three option constants; `questions.py` re-exports and asks 5 per
+      refresh; `planner.candidates` takes the unbatched set and `propose` notes how many
+      were held; `STALE_KEEP` leaves the set permanently, and because
+      `inputs_fingerprint` hashes the post-gate pool that answer is same-day drift, so
+      `replan_pass` rebuilds a still-proposed board rather than waiting for 05:45;
+      `set_block_outcome('done')` resolves the commitment behind the block. 13 tests, gate
+      and KEEP override each proven by a red mutation run. Live probe (read-only, 2026-08-18):
+      83 of 205 open `i_owe` rows held back, all five UT Dallas rows among them, remaining
+      board is ASU work.
 
 ## Constraints that bite
 
