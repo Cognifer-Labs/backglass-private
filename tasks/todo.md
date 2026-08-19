@@ -100,6 +100,31 @@ the ledger stays primary, and a second copy of the truth would drift from the fi
       proposed plans; `plan-changed` notification via notify's dedup; accepted plans
       get `plan-drift` notification only). 12 tests.
 
+- [ ] 7. **A stale commitment leaves the plan, not just the board** — reported by the
+      owner on 2026-08-18: "the AES things on schedule make no sense because i go to
+      asu". The 13:42 plan for today gave four of its twelve blocks to dead
+      college-admissions work — UT Dallas scholarship acceptance (due 2026-05-01, from
+      `AES@utdallas.edu`), a UW–Madison waitlist form — while fact 5 records the owner
+      enrolled at ASU. Two defects, one complaint:
+      1. `planner.candidates()` (planner.py:96) selects every open `i_owe` commitment
+         and `PRIORITY_OVERDUE` ranks the most lapsed ones *first, forever* (docs/04
+         §1.5 rule 2). Increment 3's detector asks "still real?" about exactly these
+         rows and the planner schedules them in the same pass — asking and asserting at
+         once. 104 open commitments are past due; the detector clears 5 per refresh, so
+         without a gate the board stays wrong for weeks.
+         Fix: one shared predicate. Move the staleness SQL and its constants out of
+         `questions.py` into `backglass/staleness.py`; `candidates()` drops stale ids.
+         Not hidden — a gated row is a question, and `STALE_KEEP` ("still on my plate")
+         overrides the gate so an answer puts it straight back in tomorrow's plan.
+      2. `actions.set_block_outcome` (actions.py:435) writes `plan_block.outcome` and
+         never touches the commitment, so "done" on the board leaves the row `open` and
+         tomorrow schedules it again. Live proof: block 518 `done`, commitment 69
+         `open`, re-proposed today. Fix: `done` resolves the linked commitment through
+         `actions.resolve`, best-effort if another surface already closed it.
+      Out of scope, noted not fixed: commitments 64/69/73/83/178 are five extractions of
+      one UT Dallas obligation (dedup), and nothing consumes fact 5 to moot a whole
+      institution at once (relevance). Both are separate passes.
+
 ## Constraints that bite
 
 - Any migration re-arms the frozen-sidecar crash (`matches_source` already false);

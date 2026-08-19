@@ -14,6 +14,7 @@ Every one of them is the owner's own click.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 from dataclasses import dataclass
@@ -433,15 +434,38 @@ def add_checklist_item(conn: sqlite3.Connection, title: str) -> Result:
 
 
 def set_block_outcome(conn: sqlite3.Connection, block_id: int, outcome: str) -> Result:
-    """docs/06: "Mark a plan block done or rolled."."""
+    """docs/06: "Mark a plan block done or rolled."
+
+    `done` carries through to the commitment behind the block. The block is a proposal to
+    spend half an hour on an obligation; the obligation is the record. Marking the block
+    and leaving the ledger row open put the same item back on the next morning's plan —
+    seen on 2026-08-18, block 518 `done` against commitment 69 still `open` and
+    re-proposed the same afternoon — which reads as the board ignoring the click.
+
+    Only `done`, and only forward. `rolled` is what `plan.rollover.close_day` already
+    counts on both rows, and a `dropped` block means "not this slot", which is not the
+    owner saying the promise is dead — that is `drop`, behind its own confirmation.
+    """
     if outcome not in ("pending", "done", "rolled", "dropped"):
         raise ActionError(f"unknown outcome {outcome!r}")
-    updated = conn.execute(
+    row = conn.execute(
+        "SELECT commitment_id FROM plan_block WHERE id = ?", (block_id,)
+    ).fetchone()
+    if row is None:
+        raise ActionError(f"no plan block {block_id}")
+    conn.execute(
         "UPDATE plan_block SET outcome = ?, rollover_count = rollover_count + ? WHERE id = ?",
         (outcome, 1 if outcome == "rolled" else 0, block_id),
     )
-    if not updated.rowcount:
-        raise ActionError(f"no plan block {block_id}")
+    if outcome == "done" and row["commitment_id"] is not None:
+        # Already closed elsewhere (the board's own resolve, a stale answer, the recheck
+        # pass) is the ordinary case, not an error: the block's outcome still stands.
+        with contextlib.suppress(ActionError):
+            resolve(
+                conn,
+                int(row["commitment_id"]),
+                note=f"marked done on the day plan (block {block_id})",
+            )
     return Result(ok=True, detail=outcome)
 
 

@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
 
+from backglass import staleness
 from backglass.config import Settings
 from backglass.db import now_iso
 from backglass.ledger import USER_ID
@@ -96,7 +97,17 @@ def candidates(
 
     Only `i_owe`. An `owed_to_me` commitment is someone else's work; scheduling time for
     it would be scheduling time to wait.
+
+    Stale rows are out (`staleness.stale_ids`). `PRIORITY_OVERDUE` ranks the most lapsed
+    item first and never expires it, so without this gate the oldest dead obligation on
+    the board outranks everything real, permanently: on 2026-08-18 the day was given four
+    blocks of college-admissions work whose deadlines passed in May, for schools the
+    owner does not attend. The same predicate is already asking the owner "still real?",
+    and half an hour scheduled for it is the system answering its own question with yes.
+    Not silently dropped — a gated row is a question, and answering `STALE_KEEP` returns
+    it to the very next plan.
     """
+    stale = staleness.stale_ids(conn, day)
     rows = conn.execute(
         "SELECT c.id, c.what, c.due_at, c.estimated_minutes, c.direction, c.goal_id, "
         "       c.rollover_count, s.occurred_at "
@@ -109,6 +120,8 @@ def candidates(
     week_end = day + timedelta(days=(6 - day.weekday()))
     out: list[Candidate] = []
     for row in rows:
+        if int(row["id"]) in stale:
+            continue
         due = date.fromisoformat(str(row["due_at"])[:10]) if row["due_at"] else None
         if due is not None and due < day:
             priority = PRIORITY_OVERDUE
@@ -412,6 +425,14 @@ def propose(
         return proposal
 
     pool = candidates(conn, settings, day, at_risk_goals or set())
+    held = len(staleness.stale_ids(conn, day))
+    if held:
+        # P2's rule applied to the gate: a plan that quietly leaves out eighty-three
+        # obligations reads as a plan that does not know about them. The sentence says
+        # where they went, because the answer is what brings them back.
+        proposal.notes.append(
+            f"{held} long-lapsed item(s) held back, awaiting your answer on the ask page."
+        )
     prefs = preferences_mod.load(conn)
     for warning in prefs.warnings:
         # A preference silently ignored is worse than none — the owner believes it is

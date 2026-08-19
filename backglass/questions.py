@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Any
 
+from backglass import staleness
 from backglass.config import Settings
 from backglass.db import now_iso
 from backglass.ledger import USER_ID
@@ -310,24 +311,16 @@ def _priority(conn: sqlite3.Connection, settings: Settings, today: date) -> list
 DETECTORS = ("conflict", "untitled", "duplicate_entity", "contradiction", "priority")
 
 
-#: A commitment this far past due, with nothing in the ledger mentioning it since,
-#: is a candidate for "quietly no longer true". Two weeks, because the board already
-#: nags inside that window and the recheck pass owns conversations; this detector is
-#: for the mail-shaped obligation that decays with no thread to re-read.
-STALE_OVERDUE_DAYS = 14
-STALE_SILENCE_DAYS = 14
-
-#: New stale questions per refresh. The first run against a neglected board would
-#: otherwise raise a hundred at once, and a wall of questions is how an owner stops
-#: answering any (the overflow-list lesson, 2026-08-09). Oldest first; the rest queue
-#: behind answers.
-STALE_BATCH_LIMIT = 5
-
-#: The stale question's options, matched EXACTLY by the answer hook — a reworded
-#: option is an answer the hook cannot act on, so these are constants, not prose.
-STALE_DONE = "Done — mark it resolved"
-STALE_DROP = "No longer relevant — drop it"
-STALE_KEEP = "Still on my plate — keep it open"
+#: The staleness rule itself lives in `backglass.staleness`, because the planner reads it
+#: too: a commitment this surface is asking "still real?" about is one the planner must
+#: stop scheduling in the meantime (increment 7). Re-exported here so the constants keep
+#: the names every caller and test already uses.
+STALE_OVERDUE_DAYS = staleness.STALE_OVERDUE_DAYS
+STALE_SILENCE_DAYS = staleness.STALE_SILENCE_DAYS
+STALE_BATCH_LIMIT = staleness.STALE_BATCH_LIMIT
+STALE_DONE = staleness.STALE_DONE
+STALE_DROP = staleness.STALE_DROP
+STALE_KEEP = staleness.STALE_KEEP
 
 
 def _stale_commitments(
@@ -341,54 +334,12 @@ def _stale_commitments(
     owner's click acts through the same actions the board uses (docs/11: proposals,
     not actions — the click is the owner's).
 
-    Newest evidence is MAX over datetime() of the commitment's own source item and
-    every commitment_evidence sighting — datetime(), not the raw column, because
-    occurred_at keeps each sender's own offset and MAX over text picks the wrong
-    message across the owner's two zones (lessons, 2026-08-02).
+    Batched: `STALE_BATCH_LIMIT` per refresh, oldest first. The planner's gate over the
+    same predicate is not batched, so a board with a hundred lapsed rows stops proposing
+    them today and is asked about them five at a time.
     """
     del settings
-    overdue_floor = (today - timedelta(days=STALE_OVERDUE_DAYS)).isoformat()
-    silence_floor = (today - timedelta(days=STALE_SILENCE_DAYS)).isoformat()
-    rows = conn.execute(
-        """
-        SELECT c.id, c.what, substr(c.due_at, 1, 10) AS due_day, c.direction,
-               last.seen_day, last.source, last.title
-        FROM commitment c
-        JOIN (
-          SELECT ranked.commitment_id,
-                 substr(ranked.occurred_at, 1, 10) AS seen_day,
-                 ranked.source AS source, ranked.title AS title
-          FROM (
-            SELECT c2.id AS commitment_id, si.occurred_at, si.source, si.title,
-                   ROW_NUMBER() OVER (
-                     PARTITION BY c2.id ORDER BY datetime(si.occurred_at) DESC
-                   ) AS rn
-            FROM commitment c2
-            JOIN source_item si
-              ON si.id = c2.source_item_id
-              OR si.id IN (
-                   SELECT ce.source_item_id FROM commitment_evidence ce
-                   WHERE ce.commitment_id = c2.id AND ce.user_id = c2.user_id
-                 )
-            WHERE c2.user_id = :user_id AND c2.status = 'open'
-          ) ranked
-          WHERE ranked.rn = 1
-        ) last ON last.commitment_id = c.id
-        WHERE c.user_id = :user_id
-          AND c.status = 'open'
-          AND c.due_at IS NOT NULL
-          AND substr(c.due_at, 1, 10) <= :overdue_floor
-          AND last.seen_day <= :silence_floor
-        ORDER BY substr(c.due_at, 1, 10) ASC, c.id ASC
-        LIMIT :limit
-        """,
-        {
-            "user_id": USER_ID,
-            "overdue_floor": overdue_floor,
-            "silence_floor": silence_floor,
-            "limit": STALE_BATCH_LIMIT,
-        },
-    ).fetchall()
+    rows = staleness.stale_rows(conn, today, limit=STALE_BATCH_LIMIT)
 
     out: list[Question] = []
     for row in rows:
