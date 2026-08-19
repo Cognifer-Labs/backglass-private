@@ -585,3 +585,20 @@ CREATE TABLE notification (
   created_at     TEXT    NOT NULL,
   UNIQUE (user_id, kind, subject_key, local_date)
 );
+
+CREATE TABLE logic_check (
+  id             INTEGER PRIMARY KEY,
+  user_id        INTEGER NOT NULL DEFAULT 1,
+  commitment_id  INTEGER NOT NULL REFERENCES commitment(id),
+  verdict        TEXT    NOT NULL,           -- keep|nonsense
+  confidence     REAL    NOT NULL,
+  fact_id        INTEGER REFERENCES fact(id),
+  quote          TEXT,
+  reason         TEXT,
+  status         TEXT    NOT NULL DEFAULT 'pending', -- applied|pending|kept
+  created_at     TEXT    NOT NULL,
+  decided_at     TEXT,
+  UNIQUE (user_id, commitment_id)
+);
+
+CREATE INDEX idx_logic_check_pending ON logic_check(user_id, status) WHERE status = 'pending';

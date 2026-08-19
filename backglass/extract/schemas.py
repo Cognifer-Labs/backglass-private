@@ -185,6 +185,32 @@ class RecheckResponse(Strict):
     verdicts: list[RecheckVerdict] = Field(default_factory=list)
 
 
+class RelevanceVerdict(Strict):
+    """One open obligation, judged against what the ledger records about the owner.
+
+    `cites_fact` is the whole difference between this pass and a guess. A `nonsense`
+    verdict names the recorded fact that retired the obligation — the enrolment that
+    makes another university's deposit moot — and that id is intersected with the fact
+    table before anything is dropped, the same guard `cites` gets in `RecheckVerdict`.
+
+    `quote` is copied from the obligation's own source text and checked against it, so a
+    fluent-sounding paraphrase cannot stand in for having read the thing being retired.
+    """
+
+    commitment_id: int
+    verdict: Literal["nonsense", "keep"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    #: `fact.id` of the recorded fact that makes it moot. None is only valid for `keep`.
+    cites_fact: int | None = None
+    #: Verbatim, from the obligation's source item. Checked before the verdict is applied.
+    quote: str | None = None
+    reason: str | None = None
+
+
+class RelevanceResponse(Strict):
+    verdicts: list[RelevanceVerdict] = Field(default_factory=list)
+
+
 def json_schema(model: type[BaseModel]) -> dict[str, Any]:
     """A self-contained JSON Schema for `--json-schema` / a tool `input_schema`.
 

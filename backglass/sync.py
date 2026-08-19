@@ -78,6 +78,11 @@ class SyncReport:
     #: under the confidence threshold — a wrong close is silent, so it asks first.
     recheck_applied: int = 0
     recheck_pending: int = 0
+    #: Obligations a recorded fact has overtaken (migration 0029). `dropped` is what the
+    #: judge was confident enough to retire by itself, citing the fact; `asked` is what it
+    #: was not, put to the owner as one question instead.
+    relevance_dropped: int = 0
+    relevance_asked: int = 0
     review_queue: int = 0
     writes: int = 0
     spend_cents: int = 0
@@ -328,6 +333,13 @@ def _sync(
     if extract and not report.rate_limited and not dry_run:
         _recheck_pass(
             conn, settings, Metered(client, "recheck", report.calls), cap, report
+        )
+        # And the obligations a recorded fact has overtaken — the other university's
+        # deposit after the owner enrolled. Same position and same conditions as recheck:
+        # after extraction because it judges what this run may have just created, and off
+        # entirely when the backend just refused or the cap is reached.
+        _relevance_pass(
+            conn, settings, Metered(client, "relevance", report.calls), cap, report
         )
 
     # Review-day tallies → checkpoints. Deterministic — the data arrives structured,
@@ -1150,3 +1162,32 @@ def _recheck_pass(
     report.errors.extend(result.errors)
     report.recheck_applied = result.applied
     report.recheck_pending = result.pending
+
+
+def _relevance_pass(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    client: Any,
+    cap: Any,
+    report: Any,
+) -> None:
+    """Retire the obligations a recorded fact has already overtaken.
+
+    Judged once per commitment and bounded per run, so a two-hundred-row board is
+    several syncs' work rather than one expensive minute — and, like every other tier,
+    it does not run at all once the cap is reached (rule 7).
+    """
+    if cap.reached:
+        return
+    from backglass.extract import prompts
+    from backglass.extract import relevance as relevance_mod
+
+    try:
+        prompt = prompts.load("check-relevance")
+    except Exception as exc:  # noqa: BLE001 — rule 5: a missing prompt degrades the pass
+        report.errors.append(f"relevance: {type(exc).__name__}: {exc}")
+        return
+    result = relevance_mod.run(conn, settings, client, prompt=prompt)
+    report.errors.extend(result.errors)
+    report.relevance_dropped = result.dropped
+    report.relevance_asked = result.asked

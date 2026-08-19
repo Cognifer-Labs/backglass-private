@@ -1995,6 +1995,71 @@ def logic_command(
     raise typer.Exit(1 if report.errors else 0)
 
 
+@app.command("relevance")
+def relevance_command(
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Print the verdicts, write nothing")
+    ] = False,
+    limit: Annotated[
+        int, typer.Option("--limit", help="Obligations judged this run")
+    ] = 0,
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable")] = False,
+) -> None:
+    """Retire obligations the owner's own record has overtaken.
+
+    The board gave four blocks of one day to a UT Dallas scholarship deadline while the
+    ledger recorded the owner enrolled at ASU. Nothing consumed that fact. This pass does:
+    it judges each open obligation against the recorded facts once, drops the ones a fact
+    plainly retires — citing that fact in the resolution note — and asks about the rest
+    rather than guessing.
+
+    Runs inside `sync`, a bounded slice per pass. `--dry-run` prints the verdicts and
+    writes nothing, which is how the first pass on a real ledger should be read.
+    """
+    import json as _json
+
+    from backglass.extract import prompts
+    from backglass.extract import relevance as relevance_mod
+    from backglass.telemetry import Metered
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    calls: list[Any] = []
+    report = relevance_mod.run(
+        conn,
+        settings,
+        Metered(_build_model_client(settings), "relevance", calls),
+        prompt=prompts.load("check-relevance"),
+        dry_run=dry_run,
+        limit=limit or relevance_mod.PER_RUN,
+    )
+    if not dry_run:
+        conn.commit()
+
+    if as_json:
+        typer.echo(_json.dumps({
+            "judged": report.judged, "dropped": report.dropped, "asked": report.asked,
+            "kept": report.kept, "discarded": report.discarded,
+            "cost_usd": round(report.cost_usd, 4), "errors": report.errors,
+        }, indent=2))
+        raise typer.Exit(1 if report.errors else 0)
+
+    if not report.judged:
+        typer.echo("nothing left to judge")
+    else:
+        typer.echo(
+            f"judged {report.judged}: {report.dropped} dropped, {report.asked} asked "
+            f"about, {report.kept} kept, {report.discarded} discarded (uncited)"
+        )
+        typer.echo(f"  spend {round(report.cost_usd * 100)}c")
+    if dry_run:
+        typer.echo("  nothing written")
+    for error in report.errors:
+        typer.echo(f"  {error}", err=True)
+    raise typer.Exit(1 if report.errors else 0)
+
+
 @app.command("duplicates")
 def duplicates_command(
     apply: Annotated[

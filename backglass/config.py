@@ -318,6 +318,13 @@ class Settings(BaseSettings):
     # --max-budget-usd, because that ceiling was enforced against an imputed price.
     per_call_budget_usd: float = 0.10
     confidence_threshold: float = 0.7
+    #: Where the relevance judge may drop an obligation by itself rather than ask about
+    #: it (extract/relevance.py). Deliberately above `confidence_threshold`: that one
+    #: gates what reaches the brief, and a wrong entry there is visible and dismissible,
+    #: while a wrong drop here is a row disappearing with nothing on the surface to say
+    #: so. The owner asked for automatic disposal on 2026-08-18; this number is how much
+    #: certainty "obviously doesn't make sense" is taken to require.
+    relevance_drop_confidence: float = 0.85
     # Post-processing step 5 in extract-commitments.md says "fuzzy match" without an
     # algorithm. Ruling: normalized token-set ratio via stdlib difflib at this
     # threshold. See tasks/todo.md §Deviations #6.

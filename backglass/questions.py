@@ -25,6 +25,7 @@ Three rules, all inherited from surfaces that already work:
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 from dataclasses import dataclass
@@ -537,6 +538,7 @@ def answer(
         reasoning=f"answered in the questions surface · {row['kind']}",
     )
     _apply_stale_answer(conn, row, option)
+    _apply_relevance_answer(conn, row, option)
 
 
 def _apply_stale_answer(conn: sqlite3.Connection, row: Any, option: str | None) -> None:
@@ -563,6 +565,43 @@ def _apply_stale_answer(conn: sqlite3.Connection, row: Any, option: str | None) 
             actions.drop(conn, commitment_id, note=note)
     except actions.ActionError:
         pass  # already closed by another surface; the recorded answer still stands
+
+
+def _apply_relevance_answer(conn: sqlite3.Connection, row: Any, option: str | None) -> None:
+    """The half of the relevance judge that was not confident enough to act alone.
+
+    The verdict is already recorded in `logic_check` as `pending`; the owner's click is
+    what settles it, and settling it is also what stops the pass judging the same
+    obligation again. "No, this is still mine" is therefore a durable answer, not a
+    snooze — the row it protects is one the judge already suspected, and asking again next
+    week would be asking a question the owner answered.
+    """
+    from backglass.extract.relevance import RELEVANCE_DROP, RELEVANCE_KEEP
+
+    if str(row["kind"]) != "nonsense" or option not in (RELEVANCE_DROP, RELEVANCE_KEEP):
+        return
+    from backglass.web import actions
+
+    try:
+        commitment_id = int(str(row["subject_key"]))
+    except ValueError:
+        return
+    conn.execute(
+        "UPDATE logic_check SET status = ?, decided_at = ?"
+        " WHERE commitment_id = ? AND user_id = ? AND status = 'pending'",
+        (
+            "applied" if option == RELEVANCE_DROP else "kept",
+            now_iso(),
+            commitment_id,
+            USER_ID,
+        ),
+    )
+    if option != RELEVANCE_DROP:
+        return
+    # Already closed by another surface is the ordinary case, not an error: the recorded
+    # answer still stands either way.
+    with contextlib.suppress(actions.ActionError):
+        actions.drop(conn, commitment_id, note="logic: owner confirmed it is overtaken")
 
 
 def dismiss(conn: sqlite3.Connection, question_id: int) -> None:

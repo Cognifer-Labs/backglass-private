@@ -135,6 +135,34 @@ the ledger stays primary, and a second copy of the truth would drift from the fi
       83 of 205 open `i_owe` rows held back, all five UT Dallas rows among them, remaining
       board is ASU work.
 
+- [x] 8. **A logic checker, disposing rather than asking** — owner, 2026-08-18: "we also
+      need a logic checker for commitments and questions, if something obviously doesnt
+      make sense then dispose of it yourself." The boundary that keeps this from being the
+      silent-data-loss failure four lessons cover: **positive contradiction, never
+      silence.** recheck closes on a quoted later message; staleness never closes, it stops
+      scheduling and asks; this closes only where the record disagrees with itself or with
+      a recorded fact.
+      Two layers, two commits.
+      landed (93b7a4a) — `backglass/logic.py`, deterministic, no model, no migration: an
+      obligation whose own text reports it done ("sent updated resume", "MCAT prep
+      completed"), a "still real?" about a commitment no longer open, a "should it have
+      come first?" about a day that ended, a collision or placeholder hour the calendar
+      no longer holds. Runs at the end of sync ahead of detection; `backglass logic
+      --dry-run` to read it. Near-miss tests are the file: "zip it up once done" is a real
+      obligation, protected-time questions carry no day, priority questions are never
+      mooted by re-detection. New `moot` status, revivable by `questions.refresh` — the
+      owner's `dismissed` stays permanent. 16 tests. Live read-only probe: 14 disposals
+      (8 reported-done, 3 dead priority questions, 3 dead conflict questions), no errors.
+      landed — the model half: migration 0029 (`logic_check`, judged once per commitment),
+      prompt `check-relevance@1`, `backglass/extract/relevance.py`, `backglass relevance`,
+      a bounded slice per sync behind the same spend cap as recheck. A `nonsense` verdict
+      must cite an active fact id AND quote the obligation's own source, both verified in
+      code; ≥ `relevance_drop_confidence` (0.85, its own setting above the extraction
+      threshold) drops with the citation in `resolution_note`, below it asks one question
+      whose answer settles the `logic_check` row. 14 tests, every guard and both sides of
+      the asymmetry. Not yet run against the live ledger: it costs model calls and the
+      migration, so the first pass should be `--dry-run` after merge.
+
 ## Constraints that bite
 
 - Any migration re-arms the frozen-sidecar crash (`matches_source` already false);
