@@ -3,6 +3,7 @@ id: app-launch
 version: 2
 title: Ship an app to the App Store and its first users
 horizon: annual
+signals: testflight, app store, app review, beta tester, subscription
 definition_of_done: Live on the App Store with 100 active users and paying subscribers
 ---
 

@@ -689,6 +689,30 @@ def verdicts(state: State, conn: sqlite3.Connection, settings: Settings) -> list
         elif _value(state, "deployed", "matches_source") is True:
             out.append(Verdict("installed app matches this checkout", ok=True))
 
+    # A plist on disk is a wish; only a loaded label is a schedule. This is the gap
+    # that silently stopped the ledger for thirteen hours on 2026-08-18: the sync
+    # plist existed, its log had an mtime, and launchd had never been asked.
+    try:
+        from backglass import schedule as schedule_mod
+
+        unloaded = schedule_mod.unloaded_jobs()
+    except Exception as exc:  # noqa: BLE001 — unknown, never a silent pass
+        unloaded = None
+        unloaded_why = f"{type(exc).__name__}: {exc}"
+    else:
+        unloaded_why = "launchctl could not be asked"
+    if unloaded is None:
+        out.append(Verdict("every scheduled job is loaded", ok=False, unknown=True,
+                           detail=unloaded_why))
+    else:
+        out.append(Verdict(
+            "every scheduled job is loaded",
+            ok=not unloaded,
+            detail=", ".join(unloaded) if unloaded else "",
+            remedy="open the Backglass app (it re-loads them at startup), or"
+                   " `backglass schedule install`",
+        ))
+
     # A version the ledger has extracted with but that is no longer on disk: the prompt
     # was edited or renamed under rows that cite it, so nothing can reproduce them.
     on_disk_versions = {

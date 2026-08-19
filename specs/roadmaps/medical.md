@@ -3,6 +3,7 @@ id: medical
 version: 3
 title: Get into medical school and through the first two years
 horizon: annual
+signals: mcat, premed, shadowing, clinical, volunteer, hospice, anki
 definition_of_done: Matriculated at an MD programme with Step 1 passed.
 ---
 

@@ -3,6 +3,7 @@ id: swe
 version: 2
 title: Land a software engineering offer
 horizon: annual
+signals: leetcode, internship, technical interview, resume, github portfolio
 definition_of_done: A signed offer for a software engineering role.
 ---
 

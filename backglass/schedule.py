@@ -104,6 +104,78 @@ def find_uv() -> str:
 BATCH_PREFIX = "com.backglass.batch-"
 
 
+def loaded_labels() -> set[str] | None:
+    """Labels launchd currently has in this user's session, or None if unknowable.
+
+    None, never an empty set, when `launchctl` cannot be asked — an empty set means
+    "everything is unloaded" and would send a caller off to fix a problem that may
+    not exist (the state module's unknown-vs-zero rule).
+    """
+    try:
+        proc = subprocess.run(
+            ["launchctl", "list"], capture_output=True, text=True, timeout=10, check=False
+        )
+    except Exception:  # noqa: BLE001 — no launchctl, no answer
+        return None
+    if proc.returncode != 0:
+        return None
+    labels: set[str] = set()
+    for line in proc.stdout.splitlines():
+        parts = line.split("	")
+        if parts:
+            labels.add(parts[-1].strip())
+    return labels
+
+
+def unloaded_jobs() -> list[str] | None:
+    """com.backglass plists on disk that launchd is NOT running, or None if unknowable.
+
+    The gap this measures is the one that silently stopped the ledger for thirteen
+    hours on 2026-08-18: com.backglass.sync.plist sat in LaunchAgents, `state` read
+    the file and the log mtime and reported a schedule, and launchd had never been
+    asked to run it — the only thing syncing was the app's own timer, which dies with
+    the app. A plist on disk is a wish; only a loaded label is a schedule.
+    """
+    loaded = loaded_labels()
+    if loaded is None:
+        return None
+    return sorted(
+        path.stem
+        for path in LAUNCH_AGENTS_DIR.glob("com.backglass.*.plist")
+        if path.stem not in loaded
+    )
+
+
+def ensure_loaded() -> list[str]:
+    """Bootstrap every on-disk com.backglass plist launchd is not running. Self-heal.
+
+    Called from the dashboard's startup — the one process the owner actually launches
+    — so the daily loops recover from anything that unloaded them (a logout, a
+    migration crash, a launchctl bootout) without a terminal. Bootstraps existing
+    files only; it never renders, so it cannot write a stale path. Best-effort
+    per-job: one refusing plist must not cost the rest (rule 5).
+    """
+    import os
+
+    missing = unloaded_jobs()
+    if not missing:
+        return []
+    healed: list[str] = []
+    domain = f"gui/{os.getuid()}"
+    for label in missing:
+        plist = LAUNCH_AGENTS_DIR / f"{label}.plist"
+        try:
+            proc = subprocess.run(
+                ["launchctl", "bootstrap", domain, str(plist)],
+                capture_output=True, text=True, timeout=15, check=False,
+            )
+            if proc.returncode == 0:
+                healed.append(label)
+        except Exception:  # noqa: BLE001 — rule 5
+            continue
+    return healed
+
+
 def install(
     *, dry_run: bool = False, uv_bin: str | None = None, batch_lane: bool = True
 ) -> dict[str, str]:

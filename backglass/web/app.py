@@ -427,4 +427,16 @@ def serve(
     conn = connect(resolved.db_path)
     migrate(conn)
     conn.close()
+    # Self-heal the daily loops. The dashboard is the one process the owner actually
+    # launches, so it re-bootstraps any com.backglass job that fell out of launchd —
+    # the failure that silently stopped the ledger for thirteen hours on 2026-08-18.
+    # Best-effort: a machine with no launchctl still gets its dashboard.
+    try:
+        from backglass import schedule
+
+        healed = schedule.ensure_loaded()
+        if healed:
+            print(f"re-loaded scheduled job(s): {', '.join(healed)}")
+    except Exception:  # noqa: BLE001 — rule 5: the dashboard must serve regardless
+        pass
     uvicorn.run(create_app(resolved), host=host, port=port, log_level="warning")

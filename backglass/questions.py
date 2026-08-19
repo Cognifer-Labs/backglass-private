@@ -472,6 +472,86 @@ def _protected_conflicts(
     return out
 
 
+#: Distinct open commitments that must match a preset's signals before it volunteers
+#: itself. One "volunteer application" is an errand; several signals across several
+#: obligations is a life track running untracked.
+ROADMAP_SIGNAL_MIN = 3
+
+#: Matched exactly by the answer hook, like the stale options.
+ROADMAP_START = "Start tracking it"
+ROADMAP_NOT_THIS = "Not this path"
+
+
+def _roadmap_candidates(
+    conn: sqlite3.Connection, settings: Settings, today: date
+) -> list[Question]:
+    """Auto-detect a roadmap the owner is already living but not tracking.
+
+    Reads the preset catalog's `signals:` words against open commitments and
+    engagements (word-boundary; substring matching on short words is the 2026-07-30
+    lesson). Three distinct matching records is the floor — below it this stays
+    silent, because "only ask when necessary" is the rule that keeps the surface
+    trusted. Ask-once identity is the preset id, so a dismissed path never returns;
+    a preset with any existing roadmap row — active, done, or dropped — is never
+    proposed, because all three mean the owner already decided.
+    """
+    import re as _re
+
+    del today
+    from backglass.roadmap import presets as presets_mod
+
+    try:
+        catalog = presets_mod.list_paths()
+    except Exception:  # noqa: BLE001 — a broken preset file must not cost the surface
+        return []
+    tracked = {
+        str(r["path_id"])
+        for r in conn.execute("SELECT DISTINCT path_id FROM roadmap WHERE user_id = ?",
+                              (USER_ID,))
+    }
+    rows = conn.execute(
+        "SELECT what FROM commitment WHERE user_id = ? AND status = 'open'"
+        " UNION ALL"
+        " SELECT what FROM engagement WHERE user_id = ?"
+        "  AND status IN ('proposed', 'confirmed')",
+        (USER_ID, USER_ID),
+    ).fetchall()
+    texts = [str(r["what"]).lower() for r in rows]
+
+    out: list[Question] = []
+    seen_ids: set[str] = set()
+    for preset in catalog:
+        if not preset.signals or preset.id in tracked or preset.id in seen_ids:
+            continue
+        seen_ids.add(preset.id)  # medical.md and medical.public.md share an id
+        matched = [
+            t for t in texts
+            if any(_re.search(rf"\b{_re.escape(sig)}\b", t) for sig in preset.signals)
+        ]
+        if len(matched) < ROADMAP_SIGNAL_MIN:
+            continue
+        shown = "\n".join(f"— {t[:80]}" for t in matched[:4])
+        out.append(
+            Question(
+                kind="roadmap",
+                subject_key=preset.id,
+                question=(
+                    f"{len(matched)} open items look like \"{preset.title}\" —"
+                    " track it as a roadmap?"
+                ),
+                detail=(
+                    f"{shown}\n"
+                    f"Done means: {preset.definition_of_done}\n"
+                    "Starting it creates the goal, its checkpoints and cadences;"
+                    " saying no never asks again."
+                ),
+                options=[ROADMAP_START, ROADMAP_NOT_THIS],
+            )
+        )
+    del settings
+    return out
+
+
 def detect(conn: sqlite3.Connection, settings: Settings, today: date) -> list[Question]:
     """Every detector, each failing on its own.
 
@@ -488,6 +568,7 @@ def detect(conn: sqlite3.Connection, settings: Settings, today: date) -> list[Qu
         lambda: _priority(conn, settings, today),
         lambda: _stale_commitments(conn, settings, today),
         lambda: _protected_conflicts(conn, settings, today),
+        lambda: _roadmap_candidates(conn, settings, today),
     ):
         try:
             found.extend(detector())
@@ -576,6 +657,36 @@ def answer(
         reasoning=f"answered in the questions surface · {row['kind']}",
     )
     _apply_stale_answer(conn, row, option)
+    _apply_roadmap_answer(conn, settings, row, option)
+
+
+def _apply_roadmap_answer(
+    conn: sqlite3.Connection, settings: Settings, row: Any, option: str | None
+) -> None:
+    """"Start tracking it" instantiates the preset — the owner's click, acted on.
+
+    Exact option match only; free text records and creates nothing. A preset that
+    vanished from disk since the question was asked records the answer and does
+    nothing rather than raising — the decision row still says what the owner chose.
+    """
+    if str(row["kind"]) != "roadmap" or option != ROADMAP_START:
+        return
+    from backglass.plan import timezones
+    from backglass.roadmap import instantiate as instantiate_mod
+    from backglass.roadmap import presets as presets_mod
+
+    try:
+        preset = presets_mod.load(str(row["subject_key"]))
+    except Exception:  # noqa: BLE001 — the answer stands; the preset is gone
+        return
+    if conn.execute(
+        "SELECT 1 FROM roadmap WHERE user_id = ? AND path_id = ?",
+        (USER_ID, preset.id),
+    ).fetchone():
+        return  # already tracked through another door; starting twice is a dup
+    instantiate_mod.instantiate(
+        conn, settings, preset, timezones.local_now(settings).date()
+    )
 
 
 def _apply_stale_answer(conn: sqlite3.Connection, row: Any, option: str | None) -> None:

@@ -12,6 +12,21 @@
     {# The headline strip: what is happening now on the left, whether the day fits on
        the right, closed by a 2px rule. No verdict chips — capacity is docs/04 §4.3's
        sentence and the only chip here is the gold overflow warning. #}
+    <div class="planacts" id="panel-plan-actions">
+      {% if plan and plan['status'] == 'proposed' %}
+        <form method="post" action="/schedule/{{ view.day.isoformat() }}/accept" style="display:inline">
+          <button class="btn ok" type="submit">Accept plan</button>
+        </form>
+      {% elif plan and plan['status'] == 'accepted' %}
+        <span class="b2">plan accepted — replanning only knocks</span>
+      {% endif %}
+      <form method="post" action="/schedule/{{ view.day.isoformat() }}/replan" style="display:inline">
+        {# Present on every state: a day with no plan gets one, a stale day gets a
+           fresh one. The owner's click may replace even an accepted plan. #}
+        <button class="btn" type="submit">{{ 'Replan' if plan else 'Plan this day' }}</button>
+      </form>
+    </div>
+
     {% if now_next or cap or notes.fully_booked or notes.fragmented %}
       <div class="dstrip">
         <div class="dstrip-top">

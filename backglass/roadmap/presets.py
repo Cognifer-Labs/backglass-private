@@ -71,6 +71,11 @@ class Preset:
     cadences: list[PresetCadence]
     totals: list[PresetTotal]
     path: Path
+    #: Optional `signals:` frontmatter — comma-separated words that, appearing across
+    #: several open commitments, suggest the owner is already living this path
+    #: without tracking it. Empty means the preset never volunteers itself; it can
+    #: still be started deliberately.
+    signals: tuple[str, ...] = ()
 
     @property
     def stamp(self) -> str:
@@ -124,6 +129,9 @@ def load(path_id: str, base_dir: Path | None = None) -> Preset:
         cadences=cadences,
         totals=totals,
         path=path,
+        signals=tuple(
+            w.strip().lower() for w in meta.get("signals", "").split(",") if w.strip()
+        ),
     )
 
 

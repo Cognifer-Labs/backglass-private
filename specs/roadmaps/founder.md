@@ -3,6 +3,7 @@ id: founder
 version: 2
 title: Start a company and raise a seed round
 horizon: annual
+signals: startup, incorporation, llc, pitch deck, cofounder
 definition_of_done: A funded company with a shipped product and paying or retained users.
 ---
 
