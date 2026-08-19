@@ -210,8 +210,53 @@ class Cluster:
         return f"duplicate of commitment {self.survivor['id']}"
 
 
+def _stars(component: list[int], edges: dict[int, dict[int, float]]) -> list[list[int]]:
+    """Split one connected component into stars: a centre, and its direct suspects only.
+
+    Greedy by degree, ties by id so the same ledger always produces the same cards. The
+    row the others actually resemble wins the centre, takes its neighbours with it, and
+    whatever is left is split again — so a genuine group of seven survives intact while a
+    chain of thirty-seven becomes the handful of real resemblances it was built from.
+
+    Not a clustering algorithm chosen for its properties; a guard chosen for what it
+    refuses to produce. The guarantee is exactly one hop — every member is a suspect of
+    the centre — so a cluster spans two rows that never resembled each other only when
+    both resemble the same third row, which is a card a person can actually answer. What
+    it rules out is the thirty-seven-member path, where the first and last members have
+    nothing whatsoever to do with each other.
+    """
+    remaining = set(component)
+    out: list[list[int]] = []
+    while remaining:
+        centre = max(
+            remaining,
+            key=lambda node: (len(edges.get(node, {}).keys() & remaining), -node),
+        )
+        star = [centre, *sorted(edges.get(centre, {}).keys() & remaining - {centre})]
+        remaining -= set(star)
+        out.append(star)
+    return out
+
+
 def clusters(conn: sqlite3.Connection) -> list[Cluster]:
-    """Suspect pairs collapsed into connected components, least certain last."""
+    """Suspect pairs collapsed into stars, least certain last.
+
+    Connected components were the first shape here and they chain. Similarity is not
+    transitive: A resembles B and B resembles C says nothing about A and C, and a floor of
+    0.6 over a personal ledger's whole open set makes that happen constantly. Measured on
+    the owner's ledger on 2026-08-19: 194 of ~200 open rows fell into components, and one
+    of them held **37 members** — the UT Dallas scholarship acceptance, a hospice
+    volunteering application, an enrolment fee and an AP-credit transfer, presented as one
+    decision. Nobody can answer that card, and a surface that asks it is worse than no
+    surface, because it looks like the system believes it.
+
+    So each emitted cluster is a *star*: one row, plus every row that is a suspect of that
+    row directly. Members are chosen by degree, so the row the others actually resemble
+    becomes the centre, and anything left over forms its own star. Seven rows that all
+    look like the hospice application still arrive as one decision — that shape is
+    unchanged, and its test says so. What cannot survive is a cluster held together by a
+    path nobody would recognise as a resemblance.
+    """
     pairs = dedup.suspects(conn)
     if not pairs:
         return []
@@ -231,10 +276,16 @@ def clusters(conn: sqlite3.Connection) -> list[Cluster]:
             parent[rb] = ra
 
     weakest: dict[tuple[int, int], float] = {}
+    #: The suspect graph itself, both directions. The components below are still what
+    #: bounds the work; this is what says whether two members of one actually resemble
+    #: each other or merely share a path.
+    edges: dict[int, dict[int, float]] = {}
     for pair in pairs:
         a, b = int(pair["a_id"]), int(pair["b_id"])
         union(a, b)
         weakest[(a, b)] = float(pair["score"])
+        edges.setdefault(a, {})[b] = float(pair["score"])
+        edges.setdefault(b, {})[a] = float(pair["score"])
 
     rows = {
         int(r["id"]): dict(r)
@@ -248,38 +299,40 @@ def clusters(conn: sqlite3.Connection) -> list[Cluster]:
         )
     }
 
-    grouped: dict[int, Cluster] = {}
+    grouped: dict[int, list[int]] = {}
     for member in parent:
         if member not in rows:
             continue  # closed between the suspect pass and this read
-        grouped.setdefault(find(member), Cluster()).members.append(rows[member])
+        grouped.setdefault(find(member), []).append(member)
 
     out: list[Cluster] = []
-    for cluster in grouped.values():
-        if len(cluster.members) < 2:
-            continue
-        ids = set(cluster.ids)
-        inside = [s for (a, b), s in weakest.items() if a in ids and b in ids]
-        cluster.weakest = min(inside) if inside else 0.0
-        sources = {m["source_item_id"] for m in cluster.members}
-        counterparties = {m["counterparty_entity_id"] for m in cluster.members}
-        if len(sources) == 1 and len(counterparties) > 1:
-            # One message, several counterparties. Three readings, and the label cannot
-            # tell them apart, which is exactly why it never decides:
-            #
-            #   - three real promises (intro emails to three instructors),
-            #   - one promise whose sender extraction resolved two ways
-            #     ("complete 2026 Annual Education quiz", ids 88 and 211),
-            #   - one promise to one organisation the entity table holds twice
-            #     ("UW–Madison Financial Aid Office" and "University of
-            #     Wisconsin–Madison"), which is an unmerged entity wearing this shape.
-            #
-            # The third is worth reading as a signal about `entity`, not about the
-            # commitments: `backglass people merge` fixes the cause, and these clusters
-            # then resolve themselves.
-            cluster.kind = FAN_OUT
-        cluster.members.sort(key=lambda m: int(m["id"]))
-        out.append(cluster)
+    for component in grouped.values():
+        for star in _stars(component, edges):
+            cluster = Cluster(members=[rows[i] for i in star])
+            if len(cluster.members) < 2:
+                continue
+            ids = set(cluster.ids)
+            inside = [s for (a, b), s in weakest.items() if a in ids and b in ids]
+            cluster.weakest = min(inside) if inside else 0.0
+            sources = {m["source_item_id"] for m in cluster.members}
+            counterparties = {m["counterparty_entity_id"] for m in cluster.members}
+            if len(sources) == 1 and len(counterparties) > 1:
+                # One message, several counterparties. Three readings, and the label
+                # cannot tell them apart, which is exactly why it never decides:
+                #
+                #   - three real promises (intro emails to three instructors),
+                #   - one promise whose sender extraction resolved two ways
+                #     ("complete 2026 Annual Education quiz", ids 88 and 211),
+                #   - one promise to one organisation the entity table holds twice
+                #     ("UW–Madison Financial Aid Office" and "University of
+                #     Wisconsin–Madison"), which is an unmerged entity wearing this shape.
+                #
+                # The third is worth reading as a signal about `entity`, not about the
+                # commitments: `backglass people merge` fixes the cause, and these
+                # clusters then resolve themselves.
+                cluster.kind = FAN_OUT
+            cluster.members.sort(key=lambda m: int(m["id"]))
+            out.append(cluster)
 
     # Identical text first, then tightest, then largest: what can be settled without
     # reading twice goes at the top, because the queue's failure was never that the

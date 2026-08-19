@@ -170,6 +170,27 @@ the ledger stays primary, and a second copy of the truth would drift from the fi
       first pass disposed of 14 (8 reported-done, 6 dead questions) writing 14 decision
       rows, the second wrote nothing. Rule 3 on real data rather than fixtures.
 
+- [x] 9. **Two surfaces the checker's own output broke, found by looking at it** —
+      not planned; both came out of reading the live ledger after increment 8 landed.
+      1. The disposals are `decision` rows, which was right for provenance and wrong for
+         the page: 14 machine rows against the owner's 4 standing decisions on the first
+         pass, banner count included. `decisions.active` now answers "what have I
+         decided" and `decisions.disposals` "what did the checker throw out", split on a
+         named `MACHINE_PREFIX`; the page shows both, the machine's below and quieter.
+         Hiding them was never an option — a row that vanishes with nothing saying why is
+         indistinguishable from a bug.
+      2. `duplicates.clusters` built connected components, and similarity is not
+         transitive. On today's ledger that produced one cluster of **37** — a UT Dallas
+         scholarship acceptance, a hospice volunteering application, an enrolment fee and
+         an AP-credit transfer — asked as one "same promise?" card. Now stars: a centre
+         plus its direct suspects only, greedy by degree, ties by id. Measured on the
+         copy: 50 cards → 60, largest 37 → 9, and the five UT Dallas rows stay one card.
+         Greedy cliques were measured too (68 cards, largest 6) and rejected: they split
+         that family across three cards, which is the opposite failure.
+      Also fixed `tests/test_duplicates.py`'s dry-run test, which opened whatever ledger
+      the ambient config named and so passed only in the owner's checkout. Suite runs
+      green with nothing deselected (2192).
+
 ## Constraints that bite
 
 - Any migration re-arms the frozen-sidecar crash (`matches_source` already false);

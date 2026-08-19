@@ -150,6 +150,73 @@ class TestFanOut:
         assert cluster.kind == duplicates.RESTATEMENT
 
 
+class TestSimilarityIsNotTransitive:
+    """The failure that made the surface unanswerable, and the guard against it.
+
+    Measured on the owner's ledger on 2026-08-19, with clusters as connected components:
+    194 of ~200 open rows fell into components and one held 37 — a UT Dallas scholarship
+    acceptance, a hospice volunteering application, an enrolment fee and an AP-credit
+    transfer, offered as a single "are these the same promise?" card. Nobody can answer
+    that, and being asked it is worse than being asked nothing, because it looks like the
+    system believes it.
+    """
+
+    def test_a_chain_is_split_rather_than_presented_as_one_decision(self) -> None:
+        """A—B—C—D where only neighbours resemble each other. D has nothing to do with A
+        and must never share its card."""
+        edges = {
+            1: {2: 0.7},
+            2: {1: 0.7, 3: 0.7},
+            3: {2: 0.7, 4: 0.7},
+            4: {3: 0.7},
+        }
+
+        stars = duplicates._stars([1, 2, 3, 4], edges)
+
+        assert all(len(star) <= 3 for star in stars)
+        together = next(star for star in stars if 1 in star)
+        assert 4 not in together
+
+    def test_a_real_group_survives_intact(self) -> None:
+        """Seven rows that all resemble one row are one decision, and stay one — the
+        guard is against paths, not against groups."""
+        edges = {1: {n: 0.8 for n in range(2, 8)}}
+        for n in range(2, 8):
+            edges[n] = {1: 0.8}
+
+        assert duplicates._stars(list(range(1, 8)), edges) == [[1, 2, 3, 4, 5, 6, 7]]
+
+    def test_the_same_ledger_always_produces_the_same_cards(self) -> None:
+        """Ties break by id, because a card that reshuffles between two runs is one the
+        owner cannot half-answer and come back to."""
+        edges = {1: {2: 0.7}, 2: {1: 0.7}, 3: {4: 0.7}, 4: {3: 0.7}}
+
+        assert duplicates._stars([1, 2, 3, 4], edges) == duplicates._stars([4, 3, 2, 1], edges)
+
+    def test_end_to_end_the_ends_of_a_chain_never_share_a_card(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """Through `clusters`, on text shaped like the ledger's own. Each link resembles
+        the next (0.72, 0.74, 0.74 by `entities.similar`) and the ends do not (0.55), so
+        components put all four on one card and stars cannot.
+
+        What stars deliberately still allow is one hop: two rows that resemble the same
+        third row do share a card, because that is a question a person can answer — "is
+        the parking permit part of this one?" — and it is the shape a real restatement
+        family has. The thirty-seven-member path is what has no answer.
+        """
+        housing = _commitment(conn, "submit the housing form")
+        _commitment(conn, "submit the housing form and the enrollment fee")
+        _commitment(conn, "submit the enrollment fee and the parking permit")
+        parking = _commitment(conn, "submit the parking permit")
+
+        found = duplicates.clusters(conn)
+
+        assert found
+        assert not any({housing, parking} <= set(c.ids) for c in found)
+        assert max(len(c.ids) for c in found) == 3
+
+
 class TestTheCommandWritesNothingByDefault:
     def test_dry_run_leaves_every_row_open(
         self,
