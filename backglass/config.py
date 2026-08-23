@@ -65,6 +65,13 @@ class Routine:
     start_minute: int  # minute of the local day
     minutes: int
     days: frozenset[str] = frozenset()
+    #: Whether the hour is decreed or merely preferred. Flexible is the default because
+    #: most of life is: lunch at 12:30 means "around then", and a chemistry class at
+    #: 12:20 does not stop the owner eating, it moves the meal. `plan/capacity.py`
+    #: shifts a flexible routine to the nearest free gap; a pinned one never moves.
+    #: Pinned exists for the routine that is an obligation at a stated hour rather than
+    #: a habit around one — Wednesday volunteering, spelled `banner@16:00+240!@wed`.
+    pinned: bool = False
 
     def falls_on(self, day: date) -> bool:
         return not self.days or DAY_NAMES[day.weekday()] in self.days
@@ -75,13 +82,24 @@ class RoutineError(ValueError):
 
 
 _ROUTINE_RE = re.compile(
-    r"^(?P<name>[^@,]+)@(?P<hh>\d{2}):(?P<mm>\d{2})\+(?P<dur>\d+)"
+    r"^(?P<name>[^@,]+)@(?P<hh>\d{2}):(?P<mm>\d{2})\+(?P<dur>\d+)(?P<pin>!)?"
     r"(?:@(?P<days>[a-z]{3}(?:\|[a-z]{3})*))?$"
 )
 
 
 def parse_routines(raw: str) -> list[Routine]:
-    """`name@HH:MM+MINUTES[@day|day],...` → routines sorted by start.
+    """`name@HH:MM+MINUTES[!][@day|day],...` → routines sorted by start.
+
+    `HH:MM` is the hour the owner prefers, not one they are held to: the planner shifts
+    a routine to the nearest free gap when the preferred span collides with a class or a
+    confirmed engagement (`plan/capacity.routine_events`). Owner's ruling, 2026-08-21 —
+    the live plan for the 24th put lunch at 12:30 inside CHM 113 at 12:20, which is not
+    a scheduling conflict so much as a plan that is wrong about when they eat.
+
+    A trailing `!` pins the routine to its hour and opts out of the shift. That is for
+    the entry that is an obligation rather than a habit — `banner@16:00+240!@wed` is
+    volunteering somebody else scheduled, and a planner that quietly moved it to 5pm
+    would be inventing an appointment.
 
     The day scope is what makes a weekly commitment expressible. Banner volunteering is
     Wednesdays 4–8pm; without a scope it had to be spelled as an everyday routine, which
@@ -120,6 +138,7 @@ def parse_routines(raw: str) -> list[Routine]:
                 start_minute=hour * 60 + minute,
                 minutes=duration,
                 days=days,
+                pinned=bool(match["pin"]),
             )
         )
     return sorted(out, key=lambda r: r.start_minute)
@@ -172,10 +191,12 @@ class Settings(BaseSettings):
         default_factory=lambda: ["mon", "tue", "wed", "thu", "fri"]
     )
     #: The other things in life, as fixed events: `name@HH:MM+MINUTES`, comma-separated,
-    #: with an optional day scope — `banner@16:00+240@wed`, or `gym@17:30+60@mon|wed|fri`
+    #: with an optional day scope — `banner@16:00+240!@wed`, or `gym@17:30+60@mon|wed|fri`
     #: for several. Unscoped means every day, which is what most of life is. They render
     #: on the schedule and the planner plans around them; only the ones inside the working
-    #: window spend capacity (lunch does, breakfast does not). Empty string means none.
+    #: window spend capacity (lunch does, relaxation at nine does not). The hour is a
+    #: preference — a routine shifts to the nearest free gap rather than sit inside a
+    #: class — unless a trailing `!` pins it. Empty string means none.
     #: Parsed and validated by `parse_routines` above — the same function capacity
     #: consumes it through, so a malformed entry fails at startup, not at 05:45.
     routines: str = (
@@ -191,6 +212,12 @@ class Settings(BaseSettings):
     min_block_minutes: int = 25
     #: P3. "If capacity is under 60 minutes, do not propose a plan."
     min_capacity_minutes: int = 60
+    #: The study block a day with no coursework in it still gets (owner's ruling,
+    #: 2026-08-21). Homework is already scheduled by name — a coursework commitment with
+    #: an estimate read off the assignment — so this is the other thing: reading, review,
+    #: keeping up, the work that has no deliverable to make it show up on a board. Zero
+    #: turns it off.
+    study_block_minutes: int = 90
     #: docs/04 §1.2 buffer rule: 10 min after any meeting >= 30 min, 5 otherwise.
     buffer_long_minutes: int = 10
     buffer_short_minutes: int = 5
@@ -225,6 +252,44 @@ class Settings(BaseSettings):
             "unknown:45",
         ]
     )
+
+    #: Coursework types, in minutes, for the assignment record (goal 4). Separate from
+    #: `estimate_defaults` because these are read off a different thing: the type table
+    #: above classifies a *sentence someone wrote in a mail*, and this one classifies an
+    #: assignment as its own course publishes it. The names come from the owner's real
+    #: feed rather than from taste — 31 LearningCurve items, 38 videos, 28 labs, 17
+    #: quizzes and 12 exams were in the ASU document on 2026-08-20, and a system that
+    #: called all of them thirty minutes is what this goal exists to fix.
+    #:
+    #: These are a floor, not a verdict. Where the assignment states its own size — a
+    #: runtime, a word count, a chapter range — the stated number wins and carries the
+    #: quote it was read from; this table only answers the ones that say nothing.
+    coursework_defaults: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: [
+            "learningcurve:25",
+            "video:20",
+            "quiz:30",
+            # An exam is the studying, not the sitting. The sitting is on the calendar.
+            "exam:120",
+            "lab:90",
+            "discussion:25",
+            "reading:45",
+            "milestone:180",
+            "homework:45",
+            "module:30",
+            # An administrative form — an absence request, a submission link, a consent
+            # box. Minutes, not an afternoon, and it sits first in `TYPE_PATTERNS`
+            # because the cost of calling one an exam is two hours of the owner's day.
+            "form:15",
+            "assignment:45",
+        ]
+    )
+    #: The longest single sitting the planner will place for one commitment. An honest
+    #: 180-minute milestone is unschedulable without this: `planner.select` drops any
+    #: candidate larger than the capacity left in the day, so raising estimates without a
+    #: clamp makes the biggest work vanish from every plan — strictly worse than the flat
+    #: 30 minutes it replaced.
+    max_block_minutes: int = 90
 
     # ── goals (docs/04 §2.5) ──────────────────────────────────────────────
     #: G11: staleness and risk are computed independently and never merged into one
@@ -295,8 +360,22 @@ class Settings(BaseSettings):
     #: re-indexes rather than mixing vector spaces — the identity in `embedding` enforces
     #: it, because ranking two models' vectors against each other returns plausible
     #: nonsense instead of an error.
+    #: Where `/v1/embeddings` lives, when that is not where chat lives. One setting used
+    #: to answer both, and on 2026-08-21 that became a contradiction: pointing
+    #: `model_base_url` at OpenRouter for the free chat tier would have sent embedding
+    #: calls there too, where `nomic-embed-text` does not exist — every index run dying
+    #: on a 404, and any vector that *did* come back belonging to a different model's
+    #: space than the 1,248 already in the table. The identity in `embedding` forbids
+    #: mixing those, and mixing them silently returns plausible nonsense rather than an
+    #: error, so the two endpoints need to be separable.
+    #:
+    #: Empty means "wherever chat is", which is what every existing config already meant.
+    embedding_base_url: str = ""
     embedding_model: str = "nomic-embed-text"
     embedding_timeout_seconds: int = 120
+    #: Tried in order when the configured model will not serve, OpenRouter only. See
+    #: `DeepInfraBackend.fallbacks` for why a free tier needs this to be usable at all.
+    model_fallbacks: Annotated[list[str], NoDecode] = Field(default_factory=list)
     model_triage: str = "haiku"
     model_extract: str = "sonnet"
     model_api_key: str = ""
@@ -524,6 +603,8 @@ class Settings(BaseSettings):
         "calendar_accounts",
         "drive_accounts",
         "estimate_defaults",
+        "coursework_defaults",
+        "model_fallbacks",
         "tz_ranges",
         "slack_channels",
         "instagram_chats",

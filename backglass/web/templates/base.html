@@ -28,6 +28,7 @@
     <nav class="snav" aria-label="Pages">
       {% for href, label, key, count in [('/', 'Dashboard', 'dashboard', sb.counts.open if sb else none),
                                          ('/schedule', 'Schedule', 'schedule', none),
+                                         ('/classes', 'Classes', 'classes', none),
                                          ('/goals', 'Goals', 'goals', none),
                                          ('/people', 'People', 'people', sb.counts.follow_ups if sb else none),
                                          ('/roadmaps', 'Roadmaps', 'roadmaps', sb.counts.roadmaps if sb else none),
@@ -113,6 +114,11 @@ function toggleTheme() {
 {# Drop's confirmation. Must load wherever a write can happen, which is every page,
    for the same reason the failed-write strip does. #}
 <script src="/static/confirm.js"></script>
+{# The stagger and the FLIP; everything else that moves is in dashboard.css §Motion.
+   Deferred, and it imports nothing: it is `Element.animate` and the motion tokens, so
+   there is no engine to load first. A browser that cannot run it gets the application
+   it had yesterday, with the stylesheet's motion and none of this. #}
+<script src="/static/motion.js" defer></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

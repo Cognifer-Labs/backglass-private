@@ -327,3 +327,100 @@ class TestTheCommandDrivesTheRealDoor:
 
         assert result.exit_code == 0, result.output
         assert '"reported-done": 1' in result.output
+
+
+# ── expiry: obligations that time itself answers ───────────────────────────
+#
+# The owner, 2026-08-20: "it is planning for things that are obviously done, for example i
+# already moved in on the 9th". Each rule is tested on the row it must close and on the
+# nearest-neighbour row it must not, because the neighbour is where the data loss lives.
+
+
+class TestEventsWhoseDayHasPassed:
+    def test_an_event_attended_before_today_is_closed(self, conn) -> None:  # type: ignore[no-untyped-def]
+        """Commitment 8 on the live ledger, verbatim. `staleness` waits fourteen days and
+        then only asks; this closes it the morning after."""
+        cid = a_commitment(
+            conn, "Move-in: Willow Hall 502, 8:00am", due="2026-08-09"
+        )
+
+        disposals = logic._events_whose_day_has_passed(conn, TODAY)
+
+        assert [d.subject_id for d in disposals] == [cid]
+        assert disposals[0].action == "dropped"
+        assert disposals[0].rule == "event-day-passed"
+
+    def test_a_deliverable_past_due_is_left_alone(self, conn) -> None:  # type: ignore[no-untyped-def]
+        """The whole safety of the rule. A housing contract is still owed the week after
+        it was due; closing it is the silent data loss the module exists to refuse."""
+        a_commitment(conn, "Submit the signed housing contract", due="2026-08-09")
+        a_commitment(conn, "Email the list of transfer credits", due="2026-07-01")
+
+        assert logic._events_whose_day_has_passed(conn, TODAY) == []
+
+    def test_todays_event_survives_until_tomorrow(self, conn) -> None:  # type: ignore[no-untyped-def]
+        """Strictly `<` today. The owner moves between UTC-7 and UTC+5:30, so a same-day
+        comparison would retire tonight's obligations from the other side of the world."""
+        a_commitment(conn, "Attend the BIO 181 review session", due=TODAY.isoformat())
+
+        assert logic._events_whose_day_has_passed(conn, TODAY) == []
+
+    def test_a_future_event_survives(self, conn) -> None:  # type: ignore[no-untyped-def]
+        a_commitment(conn, "Attend orientation", due="2026-09-01")
+        assert logic._events_whose_day_has_passed(conn, TODAY) == []
+
+    def test_an_undated_attendance_row_is_left_alone(self, conn) -> None:  # type: ignore[no-untyped-def]
+        """No date, no contradiction. The rule closes on a day that ended, and a row
+        without one has not had a day end."""
+        a_commitment(conn, "Attend the alumni mixer", due=None)
+        assert logic._events_whose_day_has_passed(conn, TODAY) == []
+
+    def test_an_already_closed_row_is_not_disposed_of_twice(self, conn) -> None:  # type: ignore[no-untyped-def]
+        """Rule 3: a second pass over an unchanged ledger writes nothing."""
+        a_commitment(conn, "Attend move-in", due="2026-08-09", status="dropped")
+        assert logic._events_whose_day_has_passed(conn, TODAY) == []
+
+
+class TestCanvasPastGrace:
+    def _assignment(self, conn: sqlite3.Connection, what: str, due: str) -> int:
+        conn.execute(
+            "INSERT INTO source_item (user_id, source, external_id, fetched_at,"
+            " occurred_at, author, title, body_text, content_hash, triage_verdict)"
+            " VALUES (?, 'canvas:ics', ?, ?, ?, 'BIO 181', ?, 'body', ?, 'keep')",
+            (USER_ID, f"assignment:{what}", now_iso(), due, what, f"h-{what}"),
+        )
+        source_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO commitment (user_id, direction, what, due_at, estimated_minutes,"
+            " estimate_source, confidence, status, source_item_id, created_at)"
+            " VALUES (?, 'i_owe', ?, ?, 30, 'manual', 0.9, 'open', ?, ?)",
+            (USER_ID, what, due, source_id, now_iso()),
+        )
+        return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+    def test_an_assignment_past_the_grace_window_is_closed(self, conn) -> None:  # type: ignore[no-untyped-def]
+        cid = self._assignment(conn, "Problem set 3", "2026-08-01")
+
+        disposals = logic._canvas_assignments_past_grace(conn, TODAY)
+
+        assert [d.subject_id for d in disposals] == [cid]
+        assert disposals[0].rule == "canvas-past-grace"
+
+    def test_an_assignment_inside_the_grace_window_is_left_alone(self, conn) -> None:  # type: ignore[no-untyped-def]
+        """Seven days is the late-submission window most courses allow. Closing on day
+        one would retire work the owner is still entitled to hand in."""
+        self._assignment(conn, "Lab writeup", "2026-08-14")
+        assert logic._canvas_assignments_past_grace(conn, TODAY) == []
+
+    def test_the_boundary_day_is_inclusive_of_the_grace(self, conn) -> None:  # type: ignore[no-untyped-def]
+        """Exactly `CANVAS_GRACE_DAYS` old still survives; one day older does not."""
+        edge = TODAY.fromordinal(TODAY.toordinal() - logic.CANVAS_GRACE_DAYS)
+        self._assignment(conn, "Edge", edge.isoformat())
+
+        assert logic._canvas_assignments_past_grace(conn, TODAY) == []
+
+    def test_a_past_due_obligation_from_mail_is_not_touched(self, conn) -> None:  # type: ignore[no-untyped-def]
+        """Bounded by source, never by shape. A professor's mail asking for the same
+        essay is still owed — only the feed row with no submission state expires."""
+        a_commitment(conn, "Submit the BIO 181 essay", due="2026-08-01")
+        assert logic._canvas_assignments_past_grace(conn, TODAY) == []

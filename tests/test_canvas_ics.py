@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import urllib.error
+from datetime import UTC, datetime
 from typing import Any
 
 import pytest
@@ -53,6 +54,18 @@ def assignment_event(
         f"SUMMARY:{summary}\r\n"
         f"{dtstart}\r\n"
         f"URL:{url}\r\n"
+        "END:VEVENT\r\n"
+    )
+
+
+def assignment_with_description(description: str) -> str:
+    return (
+        "BEGIN:VEVENT\r\n"
+        "UID:event-assignment-7833000@asu.instructure.com\r\n"
+        "SUMMARY:1-1-1 - Tech in the 21st Century (12:35) [CIS 236]\r\n"
+        "DTSTART;VALUE=DATE:20260825\r\n"
+        "URL:https://canvas.asu.edu/calendar#assignment_7833000\r\n"
+        f"DESCRIPTION:{description}\r\n"
         "END:VEVENT\r\n"
     )
 
@@ -168,7 +181,9 @@ class TestAnAssignmentBecomesAnObligation:
 
         assert [i.external_id for i in connector.fetch(None)] == ["assignment:9001"]
 
-    def test_the_cursor_advances_to_the_latest_due_date(self, permissive: Boundary) -> None:
+    def test_the_cursor_records_the_read_not_a_due_date(self, permissive: Boundary) -> None:
+        """A due-date watermark parked past the data and cost a semester; the cursor now
+        says when the feed was read, which cannot get ahead of anything."""
         connector = FakeFeed(
             calendar(
                 assignment_event(),
@@ -183,20 +198,78 @@ class TestAnAssignmentBecomesAnObligation:
 
         list(connector.fetch(None))
 
-        assert connector.cursor == "2026-12-10T06:59:00+00:00"
+        assert connector.cursor is not None
+        stamp = datetime.fromisoformat(str(connector.cursor))
+        assert stamp.tzinfo is not None
+        assert abs((datetime.now(UTC) - stamp).total_seconds()) < 60
 
-    def test_an_item_at_the_watermark_is_re_read_rather_than_lost(
+    def test_an_assignment_due_before_the_last_cursor_is_still_emitted(
+        self, permissive: Boundary
+    ) -> None:
+        """The regression. A course publishes coursework due *earlier* than something
+        already seen — a far-future "Excused Absence Requests" row is the real one — and
+        under the old due-date watermark every such assignment was skipped forever."""
+        connector = FakeFeed(
+            calendar(
+                assignment_event(),
+                assignment_event(
+                    uid="event-assignment-9004@asu",
+                    summary="Excused Absence Requests [CHM 113]",
+                    dtstart="DTSTART;VALUE=DATE:20270307",
+                ),
+            ),
+            boundary=permissive,
+        )
+
+        emitted = [i.external_id for i in connector.fetch("2027-03-07")]
+
+        assert emitted == ["assignment:9001", "assignment:9004"]
+
+    def test_every_assignment_is_emitted_whatever_the_cursor_says(
         self, permissive: Boundary
     ) -> None:
         connector = FakeFeed(calendar(assignment_event()), boundary=permissive)
-        assert len(list(connector.fetch("2026-08-28T06:59:00+00:00"))) == 1
-
-    def test_an_older_item_is_skipped(self, permissive: Boundary) -> None:
-        connector = FakeFeed(calendar(assignment_event()), boundary=permissive)
-        assert list(connector.fetch("2026-12-01T00:00:00+00:00")) == []
+        assert len(list(connector.fetch("2099-01-01T00:00:00+00:00"))) == 1
 
 
 # ── 2. idempotency ────────────────────────────────────────────────────────
+
+
+def test_a_second_ingest_of_an_unchanged_feed_writes_nothing(
+    conn, settings, permissive: Boundary  # type: ignore[no-untyped-def]
+) -> None:
+    """Idempotency at the ledger, not just at the hash.
+
+    Matching hashes only prove the connector is deterministic. Now that `fetch` emits the
+    whole feed on every read — the due-date watermark parked past the data and skipped a
+    semester — `upsert_source_item`'s content_hash short-circuit is the *only* thing
+    standing between 157 assignments a run and 157 writes a run. So it is asserted here,
+    against the real table, rather than inferred.
+    """
+    from backglass.ledger import Ledger
+
+    document = calendar(
+        assignment_event(),
+        assignment_event(
+            uid="event-assignment-9004@asu",
+            summary="Excused Absence Requests [CHM 113]",
+            dtstart="DTSTART;VALUE=DATE:20270307",
+        ),
+    )
+
+    first = Ledger(conn, settings)
+    for item in FakeFeed(document, boundary=permissive).fetch(None):
+        first.upsert_source_item(item)
+    assert first.writes == 2
+
+    second = Ledger(conn, settings)
+    for item in FakeFeed(document, boundary=permissive).fetch(None):
+        second.upsert_source_item(item)
+
+    assert second.writes == 0
+    assert conn.execute(
+        "SELECT COUNT(*) AS n FROM source_item WHERE source = 'canvas:ics'"
+    ).fetchone()["n"] == 2
 
 
 def test_two_runs_over_an_unchanged_feed_hash_identically(permissive: Boundary) -> None:
@@ -330,3 +403,64 @@ def test_it_satisfies_the_connector_protocol(permissive: Boundary) -> None:
     connector = CanvasIcsConnector(feed_url=FEED, boundary=permissive)
     assert isinstance(connector, Connector)
     assert connector.name == "canvas:ics"
+
+
+# ── goal 4: the half of the feed the item cannot carry ────────────────────────
+
+
+def test_the_description_reaches_the_caller_even_though_the_item_cannot_hold_it(
+    permissive: Boundary,
+) -> None:
+    """74 of the owner's 169 assignments carry a real DESCRIPTION — instructions, tool
+    names, page counts — and the `SourceItem` carries one sentence by design. Widening
+    the body is not an option: `ledger.upsert_source_item` treats a changed `content_hash`
+    on a stored `external_id` as a conflict and skips it, so all 159 rows already in the
+    ledger would produce errors and no new data. It rides on the connector instead."""
+    feed = FakeFeed(
+        calendar(assignment_with_description("Watch the video. Open Tableau.")),
+        boundary=permissive,
+    )
+
+    items = list(feed.fetch(None))
+
+    assert len(feed.assignments) == 1
+    parsed = feed.assignments[0]
+    assert parsed.description == "Watch the video. Open Tableau."
+    assert parsed.title == "1-1-1 - Tech in the 21st Century (12:35)"
+    assert parsed.course == "CIS 236"
+    assert parsed.url.endswith("#assignment_7833000")
+    # And the item is unchanged in the ways that matter: one terse sentence, and the
+    # description only in `raw_json`, which `content_hash` does not cover.
+    assert "Tableau" not in (items[0].body_text or "")
+    assert json.loads(items[0].raw_json)["description"] == "Watch the video. Open Tableau."
+
+
+def test_the_widened_raw_record_does_not_change_the_content_hash(
+    permissive: Boundary,
+) -> None:
+    """The property that makes it free: 159 stored assignments keep the hash they were
+    written with, so a re-read is still zero writes and zero errors."""
+    with_text = FakeFeed(
+        calendar(assignment_with_description("Open Tableau.")), boundary=permissive
+    )
+    without = FakeFeed(
+        calendar(assignment_with_description("")), boundary=permissive
+    )
+
+    assert list(with_text.fetch(None))[0].content_hash == (
+        list(without.fetch(None))[0].content_hash
+    )
+
+
+def test_an_excluded_course_contributes_no_assignment_either(
+    enforcing: Boundary,
+) -> None:
+    """The boundary decides once, in `_parse`, so a course the owner excluded cannot
+    reach the coursework record through the back door."""
+    feed = FakeFeed(
+        calendar(assignment_event(summary="Case notes [clientexample.gov]")),
+        boundary=enforcing,
+    )
+
+    assert list(feed.fetch(None)) == []
+    assert feed.assignments == []

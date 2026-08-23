@@ -17,10 +17,17 @@ from datetime import date, datetime, timedelta
 from typing import Any
 
 from backglass import dedup
+from backglass import scrub
 from backglass.config import Settings
 from backglass.db import query
 from backglass.ledger import USER_ID
 from backglass.plan import timezones
+
+#: How many disposable-looking commitments it takes before the dashboard says so. Below
+#: this a backlog is an ordinary week; above it the board has stopped being a picture of
+#: what the owner owes. Set from the state that produced the complaint — 87 — so the alert
+#: fires well before the board gets there again.
+SCRUB_ALERT_FLOOR = 25
 
 #: How far back the plan review queue looks; see `_review_floor`.
 REVIEW_FLOOR_DAYS = 60
@@ -195,7 +202,36 @@ def today_panel(conn: sqlite3.Connection, settings: Settings, today: date) -> Pa
     return panel
 
 
-def board_panel(conn: sqlite3.Connection, settings: Settings, today: date) -> Panel:
+#: How many duplicate pairs the board offers at once. `dedup.suspects` sorts strongest
+#: first and returns 799 of them on this ledger; rendering all of them wrote 657 KB into
+#: every dashboard load — half the page — behind a fold that is closed, carrying 1 598
+#: buttons htmx had to bind before the page could be used. That is not a queue anybody
+#: finishes (the argument `duplicates.py` already makes) and it is not a page anybody
+#: wants to load. Twenty is a sitting's worth; the rest are counted, not hidden, and
+#: `backglass duplicates` clears them in clusters, which is the surface built for a pile
+#: this size.
+SUSPECT_CAP = 20
+
+
+def board_panel(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    today: date,
+    *,
+    include_suspects: bool = True,
+) -> Panel:
+    """The commitments board. `include_suspects=False` builds it without the duplicate
+    pass, for callers that only want the rows.
+
+    The pass is O(n²) over open commitments twice over — difflib for wording,
+    embeddings for meaning — and `dedup.suspects` was written when that was "double
+    digits, measured in milliseconds". At 317 open rows it is 50k difflib ratios and
+    24k cosine comparisons: 3.2 seconds of pure Python, against 0.089s of SQL, on
+    *every* full-page load, because the sidebar middleware builds this panel to read
+    one number off it. That is what the dashboard's stutter was. Exactly one surface
+    consumes the result — the Looks-the-same fold in `_board.html` — so everything
+    else asks for the board without it and pays for what it uses.
+    """
     rows = _rows(
         conn,
         "dashboard_board",
@@ -224,6 +260,7 @@ def board_panel(conn: sqlite3.Connection, settings: Settings, today: date) -> Pa
         r for r in rows
         if r["bucket"] == "Overdue" and _days_late(r) > settings.stale_after_days
     ]
+    found = dedup.suspects(conn) if include_suspects else []
     return Panel(
         title="Commitments",
         empty_text="Nothing open.",
@@ -234,7 +271,8 @@ def board_panel(conn: sqlite3.Connection, settings: Settings, today: date) -> Pa
         meta={
             "stale": stale,
             "stale_after_days": settings.stale_after_days,
-            "suspects": dedup.suspects(conn),
+            "suspects": found[:SUSPECT_CAP],
+            "suspects_total": len(found),
         },
     )
 
@@ -354,6 +392,11 @@ def checklist_panel(conn: sqlite3.Connection, today: date) -> Panel:
     )
 
 
+#: Review rows the dashboard renders at once. See `review_panel` for why there is a
+#: number here at all; the remainder is counted in the banner and named under the rows.
+REVIEW_CAP = 40
+
+
 def review_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:
     """Both record types, in one queue.
 
@@ -418,7 +461,14 @@ def review_panel(conn: sqlite3.Connection, settings: Settings) -> Panel:
     return Panel(
         title="Review queue",
         empty_text="Nothing to review.",
-        rows=rows,
+        # A page's worth, not the whole pile. 340 rows rendered to 461 KB of the
+        # dashboard's 1.36 MB and 1 190 of its htmx-bound buttons — a queue this long
+        # is not read to the end (this panel's own comments say so twice), and the cost
+        # of pretending otherwise was paid on every load by every other panel, in a
+        # webview that has to lay all of it out before the page can be touched. The
+        # total is still said out loud above and below the rows: `meta["total"]` is what
+        # the banner and the sidebar count, so nothing here is quietly smaller.
+        rows=rows[:REVIEW_CAP],
         meta={"pressing": pressing, "total": len(rows)},
     )
 
@@ -723,7 +773,9 @@ def sidebar(
     from backglass.people import touch
     from backglass.web.routes.roadmaps import list_roadmaps
 
-    board = board_panel(conn, settings, today)
+    # Without the duplicate pass: the only thing taken off this panel below is
+    # `len(board.rows)`, and this function runs on every full-page GET.
+    board = board_panel(conn, settings, today, include_suspects=False)
     review = review_panel(conn, settings)
     sources = sources_panel(conn, settings)
 
@@ -803,6 +855,24 @@ def sidebar(
             }
         )
 
+    # The other half of the same problem, and it needs its own alert because it is the
+    # half that never announced itself. On 2026-08-20 the board held 366 open commitments
+    # with 64 past due — a fishtank due in January among them — and every one stayed
+    # eligible for the day plan while `staleness` offered five questions a day against a
+    # queue nobody was drawing down. The owner's read of that was "it is planning for
+    # things that are obviously done", which is what an unbounded backlog looks like from
+    # the outside. Surfaced only above a threshold: a handful of overdue rows is an
+    # ordinary week, and an alert that fires every week is furniture.
+    disposable = scrub.counts(conn, today)["total"]
+    if disposable >= SCRUB_ALERT_FLOOR:
+        alerts.append(
+            {
+                "level": "gold",
+                "text": f"{disposable} commitments look finished or dead — clear the board",
+                "href": "/scrub",
+            }
+        )
+
     for s in sources.rows:
         if s["status"] != "ok" and s["enabled"]:
             # docs/11 §Cross-cutting rule 4: failures are louder than successes —
@@ -841,7 +911,8 @@ def sidebar(
         )
 
     if review.rows:
-        n = len(review.rows)
+        # The whole queue, not the page of it the dashboard draws.
+        n = int(review.meta.get("total", len(review.rows)))
         alerts.append(
             {"level": "dash",
              "text": f"{n} extraction{'s' if n != 1 else ''} awaiting review",

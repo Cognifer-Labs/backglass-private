@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = 'classes' %}
+
+{% block title %}Backglass — Classes{% endblock %}
+
+{# One tile per course, reusing the goal card's keyline treatment: §7b — every content
+   unit outlined, colour on the keyline and never in the fill. Nothing here is a new
+   component, because a course card and a goal card are the same object: a heading, a
+   few facts, and a dated list. #}
+
+{% block content %}
+<section class="sec" id="panel-classes">
+  {{ m.banner('Classes', courses|length ~ ' courses') }}
+  <div class="inner">
+    {% if not courses %}
+      <p class="empty">No classes in the ledger. The calendar connector is what puts them
+        there — <span class="kbd">backglass doctor</span> says whether it is collecting.</p>
+    {% endif %}
+
+    {% for c in courses %}
+      {% set slug = c.subject|replace(' ', '')|lower %}
+      <article class="gcard" id="panel-course-{{ slug }}">
+        <div class="ghd">
+          <div>
+            <h2 class="gtitle">{{ c.subject }}</h2>
+            <p class="gmeta">
+              {%- if c.instructors %}{{ c.instructors|join(', ') }}{% else %}instructor not recorded{% endif -%}
+              {%- if c.rooms %} · {{ c.rooms|join(' · ') }}{% endif -%}
+            </p>
+          </div>
+          <span class="ct">{{ c.assignment_total }} assignments</span>
+        </div>
+
+        {# Meetings. The occurrence count is deliberately on the page: it is how many
+           calendar rows the pattern was folded out of, so a wrong-looking line can be
+           checked against the ledger instead of believed. #}
+        <div class="gtgt" id="panel-course-{{ slug }}-meetings">
+          <p class="lane">meets</p>
+          {% if not c.meetings %}
+            <p class="empty">No meetings on the calendar — this course is Canvas-only.</p>
+          {% endif %}
+          {% for meet in c.meetings %}
+            <div class="row">
+              <span class="time">{{ meet.component }}</span>
+              <div class="grow">
+                <p class="b1">{{ meet.when }}</p>
+                <p class="b2">
+                  {%- if meet.room %}{{ meet.room }}{% endif -%}
+                  {%- if meet.instructors %} · {{ meet.instructors|join(', ') }}{% endif -%}
+                  {{ ' · ' }}{{ meet.occurrences }} calendar rows
+                </p>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+
+        {% if c.dates %}
+          <div class="gtgt" id="panel-course-{{ slug }}-dates">
+            <p class="lane">exams &amp; dated deadlines</p>
+            {% for d in c.dates %}
+              <div class="row">
+                <span class="time">{{ d.day_label }}</span>
+                <div class="grow">
+                  <p class="b1">{{ d.title }}</p>
+                  <p class="b2">{{ d.time_label }}{% if d.room %} · {{ d.room }}{% endif %}
+                    · <a href="/source/{{ d.source_item_id }}">source</a></p>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        {% if c.upcoming %}
+          <div class="gtgt" id="panel-course-{{ slug }}-work">
+            <p class="lane">due next</p>
+            {% for a in c.upcoming %}
+              <div class="row">
+                <span class="time">{{ a.due_at }}</span>
+                <div class="grow">
+                  <p class="b1">{{ a.title }}</p>
+                  <p class="b2">
+                    {%- if a.effort_minutes %}{{ a.effort_minutes }} min
+                      {%- if a.sessions > 1 %} over {{ a.sessions }} sessions{% endif -%}
+                      {%- if a.effort_basis %} ({{ a.effort_basis }}){% endif -%}
+                    {%- else %}no estimate{% endif -%}
+                    {%- if a.materials %} · needs {{ a.materials|map(attribute='name')|join(', ') }}{% endif -%}
+                  </p>
+                  {% if a.effort_quote %}
+                    {# The words the number was read from — rule 1 for an estimate. #}
+                    <p class="b2i">&ldquo;{{ a.effort_quote }}&rdquo;</p>
+                  {% endif %}
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+
+        {% if c.obligations %}
+          <div class="gtgt" id="panel-course-{{ slug }}-open">
+            <p class="lane">open commitments</p>
+            {% for o in c.obligations[:8] %}
+              <div class="row">
+                <span class="time">{{ o.due_at or 'no date' }}</span>
+                <div class="grow">
+                  <p class="b1">{{ o.what }}</p>
+                  <p class="b2">
+                    {%- if o.estimated_minutes %}{{ o.estimated_minutes }} min · {% endif -%}
+                    <a href="/source/{{ o.source_item_id }}">source</a></p>
+                </div>
+              </div>
+            {% endfor %}
+            {% if c.obligations|length > 8 %}
+              <p class="b2">{{ c.obligations|length - 8 }} more open, on the Dashboard.</p>
+            {% endif %}
+          </div>
+        {% endif %}
+
+        {% if c.documents %}
+          <div class="gtgt" id="panel-course-{{ slug }}-docs">
+            <p class="lane">documents</p>
+            {% for d in c.documents[:10] %}
+              <div class="row">
+                <span class="time">file</span>
+                <div class="grow">
+                  <p class="b1">{{ d.title }}</p>
+                  <p class="b2">{{ d.path }} · <a href="/source/{{ d.source_item_id }}">source</a></p>
+                </div>
+              </div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="sec" id="panel-semester">
+  {{ m.banner('Semester', semester_dates|length ~ ' dates') }}
+  <div class="inner">
+    {% for d in semester_dates %}
+      <div class="row">
+        <span class="time">{{ d.day_label }}</span>
+        <div class="grow">
+          <p class="b1">{{ d.title }}</p>
+          <p class="b2">{{ d.time_label }} · <a href="/source/{{ d.source_item_id }}">source</a></p>
+        </div>
+      </div>
+    {% endfor %}
+    {# Said on the page, not left to be discovered: an owner who wrote 28 dates to a
+       calendar and counts fewer here is owed the reason. #}
+    <p class="b2i">{{ all_day_note }}</p>
+  </div>
+</section>
+{% endblock %}

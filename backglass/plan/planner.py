@@ -17,6 +17,8 @@ Requirements implemented here:
   P8  small items and admin never go in the protected block
   P9  when no 90-minute gap exists, say so plainly
   P10 rollover items sit at the top of the next day's proposal
+  P18 a routine the day left no room for is stated, never silently dropped (§1.9)
+  P20 a day whose plan holds no coursework gets one study block, and it never rolls
 """
 
 from __future__ import annotations
@@ -56,10 +58,52 @@ class Candidate:
     priority: int
     blocked_on_others: bool
     age_days: int
+    #: Minutes already worked on this obligation, from blocks marked done on earlier days.
+    #: Zero for everything that has never been scheduled, which is almost everything.
+    done_minutes: int = 0
+    #: What today's plan is giving it. Set by `select`, read by `propose`; zero until then.
+    planned_minutes: int = 0
+    #: Whether the work can be done across sittings. True only for an estimate
+    #: `coursework` read off the assignment (`estimate_source = 'analyzed'`), which is a
+    #: deliverable measured in pages, chapters or runtime and divisible by construction.
+    #: A three-hour move-in is not, and nothing here may cut one in half.
+    divisible: bool = False
 
     @property
     def small(self) -> bool:
         return False  # decided against settings in `select`, not here
+
+    @property
+    def remaining(self) -> int:
+        """What is left of the work, not what it was when it started."""
+        return max(1, self.minutes - self.done_minutes)
+
+    def sitting(self, settings: Settings) -> int:
+        """How much of it to put in one block.
+
+        `coursework` reads real numbers off the assignment now: four exams at two hours,
+        five CIS 236 milestones between 138 and 344 minutes. Handed to the planner whole,
+        every one of them is *unschedulable* — `select` drops any candidate larger than
+        the capacity left in the day and `place` needs a contiguous slot that long — so
+        honest estimates would have made the biggest work vanish from every plan, which
+        is strictly worse than the flat thirty minutes they replaced.
+
+        So divisible work is capped at a sitting, the obligation stays open, and the rest
+        comes back tomorrow. `done_minutes` is what stops that being an endless loop: the
+        work shrinks as it is done, and `actions.set_block_outcome` resolves the
+        commitment once the sittings add up.
+
+        Divisible, and not merely long. The discriminator is evidence rather than size:
+        an `analyzed` estimate is one `coursework` read off the assignment — pages,
+        chapters, a runtime — and a deliverable measured that way is done across sittings
+        by construction. "Move-in: Willow Hall 502" is three hours of one thing, carries
+        a number a person chose, and is planned whole or not at all. Nobody writes a
+        344-minute report in one sitting either; docs/04 protects 90 minutes because
+        that is what a sitting is.
+        """
+        if not self.divisible:
+            return self.remaining
+        return min(self.remaining, max(1, settings.max_block_minutes))
 
 
 @dataclass
@@ -86,7 +130,7 @@ class Proposal:
         return sum(
             int(b["minutes"])
             for b in self.blocks
-            if b["kind"] in ("work", "protected", "small")
+            if b["kind"] in ("work", "protected", "small", "study")
         )
 
 
@@ -119,7 +163,14 @@ def candidates(
         stale = staleness.stale_ids(conn, day)
     rows = conn.execute(
         "SELECT c.id, c.what, c.due_at, c.estimated_minutes, c.direction, c.goal_id, "
-        "       c.rollover_count, s.occurred_at "
+        "       c.rollover_count, c.estimate_source, s.occurred_at, "
+        # Sittings already spent on it. A multi-session assignment that keeps its full
+        # estimate every morning would be scheduled forever; this is what makes the
+        # remainder shrink.
+        "       COALESCE(("
+        "         SELECT SUM((julianday(b.ends_at) - julianday(b.starts_at)) * 1440) "
+        "         FROM plan_block b WHERE b.commitment_id = c.id AND b.outcome = 'done'"
+        "       ), 0) AS done_minutes "
         "FROM commitment c JOIN source_item s ON s.id = c.source_item_id "
         "WHERE c.user_id = ? AND c.status = 'open' AND c.confidence >= ? "
         "  AND c.direction = 'i_owe'",
@@ -158,9 +209,25 @@ def candidates(
                 # day, so the ask goes out with a full working day left for a response."
                 blocked_on_others=_is_an_ask(str(row["what"])),
                 age_days=(day - occurred).days,
+                done_minutes=int(row["done_minutes"] or 0),
+                divisible=str(row["estimate_source"] or "") == "analyzed",
             )
         )
     return out
+
+
+def _block_title(item: Candidate, minutes: int) -> str:
+    """What the block is called, and whether it admits to being part of something.
+
+    A block reading "T - Final Analysis" for 90 minutes of a 344-minute deliverable would
+    be a quiet lie about what finishing it means, and the owner marks these done by
+    reading them. Shared by the protected block and the ordinary work blocks, because the
+    protected slot takes the first real piece of work and that is exactly the piece most
+    likely to be too big for one sitting.
+    """
+    if minutes >= item.remaining:
+        return item.what
+    return f"{item.what} ({minutes}m of {item.remaining}m left)"
 
 
 def _is_an_ask(what: str) -> bool:
@@ -215,10 +282,15 @@ def select(
     overflow: list[Candidate] = []
 
     for item in order(items, prefs):
-        minutes = max(1, item.minutes)
+        # A sitting of it, which for everything indivisible is the whole thing — see
+        # `Candidate.sitting`. Without the cap a 344-minute milestone is overflow on
+        # every day of its life, and honest estimates would make the biggest work
+        # invisible rather than schedulable.
+        minutes = item.sitting(settings)
         if minutes > remaining:
             overflow.append(item)
             continue
+        item.planned_minutes = minutes
         # P4: "Blocks have a minimum size of 25 minutes. Anything smaller is batched into
         # a single 'small items' block."
         if minutes < settings.min_block_minutes:
@@ -316,7 +388,11 @@ def inputs_fingerprint(
     window = timezones.window_on(settings, day)
     payload = {
         "candidates": sorted(
-            (c.commitment_id, c.what, c.minutes, c.due_at or "", c.priority,
+            # `remaining`, not `minutes`: a sitting finished on a multi-session
+            # assignment genuinely changes the pool the day was built from, and a
+            # still-proposed board should rebuild around what is left rather than keep
+            # offering the work that was just done.
+            (c.commitment_id, c.what, c.remaining, c.due_at or "", c.priority,
              c.rollover_count, c.blocked_on_others)
             for c in pool
         ),
@@ -394,6 +470,14 @@ def propose(
             }
         )
 
+    for event in whole_day:
+        if event.conflict:
+            # P18. A routine the day left no room for, said here rather than swallowed,
+            # because "there was no free 45 minutes between 10:30 and 14:30" is a fact
+            # about the day the owner can act on — by moving something, or by eating
+            # anyway and knowing the plan knows.
+            proposal.notes.append(event.conflict)
+
     if not cap.plannable:
         # P3. "Say the day is fully booked and list only what is due."
         proposal.overflow = order(
@@ -450,6 +534,13 @@ def propose(
         proposal.notes.append(warning)
     scheduled, small, overflow = select(pool, cap, settings, prefs)
     proposal.overflow = overflow
+    # Read here, before the protected block pops the first real piece of work off
+    # `scheduled` — which is exactly where a coursework item usually goes, so asking
+    # later saw an empty homework list and gave a day full of homework a study block
+    # on top of it. `divisible` is the discriminator because it is the same one: a
+    # divisible estimate is a `coursework` estimate read off the assignment, which is
+    # what "homework" means here.
+    homework_planned = any(item.divisible for item in scheduled + small)
 
     protected = _peak_slot(cap, settings, day)
     if protected is None:
@@ -467,7 +558,11 @@ def propose(
                 "starts_at": protected.starts_at.isoformat(),
                 "ends_at": protected.ends_at.isoformat(),
                 "kind": "protected",
-                "title": head.what,
+                # Partial when it is partial. The protected slot is a fixed 90 minutes
+                # and it takes the first real piece of work, so it is exactly where a
+                # long obligation gets truncated — and it said nothing about it, which
+                # made "done" on that block look like done with the whole thing.
+                "title": _block_title(head, protected.minutes),
                 "minutes": protected.minutes,
                 "commitment_id": head.commitment_id,
                 "goal_id": head.goal_id,
@@ -502,14 +597,41 @@ def propose(
         return False
 
     for item in scheduled:
-        if not place(item.what, max(1, item.minutes), "work", item.commitment_id, item.goal_id):
+        minutes = item.planned_minutes or item.sitting(settings)
+        if not place(
+            _block_title(item, minutes), minutes, "work", item.commitment_id, item.goal_id
+        ):
             proposal.overflow.append(item)
 
     if small:
-        total = max(settings.min_block_minutes, sum(max(1, s.minutes) for s in small))
+        total = max(
+            settings.min_block_minutes,
+            sum(s.planned_minutes or max(1, s.minutes) for s in small),
+        )
         title = f"Small items ({len(small)})"
         if not place(title, total, "small", None, None):
             proposal.overflow.extend(small)
+
+    # P20, docs/04 §1.9. A day should hold study time as well as homework.
+    # Homework is what the planner already does — coursework commitments scheduled by
+    # name — so this is only for the day that has none of it.
+    #
+    # A block, not a commitment. Nothing is written to the ledger, nothing rolls over,
+    # and there is nothing to mark done but the block itself — a plan may say "read"
+    # without inventing an obligation the owner never made. It is capacity-bounded like
+    # everything else (P1): what is left after the real work, never more.
+    if settings.study_block_minutes > 0 and not homework_planned:
+        room = min(
+            settings.study_block_minutes,
+            cap.capacity_minutes - proposal.planned_minutes,
+        )
+        if room >= settings.min_block_minutes:
+            # Its own kind, not `work`. `rollover.open_blocks` rolls every pending
+            # work/protected/small block into tomorrow, and an hour of reading nobody
+            # did is not a debt — rolled, it would arrive tomorrow as an obligation the
+            # owner never made, and P11 would eventually ask them whether to drop it.
+            # It still counts toward `planned_minutes`: the time is genuinely spent.
+            place("Study", room, "study", None, None)
 
     if proposal.overflow:
         # P2. Never silently truncate.

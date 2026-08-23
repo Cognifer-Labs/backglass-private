@@ -20,6 +20,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
+from backglass import claim_events
 from backglass.config import Settings
 from backglass.ledger import USER_ID
 from backglass.plan import timezones
@@ -80,11 +81,27 @@ def remember(
         ),
     )
     new_id = int(cur.lastrowid or 0)
+    # Read before UPDATE: the change ledger and the invalidation lookup both need the
+    # ids being superseded, and an UPDATE ... WHERE clause does not hand them back.
+    superseded_ids = [
+        int(r["id"])
+        for r in conn.execute(
+            "SELECT id FROM fact WHERE user_id = ? AND subject = ? AND key = ?"
+            " AND status = 'active' AND id != ?",
+            (USER_ID, subject, key, new_id),
+        )
+    ]
     conn.execute(
         "UPDATE fact SET status = 'superseded', superseded_by = ? "
         "WHERE user_id = ? AND subject = ? AND key = ? AND status = 'active' AND id != ?",
         (new_id, USER_ID, subject, key, new_id),
     )
+    for old_id in superseded_ids:
+        event_id = claim_events.record(
+            conn, subject_table="fact", subject_id=old_id, cause="fact_superseded",
+            field="status", old_value="active", new_value="superseded",
+        )
+        claim_events.invalidate_fact(conn, old_id, event_id=event_id)
     return new_id
 
 
@@ -294,6 +311,11 @@ def forget(conn: sqlite3.Connection, fact_id: int) -> None:
     )
     if cur.rowcount == 0:
         raise FactError(f"no active fact {fact_id}")
+    event_id = claim_events.record(
+        conn, subject_table="fact", subject_id=fact_id, cause="fact_retracted",
+        field="status", old_value="active", new_value="retracted",
+    )
+    claim_events.invalidate_fact(conn, fact_id, event_id=event_id)
 
 
 #: How much of the knowledge base may ride on a triage call. Every token spent in

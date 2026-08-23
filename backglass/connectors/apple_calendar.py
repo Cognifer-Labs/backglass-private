@@ -36,6 +36,7 @@ from datetime import UTC, datetime, timedelta
 
 from backglass.connectors.base import Cursor, Health, SourceItem, content_hash
 from backglass.connectors.boundary import Boundary
+from backglass.retraction import RetractableWindow
 
 #: Matching `calendar.py`'s window: enough history for "what did I do last week" and
 #: enough future for the day planner's horizon, without enumerating a decade.
@@ -58,10 +59,15 @@ const to = new Date(%(to_ms)d);
 const wanted = %(name)s;
 const out = [];
 for (const c of cal.calendars.whose({name: wanted})()) {
-  let events;
-  try {
-    events = c.events.whose({_and: [{startDate: {">": from}}, {startDate: {"<": to}}]})();
-  } catch (e) { continue; }
+  // Deliberately NOT wrapped in try/catch. This query is the one that hits macOS's own
+  // ~2-minute Apple Event ceiling and raises -1712, and swallowing it here returned `[]`
+  // with exit code 0 — a calendar that timed out became a calendar with no events, with
+  // nothing anywhere recording a failure. The isolation the catch was providing is
+  // already provided: this script is invoked once per calendar, so an error costs its
+  // own calendar and nothing else, and letting it propagate makes osascript exit
+  // non-zero, which `run_osascript` turns into the RuntimeError that `failed_calendars`
+  // is built from. `retractable_window` then correctly refuses to certify the read.
+  const events = c.events.whose({_and: [{startDate: {">": from}}, {startDate: {"<": to}}]})();
   for (const e of events) {
     try {
       out.push({
@@ -97,16 +103,43 @@ _TRAVEL = re.compile(
 )
 
 
-def run_osascript(script: str) -> str:
+#: Seconds to wait on one calendar's query. Measured, not guessed, and the measurement is
+#: why it is this large: the owner's `dkesava2@asu.edu` calendar takes **80 seconds** to
+#: return 28 days of events on an otherwise idle machine, and over **two minutes** while a
+#: sync is doing anything else. At the previous value of 120 it therefore failed whenever
+#: the machine was busy — which is every scheduled run, because the sync is what is busy.
+#:
+#: The cost of that was not a missing calendar. The connector caught the timeout per rule
+#: 5, reported it as a boundary exclusion, and carried on returning **two events** for the
+#: whole day: the planner then built a day around an almost-empty calendar. It also meant
+#: `retractable_window` could never certify a read, so no cancelled class was ever
+#: retracted — the fix built for that on 2026-08-20 could not fire once.
+#:
+#: Both ceilings are real and they fire in different regimes, which is why the comment
+#: this replaces — asserting macOS's own ~2-minute Apple Event ceiling was "the one that
+#: actually fires" — was half right and cost a fortnight. This subprocess limit is what
+#: fires when the *script* runs long, and it is what produced the observed
+#: `timed out after 120 seconds`. macOS's per-Apple-Event ceiling is separate, raises
+#: -1712 inside osascript, and is why the `whose` query above is no longer wrapped in a
+#: JXA try/catch: swallowed, it returned an empty calendar with exit code 0. The
+#: standalone run that finished at 2:51 crossed neither, because no single Apple Event
+#: in it ran for two minutes.
+#:
+#: Not solved by asking for less per event, which was tried first: reading each property
+#: for the whole result set in one call (`spec.uid()`, `spec.summary()`, …) re-evaluates
+#: the `whose` predicate per property and measured 2:51 against the current shape's 1:20.
+#: The predicate is the cost, and it is paid once already.
+OSASCRIPT_TIMEOUT_SECONDS = 300
+
+
+def run_osascript(script: str, timeout: int = OSASCRIPT_TIMEOUT_SECONDS) -> str:
     done = subprocess.run(
         ["osascript", "-l", "JavaScript", "-e", script],
         capture_output=True,
         text=True,
-        # Belt to macOS's own braces. The Apple Event ceiling (~2 min) is the one that
-        # actually fires, and it is not configurable from here — which is why the work is
-        # split per calendar above rather than made to wait longer. This timeout only
-        # catches a wedged osascript, and reads as a failed source per rule 5.
-        timeout=120,
+        # Catches a wedged osascript, and reads as a failed source per rule 5. See the
+        # constant above for why the number is what it is.
+        timeout=timeout,
     )
     if done.returncode != 0:
         raise RuntimeError(done.stderr.strip() or "osascript failed")
@@ -129,10 +162,45 @@ class AppleCalendarConnector:
     #: Calendars that errored this run, reported rather than swallowed. Non-empty means
     #: the day plan is missing whatever was in them.
     failed_calendars: list[str] = field(default_factory=list)
+    #: The window this run actually read, and every external_id it returned inside it.
+    #: `backglass.retraction` uses the pair to tell a cancelled class from a missing one.
+    #: Reset at the top of every `fetch`, so a stale run cannot certify a new one.
+    read_window: tuple[str, str] | None = None
+    seen_ids: set[str] = field(default_factory=set)
+    #: Calendars this run read all the way through. Certification is per calendar, not
+    #: per run: the owner has one calendar that reliably takes minutes and sometimes
+    #: fails, and an all-or-nothing rule let it veto retraction for every other calendar
+    #: forever — which is how a cancelled class kept its slot in the day plan.
+    complete_calendars: set[str] = field(default_factory=set)
 
     @property
     def name(self) -> str:
         return "calendar:apple"
+
+    def retractable_window(self) -> RetractableWindow | None:
+        """What this run is entitled to conclude from absence, and for which calendars.
+
+        Scoped per calendar rather than per run, and that is the whole design. The owner
+        has one calendar that takes minutes and intermittently fails; under an
+        all-or-nothing rule it vetoed retraction for every *other* calendar on every run,
+        so a cancelled class kept its slot in the day plan indefinitely. A calendar read
+        all the way through is evidence about that calendar and about nothing else, which
+        is exactly how it is used.
+
+        A read that returned no events at all still certifies nothing. That is far more
+        likely to be a broken bridge than a genuinely emptied calendar, and it costs only
+        a real edge case: an owner who deletes every event in the window keeps stale rows
+        until one new event lands. The failure it prevents is silent and total; the one it
+        causes is visible and partial.
+        """
+        if self.read_window is None or not self.complete_calendars or not self.seen_ids:
+            return None
+        return RetractableWindow(
+            starts_at=self.read_window[0],
+            ends_before=self.read_window[1],
+            seen_ids=set(self.seen_ids),
+            calendars=set(self.complete_calendars),
+        )
 
     def health(self) -> Health:
         try:
@@ -153,11 +221,16 @@ class AppleCalendarConnector:
         self.excluded = 0
         self.excluded_by_rule = {}
         self.failed_calendars = []
+        self.read_window = None
+        self.seen_ids = set()
+        self.complete_calendars = set()
 
         now = self.now()
+        starts_at = now - timedelta(days=LOOKBACK_DAYS)
+        ends_before = now + timedelta(days=HORIZON_DAYS)
         window = {
-            "from_ms": int((now - timedelta(days=LOOKBACK_DAYS)).timestamp() * 1000),
-            "to_ms": int((now + timedelta(days=HORIZON_DAYS)).timestamp() * 1000),
+            "from_ms": int(starts_at.timestamp() * 1000),
+            "to_ms": int(ends_before.timestamp() * 1000),
         }
         skip = {name.casefold() for name in self.skip}
 
@@ -174,12 +247,36 @@ class AppleCalendarConnector:
         for name in names:
             script = _EVENTS_SCRIPT % {**window, "name": json.dumps(str(name))}
             try:
-                events.extend(json.loads(self.runner(script) or "[]"))
+                returned = json.loads(self.runner(script) or "[]")
+                # Every uid the store returned, before dedup and before `_to_item` drops
+                # all-day banners and cancellations. `seen_ids` answers "does the store
+                # still have this?", which is not the same question as "did we emit it".
+                # The connector suppresses one of two identical events across calendars
+                # on purpose, and reading that suppression as a deletion would have
+                # retracted live rows: the owner's HON 171, PSY 101 and CIS 236 all sit
+                # in two calendars at once.
+                for event in returned:
+                    uid = str(event.get("uid") or "")
+                    if uid:
+                        self.seen_ids.add(uid)
+                events.extend(returned)
+                # Reached only when the query returned without raising, which is now the
+                # honest signal it was not before: the JXA catch that used to wrap the
+                # query turned a timeout into an empty list, so this line would have
+                # certified a calendar nobody had actually read.
+                self.complete_calendars.add(str(name))
             except Exception as exc:  # noqa: BLE001 — rule 5: one calendar is not the source
                 # A calendar that times out or errors costs its own events and nothing
                 # else. Losing one shared feed used to fail the whole connector and mark
                 # the credential dead, which took the day plan's real meetings with it.
-                self.excluded_by_rule[f"calendar:{name}"] = 1
+                #
+                # Recorded ONLY in `failed_calendars`. It used to also write
+                # `excluded_by_rule[f"calendar:{name}"]`, and that is how this hid: the
+                # sync line rendered it as `boundary excluded 1 by rule
+                # calendar:dkesava2@asu.edu`, which reads as a privacy rule doing its job
+                # rather than as the owner's main calendar failing on every run. Rule 5
+                # says a failing source is surfaced, and a failure wearing the vocabulary
+                # of a deliberate exclusion is not surfaced.
                 self.failed_calendars.append(f"{name}: {exc}")
 
         # Deduplicated across calendars, which is not a nicety. On the owner's machine
@@ -210,6 +307,10 @@ class AppleCalendarConnector:
             item = self._to_item(event, skip)
             if item is not None:
                 yield item
+        # Set last, and only here. `fetch` is a generator: a caller that abandons it
+        # part-way never reaches this line, so a half-consumed read cannot certify a
+        # window it did not finish returning.
+        self.read_window = (starts_at.isoformat(), ends_before.isoformat())
         self.cursor = now.isoformat()
 
     def _to_item(self, event: dict[str, object], skip: set[str]) -> SourceItem | None:

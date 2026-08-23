@@ -3,10 +3,11 @@
     "Every open commitment carries `estimated_minutes`. Without it the planner cannot pack
     a day."
 
-Three sources, recorded in `commitment.estimate_source` so they can be told apart:
+Four sources, recorded in `commitment.estimate_source` so they can be told apart:
 
     extracted     the source text supported a number ("this'll take an hour")
     manual        the owner set it; sticky, and never overwritten by a default
+    analyzed      `coursework` read it off the assignment itself (goal 4)
     type_default  inferred from the commitment type
 
 This closes the Phase 1 deviation that left `estimated_minutes` NULL: docs/04 is the
@@ -71,7 +72,7 @@ RATIO_MIN_SAMPLE = 30
 @dataclass(frozen=True)
 class Estimate:
     minutes: int
-    source: str  # extracted | manual | type_default
+    source: str  # extracted | manual | analyzed | type_default
     kind: str
 
 
@@ -116,6 +117,14 @@ def estimate_for(
         return Estimate(minutes=extracted_minutes, source="extracted", kind=kind)
     if existing_source == "extracted" and existing_minutes is not None:
         return Estimate(minutes=existing_minutes, source="extracted", kind=kind)
+    # `analyzed` is `coursework`'s: a number read off the assignment as its course
+    # published it, which beats this table because this table has never seen the
+    # assignment — it classifies the sentence somebody wrote about it. The ladder in full
+    # is manual > extracted > analyzed > type_default, and it ranks evidence, not
+    # recency. `backfill`'s WHERE clause already excludes these rows; the branch is here
+    # so the rule is stated where the ladder is, and not only where it is enforced.
+    if existing_source == "analyzed" and existing_minutes is not None:
+        return Estimate(minutes=existing_minutes, source="analyzed", kind=kind)
     return Estimate(minutes=defaults(settings)[kind], source="type_default", kind=kind)
 
 

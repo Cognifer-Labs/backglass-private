@@ -23,6 +23,7 @@ from backglass.brief.model import Brief, LedgerRef, Line, Note, Section, SourceR
 from backglass.config import Settings
 from backglass.db import query
 from backglass.ledger import USER_ID
+from backglass.plan import capacity as capacity_mod
 from backglass.plan import timezones
 
 #: docs/05 §4. Two days, in the sense of calendar days, because the reader thinks in days.
@@ -274,8 +275,17 @@ def timezone_section(conn: sqlite3.Connection, today: date, settings: Settings) 
     return section
 
 
-def plan_section(conn: sqlite3.Connection, today: date) -> Section:
-    """docs/05 §2. Proposed blocks from the day planner, protected block marked."""
+def plan_section(conn: sqlite3.Connection, settings: Settings, today: date) -> Section:
+    """docs/05 §2. Proposed blocks from the day planner, protected block marked.
+
+    P18 (docs/04 §1.9) is answered here as well as on the plan itself. A routine the day
+    left no room for — a lunch with no free 45 minutes anywhere near it — is stated in
+    the CLI's proposal notes, and those are ephemeral: the brief rebuilds its lines from
+    the ledger, so a fact that lives only on the in-memory `Proposal` never reaches the
+    surface the owner actually reads at six in the morning. It is recomputed rather than
+    stored because `day_events` is deterministic over the same day, which is the same
+    property the fingerprint already leans on.
+    """
     section = Section(priority=2, title="Today")
     rows = conn.execute(
         "SELECT b.id, b.starts_at, b.ends_at, b.kind, b.title, b.commitment_id, p.local_date "
@@ -311,6 +321,17 @@ def plan_section(conn: sqlite3.Connection, today: date) -> Section:
                 commitment_id=row["commitment_id"],
             )
         )
+
+    for event in capacity_mod.day_events(conn, settings, today):
+        if event.conflict:
+            section.lines.append(
+                Line(
+                    text=event.conflict,
+                    provenance=LedgerRef(
+                        "plans", today.isoformat(), f"day plan · {today.isoformat()}"
+                    ),
+                )
+            )
     return section
 
 
@@ -813,7 +834,7 @@ def build(conn: sqlite3.Connection, settings: Settings, for_date: date | None = 
     for section in (
         failure_section(conn, today, settings),
         timezone_section(conn, today, settings),
-        plan_section(conn, today),
+        plan_section(conn, settings, today),
         capacity_section(conn, today),
         slipping_section(conn, today, settings),
         awaiting_section(conn, today, settings),

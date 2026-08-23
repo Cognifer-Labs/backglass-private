@@ -33,6 +33,7 @@ import sqlite3
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, replace
+from operator import mul
 from typing import Any
 
 from backglass.config import Settings
@@ -140,7 +141,15 @@ def _embed_request(settings: Settings, texts: list[str]) -> list[list[float]]:
     the transport, and so a test can exercise either without the other."""
     if not texts:
         return []
-    base = (settings.model_base_url or settings.deepinfra_base_url).rstrip("/")
+    # `embedding_base_url` first: chat and embeddings are one endpoint on Ollama and
+    # DeepInfra, and different ones the moment chat moves to a provider that serves no
+    # embedding model. Falling back through the chat URL keeps every existing config
+    # meaning exactly what it meant before the split.
+    base = (
+        settings.embedding_base_url
+        or settings.model_base_url
+        or settings.deepinfra_base_url
+    ).rstrip("/")
     request = urllib.request.Request(
         f"{base}/embeddings",
         data=json.dumps({"model": settings.embedding_model, "input": texts}).encode(),
@@ -236,6 +245,15 @@ def index(
     return added
 
 
+#: The last `duplicate_pairs` answer, under a digest of the exact vectors it was
+#: computed from. The comparison is O(n²) and its inputs change only when the index
+#: does, so a second read of an unchanged index should cost the read and nothing else.
+#: Keyed on the vector bytes rather than on row ids or counts: a re-index that rewrites
+#: a vector in place changes no count, and a cache that cannot see that is a cache that
+#: quietly answers with last week's meaning.
+_PAIRS_CACHE: tuple[str, float, set[tuple[int, int]]] | None = None
+
+
 def duplicate_pairs(
     conn: sqlite3.Connection, settings: Settings, *, threshold: float = SAME_COMMITMENT
 ) -> set[tuple[int, int]]:
@@ -258,13 +276,49 @@ def duplicate_pairs(
         "   AND c.status = 'open'",
         (USER_ID, settings.embedding_model),
     ).fetchall()
-    vectors = [(int(row["ref_id"]), _unpack(row["vector"])) for row in rows]
+
+    global _PAIRS_CACHE
+    digest = hashlib.sha256()
+    for row in rows:
+        digest.update(str(row["ref_id"]).encode())
+        digest.update(row["vector"])
+    fingerprint = digest.hexdigest()
+    if _PAIRS_CACHE is not None and _PAIRS_CACHE[:2] == (fingerprint, threshold):
+        return set(_PAIRS_CACHE[2])
+
+    # Normalised once here rather than through `_cosine`, which recomputes both norms
+    # inside every comparison. This loop is O(n²): at 220 indexed open commitments that
+    # is 24 090 pairs, and the norms were two thirds of 55 million multiplications for
+    # values that never change between pairs. Same arithmetic, same results — a cosine
+    # against unit vectors is a plain dot product — for a third of the work. `_cosine`
+    # itself is untouched, because `search()` compares one query against many documents
+    # and has nothing to amortise.
+    vectors: list[tuple[int, array.array[float]]] = []
+    for row in rows:
+        vector = _unpack(row["vector"])
+        norm = math.sqrt(sum(x * x for x in vector))
+        if norm == 0:
+            # A zero vector is similar to nothing, including itself. Dropping it here
+            # keeps the division out of the inner loop.
+            continue
+        vectors.append((int(row["ref_id"]), array.array("f", (x / norm for x in vector))))
+
+    # `_cosine` refuses to compare vectors of different widths, because ranking two
+    # models against each other produces plausible nonsense rather than an error. The
+    # dot product below would silently compare the overlap instead, so the assertion
+    # moves here — once for the set, not once per pair.
+    widths = {len(vector) for _, vector in vectors}
+    if len(widths) > 1:
+        raise SearchError(f"vector dimensions differ ({sorted(widths)})")
 
     out: set[tuple[int, int]] = set()
     for i, (left_id, left) in enumerate(vectors):
         for right_id, right in vectors[i + 1 :]:
-            if _cosine(left, right) >= threshold:
+            # `map` over the two arrays rather than a generator expression: this runs
+            # tens of millions of times and a genexpr pays a Python frame for each one.
+            if sum(map(mul, left, right)) >= threshold:
                 out.add((min(left_id, right_id), max(left_id, right_id)))
+    _PAIRS_CACHE = (fingerprint, threshold, set(out))
     return out
 
 

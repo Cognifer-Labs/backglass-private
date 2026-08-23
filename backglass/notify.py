@@ -30,7 +30,7 @@ from __future__ import annotations
 import sqlite3
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from backglass.config import Settings
 from backglass.ledger import USER_ID
@@ -96,7 +96,6 @@ def record(
     scheduled deciders re-offer next sync, so the banner arrives when the window
     opens instead of never.
     """
-    from backglass.db import now_iso
     from backglass.plan import timezones
 
     if now is None:
@@ -108,7 +107,22 @@ def record(
         "INSERT OR IGNORE INTO notification"
         " (user_id, kind, subject_key, local_date, title, body, delivered, created_at)"
         " VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
-        (USER_ID, kind, subject_key, now.date().isoformat(), title, body, now_iso()),
+        # From `now`, not the wall clock. `_stale_questions` compares a question's
+        # `asked_at` against this column and its docstring claims "one clock against
+        # itself" — which it was not: the row's `local_date` came from the caller's clock
+        # and its `created_at` from `datetime.now()`, so the two disagreed for anything
+        # that injects a time. In production they are the same instant and nothing
+        # changes; under an injected clock the comparison becomes the one the docstring
+        # describes, which is also why the re-banner rule could not be tested honestly.
+        (
+            USER_ID,
+            kind,
+            subject_key,
+            now.date().isoformat(),
+            title,
+            body,
+            now.astimezone(UTC).replace(microsecond=0).isoformat(),
+        ),
     )
     if not cur.rowcount:
         return None  # today's slot already taken — rule 3, by schema

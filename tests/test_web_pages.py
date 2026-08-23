@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backglass.config import Settings
+from backglass.db import now_iso
 from backglass.web.app import create_app
 from tests.conftest import panel_slice
 
@@ -48,6 +49,10 @@ class TestShell:
             assert page.status_code == 200, path
             for label in ("Dashboard", "Schedule", "Goals", "People", "Roadmaps"):
                 assert label in page.text, (path, label)
+
+    def test_the_classes_tab_is_in_the_nav(self, client: TestClient) -> None:
+        page = client.get("/")
+        assert 'href="/classes"' in page.text
 
     def test_dashboard_content_survived_the_base_refactor(self, client: TestClient) -> None:
         page = client.get("/")
@@ -1944,6 +1949,59 @@ class TestAllDayReachesEveryReader:
         assert "12:00am" not in panel
         assert "All day" in panel
 
+    def test_a_block_names_what_has_to_be_open_before_it_starts(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """Goal 4: the materials half of "time needed and materials needed". Recording
+        them and leaving them in a table the owner never opens is not the feature — the
+        point is reading "needs Respondus LockDown Browser" the evening before, not the
+        moment the exam refuses to start."""
+        day = date.today().isoformat()
+        conn.execute(
+            "INSERT INTO source_item (user_id, source, external_id, fetched_at, "
+            " occurred_at, author, title, body_text, raw_json, content_hash) "
+            "VALUES (1, 'canvas:ics', 'assignment:1', ?, ?, 'PSY101', 't', 'b', '{}', 'h')",
+            (now_iso(), day),
+        )
+        item_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO commitment (user_id, direction, what, due_at, confidence, "
+            " status, source_item_id, created_at) "
+            "VALUES (1, 'i_owe', 'Take PSY101 Exam 4', ?, 0.9, 'open', ?, ?)",
+            (day, item_id, now_iso()),
+        )
+        commitment_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO assignment (user_id, source, external_id, source_item_id, course, "
+            " title, due_at, description_hash, first_seen_at, last_changed_at) "
+            "VALUES (1, 'canvas:ics', 'assignment:1', ?, 'PSY101', 'Exam 4', ?, 'h', ?, ?)",
+            (item_id, day, now_iso(), now_iso()),
+        )
+        assignment_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        materials = (("software", "Respondus LockDown Browser"), ("reading", "Ch. 13–15"))
+        for kind, name in materials:
+            conn.execute(
+                "INSERT INTO assignment_material (user_id, assignment_id, kind, name, "
+                " created_at) VALUES (1, ?, ?, ?, ?)",
+                (assignment_id, kind, name, now_iso()),
+            )
+        conn.execute(
+            "INSERT INTO day_plan (user_id, local_date, tz, capacity_minutes, generated_at)"
+            " VALUES (1, ?, 'America/Phoenix', 480, ?)",
+            (day, now_iso()),
+        )
+        plan_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title, "
+            " commitment_id) VALUES (?, ?, ?, 'work', 'Take PSY101 Exam 4', ?)",
+            (plan_id, f"{day}T09:00:00-07:00", f"{day}T10:30:00-07:00", commitment_id),
+        )
+        conn.commit()
+
+        panel = panel_slice(client.get("/").text, "panel-today")
+
+        assert "needs Ch. 13–15 · Respondus LockDown Browser" in panel
+
     def test_the_week_grid_shows_a_programme_it_cannot_draw_an_hour_for(
         self, client: TestClient, conn: sqlite3.Connection
     ) -> None:
@@ -1972,3 +2030,40 @@ class TestAllDayReachesEveryReader:
 
         assert col.busy is True
         assert WeekCol(view=view, entries=[], now_top=None, cap=None).busy is False
+
+
+class TestClassesPage:
+    """The semester as a page: one card per course, and an empty state that says what
+    would fill it rather than rendering a blank panel."""
+
+    def test_an_empty_ledger_says_what_would_fill_the_page(
+        self, client: TestClient
+    ) -> None:
+        page = client.get("/classes")
+        assert page.status_code == 200
+        panel = panel_slice(page.text, "panel-classes")
+        assert "No classes in the ledger" in panel
+        assert "backglass doctor" in panel
+
+    def test_a_course_card_carries_its_meeting_room_and_instructor(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        from tests.test_courses import _lecture_week
+
+        _lecture_week(conn)
+        page = client.get("/classes")
+        panel = panel_slice(page.text, "panel-course-chm113-meetings")
+        assert "Mon/Wed/Fri 12:20 pm–1:10 pm" in panel
+        assert "Tempe LSA 191" in panel
+        assert "Wei Wang" in panel
+        # The occurrence count is what makes the folded pattern checkable.
+        assert "3 calendar rows" in panel
+
+    def test_the_page_says_why_all_day_dates_are_missing(
+        self, client: TestClient
+    ) -> None:
+        """28 dates were written to the calendar and only the timed ones can reach the
+        ledger. The page states that rather than leaving the owner to count."""
+        panel = panel_slice(client.get("/classes").text, "panel-semester")
+        assert "all-day" in panel.lower()
+        assert "docs/07" in panel

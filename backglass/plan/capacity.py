@@ -17,6 +17,11 @@ The reserve is the requirement most likely to be "optimised" away by someone try
 one more thing in. docs/04: "A plan that fills every minute is a plan that fails at 10:15
 and stays failed." `reserve_minutes` is clamped to at least one minute for that reason.
 
+Routines — the configured anchors, breakfast through the evening — are part of that
+fixed picture, and docs/04 §1.9 governs where they land: the configured hour is
+preferred rather than decreed (P17), a routine that cannot be placed clear of everything
+keeps its hour and says what it overlaps (P18), and a pinned one never moves (P19).
+
 Fixed events come from `source_item` rows written by the calendar connector, which is
 Phase 5. Until it exists this returns an empty list and capacity is the whole window minus
 the reserve — which is correct, not a stub: a day with no known meetings genuinely has no
@@ -45,6 +50,13 @@ BUSY_STATUSES = {"confirmed", "tentative", "busy"}
 #: surrender the day to.
 REVIEW_CAP_MINUTES = 120
 
+#: How far a flexible routine may drift from its preferred hour to find a free gap.
+#: Unbounded, a fully-booked afternoon puts lunch at four o'clock, and a meal moved that
+#: far is not the meal the owner asked for — it is the planner quietly rewriting the day
+#: and calling it lunch. Two hours is the width of "around then"; past it the routine
+#: keeps its hour and says what it collided with, which is a fact the owner can act on.
+ROUTINE_MAX_SHIFT_MINUTES = 120
+
 #: How long a confirmed plan is assumed to run when the message never said. An hour is
 #: the honest floor for "dinner at seven": people rarely state an end time for social
 #: arrangements, and assuming a shorter one would hand the planner minutes the owner does
@@ -64,6 +76,12 @@ class FixedEvent:
     #: an all-day banner spends no capacity at all, and the schedule draws each in its
     #: own register.
     kind: str = "fixed"
+    #: Set only on a routine that could not be placed clear of everything else: the
+    #: sentence naming what it overlaps and why it did not move. It rides on the event
+    #: rather than being returned alongside it because all three consumers of
+    #: `day_events` want it — the plan notes it, the schedule can show it — and a fact
+    #: returned on the side is a fact two of them will forget to ask for.
+    conflict: str = ""
 
     @property
     def allday(self) -> bool:
@@ -156,10 +174,18 @@ def fixed_events(conn: sqlite3.Connection, day: date, tz: str) -> list[FixedEven
     # event after ~17:00 from its own day, so the planner scheduled work across it.
     # timezones.utc_bounds carries the full reasoning.
     starts_at, ends_before = timezones.day_bounds(day, tz)
+    # `NOT EXISTS` rather than a status column, because `source_item` is immutable and
+    # the row stays true forever: the class really did meet on Wednesdays until the 10th.
+    # What changed is that Calendar.app no longer has it, which migration 0030 records
+    # beside the item. Without this join the planner keeps subtracting dropped classes —
+    # five of them, for ten days, which is what sent the owner looking.
     rows = conn.execute(
-        "SELECT raw_json, title FROM source_item "
-        "WHERE user_id = ? AND source LIKE 'calendar%' "
-        "  AND datetime(occurred_at) >= datetime(?) AND datetime(occurred_at) < datetime(?)",
+        "SELECT si.raw_json, si.title FROM source_item si "
+        "WHERE si.user_id = ? AND si.source LIKE 'calendar%' "
+        "  AND datetime(si.occurred_at) >= datetime(?) "
+        "  AND datetime(si.occurred_at) < datetime(?) "
+        "  AND NOT EXISTS (SELECT 1 FROM source_item_retraction r "
+        "                  WHERE r.source_item_id = si.id)",
         (USER_ID, starts_at, ends_before),
     ).fetchall()
 
@@ -443,8 +469,13 @@ def _allday(row: sqlite3.Row, day: date, tz: str) -> FixedEvent:
     )
 
 
-def routine_events(settings: Settings, day: date, tz: str) -> list[FixedEvent]:
-    """The configured anchors — breakfast, lunch, gym — as fixed events on `day`.
+def routine_events(
+    settings: Settings,
+    day: date,
+    tz: str,
+    around: list[FixedEvent] | None = None,
+) -> list[FixedEvent]:
+    """The configured anchors — breakfast, lunch, gym — placed on `day` around `around`.
 
     Most of life happens every day, so an unscoped routine carries no weekday gate: a
     Saturday breakfast is still breakfast. A routine that names days is filtered to
@@ -454,22 +485,125 @@ def routine_events(settings: Settings, day: date, tz: str) -> list[FixedEvent]:
     the one day that does.
 
     They come from config rather than the ledger because they are the owner's own
-    template for a day, not something a source said.
+    template for a day, not something a source said. And the hour in that template is a
+    preference: `around` is everything already true about the day — classes, meetings,
+    confirmed engagements — and a routine whose preferred span lands inside one of them
+    moves to the nearest free gap that fits it. The owner ruled on 2026-08-21 that meals
+    and the gym are planned *around* the fixed day rather than stamped on top of it;
+    until then the plan for the 24th ate lunch inside a chemistry class.
+
+    P17 and P18, docs/04 §1.9.
+
+    Pinned routines (`banner@16:00+240!@wed`) are placed first and never move (P19) — they are
+    obligations at a stated hour — and every placed routine joins the obstacle set, so
+    breakfast cannot be shifted onto lunch.
     """
     from zoneinfo import ZoneInfo
 
     zone = ZoneInfo(tz)
     midnight = datetime.combine(day, datetime.min.time(), tzinfo=zone)
-    return [
-        FixedEvent(
-            starts_at=midnight + timedelta(minutes=r.start_minute),
-            ends_at=midnight + timedelta(minutes=r.start_minute + r.minutes),
-            title=r.name.capitalize(),
-            kind="routine",
-        )
-        for r in parse_routines(settings.routines)
-        if r.falls_on(day)
+    day_end = midnight + timedelta(days=1)
+    routines = [r for r in parse_routines(settings.routines) if r.falls_on(day)]
+
+    # An all-day banner covers every minute of the day; treating it as an obstacle would
+    # move every routine off the day entirely, or (bounded) fail to place any of them.
+    obstacles: list[tuple[datetime, datetime, str]] = [
+        (e.starts_at, e.ends_at, e.title) for e in (around or []) if not e.allday
     ]
+
+    placed: list[FixedEvent] = []
+    # Pinned first, so a flexible routine yields to a decreed one rather than the order
+    # of the config line deciding which of the two moves.
+    for routine in sorted(routines, key=lambda r: (not r.pinned, r.start_minute)):
+        preferred = midnight + timedelta(minutes=routine.start_minute)
+        span = timedelta(minutes=routine.minutes)
+        title = routine.name.capitalize()
+        conflict = ""
+        start = preferred
+
+        if not routine.pinned:
+            found = _nearest_gap(preferred, span, obstacles, midnight, day_end)
+            if found is not None:
+                start = found
+            else:
+                clashing = _clashing_titles(preferred, preferred + span, obstacles)
+                if clashing:
+                    # Never silently dropped and never silently moved out of the day: the
+                    # routine keeps its hour and states what it is inside. P2's rule, one
+                    # register down — a meal the planner could not place is a fact about
+                    # a day too full to eat in, which is worth saying out loud.
+                    conflict = (
+                        f"{title} overlaps {clashing} — no free {routine.minutes}m gap "
+                        f"within {ROUTINE_MAX_SHIFT_MINUTES}m of "
+                        f"{preferred.strftime('%H:%M')}."
+                    )
+
+        placed.append(
+            FixedEvent(
+                starts_at=start,
+                ends_at=start + span,
+                title=title,
+                kind="routine",
+                conflict=conflict,
+            )
+        )
+        obstacles.append((start, start + span, title))
+
+    return sorted(placed, key=lambda e: e.starts_at)
+
+
+def _overlaps(
+    start: datetime, end: datetime, obstacles: list[tuple[datetime, datetime, str]]
+) -> bool:
+    return any(o_start < end and start < o_end for o_start, o_end, _ in obstacles)
+
+
+def _clashing_titles(
+    start: datetime, end: datetime, obstacles: list[tuple[datetime, datetime, str]]
+) -> str:
+    names = [t for o_start, o_end, t in obstacles if o_start < end and start < o_end and t]
+    return ", ".join(dict.fromkeys(names))
+
+
+def _nearest_gap(
+    preferred: datetime,
+    span: timedelta,
+    obstacles: list[tuple[datetime, datetime, str]],
+    day_start: datetime,
+    day_end: datetime,
+) -> datetime | None:
+    """The free start closest to `preferred`, earlier winning ties, or None.
+
+    Only three kinds of start can ever be the closest free one: the preferred minute
+    itself, the minute an obstacle ends, and the minute `span` before an obstacle
+    begins. Anything else is either occupied or strictly further from `preferred` than
+    one of those, so the search is over a handful of candidates rather than a scan of
+    the day — which matters less for speed than for determinism. The same day must
+    place lunch on the same minute every time it is planned, or 0028's
+    `inputs_fingerprint` reports drift that is only arithmetic, and rule 3's "two runs,
+    zero writes" stops holding.
+    """
+    candidates = {preferred}
+    for o_start, o_end, _ in obstacles:
+        candidates.add(o_end)
+        candidates.add(o_start - span)
+
+    best: tuple[int, datetime] | None = None
+    for start in sorted(candidates):
+        if start < day_start or start + span > day_end:
+            continue
+        drift = abs(int((start - preferred).total_seconds() // 60))
+        if drift > ROUTINE_MAX_SHIFT_MINUTES:
+            continue
+        if _overlaps(start, start + span, obstacles):
+            continue
+        # Sorted ascending and compared strictly, so of two placements equally far from
+        # the preferred hour the earlier one wins: eating before the class beats eating
+        # after it, and either beats a coin toss.
+        key = (drift, start)
+        if best is None or key < best:
+            best = key
+    return best[1] if best is not None else None
 
 
 def day_events(conn: sqlite3.Connection, settings: Settings, day: date) -> list[FixedEvent]:
@@ -482,12 +616,16 @@ def day_events(conn: sqlite3.Connection, settings: Settings, day: date) -> list[
     disagree about what the day holds.
     """
     tz = timezones.active_tz(settings, day)
+    # Calendar and engagements first, deduped: they are the skeleton the day is built
+    # on, and they are what routines are placed *around*. Deduping before placement is
+    # what stops the same class, arriving twice from two calendars, being treated as two
+    # obstacles a meal has to dodge separately.
+    booked = _distinct(
+        fixed_events(conn, day, tz)
+        + engagement_events(conn, day, tz, min_confidence=settings.confidence_threshold)
+    )
     return sorted(
-        _distinct(
-            fixed_events(conn, day, tz)
-            + engagement_events(conn, day, tz, min_confidence=settings.confidence_threshold)
-            + routine_events(settings, day, tz)
-        ),
+        _distinct(booked + routine_events(settings, day, tz, around=booked)),
         key=lambda e: e.starts_at,
     )
 

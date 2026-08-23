@@ -52,9 +52,17 @@ from backglass.connectors.boundary import Boundary
 #: What can be read as text today.
 SUPPORTED_SUFFIXES = {".txt", ".md", ".pdf"}
 
-#: Anything larger is an export or a log dump, not a document. Same ceiling as notes.py;
-#: it stops the file being read into memory at all.
-MAX_BYTES = 512_000
+#: Anything larger is an export or a log dump, not a document. It stops the file being
+#: read into memory at all, and `MAX_CHARS` below is what bounds extraction cost — so the
+#: only thing this number protects is memory.
+#:
+#: Raised from notes.py's 512 KB on 2026-08-21, when the first real drop folder — a
+#: semester of ASU coursework — had seven files over the old ceiling and every one of
+#: them was a document: a 784 KB lab syllabus, a 2.8 MB recitation activity, a 2.3 MB
+#: textbook chapter. They are large because they are typeset and full of figures, not
+#: because they are dumps, and excluding a syllabus is exactly the failure docs/11 §8
+#: calls dangerous. The text inside them is still cut to MAX_CHARS.
+MAX_BYTES = 4_000_000
 
 #: docs/02's per-item ceiling. A 300-page contract is not extracted whole.
 MAX_CHARS = 20_000

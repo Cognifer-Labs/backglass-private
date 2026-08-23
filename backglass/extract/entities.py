@@ -63,5 +63,20 @@ def similar(left: str, right: str) -> float:
     # Jaccard alone is too harsh on one-word differences at these lengths; the sequence
     # ratio over sorted tokens recovers near-misses like "plan" vs "plans".
     jaccard = len(overlap) / len(a | b)
-    sequence = SequenceMatcher(None, " ".join(sorted(a)), " ".join(sorted(b))).ratio()
-    return max(jaccard, sequence)
+    left_s, right_s = " ".join(sorted(a)), " ".join(sorted(b))
+    # The sequence ratio only ever matters when it beats the Jaccard, and difflib
+    # publishes two upper bounds on it that cost nothing next to the real thing. If a
+    # bound cannot clear the Jaccard, neither can the ratio, so the Jaccard already is
+    # the answer — this is an exact short circuit, not an approximation.
+    #
+    # It is here because `dedup.suspects` calls this once per pair of open commitments:
+    # 50 135 calls on the owner's ledger, 4 seconds of `find_longest_match`, on a path
+    # the dashboard walked on every page load. Most of those pairs are two unrelated
+    # sentences whose Jaccard is already higher than any alignment of their letters.
+    la, lb = len(left_s), len(right_s)
+    if 2 * min(la, lb) / (la + lb) <= jaccard:  # difflib's real_quick_ratio, inlined
+        return jaccard
+    matcher = SequenceMatcher(None, left_s, right_s)
+    if matcher.quick_ratio() <= jaccard:
+        return jaccard
+    return max(jaccard, matcher.ratio())

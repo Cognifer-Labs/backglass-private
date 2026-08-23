@@ -45,10 +45,13 @@
             <p class="b1"><span class="cond">{{ b['title'] }}</span></p>
             {{ m.chip('protected') }}
           </div>
-        {% elif b['kind'] == 'routine' %}
+        {% elif b['kind'] in ('routine', 'study') %}
           {# Routines get no verbs, hovered or not: "Roll" on breakfast is a question
-             nobody asked. Life holds its place; only work carries actions. #}
-          <div class="row sched k-routine">
+             nobody asked. Life holds its place; only work carries actions. A study
+             block is here for the same reason and not by analogy: it is time the plan
+             set aside, not an obligation anybody made, so there is nothing to tick and
+             nothing to roll — and `rollover.open_blocks` agrees, leaving its kind out. #}
+          <div class="row sched k-{{ b['kind'] }}">
             <span class="time">{{ b['starts_at']|t12 }}–{{ b['ends_at']|t12 }}</span>
             <p class="b1"><span>{{ b['title'] }}</span></p>
           </div>
@@ -64,7 +67,8 @@
             <span class="time">{{ b['starts_at']|t12 }}–{{ b['ends_at']|t12 }}</span>
             <p class="b1"><span>{{ b['title'] }}</span>
               {%- if b['pinned'] %} <span class="kbd">pinned</span>{% endif %}
-              {%- if b['rollover_count'] %} <span class="b2i">rolled {{ b['rollover_count'] }}x</span>{% endif %}</p>
+              {%- if b['rollover_count'] %} <span class="b2i">rolled {{ b['rollover_count'] }}x</span>{% endif %}
+              {%- if b['needs'] %}<br><span class="b2i">needs {{ b['needs'] }}</span>{% endif %}</p>
             <div class="acts">
               <button class="btn ok" hx-post="/blocks/{{ b['id'] }}/outcome/done"
                       hx-target="#panel-today" hx-swap="outerHTML">Done</button>

@@ -9,7 +9,8 @@ that is mostly empty headers trains you to stop opening it.
 
 1. **Timezone change** — only when today's active zone differs from yesterday's. First,
    above everything. Shows the working window in both zones.
-2. **Today's plan** — proposed blocks from the day planner, protected block marked.
+2. **Today's plan** — proposed blocks from the day planner, protected block marked,
+   plus any routine the day left no room for (docs/04 §1.9, P18).
 3. **Capacity line** — one sentence. "6h 15m available, 5h 30m planned, 3 items did not
    fit."
 4. **Slipping** — due within 48 hours with no visible progress.

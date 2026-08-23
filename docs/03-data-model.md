@@ -18,6 +18,20 @@ Schedule and goal tables (`goal`, `target`, `checkpoint`, `checklist_item`,
 `checklist_tick`, `day_plan`, `plan_block`, `shutdown_note`) are specified in
 `docs/04-daily-schedule-and-goals.md` §3.
 
+Coursework tables (`assignment`, `assignment_material`, migration 0031, applied — schema
+is at 31) sit beside the ledger rather than inside it: the obligation still lives in
+`commitment` and the evidence still lives in `source_item`, and an assignment row exists
+because a Canvas assignment is a live upstream record whose due date and instructions move
+after the immutable item that first reported it was written. The migration's own header
+carries the reasoning and is the file to read; it is not repeated here so the two cannot
+drift.
+
+There is no course table. `backglass/courses.py` — the reader behind the Classes page —
+joins three vocabularies for one course (Canvas's `2026FallC-T-CHM113-60105`, the
+calendar's `CHM 113 (Lab)`, the drop folder's `CHM113-Lab`) on the registrar's course
+code, at read time, over rows that already exist. A course is not a record the system
+owns; it is a view over meetings, coursework, commitments and documents.
+
 ## source_item
 
 ```

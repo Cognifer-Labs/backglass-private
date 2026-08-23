@@ -24,6 +24,20 @@ from backglass.ledger import USER_ID
 #: Below this the pairs are noise — nearly everything scores a little alike.
 SUSPECT_FLOOR = 0.6
 
+#: Wording scores already computed, by commitment id pair, and the text each id held
+#: when its scores were taken. Keyed by id, *validated* by text: a score is reused only
+#: when both sides still say exactly what they said, so this is a memo of a pure
+#: function and not a snapshot that can disagree with the ledger. Two different
+#: databases can share ids safely for the same reason — the text decides, not the id.
+#:
+#: It exists because the pass is O(n²) and was being run from scratch on every read.
+#: What actually changes between two reads is a handful of rows, so the second read
+#: should cost a handful of rows: a sync that adds five commitments to three hundred
+#: scores 1 500 pairs, not 50 000. Process-local and unbounded only by the open set,
+#: which is the same size as the query that fills it.
+_SCORES: dict[tuple[int, int], float] = {}
+_TEXTS: dict[int, str] = {}
+
 
 def _fan_out(a: dict[str, Any], b: dict[str, Any]) -> bool:
     """One message that produced a promise to each of several people.
@@ -75,9 +89,17 @@ def suspects(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     Pairs at or above `dedup_threshold` are included too: rows inserted before the
     dedup matured (or through quick-add, which never dedups) persist above the
     threshold, and "the auto-joiner would have caught this today" is exactly the
-    strongest kind of suspect. O(n²) over open commitments — n is a personal ledger's
-    open set, double digits, and `similar` is stdlib difflib; measured in
-    milliseconds, computed at read time so there is nothing to fall out of date.
+    strongest kind of suspect.
+
+    O(n²) over open commitments. This once said "n is a personal ledger's open set,
+    double digits … measured in milliseconds", and that stopped being true: n reached
+    317, the pass reached 3.2 seconds, and the dashboard's sidebar middleware was
+    running it on every full-page load — 97% of a page render, against 0.089s of SQL.
+    Two things fixed it and neither of them is an approximation. Callers that only want
+    the board's rows now ask for it without this (`board_panel(include_suspects=False)`),
+    and the wording scores are memoised across calls by `_SCORES`, so a read after a
+    sync costs the pairs that changed rather than all of them. Still computed at read
+    time, and still nothing that can fall out of date with the ledger.
     """
     rows = [
         dict(r)
@@ -98,6 +120,21 @@ def suspects(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         )
     }
     semantic = _semantic_pairs(conn)
+
+    # Retire every cached score whose text moved or whose row is no longer open, before
+    # a single one is read. Doing it as one sweep rather than per lookup is what keeps
+    # the reuse honest: a stale score never gets the chance to be returned.
+    global _SCORES, _TEXTS
+    live = {int(r["id"]): str(r["what"]) for r in rows}
+    moved = {row_id for row_id, what in live.items() if _TEXTS.get(row_id) != what}
+    if moved or _TEXTS.keys() != live.keys():
+        _SCORES = {
+            (a_id, b_id): score
+            for (a_id, b_id), score in _SCORES.items()
+            if a_id in live and b_id in live and a_id not in moved and b_id not in moved
+        }
+    _TEXTS = live
+
     out: list[dict[str, Any]] = []
     for i, a in enumerate(rows):
         for b in rows[i + 1 :]:
@@ -106,7 +143,10 @@ def suspects(conn: sqlite3.Connection) -> list[dict[str, Any]]:
             pair = (int(a["id"]), int(b["id"]))
             if pair in settled:
                 continue
-            score = entities.similar(str(a["what"]), str(b["what"]))
+            score = _SCORES.get(pair)
+            if score is None:
+                score = entities.similar(str(a["what"]), str(b["what"]))
+                _SCORES[pair] = score
             # Agreement is the signal; disagreement is not. Where both call a pair the
             # same thing it is almost always the same thing, and 13 of the owner's pairs
             # are that while scoring under 0.85 lexically — near-certain duplicates

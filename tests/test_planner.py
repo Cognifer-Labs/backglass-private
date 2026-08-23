@@ -1137,7 +1137,12 @@ def test_the_weekend_window_makes_sunday_plannable(conn, weekends: Settings) -> 
 
     assert proposal.capacity.capacity_minutes > 0
     placed = [b for b in proposal.blocks if b["kind"] in ("work", "protected")]
-    assert [b["title"] for b in placed] == ["Move-in: Willow Hall 502, 8:00am"]
+    # The protected slot is a fixed 90 minutes and this is three hours of one thing, so
+    # the block says which part of it the day is giving — goal 4 increment C. The plan
+    # always did truncate here; what changed is that it now admits to it.
+    assert [b["title"] for b in placed] == [
+        "Move-in: Willow Hall 502, 8:00am (90m of 180m left)"
+    ]
     assert proposal.overflow == []
 
 
@@ -1817,3 +1822,144 @@ class TestAnHourTwoThingsCoverIsOneHour:
         )
         assert cap.travel_minutes == 60
         assert cap.fixed_minutes == 30
+
+
+# ── goal 4 increment C: honest estimates need a sitting, not a wall ───────────
+#
+# `coursework` now reads real numbers off the assignment — four exams at two hours, five
+# CIS 236 milestones between 138 and 344 minutes. Handed to the planner whole, every one
+# of those is unschedulable: `select` drops anything larger than the capacity left and
+# `place` needs a contiguous slot that long. Honest estimates without a clamp make the
+# biggest work vanish from every plan, which is strictly worse than the flat thirty
+# minutes they replaced. These hold that line, and the one behind it: a sitting is not
+# the obligation, so finishing one must not close it.
+
+
+def _a_day_with_the_protected_slot_already_taken(conn, sett: Settings) -> int:  # type: ignore[no-untyped-def]
+    """Something due today ahead of the big thing, so the protected block is spoken for.
+
+    Load-bearing: the protected slot is a fixed 90 minutes and takes the first real piece
+    of work, so with the milestone at the head of the queue it would be truncated there
+    and the clamp would never run. A test that passes with the clamp removed is not a
+    test of the clamp — mutation-checked by replacing `sitting()` with `remaining`.
+    """
+    add_commitment(conn, sett, "reply to Dana", minutes=60, due=THURSDAY, n=1)
+    commitment_id = add_commitment(
+        conn, sett, "T - Final Analysis, RFP, and Presentation", minutes=344, n=2
+    )
+    # What makes it divisible: `coursework` read 344 minutes off the assignment's own
+    # page limit. A number a person typed onto a move-in would not be.
+    conn.execute(
+        "UPDATE commitment SET estimate_source = 'analyzed' WHERE id = ?", (commitment_id,)
+    )
+    return commitment_id
+
+
+def test_work_larger_than_a_sitting_is_still_scheduled(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    commitment_id = _a_day_with_the_protected_slot_already_taken(conn, sett)
+
+    proposal = planner.propose(conn, sett, THURSDAY, events=[])
+
+    mine = [b for b in proposal.blocks if b["commitment_id"] == commitment_id]
+    assert mine, "a 344-minute deliverable must not fall off the plan entirely"
+    assert mine[0]["minutes"] == sett.max_block_minutes
+    assert [c.commitment_id for c in proposal.overflow] == []
+
+
+def test_a_clamped_block_says_it_is_only_part_of_the_work(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """A block reading "T - Final Analysis" for 90 minutes of a 344-minute deliverable
+    would be a quiet lie about what finishing it means, and the owner marks these done by
+    reading them."""
+    commitment_id = _a_day_with_the_protected_slot_already_taken(conn, sett)
+
+    proposal = planner.propose(conn, sett, THURSDAY, events=[])
+
+    title = next(
+        b["title"] for b in proposal.blocks if b["commitment_id"] == commitment_id
+    )
+    assert "90m of 344m left" in title
+
+
+def test_work_that_fits_is_not_split(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """Not every long obligation is divisible — "Move-in: Willow Hall 502" is three hours
+    of one thing. The split is what happens instead of the item disappearing, never
+    instead of it being planned properly."""
+    add_commitment(conn, sett, "reply to Dana", minutes=60, due=THURSDAY, n=1)
+    commitment_id = add_commitment(conn, sett, "Move-in: Willow Hall 502", minutes=180, n=2)
+
+    proposal = planner.propose(conn, sett, THURSDAY, events=[])
+
+    mine = [b for b in proposal.blocks if b["commitment_id"] == commitment_id]
+    assert [b["minutes"] for b in mine] == [180]
+    assert mine[0]["title"] == "Move-in: Willow Hall 502"
+
+
+def test_a_sitting_that_is_done_shrinks_what_is_left(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """Otherwise a multi-session assignment keeps its whole estimate every morning and is
+    scheduled forever."""
+    commitment_id = add_commitment(conn, sett, "T - Final Analysis", minutes=344)
+    conn.execute(
+        "INSERT INTO day_plan (user_id, local_date, tz, capacity_minutes, generated_at) "
+        "VALUES (?, '2026-07-29', ?, 480, ?)",
+        (USER_ID, PHOENIX, now_iso()),
+    )
+    plan_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    conn.execute(
+        "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, commitment_id, "
+        " title, outcome) VALUES (?, ?, ?, 'work', ?, 'T - Final Analysis', 'done')",
+        (plan_id, at(MONDAY, "09:00").isoformat(), at(MONDAY, "10:30").isoformat(),
+         commitment_id),
+    )
+
+    pool = planner.candidates(conn, sett, THURSDAY, set())
+    item = next(c for c in pool if c.commitment_id == commitment_id)
+    assert item.done_minutes == 90
+    assert item.remaining == 254
+
+
+def test_one_sitting_done_does_not_close_multi_session_work(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """Increment 7 made a done block resolve the commitment behind it, which is right for
+    the single-sitting work that is nearly all of the ledger. With a clamp it would delete
+    three days of a CIS 236 milestone on the first click."""
+    from backglass.web import actions
+
+    commitment_id = add_commitment(conn, sett, "T - Final Analysis", minutes=344)
+    proposal = planner.propose(conn, sett, THURSDAY, events=[])
+    plan_id = planner.persist(conn, sett, proposal)
+    block_id = int(
+        conn.execute(
+            "SELECT id FROM plan_block WHERE day_plan_id = ? "
+            "AND commitment_id IS NOT NULL", (plan_id,)
+        ).fetchone()["id"]
+    )
+
+    result = actions.set_block_outcome(conn, block_id, "done")
+
+    assert result.detail == "progress recorded"
+    status = conn.execute(
+        "SELECT status FROM commitment WHERE id = ?", (commitment_id,)
+    ).fetchone()["status"]
+    assert status == "open"
+
+
+def test_the_last_sitting_does_close_it(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """And single-sitting work still resolves on the click exactly as it did, because one
+    sitting is the whole estimate."""
+    from backglass.web import actions
+
+    commitment_id = add_commitment(conn, sett, "reply to Dana", minutes=45)
+    proposal = planner.propose(conn, sett, THURSDAY, events=[])
+    plan_id = planner.persist(conn, sett, proposal)
+    block_id = int(
+        conn.execute(
+            "SELECT id FROM plan_block WHERE day_plan_id = ? "
+            "AND commitment_id IS NOT NULL", (plan_id,)
+        ).fetchone()["id"]
+    )
+
+    actions.set_block_outcome(conn, block_id, "done")
+
+    status = conn.execute(
+        "SELECT status FROM commitment WHERE id = ?", (commitment_id,)
+    ).fetchone()["status"]
+    assert status == "done"

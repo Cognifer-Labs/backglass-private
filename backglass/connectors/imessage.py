@@ -396,6 +396,14 @@ DEPENDENTS = (
     # not about which rows happen to match: leaving it out arms a foreign-key failure for
     # whoever later prunes a source that a touch could cite.
     "touchpoint",
+    # Migration 0030. Only a windowed connector writes these and iMessage is not one, so
+    # like `touchpoint` this deletes nothing today and is here for the same reason.
+    "source_item_retraction",
+    # Migration 0031, and the third of the same kind: only Canvas writes an assignment
+    # row, so no iMessage prune will ever match one. Its `assignment_material` children
+    # go with it through ON DELETE CASCADE, which holds because `db.connect` turns
+    # `PRAGMA foreign_keys` on.
+    "assignment",
 )
 
 

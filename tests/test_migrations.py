@@ -254,6 +254,13 @@ FROZEN_CHECKSUMS = {
     "0029_logic_check.sql": (
         "56a420e97622348f7dc5f3214dc1d5dc54b567647dbc52d035f1fb06a74c64ef"
     ),
+    "0030_source_item_retraction.sql": (
+        "be9473afb7d0ccca2e6bba9752304a9c4a4480583b1140dce10fcdfd9734651d"
+    ),
+    "0031_assignment.sql": ("b2ff6067cfdd8db9623c1c2b783cefc6245863f4f8a1b54341c183d3be545318"),
+    "0032_claim_event.sql": (
+        "92163efcf89b0394a11b7d358cead5c79ca446143a51222536f38017af50b18b"
+    ),
 }
 
 

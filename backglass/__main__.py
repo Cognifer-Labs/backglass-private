@@ -1469,6 +1469,15 @@ def _print_report(report: Any, *, dry_run: bool) -> None:
     )
     if getattr(report, "contacts_linked", 0):
         typer.echo(f"  contacts linked {report.contacts_linked} identifier(s) to people")
+    if getattr(report, "retracted", 0):
+        # Said out loud, because it changes the day's capacity. The owner's schedule
+        # changed on 2026-08-10 and five dropped classes went on being planned around for
+        # ten days with nothing anywhere reporting it; a retraction that only ever shows
+        # up as an absence would repeat exactly that.
+        typer.echo(
+            f"  retracted {report.retracted} item(s) their source no longer has — "
+            "your calendar changed"
+        )
     typer.echo(f"  writes {report.writes}, spend {report.spend_cents}c")
     # startswith, because the reason carries which stage stopped ('rate_limit:triage').
     if (report.degrade_reason or "").startswith("rate_limit"):
@@ -2069,6 +2078,119 @@ def logic_command(
     for error in report.errors:
         typer.echo(f"  {error}", err=True)
     raise typer.Exit(1 if report.errors else 0)
+
+
+@app.command("coursework")
+def coursework_command(
+    refresh: Annotated[
+        bool,
+        typer.Option("--refresh", help="Re-read the Canvas feed before printing"),
+    ] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="With --refresh: print, write nothing")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable")] = False,
+) -> None:
+    """How long each assignment takes, and what you need open to do it.
+
+    The estimate comes from the assignment itself wherever the assignment says: a runtime
+    in the title, a word count, a chapter range. `basis` is which of those it read, and
+    `type:` means nothing was stated and the `coursework_defaults` table answered instead.
+    Materials are what the text names — a browser an exam will not run without, the
+    chapters it covers, the guide it links to.
+
+    `--refresh` re-reads the feed without ingesting it, which is how a due date that moved
+    upstream shows up between syncs. `sync` does the same work on its own schedule.
+    """
+    import json as _json
+
+    from backglass import coursework as coursework_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+
+    if refresh:
+        connectors = [
+            c for c in _all_connectors(conn, settings) if c.name.startswith("canvas")
+        ]
+        if not connectors:
+            typer.echo("no Canvas source is configured", err=True)
+            raise typer.Exit(1)
+        for connector in connectors:
+            # The items are discarded on purpose: recording them is `sync`'s job and its
+            # ledger is the only thing allowed to decide what a new source item means.
+            # This read is here for the assignments the fetch parses along the way.
+            for _ in connector.fetch(None):
+                pass
+            report = coursework_mod.upsert(
+                conn,
+                settings,
+                connector.name,
+                list(getattr(connector, "assignments", [])),
+                dry_run=dry_run,
+            )
+            for note in report.notes:
+                typer.echo(f"  {note}")
+            typer.echo(
+                f"{connector.name}: {report.inserted} new, {report.updated} changed, "
+                f"{report.unchanged} unchanged; materials +{report.materials_added} "
+                f"-{report.materials_removed}"
+            )
+        if not dry_run:
+            applied, notes = coursework_mod.apply_estimates(conn)
+            for note in notes:
+                typer.echo(f"  {note}")
+            typer.echo(f"{applied} commitment estimate(s) updated")
+            conn.commit()
+        else:
+            typer.echo("  nothing written")
+
+    rows = coursework_mod.rows(conn)
+    if as_json:
+        typer.echo(
+            _json.dumps(
+                [
+                    {
+                        "id": r.id,
+                        "course": r.course,
+                        "title": r.title,
+                        "due_at": r.due_at,
+                        "minutes": r.effort_minutes,
+                        "basis": r.effort_basis,
+                        "quote": r.effort_quote,
+                        "sessions": r.sessions,
+                        "url": r.url,
+                        "materials": [
+                            {"kind": m.kind, "name": m.name, "detail": m.detail,
+                             "quote": m.quote, "basis": m.basis}
+                            for m in r.materials
+                        ],
+                    }
+                    for r in rows
+                ],
+                indent=2,
+            )
+        )
+        raise typer.Exit(0)
+
+    if not rows:
+        typer.echo("no assignments recorded — run `backglass coursework --refresh`")
+        raise typer.Exit(0)
+    for row in rows:
+        due = (row.due_at or "")[:10] or "no date"
+        sessions = f" ×{row.sessions}" if row.sessions > 1 else ""
+        typer.echo(
+            f"  {due}  {str(row.effort_minutes or '—'):>4}m{sessions:<4} "
+            f"{row.course:<12} {row.title[:52]}  [{row.effort_basis or '—'}]"
+        )
+        if row.materials:
+            typer.echo(
+                "          needs: "
+                + ", ".join(f"{m.name} ({m.kind})" for m in row.materials)
+            )
+    typer.echo(f"{len(rows)} assignment(s)")
+    raise typer.Exit(0)
 
 
 @app.command("relevance")
