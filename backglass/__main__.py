@@ -17,7 +17,7 @@ from typing import Annotated, Any
 
 import typer
 
-from backglass import catchup
+from backglass import loop
 from backglass.brief import model
 from backglass.config import Settings, get_settings
 from backglass.connectors import credentials
@@ -29,7 +29,7 @@ from backglass.extract import client as model_client
 from backglass.extract import prompts
 from backglass.goals import activities as activities_mod
 from backglass.ledger import USER_ID
-from backglass.sync import EXTRACT_PROMPT, SyncLocked, run_lock, sync
+from backglass.sync import EXTRACT_PROMPT, SyncLocked, sync
 
 app = typer.Typer(
     add_completion=False,
@@ -425,72 +425,17 @@ def sync_command(
         raise typer.Exit(0) from None
     _print_report(report, dry_run=dry_run)
     if not dry_run:
-        # The net under the morning jobs. This is the only scheduled job that runs on
-        # wake, so on a laptop that sleeps through 05:45 it is the thing that notices
-        # the plan and the brief were never produced. It fills a hole and never
-        # replaces anything — see backglass/catchup.py.
+        # The loop under the pipeline: the morning surfaces caught up, a drifted plan
+        # refreshed, the record's own contradictions disposed of, the detectors asked,
+        # and the day's notifications delivered.
         #
-        # Under the lock, because the app-open trigger takes it too: the sync releases the
-        # lock before this line, and an app opened in that window would otherwise propose
-        # the same day a second time. Whichever side gets the lock fills the hole; the
-        # other finds nothing missing, or skips.
-        try:
-            with run_lock(settings):
-                for produced in catchup.run(conn, settings):
-                    typer.echo(
-                        f"caught up {produced.surface} for {produced.day}: {produced.detail}"
-                    )
-        except SyncLocked:
-            pass
-        # The mirror of the net: catchup fills the plan that is missing, replan
-        # refreshes the plan that exists when the day has changed under it. Proposed
-        # plans are regenerated; accepted plans only get a knock. Best-effort (rule 5).
-        try:
-            from backglass.plan import replan as replan_mod
-
-            replanned = replan_mod.run(conn, settings)
-            if replanned is not None:
-                typer.echo(f"plan {replanned.action} for {replanned.day}: {replanned.detail}")
-        except Exception:  # noqa: BLE001 — rule 5
-            pass
-        # Before asking anything, throw out what the record already contradicts: an
-        # obligation whose own text says it happened, a question about a day that ended.
-        # Ahead of detection on purpose — a question mooted here is one the owner never
-        # has to read, and a commitment resolved here is one nothing re-asks about.
-        try:
-            from backglass import logic as logic_mod
-            from backglass.plan import timezones as tz_mod
-
-            disposed = logic_mod.run(conn, settings, tz_mod.local_now(settings).date())
-            if disposed.applied:
-                typer.echo(
-                    f"logic check disposed of {disposed.applied} item(s): "
-                    + ", ".join(f"{rule} ×{n}" for rule, n in disposed.by_rule().items())
-                )
-        except Exception:  # noqa: BLE001 — rule 5
-            pass
-        # Auto-recognition runs where the data arrives, not only when the owner opens
-        # /ask: a sync that ingested the evidence is the moment a conflict, a stale
-        # commitment or a contradiction becomes detectable. Best-effort (rule 5) — a
-        # detector down must not take the sync's exit code with it.
-        try:
-            from backglass import questions as questions_mod
-            from backglass.plan import timezones as tz_mod
-
-            asked = questions_mod.refresh(conn, settings, tz_mod.local_now(settings).date())
-            if asked:
-                typer.echo(f"{asked} new question(s) for you — answer at /ask")
-        except Exception:  # noqa: BLE001 — rule 5: degrade, never block
-            pass
-        # And say what the day demands, inside the owner's notify window. Same
-        # best-effort stance; the notification ledger is the record either way.
-        try:
-            from backglass import notify as notify_mod
-
-            for note in notify_mod.run(conn, settings):
-                typer.echo(f"notified: {note.title} ({note.delivered})")
-        except Exception:  # noqa: BLE001 — rule 5
-            pass
+        # The list, the order, the lock and rule 5 all live in `backglass/loop.py` now.
+        # They were a hundred lines of `try/except: pass` here, which is why the app-open
+        # trigger ran one of these five passes and this ran all of them with nothing
+        # anywhere to compare the two against.
+        for outcome in loop.run(conn, settings):
+            for line in outcome.lines:
+                typer.echo(line)
     raise typer.Exit(report.exit_code)
 
 

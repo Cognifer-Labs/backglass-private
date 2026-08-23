@@ -228,3 +228,86 @@ the ledger stays primary, and a second copy of the truth would drift from the fi
       decline never re-asks, any roadmap row (even dropped) means decided. (7990034)
 - Commitments/facts/engagements autodetect: already automatic via the sync loop
   (goal 1). Questions-only-when-necessary: ask-once + floors + only-news banners.
+
+## Goal 3 (2026-08-23): the loop is one thing, and it says what it did
+
+Owner's directive: better loop commands, better triage and processing, more autonomy,
+less dependence on the owner sitting in a terminal, and more efficient.
+
+**Stated assumption, so it is not invisible:** "loop commands" is read as *the recurring
+autonomous pass set*, not an in-process scheduler. launchd owns cadence
+(CLAUDE.md decisions table) and every command added here is one-shot. A `while True:
+sleep(1800)` would re-open a closed decision.
+
+### What the loop is today, read rather than remembered
+
+`launchd → backglass sync` runs `sync()` (ingest → rules → triage → extract → recheck →
+relevance → reviews) and then **five more passes wired inline in `__main__.py:429–493`**
+as ad-hoc `try/except: pass` blocks: catchup → replan → logic → questions.refresh →
+notify. Four defects follow from that shape, none of them loud:
+
+1. **Two entry points, two different pass sets.** The CLI runs all five. App-open
+   (`catchup.spawn_on_open`) runs *catchup only* — no replan, no logic check, no question
+   detection, no notification. The owner opening the app gets a third of the loop.
+2. **`except Exception: pass` is not rule 5.** The rule is log, surface, continue, exit
+   non-zero. Today a pass that has been throwing for a week is indistinguishable from a
+   pass with nothing to do: no row, no panel, no exit code, no `state` field. A loop you
+   cannot see failing is unattended, not autonomous.
+3. **The lock covers one pass of five.** `catchup.run` re-takes `run_lock`; `replan` —
+   which *supersedes day plans* — runs outside it, so an app-open catchup proposing a
+   plan and a sync replanning it can interleave.
+4. **Nothing is gated.** 48 syncs a day each run 5 full detector sweeps whether or not a
+   single row was written. Verified model-free (`logic.py` and `questions.py` hold zero
+   `ModelClient` references), so this is CPU and wall time rather than money — but it is
+   the reason a sync that ingested nothing still takes seconds.
+
+And `duplicates` — the star-clustering work of increment 9 — is reachable **only** by
+typing `backglass duplicates` in a terminal. `grep` over the package: one caller,
+`__main__.py:2163`. `plan_clusters` (duplicate engagements) has no surface at all. That is
+the literal shape of the owner's complaint.
+
+### Increments (each lands tested + committed before the next starts)
+
+- [ ] 1. **`backglass/loop.py` — one registry, one runner, zero behaviour change.**
+      Each pass declares its name, its trigger (`clock` | `data` | `always`), whether it
+      can spend, and its callable. Order preserved exactly: catchup → replan → logic →
+      questions → notify. The runner owns the lock contract (take once for the whole set;
+      skip, never block, on `SyncLocked`) so callers cannot get it wrong — fixing defect 3
+      as a side effect of having one place to put it. `sync_command`'s hundred inline
+      lines become a loop over `loop.run(...)`. Idempotency test: run twice on a frozen
+      fixture, zero writes on the second.
+- [ ] 2. **Per-pass outcomes recorded and surfaced** — rule 5's missing half. Migration
+      0030 `loop_pass` (nullable `run_id`, name, started/finished, status ok|failed|skipped,
+      detail). `state` verdict "every loop pass ran within its cadence"; heartbeat alert
+      for a pass failing every attempt past a grace window; the CLI exits non-zero when a
+      pass failed, leaving sync's own code alone when they are fine. **Re-arms the frozen
+      sidecar crash — rebuild step goes in the commit.**
+- [ ] 3. **`backglass loop`, one-shot** — runs the owed pass set without the ingest and
+      model pipeline. `--dry-run` prints what is owed and why it is owed; `--only <name>`
+      for one pass. This is the "better loop commands" ask, and the point of increments
+      4–6 is that the owner should never need to type it.
+- [ ] 4. **App-open runs the whole loop**, not a third of it. Safe by construction rather
+      than by care: every pass is idempotent and owed-gated, which is exactly what
+      increment 1 made checkable. Still a daemon thread, still fire-and-forget, still
+      degrades per rule 5.
+- [ ] 5. **Data-gating** — a `data` pass whose inputs have not changed since its last
+      successful run is skipped and says so. `clock` passes (catchup, notify, replan)
+      always evaluate: their gate is the owed-at hour and a zero-write sync still crosses
+      06:00. Timezone tests in both zones, per the 2026-08-17 lessons.
+- [ ] 6. **Duplicates leaves the terminal.** The clustered review becomes a loop pass that
+      raises cards on the page where `same`/`distinct` already live, bounded per refresh
+      like staleness's five. Auto-collapse stays owner-gated — a row that vanishes with
+      nothing saying why is the failure four lessons already cover. Duplicate engagements
+      (`plan_clusters`) get their first surface.
+- [ ] 7. **Owner question, not a flip.** `noise_auto_promote` is off by default and domain
+      candidates are CLI-only by design. Raised as a question on the page; the default is
+      not changed silently.
+- [ ] 8. **Triage efficiency: measure before touching.** Batch triage and parallel passes
+      already exist. Read `model_call` for where latency and money actually go, and only
+      then decide whether anything in triage is worth reworking. No rewrite on a hunch.
+
+### Constraints that bite (carried forward)
+
+- Migration 0030 re-arms the frozen-sidecar crash; the rebuild is part of increment 2.
+- No new scheduler. launchd owns cadence.
+- No pass may become load-bearing on retrieval (CLAUDE.md's additive ruling).
