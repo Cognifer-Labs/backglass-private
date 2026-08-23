@@ -23,7 +23,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from backglass import catchup
+from backglass import catchup, loop
 from backglass.config import REPO_ROOT, Settings, get_settings
 from backglass.db import connect, migrate
 from backglass.plan import timezones
@@ -476,6 +476,6 @@ def serve(
     # (desktop/src-tauri/src/main.rs), and kills it when the window closes. So the first
     # open of the day lands here, before any request — the middleware's per-load check
     # then covers the app that stays open into tomorrow.
-    catchup.spawn_on_open(resolved)
-    app = create_app(resolved, on_open=lambda: catchup.spawn_on_open(resolved))
+    loop.spawn_on_open(resolved)
+    app = create_app(resolved, on_open=lambda: loop.spawn_on_open(resolved))
     uvicorn.run(app, host=host, port=port, log_level="warning")

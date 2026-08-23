@@ -24,7 +24,6 @@ import pytest
 
 from backglass import catchup
 from backglass.config import Settings
-from backglass.ledger import USER_ID
 from backglass.plan import capacity as capacity_mod
 from backglass.plan import planner
 
@@ -244,68 +243,10 @@ class TestTheAppOpenTrigger:
         monkeypatch.setattr(search, "index", boom)
         assert catchup.hole_exists(conn, settings, now=_at(8, 0))
 
-    def test_on_open_fills_the_hole_and_commits(
-        self, conn: sqlite3.Connection, settings: Settings
-    ) -> None:
-        """It runs on its own connection, on a thread, so an uncommitted write would be
-        invisible to every reader including the page that triggered it."""
-        _commitment(conn, "email the signed waivers")
-        conn.commit()
-        filled = catchup.on_open(settings, now=_at(8, 0))
-        assert [f.surface for f in filled] == ["plan", "brief"]
-        fresh = sqlite3.connect(settings.db_path)
-        try:
-            row = fresh.execute(
-                "SELECT COUNT(*) FROM day_plan WHERE local_date = ?", (DAY.isoformat(),)
-            ).fetchone()
-        finally:
-            fresh.close()
-        assert row[0] == 1
-
-    def test_it_skips_while_another_process_holds_the_lock(
-        self, conn: sqlite3.Connection, settings: Settings
-    ) -> None:
-        """An app opened at :18 while the timer's sync is mid-run must not propose the same
-        day a second time — one plan superseded a second later, both of them paid for.
-
-        The lock is taken here through a second file descriptor rather than through
-        `run_lock`, because that is the case being tested: flock excludes by open file
-        description, and `run_lock` is deliberately reentrant *within* a process so batch
-        submit can hold it around its own sync. The collision that matters is between the
-        launchd sync and this dashboard, which are two processes.
-        """
-        import fcntl
-        from pathlib import Path
-
-        db = Path(settings.db_path)
-        held = (db.parent / f"{db.name}.sync-lock").open("a+")
-        try:
-            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            assert catchup.on_open(settings, now=_at(8, 0)) == []
-        finally:
-            fcntl.flock(held, fcntl.LOCK_UN)
-            held.close()
-        assert planner.current_plan_id(conn, DAY) is None
-
-    def test_a_second_open_does_not_start_a_second_planner(
-        self, settings: Settings, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        """Two tabs, one catch-up. The lock is held for the thread's whole life, so the
-        second call returns without starting anything."""
-        started: list[str] = []
-
-        class FakeThread:
-            def __init__(self, *_a: object, **kwargs: object) -> None:
-                self.target = kwargs["target"]
-
-            def start(self) -> None:
-                started.append("go")
-
-        monkeypatch.setattr(catchup.threading, "Thread", FakeThread)
-        catchup.spawn_on_open(settings)
-        catchup.spawn_on_open(settings)
-        assert started == ["go"]
-        catchup._running.release()
+    # `on_open` and `spawn_on_open` moved to `backglass/loop.py` when opening the app
+    # started running the whole loop rather than this one pass; their tests moved with
+    # them to tests/test_loop.py::TestTheAppOpenTrigger. `hole_exists` stayed here,
+    # because it is the cheap question about *this* net.
 
 
 class TestTheBriefHoleClosesOnEveryDayOfTheWeek:

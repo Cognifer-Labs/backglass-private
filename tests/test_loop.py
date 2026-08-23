@@ -691,3 +691,132 @@ class TestTheDryRun:
         result = CliRunner().invoke(cli.app, ["loop", "--dry-run"])
         for name in loop.NAMES:
             assert name in result.output
+
+
+#: 08:00 Phoenix on the same Tuesday: past `plan_at` and `brief_at`, so the morning
+#: surfaces are genuinely owed and the app-open trigger has real work to do.
+MORNING = datetime(2026, 8, 18, 8, 0, tzinfo=ZoneInfo(PHOENIX))
+
+
+def _plannable(conn: sqlite3.Connection, what: str, *, minutes: int = 45) -> int:
+    """An open obligation with an estimate, so the planner has something to place."""
+    conn.execute(
+        "INSERT INTO source_item (user_id, source, external_id, fetched_at, occurred_at,"
+        " title, body_text, content_hash, triage_verdict, extraction_version)"
+        " VALUES (1, 'manual', ?, '2026-08-10T00:00:00Z', '2026-08-10T00:00:00Z',"
+        " ?, ?, ?, 'keep', 'manual')",
+        (f"x{what}", what, what, f"h{what}"),
+    )
+    item = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    conn.execute(
+        "INSERT INTO commitment (user_id, direction, what, confidence, status,"
+        " estimated_minutes, estimate_source, source_item_id, created_at)"
+        " VALUES (1, 'i_owe', ?, 0.9, 'open', ?, 'manual', ?, '2026-08-10T00:00:00Z')",
+        (what, minutes, item),
+    )
+    return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+
+class TestTheAppOpenTrigger:
+    """Opening the app runs the whole loop, not a third of it.
+
+    The trigger used to live in `catchup` because catchup was all it fired, so the owner
+    opening the dashboard got the morning surfaces and none of the disposal, detection or
+    notification the CLI ran every half hour. Widening it is safe because of what the
+    passes already are — idempotent, owed-gated, ask-once — which `TestIdempotency`
+    asserts over the whole loop rather than pass by pass.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _no_embedding_endpoint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from backglass import search
+
+        monkeypatch.setattr(search, "index", lambda *_a, **_k: 0)
+
+    def test_it_runs_every_pass_and_commits(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """On its own connection, on a thread, so an uncommitted write would be invisible
+        to every reader including the page that triggered it."""
+        _plannable(conn, "email the signed waivers")
+        conn.commit()
+
+        outcomes = loop.on_open(sett, now=MORNING)
+
+        assert [o.name for o in outcomes] == list(loop.NAMES)
+        assert [o.name for o in outcomes if o.status == loop.FAILED] == []
+        fresh = sqlite3.connect(sett.db_path)
+        try:
+            planned = fresh.execute(
+                "SELECT COUNT(*) FROM day_plan WHERE local_date = ?", ("2026-08-18",)
+            ).fetchone()[0]
+            passes = fresh.execute("SELECT COUNT(*) FROM loop_pass").fetchone()[0]
+        finally:
+            fresh.close()
+        assert planned == 1
+        assert passes == len(loop.NAMES)  # the record committed with the work
+
+    def test_it_skips_while_another_process_holds_the_lock(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """An app opened at :18 while the timer's sync is mid-run must not propose the
+        same day a second time — one plan superseded a second later, both paid for.
+
+        Taken through a second file descriptor rather than through `run_lock`, because
+        that is the case being tested: flock excludes by open file description and
+        `run_lock` is deliberately reentrant within a process. The collision that matters
+        is between the launchd sync and this dashboard, which are two processes.
+        """
+        import fcntl
+        from pathlib import Path
+
+        from backglass.plan import planner
+
+        _plannable(conn, "email the signed waivers")
+        conn.commit()
+
+        db = Path(sett.db_path)
+        held = (db.parent / f"{db.name}.sync-lock").open("a+")
+        try:
+            fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            outcomes = loop.on_open(sett, now=MORNING)
+        finally:
+            fcntl.flock(held, fcntl.LOCK_UN)
+            held.close()
+
+        assert {o.status for o in outcomes} == {loop.SKIPPED}
+        assert planner.current_plan_id(conn, date(2026, 8, 18)) is None
+
+    def test_a_second_open_does_not_start_a_second_loop(
+        self, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Two tabs, one loop. The in-process guard is held for the thread's whole life,
+        so the second call returns without starting anything. It is not redundant with
+        `run_lock`: that one excludes other processes, this one excludes the tab next to
+        it before either reaches the ledger."""
+        started: list[str] = []
+
+        class FakeThread:
+            def __init__(self, *_a: object, **kwargs: object) -> None:
+                self.target = kwargs["target"]
+
+            def start(self) -> None:
+                started.append("go")
+
+        monkeypatch.setattr(loop.threading, "Thread", FakeThread)
+        loop.spawn_on_open(sett)
+        loop.spawn_on_open(sett)
+        assert started == ["go"]
+        loop._running.release()
+
+    def test_a_broken_loop_never_reaches_the_page(
+        self, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Rule 5: the dashboard renders, the ledger is correct, and `state` says what is
+        # missing. A trigger that raised into the request path would be a 500 on the page
+        # the owner opened to find out what today looks like.
+        def boom(*_a: object, **_k: object) -> list[loop.Outcome]:
+            raise OSError("no database")
+
+        monkeypatch.setattr(loop, "on_open", boom)
+        loop.spawn_on_open(sett)  # daemon thread, swallows and logs

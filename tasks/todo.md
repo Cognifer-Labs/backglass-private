@@ -268,7 +268,7 @@ the literal shape of the owner's complaint.
 
 ### Increments (each lands tested + committed before the next starts)
 
-- [ ] 1. **`backglass/loop.py` — one registry, one runner, zero behaviour change.**
+- [x] 1. **`backglass/loop.py` — one registry, one runner, zero behaviour change.**
       Each pass declares its name, its trigger (`clock` | `data` | `always`), whether it
       can spend, and its callable. Order preserved exactly: catchup → replan → logic →
       questions → notify. The runner owns the lock contract (take once for the whole set;
@@ -276,17 +276,34 @@ the literal shape of the owner's complaint.
       as a side effect of having one place to put it. `sync_command`'s hundred inline
       lines become a loop over `loop.run(...)`. Idempotency test: run twice on a frozen
       fixture, zero writes on the second.
-- [ ] 2. **Per-pass outcomes recorded and surfaced** — rule 5's missing half. Migration
+      landed (bc793f0): `backglass/loop.py` with `PASSES`, `Outcome`, and a runner that
+      takes the lock once for the whole set and resolves `now` once for all five;
+      `sync_command`'s hundred lines became four. 15 tests, order pinned because it is a
+      decision. A side fix went in first (1b087a9): `notify.record` stamped `created_at`
+      from the wall clock while `local_date` came from the injected `now`, so the
+      re-banner test passed until 2026-08-20 and failed on every machine after it.
+- [x] 2. **Per-pass outcomes recorded and surfaced** — rule 5's missing half. Migration
       0030 `loop_pass` (nullable `run_id`, name, started/finished, status ok|failed|skipped,
       detail). `state` verdict "every loop pass ran within its cadence"; heartbeat alert
       for a pass failing every attempt past a grace window; the CLI exits non-zero when a
       pass failed, leaving sync's own code alone when they are fine. **Re-arms the frozen
       sidecar crash — rebuild step goes in the commit.**
-- [ ] 3. **`backglass loop`, one-shot** — runs the owed pass set without the ingest and
+      landed (4e22113): migration 0030 `loop_pass` (nullable `run_id`, trigger, status,
+      span, detail); `SyncReport.run_id` carries the sync's id out to the rows;
+      `loop.health()` enumerates the *registry* so a pass nobody called is reported by
+      name rather than absent; a skip is neither success nor failure, so a contended lock
+      does not alarm. `state` verdict "every loop pass is succeeding", stderr line and
+      exit 1 from `sync`. 23 tests.
+- [x] 3. **`backglass loop`, one-shot** — runs the owed pass set without the ingest and
       model pipeline. `--dry-run` prints what is owed and why it is owed; `--only <name>`
       for one pass. This is the "better loop commands" ask, and the point of increments
       4–6 is that the owner should never need to type it.
-- [ ] 4. **App-open runs the whole loop**, not a third of it. Safe by construction rather
+      landed (df3ae55): bare run / `--only <name>` (repeatable, unknown name exits 2
+      rather than silently running nothing) / `--dry-run` as a *read* of where each pass
+      stands, deliberately not a rehearsal — these passes deliver notifications and
+      supersede plans. A quiet loop says "nothing owed"; a contended lock is said out
+      loud, unlike inside `sync`, because someone typed this and is waiting. 8 tests.
+- [x] 4. **App-open runs the whole loop**, not a third of it. Safe by construction rather
       than by care: every pass is idempotent and owed-gated, which is exactly what
       increment 1 made checkable. Still a daemon thread, still fire-and-forget, still
       degrades per rule 5.

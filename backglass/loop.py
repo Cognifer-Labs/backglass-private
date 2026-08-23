@@ -34,6 +34,8 @@ from __future__ import annotations
 
 import contextlib
 import sqlite3
+import sys
+import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -356,3 +358,70 @@ def by_name(names: Sequence[str]) -> list[Pass]:
     if unknown:
         raise KeyError(f"unknown pass(es): {', '.join(unknown)}; known: {', '.join(NAMES)}")
     return [p for p in PASSES if p.name in wanted]
+
+
+# ── who asks ──────────────────────────────────────────────────────────────────
+# The registry above answers "what runs"; this answers "who starts it". Until goal 3 the
+# two callers gave different answers to the second question and nobody could see it: the
+# CLI ran five passes and opening the app ran one, because the app-open trigger was built
+# inside `catchup` when catchup was the only thing it needed to fire.
+#
+# It is safe to widen because of what the passes already are, not because of care taken
+# here. Every one of them is idempotent (rule 3) and gated on its own hour or its own
+# ask-once key, which is exactly what the registry made checkable — `TestIdempotency`
+# runs the whole loop twice and asserts the second writes nothing.
+
+#: One loop at a time inside this process. The dashboard can be asked for the same page
+#: by two tabs in the same second, and each would otherwise start its own planner. The
+#: cross-process guard is `run_lock`; this is the in-process one, and both are needed.
+_running = threading.Lock()
+
+
+def on_open(settings: Settings, *, now: datetime | None = None) -> list[Outcome]:
+    """The loop, for an app that has just been opened, on its own connection.
+
+    Its own connection because the caller is a thread the request path started and the
+    dashboard's connection belongs to a request. The lock is `run.`'s problem, not this
+    function's — a held lock means another run is already doing the work and every pass
+    comes back `skipped`.
+    """
+    from backglass.db import connect
+
+    conn = connect(settings.db_path)
+    try:
+        outcomes = run(conn, settings, now=now)
+        conn.commit()
+    finally:
+        conn.close()
+    return outcomes
+
+
+def spawn_on_open(settings: Settings) -> None:
+    """Fire `on_open` on a daemon thread and return immediately.
+
+    Fire and forget, for two reasons that are the same reason. The dashboard is what the
+    desktop shell opens, so anything synchronous here is time the owner spends looking at
+    a window that has not painted — and catching up a plan is model calls, seconds of
+    them. And by rule 5 a failure to run the loop must degrade: the page still renders,
+    the ledger is still correct, and `heartbeat` and `state` still say what is missing.
+
+    Daemon, so quitting the app never waits on it; anything half-written is a proposal
+    the next open regenerates, never a partial commit.
+    """
+    if not _running.acquire(blocking=False):
+        return
+
+    def work() -> None:
+        try:
+            for outcome in on_open(settings):
+                for line in outcome.lines:
+                    print(line, file=sys.stderr)
+                if outcome.status == FAILED:
+                    print(f"loop pass {outcome.name!r} failed: {outcome.error}",
+                          file=sys.stderr)
+        except Exception as exc:  # noqa: BLE001 — rule 5: never take the dashboard down
+            print(f"loop on open failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        finally:
+            _running.release()
+
+    threading.Thread(target=work, name="backglass-loop", daemon=True).start()

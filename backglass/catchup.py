@@ -31,11 +31,13 @@ only a reboot fixes it — see `state.py`. The 30-minute sync timer was the only
 counting honestly, and it *is* what produced that day's plan, at 08:18.
 
 So the trigger the owner actually controls is the one that had no hook: opening the app.
-`spawn_on_open` runs the same net when the dashboard starts, and the dashboard calls
-`hole_exists` on each full-page load to catch an app left open across midnight. Nothing
-about the net's guarantees changes — it still only fills a hole, still never runs early —
-which is exactly why it was safe to give it a second caller rather than a second
-implementation.
+That trigger now lives in `backglass/loop.py` and starts the whole loop rather than this
+one pass — the answer to "who asks" outgrew this module the moment there were five passes
+to ask for. `hole_exists` stays here: it is the cheap two-read question the dashboard puts
+on every full-page load to catch an app left open across midnight, and it is about this
+net specifically. Nothing about the net's guarantees changes — it still only fills a hole,
+still never runs early — which is exactly why it was safe to widen the caller rather than
+write a second implementation.
 
 The retrieval index is caught up here too, for the same reason rather than by analogy: it
 was work that had no job at all. `search index` was manual-only — nothing in `sync.py`,
@@ -47,8 +49,6 @@ Unlike the two surfaces above it has no hour, so it runs on every sync.
 from __future__ import annotations
 
 import sqlite3
-import sys
-import threading
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -141,13 +141,10 @@ def run(
     return filled
 
 
-# ── the app-open trigger ──────────────────────────────────────────────────────
-# The net above answers "did the morning happen?". These three answer "who asks?", and
-# the answer that was missing is the owner opening the app.
-
-#: One catch-up at a time inside this process. The dashboard can be asked for the same
-#: page by two tabs in the same second, and each would otherwise start its own planner.
-_running = threading.Lock()
+# ── the cheap question the request path may ask ───────────────────────────────
+# The net above answers "did the morning happen?". This answers "is it worth asking?" —
+# and the trigger itself moved to `backglass/loop.py` when the answer to "who asks" grew
+# past catchup: opening the app now runs the whole loop, not just this one pass.
 
 
 def hole_exists(
@@ -175,62 +172,6 @@ def hole_exists(
     if _owed(now, settings.plan_at) and plan_is_missing(conn, day):
         return True
     return _owed(now, settings.brief_at) and brief_is_missing(conn, day)
-
-
-def on_open(settings: Settings, *, now: datetime | None = None) -> list[Filled]:
-    """Run the net for an app that has just been opened, on its own connection.
-
-    Takes the sync lock. Without it, an app opened at :18 while the 30-minute sync is
-    mid-run produces a second proposal for the same day — one of them immediately
-    superseded, both of them paid for. A held lock means another run is already doing this
-    work, so the answer is to skip, which is the same conclusion `sync` reaches (see
-    `SyncLocked` in `__main__`).
-    """
-    from backglass.db import connect
-    from backglass.sync import SyncLocked, run_lock
-
-    try:
-        with run_lock(settings):
-            conn = connect(settings.db_path)
-            try:
-                filled = run(conn, settings, now=now)
-                conn.commit()
-            finally:
-                conn.close()
-    except SyncLocked:
-        return []
-    return filled
-
-
-def spawn_on_open(settings: Settings) -> None:
-    """Fire `on_open` on a daemon thread and return immediately.
-
-    Fire and forget, for two reasons that are the same reason. The dashboard is what the
-    desktop shell opens, so anything synchronous here is time the owner spends looking at
-    a window that has not painted — and generating a plan is model calls, seconds of them.
-    And by CLAUDE.md rule 5 a failure to catch up must degrade: the page still renders,
-    the ledger is still correct, the plan is simply still missing and `heartbeat` still
-    says so in the sidebar.
-
-    Daemon, so quitting the app never waits on it; anything half-written is a proposal the
-    next open regenerates, never a partial commit — `run` commits once, at the end.
-    """
-    if not _running.acquire(blocking=False):
-        return
-
-    def work() -> None:
-        try:
-            for produced in on_open(settings):
-                print(
-                    f"caught up {produced.surface} for {produced.day}: {produced.detail}",
-                    file=sys.stderr,
-                )
-        except Exception as exc:  # noqa: BLE001 - rule 5: never take the dashboard down
-            print(f"catch-up on open failed: {type(exc).__name__}: {exc}", file=sys.stderr)
-        finally:
-            _running.release()
-
-    threading.Thread(target=work, name="backglass-catchup", daemon=True).start()
 
 
 def _index_backlog(conn: sqlite3.Connection, settings: Settings) -> int:
