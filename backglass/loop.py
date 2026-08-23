@@ -56,6 +56,20 @@ CLOCK = "clock"
 DATA = "data"
 ALWAYS = "always"
 
+class Skip(Exception):
+    """A pass declining to run, with the reason it declined.
+
+    Distinct from a failure and from a quiet success, because it means something neither
+    of them does: there was work this pass could have done and it decided the cost was
+    not owed yet. Only `duplicates` raises it today — its clustering is O(n²) over the
+    open set and costs ~3.7 s, which is not a per-half-hour price for a review queue.
+
+    A pass that is merely *cheap and idle* must not raise this. "Ran and found nothing" is
+    the healthy state the record exists to prove, and dressing it as a skip would make a
+    live pass indistinguishable from a gated one.
+    """
+
+
 #: A pass ran and did whatever it had to do — including nothing, which is the normal case.
 OK = "ok"
 #: It raised. Rule 5: the loop continues, and increment 2 makes this visible and costly.
@@ -146,6 +160,55 @@ def _notify(conn: sqlite3.Connection, settings: Settings, now: datetime) -> list
     ]
 
 
+def _duplicates(conn: sqlite3.Connection, settings: Settings, now: datetime) -> list[str]:
+    """Clusters of open commitments that look like one promise, raised as cards.
+
+    Gated to once per owner-local day, and the gate is the reason this is a pass of its
+    own rather than another entry in `questions.detect`. Measured on a copy of the live
+    ledger: `duplicates.clusters` costs **3.7 s** over 386 open commitments — 51,443
+    difflib ratios and 23,871 cosine comparisons — and no index touches it, because the
+    cost is the pairwise comparison itself. Running that every thirty minutes to re-derive
+    a queue whose cards persist until answered would be the loop's largest expense by an
+    order of magnitude, spent almost entirely on re-finding what it found at 06:00.
+
+    Daily is the right cadence rather than a compromise: a card stays until the owner
+    answers it, `DUP_BATCH_LIMIT` bounds how many are raised at once, and a duplicate
+    created at 11:00 is not a thing the owner needed to be asked about by 11:30.
+
+    The gate reads `loop_pass`, which increment 2 already writes — no second bookkeeping
+    table, and the gate is visible in the same record that proves the pass is alive.
+    """
+    from backglass import duplicates as dup_mod
+    from backglass import questions as questions_mod
+
+    if _ran_ok_today(conn, "duplicates", now):
+        raise Skip("already ran today; the clustering costs ~3.7s and the cards persist")
+
+    asked = questions_mod.record(conn, dup_mod.questions_for(conn))
+    if not asked:
+        return []
+    return [f"{asked} duplicate cluster(s) to settle — /ask"]
+
+
+def _ran_ok_today(conn: sqlite3.Connection, name: str, now: datetime) -> bool:
+    """Has this pass already succeeded on the owner's current local day?
+
+    Reads `local_date`, never `finished_at`. The two are different clocks on purpose:
+    the timestamps are wall-clock UTC so "how long did this take" stays answerable, and
+    the day is the owner's. Gating on the timestamps was the first version of this and it
+    was wrong in both directions — every run looked like today because `finished_at` is
+    stamped from the wall clock regardless of the day being processed, and even with a
+    frozen clock 20:00 Phoenix is already tomorrow in UTC, so the gate would reopen at
+    dinner. `notification.local_date` exists for the same reason.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM loop_pass WHERE user_id = ? AND name = ? AND status = ?"
+        "   AND local_date = ? LIMIT 1",
+        (USER_ID, name, OK, now.date().isoformat()),
+    ).fetchone()
+    return row is not None
+
+
 #: The loop, in the order it has always run. The order is not arbitrary and moving an
 #: entry is a decision, not a tidy-up:
 #:
@@ -156,12 +219,16 @@ def _notify(conn: sqlite3.Connection, settings: Settings, now: datetime) -> list
 #:      owner never has to read, and an obligation resolved here is one nothing re-asks
 #:      about. Detection after disposal, never the reverse.
 #:   4. questions.
-#:   5. notify last, so it can speak about anything the four passes above just produced.
+#:   5. duplicates after questions rather than inside `detect`, because it is gated to
+#:      once a day and the others are not — see `_duplicates` for the measurement that
+#:      made the gate necessary.
+#:   6. notify last, so it can speak about anything the passes above just produced.
 PASSES: tuple[Pass, ...] = (
     Pass("catchup", CLOCK, spends=True, fn=_catchup),
     Pass("replan", CLOCK, spends=True, fn=_replan),
     Pass("logic", DATA, spends=False, fn=_logic),
     Pass("questions", DATA, spends=False, fn=_questions),
+    Pass("duplicates", DATA, spends=False, fn=_duplicates),
     Pass("notify", CLOCK, spends=False, fn=_notify),
 )
 
@@ -216,7 +283,7 @@ def run(
         outcomes = [Outcome(p.name, SKIPPED, error=str(locked)) for p in selected]
         if record:
             for entry, outcome in zip(selected, outcomes, strict=True):
-                _write(conn, entry, outcome, run_id, at, at)
+                _write(conn, entry, outcome, run_id, now, at, at)
         return outcomes
 
 
@@ -234,10 +301,12 @@ def _one(
     started = now_iso()
     try:
         outcome = Outcome(entry.name, OK, tuple(entry.fn(conn, settings, now)))
+    except Skip as skipped:
+        outcome = Outcome(entry.name, SKIPPED, error=str(skipped))
     except Exception as exc:  # noqa: BLE001 — rule 5: degrade, never block
         outcome = Outcome(entry.name, FAILED, error=f"{type(exc).__name__}: {exc}")
     if record:
-        _write(conn, entry, outcome, run_id, started, now_iso())
+        _write(conn, entry, outcome, run_id, now, started, now_iso())
     return outcome
 
 
@@ -246,6 +315,7 @@ def _write(
     entry: Pass,
     outcome: Outcome,
     run_id: int | None,
+    now: datetime,
     started: str,
     finished: str,
 ) -> None:
@@ -263,10 +333,11 @@ def _write(
     with contextlib.suppress(sqlite3.Error):
         conn.execute(
             "INSERT INTO loop_pass"
-            " (user_id, run_id, name, trigger, status, started_at, finished_at, detail)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            " (user_id, run_id, name, trigger, status, local_date, started_at,"
+            "  finished_at, detail)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (USER_ID, run_id, entry.name, entry.trigger, outcome.status,
-             started, finished, detail),
+             now.date().isoformat(), started, finished, detail),
         )
 
 

@@ -607,9 +607,10 @@ CREATE TABLE loop_pass (
   id          INTEGER PRIMARY KEY,
   user_id     INTEGER NOT NULL DEFAULT 1,
   run_id      INTEGER,           -- the sync run this rode with, when there was one
-  name        TEXT    NOT NULL,  -- catchup|replan|logic|questions|notify
+  name        TEXT    NOT NULL,  -- catchup|replan|logic|questions|duplicates|notify
   trigger     TEXT    NOT NULL,  -- clock|data|always, as the pass declared it
   status      TEXT    NOT NULL,  -- ok|failed|skipped
+  local_date  TEXT    NOT NULL,  -- the owner's local day this ran on
   started_at  TEXT    NOT NULL,
   finished_at TEXT    NOT NULL,
   detail      TEXT               -- the lines it reported, or the exception that stopped it

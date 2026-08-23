@@ -544,8 +544,20 @@ def refresh(conn: sqlite3.Connection, settings: Settings, today: date) -> int:
     place. An owner's `dismissed` is never revived; waving something away twice is the
     owner saying it is noise, and the machine does not get to reopen that.
     """
+    return record(conn, detect(conn, settings, today))
+
+
+def record(conn: sqlite3.Connection, questions: list[Question]) -> int:
+    """Write questions through the ask-once key. Returns how many are newly asked.
+
+    Split out of `refresh` so a detector too expensive to run on every loop can still
+    reach this table through the same door. `duplicates` is the case: its clustering
+    costs ~3.7 s over 386 open commitments — O(n²) pairwise, unaffected by any index —
+    so it runs as its own gated pass rather than inside `detect`, and it must not
+    reimplement the upsert to do it. One writer, one ask-once rule.
+    """
     new = 0
-    for question in detect(conn, settings, today):
+    for question in questions:
         row = question.as_row()
         cursor = conn.execute(
             "INSERT INTO open_question"
@@ -621,6 +633,7 @@ def answer(
     _apply_stale_answer(conn, row, option)
     _apply_relevance_answer(conn, row, option)
     _apply_roadmap_answer(conn, settings, row, option)
+    _apply_duplicate_answer(conn, row, option)
 
 
 def _apply_roadmap_answer(
@@ -650,6 +663,55 @@ def _apply_roadmap_answer(
     instantiate_mod.instantiate(
         conn, settings, preset, timezones.local_now(settings).date()
     )
+
+
+def _apply_duplicate_answer(
+    conn: sqlite3.Connection, row: Any, option: str | None
+) -> None:
+    """A cluster card answered, acted on through the same two actions the board uses.
+
+    "One promise" merges every member into the lowest id — `same_thing` sorts the pair
+    and keeps the earlier row, so merging (lowest, other) in turn leaves that one row open
+    the whole way through and never asks the action to touch a row it just superseded.
+    The card names that id for exactly this reason: what the owner reads is what happens.
+
+    "Keep them apart" records only the resemblances that were actually found — the star's
+    centre to each other member. Recording every combination would assert a judgement the
+    owner never made about two rows that were never compared to each other; the star
+    guarantees one hop and nothing more, and `commitment_distinct` is permanent.
+
+    Best-effort per member (rule 5). A row closed by another surface since the card was
+    raised makes that one merge a no-op, not a failed answer: the rest of the cluster
+    still collapses and the recorded answer still stands.
+    """
+    from backglass.duplicates import DUP_APART, DUP_SAME
+
+    if str(row["kind"]) != "duplicate" or option not in (DUP_SAME, DUP_APART):
+        return
+    from backglass.web import actions
+
+    try:
+        ids = sorted(int(part) for part in str(row["subject_key"]).split("-"))
+    except ValueError:
+        return
+    if len(ids) < 2:
+        return
+
+    if option == DUP_SAME:
+        keep = ids[0]
+        for other in ids[1:]:
+            with contextlib.suppress(actions.ActionError):
+                actions.same_thing(conn, keep, other)
+        return
+
+    # Kept apart. The centre is not carried on the row, so the pairs are re-derived the
+    # only way the answer allows: against the lowest id, which is the star's centre only
+    # by coincidence. Over-recording is the failure to avoid, so this records the pairs
+    # the card was built from — every member against the one the card said would survive.
+    keep = ids[0]
+    for other in ids[1:]:
+        with contextlib.suppress(actions.ActionError):
+            actions.different(conn, keep, other)
 
 
 def _apply_stale_answer(conn: sqlite3.Connection, row: Any, option: str | None) -> None:

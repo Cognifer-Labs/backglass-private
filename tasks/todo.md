@@ -342,11 +342,31 @@ the literal shape of the owner's complaint.
       untouched by the index because it is O(n²) — 51,443 difflib ratios and 23,871 cosine
       comparisons over 386 open commitments. That is increment 6's problem, and it is why
       increment 6 bounds and gates that one pass where its inputs live.
-- [ ] 6. **Duplicates leaves the terminal.** The clustered review becomes a loop pass that
+- [x] 6. **Duplicates leaves the terminal.** The clustered review becomes a loop pass that
       raises cards on the page where `same`/`distinct` already live, bounded per refresh
       like staleness's five. Auto-collapse stays owner-gated — a row that vanishes with
-      nothing saying why is the failure four lessons already cover. Duplicate engagements
-      (`plan_clusters`) get their first surface.
+      nothing saying why is the failure four lessons already cover.
+      landed: `duplicates.questions_for` (five cards per refresh, `clusters()`'s own
+      order — identical text first), a `duplicates` loop pass gated to once per owner-local
+      day (the clustering is 3.7 s, O(n²), untouched by any index), `questions.record`
+      split out of `refresh` so an expensive detector reaches the ask-once key through the
+      same door, and `_apply_duplicate_answer` acting through the board's own
+      `same_thing`/`different`. `Cluster.merged_into` names the row the merge keeps, so
+      the card says what the click does. 14 tests, including the card read and answered
+      through `/ask`.
+      Two corrections found while building it, both worth stating. The once-a-day gate
+      first read `finished_at`, which is wall-clock UTC and stamped whatever day is being
+      processed — the same two-clocks-in-one-row defect fixed in `notify` at the start of
+      this branch, reintroduced three increments later. `loop_pass` now carries
+      `local_date` like `notification` does. And "keep them apart" records only the pairs
+      the card was built from; recording every combination would assert a judgement about
+      two rows that were never compared.
+      **Not done: duplicate engagements (`plan_clusters`).** 41 days of them on the live
+      ledger, and unlike commitments there is no established resolution action for a
+      duplicate engagement — `reject_plan` declines it, which is a different claim from
+      "this is the same plan twice". The CLI already says this is resolver-phase policy
+      rather than report policy, and inventing it inside a review card would be deciding
+      it by accident. Left as its own increment.
 - [ ] 7. **Owner question, not a flip.** `noise_auto_promote` is off by default and domain
       candidates are CLI-only by design. Raised as a question on the page; the default is
       not changed silently.

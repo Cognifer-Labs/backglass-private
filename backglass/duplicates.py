@@ -177,6 +177,12 @@ class Cluster:
     #: The lowest pair score inside the cluster — how weakly it is held together.
     weakest: float = 1.0
     kind: str = RESTATEMENT
+    #: The star's centre. Kept because `members` is sorted by id for reading and that
+    #: throws away which row the others actually resembled. "Keep apart" needs it: the
+    #: guarantee is one hop, so the flagged pairs are centre-to-each and nothing else,
+    #: and recording every combination would assert a judgement the owner never made
+    #: about two rows that were never compared.
+    centre_id: int = 0
 
     @property
     def ids(self) -> list[int]:
@@ -208,6 +214,22 @@ class Cluster:
     def note(self) -> str:
         """What to record on each closed row, so the ledger says why it went."""
         return f"duplicate of commitment {self.survivor['id']}"
+
+    @property
+    def pairs(self) -> list[tuple[int, int]]:
+        """The resemblances that were actually found: centre to each other member."""
+        return [(self.centre_id, i) for i in self.ids if i != self.centre_id]
+
+    @property
+    def merged_into(self) -> int:
+        """The id `actions.same_thing` will keep if the owner says these are one.
+
+        The lowest, not `survivor`. Two different policies, both deliberate: `survivor`
+        answers "which row says the most" for a person reading the card, and
+        `same_thing` keeps the earliest because its citations reach furthest back. The
+        card names this one, so what the owner reads is what the click does.
+        """
+        return min(self.ids)
 
 
 def _stars(component: list[int], edges: dict[int, dict[int, float]]) -> list[list[int]]:
@@ -314,7 +336,7 @@ def clusters(conn: sqlite3.Connection) -> list[Cluster]:
     out: list[Cluster] = []
     for component in grouped.values():
         for star in _stars(component, edges):
-            cluster = Cluster(members=[rows[i] for i in star])
+            cluster = Cluster(members=[rows[i] for i in star], centre_id=star[0])
             if len(cluster.members) < 2:
                 continue
             ids = set(cluster.ids)
@@ -344,4 +366,71 @@ def clusters(conn: sqlite3.Connection) -> list[Cluster]:
     # reading twice goes at the top, because the queue's failure was never that the
     # pairs were wrong.
     out.sort(key=lambda c: (not c.identical, -c.weakest, -len(c.members)))
+    return out
+
+
+# ── the review surface, off the terminal ──────────────────────────────────────
+# Everything above was reachable only by typing `backglass duplicates`. On the owner's
+# ledger that is 73 clusters over 386 open commitments that nothing on the page has ever
+# shown — the planner schedules whatever the ledger holds, so one scholarship acceptance
+# written down five ways costs real hours of a real day, and the surface that could say
+# so lived behind a command nobody runs unprompted.
+#
+# Cards, not collapses. `--apply` exists and stays a deliberate keystroke: a row that
+# vanishes with nothing saying why is the failure four entries in tasks/lessons.md are
+# about, and "identical text and not a fan-out" is a good heuristic rather than a fact.
+# The click is the owner's (docs/11).
+
+#: Options, matched exactly by the answer hook like every other question kind.
+DUP_SAME = "One promise — merge them"
+DUP_APART = "Different promises — keep them apart"
+
+#: Cards per refresh. Five, like the stale batch, and for the same reason: a queue of 73
+#: is a queue nobody finishes, and the whole point of the clustered shape was that each
+#: card is answerable in one read.
+DUP_BATCH_LIMIT = 5
+
+
+def questions_for(conn: sqlite3.Connection, *, limit: int = DUP_BATCH_LIMIT) -> list[Any]:
+    """The top clusters as questions, most certain first.
+
+    Order is `clusters()`'s own: identical text first, then tightest, then largest — what
+    can be settled without reading twice goes at the top. Fan-outs are not filtered out;
+    they are the clusters that most need a person, and the card carries the sentence
+    explaining what makes them ambiguous rather than a verdict.
+
+    `subject_key` is the member id set, so ask-once holds while the cluster does and a
+    cluster that gains or loses a member is a new question rather than a stale one
+    wearing the old text.
+    """
+    from backglass.questions import Question
+
+    out: list[Any] = []
+    for cluster in clusters(conn)[:limit]:
+        ids = cluster.ids
+        keep = cluster.merged_into
+        lines = [
+            f"  #{m['id']} {str(m['what'])[:70]}" + (f"  · {m['who']}" if m["who"] else "")
+            for m in cluster.members
+        ]
+        detail = "\n".join(lines) + f"\n\nMerging keeps #{keep}, the earliest — its"
+        detail += " citations reach furthest back."
+        if cluster.kind == FAN_OUT:
+            detail += (
+                "\n\nOne message, several counterparties: this is several real promises,"
+                " or one organisation the entity table holds twice (`backglass people"
+                " merge` fixes the second and these resolve themselves)."
+            )
+        out.append(
+            Question(
+                kind="duplicate",
+                subject_key="-".join(str(i) for i in ids),
+                question=(
+                    f"{len(ids)} open commitments look like the same promise"
+                    f" ({cluster.weakest:.2f} weakest match). One, or several?"
+                ),
+                detail=detail,
+                options=[DUP_SAME, DUP_APART],
+            )
+        )
     return out

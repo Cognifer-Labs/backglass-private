@@ -54,8 +54,10 @@ def a_boom(name: str, ran: list[str]) -> loop.Pass:
 
 
 class TestRegistry:
-    def test_the_five_passes_are_declared_in_the_order_they_have_always_run(self) -> None:
-        assert loop.NAMES == ("catchup", "replan", "logic", "questions", "notify")
+    def test_the_passes_are_declared_in_the_order_they_run(self) -> None:
+        assert loop.NAMES == (
+            "catchup", "replan", "logic", "questions", "duplicates", "notify",
+        )
 
     def test_logic_runs_before_questions_so_a_mooted_question_is_never_asked(self) -> None:
         # Disposal ahead of detection is the decision increment 8 landed. A swap here
@@ -374,6 +376,23 @@ class TestTheRecord:
         )
         assert outcomes[0].status == loop.OK
         assert loop.recent(conn) == []
+
+    def test_the_row_carries_both_clocks_and_they_are_not_the_same_one(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """`local_date` is the owner's day; the timestamps are wall-clock UTC.
+
+        Storing one and deriving the other was the first version and it broke the
+        once-a-day gate in both directions: `finished_at` is stamped from the wall clock
+        whatever day is being processed, and even frozen, 20:00 Phoenix is already
+        tomorrow in UTC. They answer different questions, so the row carries both.
+        """
+        evening = BEFORE_DAWN.replace(hour=20)  # 2026-08-19T03:00Z — a different UTC date
+        loop.run(conn, sett, now=evening, passes=[a_pass("x", [])])
+
+        row = loop.recent(conn)[0]
+        assert row["local_date"] == "2026-08-18"
+        assert str(row["finished_at"])[:10] != "2026-08-18"  # the wall clock, not the day
 
     def test_the_row_carries_the_sync_run_it_rode_with(
         self, conn: sqlite3.Connection, sett: Settings
@@ -820,3 +839,237 @@ class TestTheAppOpenTrigger:
 
         monkeypatch.setattr(loop, "on_open", boom)
         loop.spawn_on_open(sett)  # daemon thread, swallows and logs
+
+
+class TestDuplicatesLeavesTheTerminal:
+    """73 clusters over 386 open commitments that no page has ever shown.
+
+    `backglass duplicates` found them from the first day it existed; nothing else called
+    it, so the only way to see a scholarship acceptance written down five ways — and
+    costing five slots of a real day — was to type a command nobody types unprompted.
+    """
+
+    def _cluster(self, conn: sqlite3.Connection, what: str, n: int = 2) -> list[int]:
+        ids = []
+        for i in range(n):
+            conn.execute(
+                "INSERT INTO source_item (user_id, source, external_id, fetched_at,"
+                " occurred_at, title, body_text, content_hash, triage_verdict,"
+                " extraction_version) VALUES (?, 'apple-mail', ?,"
+                " '2026-08-10T00:00:00Z', '2026-08-10T00:00:00Z', ?, ?, ?, 'keep',"
+                " 'manual')",
+                (USER_ID, f"dup-{what}-{i}", what, what, f"h-{what}-{i}"),
+            )
+            item = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+            conn.execute(
+                "INSERT INTO commitment (user_id, direction, what, confidence, status,"
+                " estimated_minutes, estimate_source, source_item_id, created_at)"
+                " VALUES (?, 'i_owe', ?, 0.9, 'open', 30, 'manual', ?, ?)",
+                (USER_ID, what, item, now_iso()),
+            )
+            ids.append(int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]))
+        return ids
+
+    def test_the_clusters_arrive_as_cards(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        from backglass import questions as questions_mod
+
+        self._cluster(conn, "Submit the hospice volunteer application")
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=loop.by_name(["duplicates"]))
+
+        cards = [q for q in questions_mod.open_questions(conn) if q["kind"] == "duplicate"]
+        assert len(cards) == 1
+        assert "same promise" in cards[0]["question"]
+        assert cards[0]["options"] == [dup_mod().DUP_SAME, dup_mod().DUP_APART]
+
+    def test_it_runs_once_a_day_and_says_why_it_skipped(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """The gate is the reason this is a pass rather than another detector: the
+        clustering is O(n²) and costs ~3.7 s on the live ledger, which no index touches
+        because the pairwise comparison *is* the cost."""
+        self._cluster(conn, "Submit the hospice volunteer application")
+        only = loop.by_name(["duplicates"])
+
+        first = loop.run(conn, sett, now=BEFORE_DAWN, passes=only)
+        assert first[0].status == loop.OK
+
+        later = BEFORE_DAWN.replace(hour=14)
+        second = loop.run(conn, sett, now=later, passes=only)
+        assert second[0].status == loop.SKIPPED
+        assert "already ran today" in str(second[0].error)
+
+    def test_the_next_day_it_runs_again(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        only = loop.by_name(["duplicates"])
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=only)
+        tomorrow = BEFORE_DAWN.replace(day=BEFORE_DAWN.day + 1)
+        assert loop.run(conn, sett, now=tomorrow, passes=only)[0].status == loop.OK
+
+    def test_the_gate_is_the_owners_local_day_not_utc(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """The owner moves between UTC-7 and UTC+05:30. A run at 20:00 Phoenix is already
+        tomorrow in UTC, so a date-prefix comparison would open the gate at dinner and
+        run the 3.7 s pass twice on one of the owner's days."""
+        only = loop.by_name(["duplicates"])
+        evening = BEFORE_DAWN.replace(hour=20)  # 2026-08-19T03:00Z — a different UTC date
+        assert loop.run(conn, sett, now=evening, passes=only)[0].status == loop.OK
+
+        later = BEFORE_DAWN.replace(hour=22)
+        assert loop.run(conn, sett, now=later, passes=only)[0].status == loop.SKIPPED
+
+    def test_a_failed_run_does_not_close_the_gate(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The gate asks whether the pass SUCCEEDED today. A pass that threw has not done
+        # its work, and locking it out until tomorrow would turn one bad run into a day
+        # without the surface.
+        def boom(*_a: object, **_k: object) -> list[object]:
+            raise RuntimeError("clustering blew up")
+
+        monkeypatch.setattr(dup_mod(), "questions_for", boom)
+        only = loop.by_name(["duplicates"])
+        assert loop.run(conn, sett, now=BEFORE_DAWN, passes=only)[0].status == loop.FAILED
+
+        monkeypatch.undo()
+        later = BEFORE_DAWN.replace(hour=9)
+        assert loop.run(conn, sett, now=later, passes=only)[0].status == loop.OK
+
+    def test_nothing_is_collapsed_without_the_owner(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """A row that vanishes with nothing saying why is the failure four lessons cover.
+        The pass asks; `--apply` on the command stays a deliberate keystroke."""
+        ids = self._cluster(conn, "Submit the hospice volunteer application")
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=loop.by_name(["duplicates"]))
+        still_open = conn.execute(
+            "SELECT COUNT(*) AS n FROM commitment WHERE status = 'open'"
+        ).fetchone()["n"]
+        assert still_open == len(ids)
+
+
+class TestAnsweringACluster:
+    def _card(self, conn: sqlite3.Connection, sett: Settings) -> tuple[int, list[int]]:
+        from backglass import questions as questions_mod
+
+        helper = TestDuplicatesLeavesTheTerminal()
+        ids = helper._cluster(conn, "Submit the hospice volunteer application")
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=loop.by_name(["duplicates"]))
+        card = next(
+            q for q in questions_mod.open_questions(conn) if q["kind"] == "duplicate"
+        )
+        return int(card["id"]), ids
+
+    def test_one_promise_merges_into_the_id_the_card_named(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        from backglass import questions as questions_mod
+
+        card_id, ids = self._card(conn, sett)
+        questions_mod.answer(conn, sett, card_id, option=dup_mod().DUP_SAME)
+
+        rows = {
+            int(r["id"]): dict(r)
+            for r in conn.execute("SELECT id, status, superseded_by FROM commitment")
+        }
+        keep = min(ids)
+        assert rows[keep]["status"] == "open"
+        for other in ids:
+            if other != keep:
+                assert rows[other]["status"] == "superseded"
+                assert rows[other]["superseded_by"] == keep
+
+    def test_keeping_them_apart_is_remembered_so_it_is_never_asked_again(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        from backglass import questions as questions_mod
+
+        card_id, ids = self._card(conn, sett)
+        questions_mod.answer(conn, sett, card_id, option=dup_mod().DUP_APART)
+
+        pairs = conn.execute(
+            "SELECT low_id, high_id FROM commitment_distinct WHERE user_id = ?",
+            (USER_ID,),
+        ).fetchall()
+        assert {(int(r["low_id"]), int(r["high_id"])) for r in pairs} == {
+            (min(ids), other) for other in ids if other != min(ids)
+        }
+        assert all(
+            str(r["status"]) == "open"
+            for r in conn.execute("SELECT status FROM commitment")
+        )
+
+    def test_the_owners_own_words_change_nothing(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        # "Never guess in the meantime": an answer this hook does not recognise is
+        # recorded and acts on nothing.
+        from backglass import questions as questions_mod
+
+        card_id, ids = self._card(conn, sett)
+        questions_mod.answer(conn, sett, card_id, text="two different scholarships")
+        assert all(
+            str(r["status"]) == "open"
+            for r in conn.execute("SELECT status FROM commitment")
+        )
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM commitment_distinct"
+        ).fetchone()["n"] == 0
+
+
+def dup_mod():  # type: ignore[no-untyped-def]
+    from backglass import duplicates
+
+    return duplicates
+
+
+class TestTheCardOnThePage:
+    """The claim increment 6 makes: this is answerable without a terminal.
+
+    Asserted end to end rather than at the question row, because "it writes an
+    open_question" was already true of things the page never showed — the whole defect
+    was a surface that existed and was unreachable.
+    """
+
+    @pytest.fixture
+    def client(self, conn: sqlite3.Connection, sett: Settings):  # type: ignore[no-untyped-def]
+        from fastapi.testclient import TestClient
+
+        from backglass.web.app import create_app
+
+        del conn
+        return TestClient(create_app(sett), base_url="http://127.0.0.1:8765")
+
+    def test_a_cluster_is_readable_and_answerable_at_ask(
+        self, client, conn: sqlite3.Connection, sett: Settings  # type: ignore[no-untyped-def]
+    ) -> None:
+        helper = TestDuplicatesLeavesTheTerminal()
+        ids = helper._cluster(conn, "Submit the hospice volunteer application")
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=loop.by_name(["duplicates"]))
+
+        body = client.get("/ask").text
+        assert "same promise" in body
+        assert f"#{min(ids)}" in body                     # every member is named
+        assert dup_mod().DUP_SAME in body                 # and both answers are buttons
+        assert dup_mod().DUP_APART in body
+
+        qid = int(
+            conn.execute(
+                "SELECT id FROM open_question WHERE kind = 'duplicate'"
+            ).fetchone()["id"]
+        )
+        client.post(
+            f"/ask/{qid}/answer",
+            data={"option": dup_mod().DUP_SAME},
+            follow_redirects=False,
+        )
+
+        statuses = {
+            int(r["id"]): str(r["status"])
+            for r in conn.execute("SELECT id, status FROM commitment")
+        }
+        assert statuses[min(ids)] == "open"
+        assert all(statuses[i] == "superseded" for i in ids if i != min(ids))

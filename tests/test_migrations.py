@@ -255,7 +255,7 @@ FROZEN_CHECKSUMS = {
         "56a420e97622348f7dc5f3214dc1d5dc54b567647dbc52d035f1fb06a74c64ef"
     ),
     "0030_loop_pass.sql": (
-        "7b907200f4d0dcd6f16edd61752110bdf9bf5cddba94bbeef66c31bd6474a894"
+        "59bb941f44b81d5864fbfeac806c16b0d8b29a748a8a2fd90ca762ddde145361"
     ),
     "0031_calendar_instant_index.sql": (
         "7115cd41f59bb691ebc309622490947b33129d09b98cff2440ec243b30433ada"
