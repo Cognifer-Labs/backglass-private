@@ -9,7 +9,7 @@ owed-at-an-hour is precisely the UTC-7/+05:30 surface the lessons cover.
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime
+from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -191,6 +191,40 @@ class TestWhatItSays:
         sent = notify.run(conn, settings, now=day3)
         assert [s.kind for s in sent] == ["questions-waiting"]
         assert "2 question(s) waiting" in sent[0].title
+
+
+class TestOneClockPerRow:
+    def test_created_at_comes_from_the_injected_now_not_the_wall_clock(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """`local_date` was taken from `now` and `created_at` from `now_iso()`.
+
+        In production the two agree and nothing was ever wrong on the owner's machine.
+        The cost landed on the tests: the re-banner case above compared a fixture's
+        `asked_at` of 2026-08-20 against a `created_at` of whenever the suite ran, so it
+        passed until that date and failed on every machine after it. A row whose two time
+        fields come from one clock cannot drift from itself.
+        """
+        notify.record(
+            conn,
+            settings,
+            kind="due-today",
+            subject_key="k",
+            title="t",
+            body="b",
+            now=_at(9),
+        )
+        row = notify.recent(conn)[0]
+        assert row["local_date"] == "2026-08-18"
+        assert row["created_at"] == "2026-08-18T16:00:00+00:00"  # 09:00 Phoenix, in UTC
+
+    def test_the_stamp_is_the_shape_now_iso_writes(self) -> None:
+        # `_questions_waiting` compares this column against `asked_at` as a string, and
+        # two formats that sort differently would silence the banner or repeat it daily.
+        from backglass.db import now_iso
+
+        stamped = notify._stamp(datetime.now(UTC))
+        assert stamped[:13] == now_iso()[:13] and stamped.endswith("+00:00")
 
 
 class TestTheRowIsTheRecord:

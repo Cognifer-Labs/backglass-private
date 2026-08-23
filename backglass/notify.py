@@ -30,7 +30,7 @@ from __future__ import annotations
 import sqlite3
 import subprocess
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 
 from backglass.config import Settings
 from backglass.ledger import USER_ID
@@ -96,7 +96,6 @@ def record(
     scheduled deciders re-offer next sync, so the banner arrives when the window
     opens instead of never.
     """
-    from backglass.db import now_iso
     from backglass.plan import timezones
 
     if now is None:
@@ -108,7 +107,7 @@ def record(
         "INSERT OR IGNORE INTO notification"
         " (user_id, kind, subject_key, local_date, title, body, delivered, created_at)"
         " VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)",
-        (USER_ID, kind, subject_key, now.date().isoformat(), title, body, now_iso()),
+        (USER_ID, kind, subject_key, now.date().isoformat(), title, body, _stamp(now)),
     )
     if not cur.rowcount:
         return None  # today's slot already taken — rule 3, by schema
@@ -116,6 +115,25 @@ def record(
     delivered = _deliver(title, body)
     conn.execute("UPDATE notification SET delivered = ? WHERE id = ?", (delivered, row_id))
     return Sent(kind=kind, title=title, body=body, delivered=delivered)
+
+
+def _stamp(now: datetime) -> str:
+    """`created_at`, in the same shape and zone `now_iso()` writes, from the caller's clock.
+
+    It used to be `now_iso()` while `local_date` on the same row came from the injected
+    `now` — two clocks in one row. In production they agree, so nothing was ever wrong
+    on the owner's machine; the cost landed on the tests, where a fixture stamping
+    `asked_at` at 2026-08-20 was compared against a `created_at` of whenever the suite
+    happened to run. `_questions_waiting`'s re-banner test passed until that date and
+    failed on every machine afterwards — the same expiry-date shape as the 2026-08-17
+    lesson, one layer down: not a literal in an assertion, but a literal in a fixture
+    read against a row the code stamped from the wall clock.
+
+    A row whose two time fields come from one clock cannot drift from itself. The shape
+    is `now_iso()`'s exactly — UTC, second precision, explicit offset — because
+    `_questions_waiting` compares this column against `asked_at` as a string.
+    """
+    return now.astimezone(UTC).replace(microsecond=0).isoformat()
 
 
 def recent(conn: sqlite3.Connection, *, limit: int = 20) -> list[sqlite3.Row]:

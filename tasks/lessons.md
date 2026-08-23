@@ -967,3 +967,17 @@ deterministic given the id.
   `_never_the_real_ledger` now bounds the damage by forcing `DB_PATH` to a per-test file,
   with `tests/test_config.py` asserting that guard, but it cannot make an unpatched
   command see the fixture's rows.
+
+- 2026-08-23 | `tests/test_notify.py`'s re-banner test failed on a clean tree, and had
+  since 2026-08-20. The fixture stamped a question's `asked_at` at 2026-08-20 and the
+  code stamped the notification's `created_at` with `now_iso()` — the wall clock — while
+  `local_date` on the same row came from the injected `now`. Two clocks in one row. The
+  comparison `_questions_waiting` makes is `asked_at > created_at`, so the test passed
+  until the day the fixture named and failed on every machine after it. Nothing was wrong
+  in production, where the two clocks agree, which is exactly why it went three days
+  unnoticed. | This is the 2026-08-17 expiry-date lesson one layer down: not a literal in
+  an assertion, but a literal in a fixture read against a column the *code* stamps from
+  the wall clock. When a row carries two time fields, they come from one clock — the
+  injected one — or the row can disagree with itself. And a test suite is not a gate if a
+  failure can sit in it for three days: run the whole suite on a clean tree before
+  starting a branch, not only after finishing one.
