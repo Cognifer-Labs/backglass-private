@@ -80,11 +80,16 @@ class SyncReport:
     #: is a day built on a figure nobody chose.
     assignments_recorded: int = 0
     assignment_estimates: int = 0
+    assignment_dates: int = 0
     assignment_writes: int = 0
     #: Due dates that moved upstream, rendered. Five CIS 236 assignments had already
     #: moved when this was built and nothing in the system could say so, because the
     #: re-read produced an immutable-item conflict and a conflict propagates nothing.
     coursework_notes: list[str] = field(default_factory=list)
+    #: Upstream edits announced for the first time this run. Not errors: the change has a
+    #: home (`assignment`) and a record (`claim_event`), and a run that reports failure
+    #: every thirty minutes reports nothing.
+    upstream_revisions: list[str] = field(default_factory=list)
     #: Ledger rows a windowed connector's complete re-read no longer returns — a class
     #: that stopped meeting, a meeting that was cancelled. Reported because it changes
     #: the day's capacity, and a silent change to the plan is the thing the owner cannot
@@ -375,6 +380,13 @@ def _sync(
         applied_estimates, _ = coursework.apply_estimates(conn)
         report.assignment_estimates = applied_estimates
         report.assignment_writes += applied_estimates
+        # And the date, for the same reason and in the same place. `upsert` above wrote
+        # the move into `assignment`; this is what carries it to the row the planner and
+        # the brief read, so the two records cannot go on disagreeing about a deadline.
+        applied_dates, date_notes = coursework.apply_due_dates(conn)
+        report.assignment_dates = applied_dates
+        report.assignment_writes += applied_dates
+        report.coursework_notes.extend(date_notes)
 
     report.writes = (
         ledger.writes + review_writes + noise_writes + contacts_writes
@@ -408,10 +420,57 @@ def _sync(
     report.commitments_superseded = ledger.stats.commitments_superseded
     for conflict in ledger.stats.source_item_conflicts:
         report.errors.append(f"content changed for an immutable source_item: {conflict}")
+    report.upstream_revisions.extend(
+        _announce_revisions(conn, ledger.stats.source_item_revisions, dry_run=dry_run)
+    )
 
     if not dry_run:
         _record_run(conn, report, started_at)
     return report
+
+
+def _announce_revisions(
+    conn: sqlite3.Connection,
+    revisions: list[Any],
+    *,
+    dry_run: bool = False,
+) -> list[str]:
+    """Say once, per edit, that an upstream record moved. Returns what is new this run.
+
+    The point is the *once*. An immutable item whose source keeps editing it produces the
+    same differing hash on every read, and before `claim_event` existed the ledger had no
+    vocabulary for "already seen" — so five moved Canvas due dates made the sync exit
+    non-zero every thirty minutes from 2026-08-21 onward, which is the saturated failure
+    signal `tasks/audit-2026-08-21.md` §2 opens with. Migration 0032 exists in part to end
+    exactly this, and its header names it.
+
+    Dedup is on the *observed* hash, not on the item: a second, different edit to the same
+    assignment is news again and must be announced again.
+    """
+    from backglass import claim_events
+
+    fresh: list[str] = []
+    for revision in revisions:
+        seen = conn.execute(
+            "SELECT 1 FROM claim_event WHERE user_id = ? AND subject_table = 'source_item'"
+            " AND subject_id = ? AND field = 'content_hash' AND new_value = ? LIMIT 1",
+            (USER_ID, revision.source_item_id, revision.observed_hash),
+        ).fetchone()
+        if seen is not None:
+            continue
+        fresh.append(f"{revision.key} was edited upstream")
+        if dry_run:
+            continue
+        claim_events.record(
+            conn,
+            subject_table="source_item",
+            subject_id=revision.source_item_id,
+            field="content_hash",
+            old_value=revision.stored_hash,
+            new_value=revision.observed_hash,
+            cause="upstream_revision",
+        )
+    return fresh
 
 
 # ──────────────────────────────────────────────────────────── stage 0: who

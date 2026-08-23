@@ -133,6 +133,21 @@ class Proposal:
             if b["kind"] in ("work", "protected", "small", "study")
         )
 
+    @property
+    def overflow_dated(self) -> int:
+        """How much of the overflow had a date and still did not fit.
+
+        The half of `overflow` that is a shortfall. Everything at `PRIORITY_REST` is there
+        because it has no date — it was never owed *today*, so counting it as something
+        the day failed to hold is what made "178 items did not fit" read as breakage when
+        the honest number was four.
+
+        Keyed on the priority each candidate already carries rather than re-reading
+        `due_at`, so this cannot form a second opinion about the ordering the planner
+        used: if a row is undated the planner has already said so by banding it.
+        """
+        return sum(1 for c in self.overflow if c.priority < PRIORITY_REST)
+
 
 def candidates(
     conn: sqlite3.Connection,
@@ -655,13 +670,45 @@ def current_plan_id(conn: sqlite3.Connection, day: date) -> int | None:
     return int(row["id"]) if row else None
 
 
-def persist(conn: sqlite3.Connection, settings: Settings, proposal: Proposal) -> int:
+def persist(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    proposal: Proposal,
+    *,
+    force: bool = False,
+) -> int:
     """Write the proposal as a new `day_plan`, superseding any prior one for that date.
 
     docs/04 §3: "`day_plan` is versioned by `status` rather than overwritten. Regenerating
     a plan supersedes the old one and keeps it. You will want the history the first time
     you ask whether the planner is actually any good."
+
+    **A proposal that schedules no work does not replace one that did.** The 05:45 job
+    omits `--if-missing` on purpose — it is the run built on the overnight batch collect
+    and it must be able to replace a thinner plan a pre-dawn login wrote. That reasoning
+    holds only while the job fires in the morning. On 2026-08-22 it fired at 17:15, the
+    clock clamp correctly found no hours left in a day that was over, and the resulting
+    capacity-0 plan superseded day_plan 71 — a real plan with 225 planned minutes written
+    at 13:23. Rows 67, 68 and 69 are the same thing the day before.
+
+    So the guard is not about the clock, which this module has no business second-guessing,
+    and not about which job called: it is that an empty plan carries strictly less than the
+    plan it would replace. Keeping the older one is the safer error in both directions —
+    a day that genuinely emptied out reads no worse for showing what was intended, and a
+    day whose planner ran at the wrong hour keeps its morning.
+
+    `force` is the owner's own hand: `/schedule/{date}/replan` is an explicit click and
+    must always win, including on a day they have deliberately cleared.
     """
+    if not force and proposal.planned_minutes == 0:
+        standing = conn.execute(
+            "SELECT id, planned_minutes FROM day_plan WHERE user_id = ? AND local_date = ?"
+            " AND status != 'superseded' ORDER BY id DESC LIMIT 1",
+            (USER_ID, proposal.day.isoformat()),
+        ).fetchone()
+        if standing is not None and int(standing["planned_minutes"] or 0) > 0:
+            return int(standing["id"])
+
     conn.execute(
         "UPDATE day_plan SET status = 'superseded' "
         "WHERE user_id = ? AND local_date = ? AND status != 'superseded'",
@@ -669,8 +716,8 @@ def persist(conn: sqlite3.Connection, settings: Settings, proposal: Proposal) ->
     )
     conn.execute(
         "INSERT INTO day_plan (user_id, local_date, tz, capacity_minutes, planned_minutes, "
-        " overflow_count, generated_at, status, inputs_fingerprint)"
-        " VALUES (?, ?, ?, ?, ?, ?, ?, 'proposed', ?)",
+        " overflow_count, overflow_dated, generated_at, status, inputs_fingerprint)"
+        " VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'proposed', ?)",
         (
             USER_ID,
             proposal.day.isoformat(),
@@ -678,6 +725,7 @@ def persist(conn: sqlite3.Connection, settings: Settings, proposal: Proposal) ->
             proposal.capacity.capacity_minutes,
             proposal.planned_minutes,
             len(proposal.overflow),
+            proposal.overflow_dated,
             now_iso(),
             proposal.fingerprint or None,
         ),

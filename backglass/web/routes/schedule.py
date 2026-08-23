@@ -656,7 +656,10 @@ def build_router(
             at_risk_goals=health.at_risk_goal_ids(conn, settings, on_date),
             now=now,
         )
-        planner.persist(conn, settings, proposal)
+        # `force`: this is the owner's own click, so it wins even when the rebuild comes
+        # back empty. `persist`'s guard exists to stop a *scheduled* run from replacing a
+        # working plan with nothing; a button the owner pressed is not that.
+        planner.persist(conn, settings, proposal, force=True)
         return RedirectResponse(f"/schedule?date={on_date.isoformat()}", status_code=303)
 
     return router

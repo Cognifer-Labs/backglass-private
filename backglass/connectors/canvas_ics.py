@@ -306,6 +306,13 @@ class CanvasIcsConnector:
             author=author,
             title=heading,
             body_text=body,
+            # The due date is in `body_text` and in `occurred_at`, and both are hashed —
+            # so every date Canvas moves re-reads as a differing `content_hash` on a row
+            # that cannot be updated. That is not a lying source: `assignment` (migration
+            # 0031) is where the moving half lives now, and `coursework.upsert` writes the
+            # new date in this same fetch. Saying so here is what stops the ledger from
+            # calling a handled change a failure on every sync forever.
+            mutable_upstream=True,
             # `content_hash` covers (author, title, body_text, occurred_at) and not this,
             # so widening the raw record costs no conflict on the 159 items already
             # stored — they keep the terse shape they were written with, and everything

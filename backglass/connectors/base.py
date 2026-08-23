@@ -44,6 +44,22 @@ class SourceItem:
     body_text: str | None = None
     raw_json: str = "{}"
 
+    #: Does the *upstream* record this item captured go on changing after it was read?
+    #:
+    #: The stored row is immutable either way — nothing here weakens docs/03 or the 0002
+    #: trigger. What this changes is what a differing `content_hash` on an already-stored
+    #: `external_id` *means*. A Gmail body does not change, so a second hash there is a
+    #: fault and `ledger.upsert_source_item` is right to record it as one. A Canvas
+    #: assignment is a live upstream record whose due date moves, and the mutable half has
+    #: had a home of its own since migration 0031 — so the second hash is news the ledger
+    #: already has somewhere to put, not a fault.
+    #:
+    #: Five CIS 236 assignments moved on 2026-08-21 and the run has exited non-zero every
+    #: thirty minutes since, re-announcing the same five upstream edits forever
+    #: (`tasks/audit-2026-08-21.md` §2). Saturating the failure signal is itself the bug:
+    #: a source that reports failure on every single run reports nothing at all.
+    mutable_upstream: bool = False
+
 
 @dataclass(frozen=True)
 class FetchResult:

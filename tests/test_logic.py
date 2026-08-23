@@ -380,6 +380,34 @@ class TestEventsWhoseDayHasPassed:
         a_commitment(conn, "Attend move-in", due="2026-08-09", status="dropped")
         assert logic._events_whose_day_has_passed(conn, TODAY) == []
 
+    def test_the_verb_is_found_after_a_clause_boundary_too(self, conn) -> None:  # type: ignore[no-untyped-def]
+        """Commitment 342 on the live ledger, verbatim: `"RSVP + attend …, Thu 13 Aug
+        5:30pm"`, due 2026-08-12 and still being scheduled into 2026-08-23. The anchored
+        pattern read "RSVP", stopped, and the row outlived the evening it was about."""
+        cid = a_commitment(
+            conn,
+            "RSVP + attend Arizona AI & Emerging Technology meetup — Agent Harnesses "
+            "and Systems Engineering, Thu 13 Aug 5:30pm, 1951@SkySong Rm 151",
+            due="2026-08-12",
+        )
+
+        assert [d.subject_id for d in logic._events_whose_day_has_passed(conn, TODAY)] == [cid]
+
+    def test_a_step_inside_a_deliverable_is_still_not_attendance(self, conn) -> None:  # type: ignore[no-untyped-def]
+        """Why the clause-boundary list is shorter than the anchored one. At the start of a
+        sentence "go to" is the whole obligation; in the middle of one it is as likely to be
+        a step inside work that is still owed after the day passes."""
+        a_commitment(conn, "Submit the form and go to the portal", due="2026-08-09")
+        a_commitment(conn, "Print the packet, then check in the paperwork", due="2026-08-09")
+
+        assert logic._events_whose_day_has_passed(conn, TODAY) == []
+
+    def test_a_word_that_merely_starts_with_a_verb_does_not_match(self, conn) -> None:  # type: ignore[no-untyped-def]
+        """`attending` is not `attend`. Commitment 89 is "return from vacation, resume
+        attending", which is a standing habit rather than one evening."""
+        a_commitment(conn, "return from vacation, resume attending", due="2026-07-24")
+        assert logic._events_whose_day_has_passed(conn, TODAY) == []
+
 
 class TestCanvasPastGrace:
     def _assignment(self, conn: sqlite3.Connection, what: str, due: str) -> int:

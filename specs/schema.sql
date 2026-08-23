@@ -163,7 +163,7 @@ CREATE TABLE day_plan (
   generated_at     TEXT    NOT NULL,
   accepted_at      TEXT,
   status           TEXT    NOT NULL DEFAULT 'proposed' -- proposed|accepted|superseded
-, inputs_fingerprint TEXT);
+, inputs_fingerprint TEXT, overflow_dated INTEGER);
 
 CREATE INDEX idx_dayplan_current ON day_plan(user_id, local_date, status);
 

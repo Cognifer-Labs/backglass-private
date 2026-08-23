@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from backglass import coursework
+from backglass import claim_events, coursework
 from backglass.config import Settings
 from backglass.db import now_iso
 from backglass.ledger import USER_ID
@@ -445,3 +445,98 @@ def test_a_second_sync_over_the_same_feed_writes_nothing(
     second = run_sync(conn, settings, [_FakeCanvas()], FakeModel(), extract=False)
 
     assert second.assignment_writes == 0  # rule 3, through the sync rather than the unit
+
+
+# ── the date, carried the last step ───────────────────────────────────────────
+#
+# The half of the Canvas loop that was missing until 2026-08-23. `upsert` wrote the moved
+# due date into `assignment` and stopped there, so the ledger held both answers at once
+# and the planner read the stale one.
+
+
+def _moved(conn: Any, settings: Settings, *, feed_due: str, commitment_due: str) -> int:
+    conn.execute(
+        "INSERT INTO source_item (user_id, source, external_id, fetched_at, occurred_at, "
+        " author, title, body_text, raw_json, content_hash) "
+        "VALUES (?, 'canvas:ics', 'assignment:7833000', ?, ?, 'CIS236', 't', 'b', '{}', 'h')",
+        (USER_ID, now_iso(), commitment_due),
+    )
+    item_id = conn.execute("SELECT id FROM source_item").fetchone()["id"]
+    conn.execute(
+        "INSERT INTO commitment (user_id, direction, what, due_at, confidence, status, "
+        " source_item_id, created_at) "
+        "VALUES (?, 'i_owe', 'Complete CIS236 assignment 1-1-1', ?, 0.9, 'open', ?, ?)",
+        (USER_ID, commitment_due, item_id, now_iso()),
+    )
+    coursework.upsert(conn, settings, "canvas:ics", [parsed(due_at=feed_due)])
+    return int(conn.execute("SELECT id FROM commitment").fetchone()["id"])
+
+
+def test_a_due_date_that_moved_upstream_reaches_the_commitment(
+    conn: Any, settings: Settings
+) -> None:
+    """The live case. `assignment:7833000` moved 08-23 → 08-25 on 2026-08-21 and commitment
+    356 still said 08-23 two days later, because an immutable-item conflict propagates
+    nothing."""
+    commitment_id = _moved(conn, settings, feed_due="2026-08-25", commitment_due="2026-08-23")
+    applied, notes = coursework.apply_due_dates(conn)
+    assert applied == 1 and notes
+    row = conn.execute(
+        "SELECT due_at FROM commitment WHERE id = ?", (commitment_id,)
+    ).fetchone()
+    assert str(row["due_at"])[:10] == "2026-08-25"
+
+
+def test_the_move_is_recorded_in_the_change_ledger(conn: Any, settings: Settings) -> None:
+    """Rule 1 applied to a date the owner was already shown. A deadline that changes with
+    nothing anywhere saying so is the shape of failure this system is built against."""
+    commitment_id = _moved(conn, settings, feed_due="2026-09-04", commitment_due="2026-08-31")
+    coursework.apply_due_dates(conn)
+    events = claim_events.since(conn, "commitment", commitment_id)
+    assert [
+        (e["field"], e["old_value"][:10], e["new_value"][:10], e["cause"]) for e in events
+    ] == [("due_at", "2026-08-31", "2026-09-04", "canvas:due_moved")]
+
+
+def test_a_second_pass_over_the_same_dates_writes_nothing(
+    conn: Any, settings: Settings
+) -> None:
+    """Rule 3."""
+    _moved(conn, settings, feed_due="2026-08-25", commitment_due="2026-08-23")
+    assert coursework.apply_due_dates(conn)[0] == 1
+    assert coursework.apply_due_dates(conn)[0] == 0
+
+
+def test_a_time_of_day_on_the_commitment_is_not_a_move(
+    conn: Any, settings: Settings
+) -> None:
+    """`commitment.due_at` may carry a time where the feed states a date. Comparing the
+    strings would rewrite the row on every sync forever and report a move that never
+    happened."""
+    _moved(conn, settings, feed_due="2026-08-25", commitment_due="2026-08-25T13:00:00")
+    assert coursework.apply_due_dates(conn)[0] == 0
+
+
+def test_a_closed_commitment_is_history_and_is_not_rewritten(
+    conn: Any, settings: Settings
+) -> None:
+    commitment_id = _moved(conn, settings, feed_due="2026-08-25", commitment_due="2026-08-23")
+    conn.execute("UPDATE commitment SET status = 'done' WHERE id = ?", (commitment_id,))
+    assert coursework.apply_due_dates(conn)[0] == 0
+    row = conn.execute(
+        "SELECT due_at FROM commitment WHERE id = ?", (commitment_id,)
+    ).fetchone()
+    assert str(row["due_at"])[:10] == "2026-08-23"
+
+
+def test_a_dry_run_names_the_move_and_makes_none_of_it(
+    conn: Any, settings: Settings
+) -> None:
+    commitment_id = _moved(conn, settings, feed_due="2026-08-25", commitment_due="2026-08-23")
+    applied, notes = coursework.apply_due_dates(conn, dry_run=True)
+    assert applied == 1 and notes
+    row = conn.execute(
+        "SELECT due_at FROM commitment WHERE id = ?", (commitment_id,)
+    ).fetchone()
+    assert str(row["due_at"])[:10] == "2026-08-23"
+    assert claim_events.since(conn, "commitment", commitment_id) == []

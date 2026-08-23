@@ -9,8 +9,25 @@
       {# docs/05 §3 and docs/06: one capacity sentence, not a dashboard of gauges. #}
       <p class="cap">
         {{ (meta.capacity_minutes // 60) }}h {{ '%02d'|format(meta.capacity_minutes % 60) }}m available,
-        {{ (meta.planned_minutes // 60) }}h {{ '%02d'|format(meta.planned_minutes % 60) }}m planned{% if meta.overflow_count %},
-        <span class="over">{{ meta.overflow_count }} item{{ 's' if meta.overflow_count != 1 }} did not fit</span>{% endif %}.
+        {{ (meta.planned_minutes // 60) }}h {{ '%02d'|format(meta.planned_minutes % 60) }}m planned{%
+          if meta.overflow_count %},
+        {#- The split migration 0033 exists for. One number said "178 items did not fit"
+            and read as breakage; 174 of them had no date and were never candidates for
+            today. The gold ink goes to the handful that were actually owed, and the
+            backlog is stated in plain type beside it — a real number the owner should
+            see, just not an alarm. A plan written before 0033 recorded no split, so it
+            keeps the sentence it was written with rather than being given a made-up one. -#}
+        {%- set dated = meta.overflow_dated %}
+        {%- set undated = meta.overflow_count - dated if dated is not none else 0 %}
+        {%- if dated is none %}
+        <span class="over">{{ meta.overflow_count }} item{{ 's' if meta.overflow_count != 1 }} did not fit</span>
+        {%- elif dated %}
+        <span class="over">{{ dated }} due item{{ 's' if dated != 1 }} did not fit</span>
+        {%- if undated %} and {{ undated }} undated {{ 'item is' if undated == 1 else 'items are' }}
+        waiting on a date{% endif %}
+        {%- else %} nothing due was left out — {{ undated }} undated
+        {{- ' item is' if undated == 1 else ' items are' }} waiting on a date
+        {%- endif %}{% endif %}.
       </p>
       {% if not meta.has_protected %}
         {# docs/05 §Failure states: say the day is fully booked rather than showing an

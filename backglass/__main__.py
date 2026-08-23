@@ -1478,6 +1478,13 @@ def _print_report(report: Any, *, dry_run: bool) -> None:
             f"  retracted {report.retracted} item(s) their source no longer has — "
             "your calendar changed"
         )
+    # Said on stdout rather than stderr, and above the write count, because these are the
+    # two things a Canvas re-read is *for*. Both were being computed and thrown away: the
+    # revision had nowhere to go but the error list, and the due-date note nowhere at all.
+    for revision in getattr(report, "upstream_revisions", []):
+        typer.echo(f"  upstream: {revision}")
+    for note in getattr(report, "coursework_notes", []):
+        typer.echo(f"  coursework: {note}")
     typer.echo(f"  writes {report.writes}, spend {report.spend_cents}c")
     # startswith, because the reason carries which stage stopped ('rate_limit:triage').
     if (report.degrade_reason or "").startswith("rate_limit"):

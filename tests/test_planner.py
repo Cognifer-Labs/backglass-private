@@ -1963,3 +1963,108 @@ def test_the_last_sitting_does_close_it(conn, sett: Settings) -> None:  # type: 
         "SELECT status FROM commitment WHERE id = ?", (commitment_id,)
     ).fetchone()["status"]
     assert status == "done"
+
+
+# ══ an empty plan does not replace a working one ══════════════════════════
+#
+# The 05:45 job omits `--if-missing` on purpose so the overnight-batch plan can replace a
+# thinner pre-dawn one. On 2026-08-22 that job fired at 17:15 — every dated launchd job on
+# the owner's Mac was evaluating against a stale timezone — the clock clamp correctly found
+# no hours left in a day that was over, and the capacity-0 result superseded day_plan 71,
+# a real plan with 225 planned minutes written at 13:23. Rows 67, 68 and 69 are the same
+# thing the day before.
+
+
+def _late_and_empty(conn, sett: Settings) -> planner.Proposal:  # type: ignore[no-untyped-def]
+    """What the planner produces when it runs after the day is over."""
+    proposal = planner.propose(
+        conn, sett, THURSDAY, events=[], now=at(THURSDAY, "23:50")
+    )
+    assert proposal.planned_minutes == 0, "the clamp is what this test is about"
+    return proposal
+
+
+def test_an_empty_plan_does_not_supersede_a_plan_that_scheduled_work(
+    conn, sett: Settings  # type: ignore[no-untyped-def]
+) -> None:
+    add_commitment(conn, sett, "work", minutes=60)
+    morning = planner.persist(conn, sett, planner.propose(conn, sett, THURSDAY, events=[]))
+
+    assert planner.persist(conn, sett, _late_and_empty(conn, sett)) == morning
+    rows = list(conn.execute("SELECT id, status FROM day_plan"))
+    assert len(rows) == 1, "nothing was written"
+    assert str(rows[0]["status"]) == "proposed"
+
+
+def test_the_owners_own_replan_still_wins(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """`/schedule/{date}/replan` is a button somebody pressed. The guard exists to stop a
+    *scheduled* run from replacing a working plan with nothing, and a deliberate rebuild of
+    a day the owner has cleared is not that."""
+    add_commitment(conn, sett, "work", minutes=60)
+    morning = planner.persist(conn, sett, planner.propose(conn, sett, THURSDAY, events=[]))
+
+    replanned = planner.persist(conn, sett, _late_and_empty(conn, sett), force=True)
+    assert replanned != morning
+    rows = {
+        int(r["id"]): str(r["status"]) for r in conn.execute("SELECT id, status FROM day_plan")
+    }
+    assert rows[morning] == "superseded"
+
+
+def test_an_empty_plan_is_still_written_when_the_day_has_none(
+    conn, sett: Settings  # type: ignore[no-untyped-def]
+) -> None:
+    """The guard is about *replacing*, not about writing. A day with nothing to plan still
+    gets its row — the brief and the catch-up net both read "is there a plan" and a hole
+    would make the net regenerate it on every sync."""
+    add_commitment(conn, sett, "work", minutes=60)
+    plan_id = planner.persist(conn, sett, _late_and_empty(conn, sett))
+    assert plan_id > 0
+    assert conn.execute("SELECT COUNT(*) AS n FROM day_plan").fetchone()["n"] == 1
+
+
+def test_an_empty_plan_may_replace_another_empty_one(
+    conn, sett: Settings  # type: ignore[no-untyped-def]
+) -> None:
+    """Nothing is lost by superseding a plan that scheduled nothing, and refusing would
+    freeze the day's first empty plan against every later rebuild."""
+    add_commitment(conn, sett, "work", minutes=60)
+    first = planner.persist(conn, sett, _late_and_empty(conn, sett))
+    second = planner.persist(conn, sett, _late_and_empty(conn, sett))
+    assert second != first
+
+
+# ══ what "did not fit" is counting ════════════════════════════════════════
+
+
+def test_the_overflow_split_counts_only_what_had_a_date(
+    conn, sett: Settings  # type: ignore[no-untyped-def]
+) -> None:
+    """Migration 0033. "178 items did not fit" was 386 open commitments meeting a day of
+    450 minutes, and 174 of them had no date at all — they were never candidates for today,
+    so counting them as a shortfall is what made the sentence read as breakage."""
+    add_commitment(conn, sett, "due today", minutes=600, due=THURSDAY, n=1)
+    for i in range(3):
+        add_commitment(conn, sett, f"someday {i}", minutes=600, due=None, n=10 + i)
+
+    proposal = planner.propose(conn, sett, THURSDAY, events=[])
+    assert len(proposal.overflow) == 4
+    assert proposal.overflow_dated == 1
+
+    planner.persist(conn, sett, proposal)
+    row = conn.execute("SELECT overflow_count, overflow_dated FROM day_plan").fetchone()
+    assert (row["overflow_count"], row["overflow_dated"]) == (4, 1)
+
+
+def test_a_plan_written_before_the_split_existed_records_no_split(
+    conn, sett: Settings  # type: ignore[no-untyped-def]
+) -> None:
+    """NULL, never 0. A zero would be a claim about a plan nobody measured, and the panels
+    render the sentence they were written with rather than inventing a breakdown."""
+    conn.execute(
+        "INSERT INTO day_plan (user_id, local_date, tz, capacity_minutes, planned_minutes,"
+        " overflow_count, generated_at, status) VALUES (?, ?, ?, 480, 120, 178, ?, 'proposed')",
+        (USER_ID, THURSDAY.isoformat(), PHOENIX, now_iso()),
+    )
+    row = conn.execute("SELECT overflow_dated FROM day_plan").fetchone()
+    assert row["overflow_dated"] is None

@@ -84,6 +84,31 @@ _ATTENDANCE = re.compile(
     re.I,
 )
 
+#: The same obligation written as the second half of a sentence. Commitment 342 on the
+#: live ledger is `"RSVP + attend Arizona AI & Emerging Technology meetup … Thu 13 Aug
+#: 5:30pm"`, due 2026-08-12 and still being scheduled into 2026-08-23 — the anchor above
+#: reads "RSVP" and stops, and the row outlives the evening it was about.
+#:
+#: Deliberately a *shorter* verb list than the anchored one. At the start of a sentence
+#: "go to" and "check in" are the whole obligation; after a clause boundary they are as
+#: likely to be a step inside a deliverable — "submit the form and go to the portal" is
+#: still owed after the day passes, and dropping it would be the silent data loss this
+#: module's docstring forbids. Only the verbs that can mean nothing but being physically
+#: present are trusted here.
+_ATTENDANCE_CLAUSE = re.compile(
+    r"(?:^|[+/&,;]|\band\b|\bthen\b)\s*(attend|show\s+up|arrive)\b",
+    re.I,
+)
+
+
+def _is_attendance(what: str) -> bool:
+    """Is this an obligation to be somewhere, rather than to deliver something?
+
+    The separation is the whole safety of `_events_whose_day_has_passed`: a day that has
+    ended answers a presence obligation and says nothing at all about a deliverable.
+    """
+    return bool(_ATTENDANCE.search(what) or _ATTENDANCE_CLAUSE.search(what))
+
 #: How long a Canvas assignment stays owed after its due date. The owner ruled on
 #: 2026-08-20 that these expire: the ICS feed carries no submission state (docs/07
 #: §Canvas), so an assignment already handed in reads `open` forever, and 141 of them
@@ -303,7 +328,7 @@ def _events_whose_day_has_passed(
         (USER_ID,),
     ):
         what = str(row["what"])
-        if not _ATTENDANCE.search(what):
+        if not _is_attendance(what):
             continue
         try:
             due = date.fromisoformat(str(row["due_at"])[:10])

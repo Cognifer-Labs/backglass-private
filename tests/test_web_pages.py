@@ -760,6 +760,53 @@ class TestScheduleTimeline:
         assert "EST" not in page  # no staged table columns
         assert "did not fit</summary>" not in page  # not a disclosure yet
 
+    def _plan_with_split(
+        self, conn: sqlite3.Connection, *, count: int, dated: int | None
+    ) -> None:
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, planned_minutes,"
+            " overflow_count, overflow_dated, generated_at, status) VALUES ('2026-07-28',"
+            " 'America/Phoenix', 375, 330, ?, ?, '2026-07-28T05:50:00', 'accepted')",
+            (count, dated),
+        )
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, '2026-07-28T09:00:00-07:00', '2026-07-28T10:00:00-07:00',"
+            " 'work', 'Finish deck')"
+        )
+        conn.commit()
+
+    def test_the_gold_chip_is_spent_on_what_was_actually_owed(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """Migration 0033. The owner read "178 items did not fit" as 178 broken things;
+        174 of them had no date and were never candidates for that day."""
+        self._plan_with_split(conn, count=178, dated=4)
+        page = client.get("/schedule?date=2026-07-28").text
+        assert "4 due did not fit" in page
+        assert "174 undated" in page
+        assert "178 did not fit" not in page
+
+    def test_a_day_that_left_out_nothing_dated_shows_no_chip(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """The common case, and the one the old sentence got most wrong: the day held
+        everything it owed, and said so in gold as though it had failed."""
+        self._plan_with_split(conn, count=174, dated=0)
+        page = client.get("/schedule?date=2026-07-28").text
+        assert "did not fit" not in page
+        assert "174 undated" in page
+
+    def test_a_plan_from_before_the_split_keeps_its_own_sentence(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """NULL is not zero. A plan nobody measured the split on gets the sentence it was
+        written with rather than a breakdown invented for it."""
+        self._plan_with_split(conn, count=178, dated=None)
+        page = client.get("/schedule?date=2026-07-28").text
+        assert "178 did not fit" in page
+        assert "undated" not in page
+
     def test_tiny_entries_drop_their_title_to_the_title_attribute(
         self, client: TestClient, conn: sqlite3.Connection
     ) -> None:
@@ -1915,6 +1962,83 @@ class TestRecentRunErrors:
         page = client.get("/")
         assert page.status_code == 200
         assert "1 item failed triage" in panel_slice(page.text, "panel-sources")
+
+
+def _flowed(markup: str) -> str:
+    """The markup as the sentence a reader sees, not as the source wrapped it.
+
+    A capacity line built out of conditionals is authored across several source lines and
+    the browser flows it back into one. Asserting on the source spacing would make every
+    reflow of a template a test failure about nothing.
+    """
+    return re.sub(r"\s+", " ", markup)
+
+
+class TestTheTodayPanelSaysWhatDidNotFit:
+    """The sentence the owner actually complained about, on 2026-08-23: *"still says there
+    are 173 items that dont work"*. It was `overflow_count`, it was 178, and it was right —
+    386 open commitments meeting a day of 450 minutes. Read as one number it accused the
+    planner of failing; 174 of the 178 had no date and were never candidates for that day.
+    """
+
+    def _plan(
+        self, conn: sqlite3.Connection, *, count: int, dated: int | None
+    ) -> str:
+        day = date.today().isoformat()
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, planned_minutes,"
+            " overflow_count, overflow_dated, generated_at, status)"
+            " VALUES (?, 'America/Phoenix', 375, 330, ?, ?, ?, 'proposed')",
+            (day, count, dated, f"{day}T05:50:00"),
+        )
+        plan_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (?, ?, ?, 'protected', 'Finish deck')",
+            (plan_id, f"{day}T09:00:00-07:00", f"{day}T10:00:00-07:00"),
+        )
+        conn.commit()
+        return day
+
+    def test_the_two_numbers_are_named_separately(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._plan(conn, count=178, dated=4)
+        panel = _flowed(panel_slice(client.get("/").text, "panel-today"))
+
+        assert "4 due items did not fit" in panel
+        assert "174 undated items are waiting on a date" in panel
+        assert "178 item" not in panel
+
+    def test_a_day_that_held_everything_owed_says_so(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._plan(conn, count=174, dated=0)
+        panel = _flowed(panel_slice(client.get("/").text, "panel-today"))
+
+        assert "nothing due was left out" in panel
+        assert "174 undated items are waiting on a date" in panel
+        assert "did not fit" not in panel
+
+    def test_one_of_each_is_singular(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._plan(conn, count=2, dated=1)
+        panel = _flowed(panel_slice(client.get("/").text, "panel-today"))
+
+        assert "1 due item did not fit" in panel
+        assert "1 undated item is waiting on a date" in panel
+
+    def test_a_plan_from_before_the_split_keeps_its_own_sentence(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """NULL is not zero, and this repo's convention is that a probe which cannot run
+        says so rather than printing a confident number."""
+        self._plan(conn, count=178, dated=None)
+        panel = _flowed(panel_slice(client.get("/").text, "panel-today"))
+
+        assert "178 items did not fit" in panel
+        assert "undated" not in panel
 
 
 class TestAllDayReachesEveryReader:

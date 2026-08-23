@@ -663,6 +663,71 @@ def apply_estimates(
     return applied, notes
 
 
+def apply_due_dates(
+    conn: sqlite3.Connection, *, dry_run: bool = False
+) -> tuple[int, list[str]]:
+    """Carry a moved due date onto the commitment the planner and the brief actually read.
+
+    The half of the Canvas loop that was missing. `source_item` is immutable, the due date
+    is in its `body_text` and its `occurred_at`, and both are hashed — so when Canvas moves
+    a date the re-read is a `content_hash` difference on a row that cannot be updated. The
+    `assignment` table (migration 0031) was built to hold the moving half and `upsert`
+    already writes the new date there. Nothing carried it the last step, so on 2026-08-23
+    the ledger held both answers at once: `assignment:7833000` due 08-25 in one table and
+    commitment 356 due 08-23 in the other, with the planner reading the stale one and
+    scheduling work for a day that was no longer the deadline.
+
+    **Only forward from the feed, and only while the obligation is open.** A resolved or
+    dropped commitment is history and does not get rewritten. `due_at` on the commitment
+    may carry a time (`2026-05-18T13:00:00`) where the feed states a date, so the
+    comparison is on the date, and a move writes the feed's value whole — the feed is the
+    authority on when this is due, and inventing a time it did not state would be a claim
+    with no evidence behind it.
+
+    Every move emits a `claim_event`. That is what makes it findable afterwards: rule 1
+    says a generated claim links to its source, and "the deadline you were shown moved"
+    is exactly the kind of silent change that costs trust when it cannot be traced. It is
+    also the wiring pass migration 0032's own header defers to this change.
+    """
+    from backglass import claim_events
+
+    rows = conn.execute(
+        "SELECT a.id, a.title, a.due_at, c.id AS commitment_id, c.due_at AS commitment_due "
+        "FROM assignment a "
+        "JOIN commitment c ON c.source_item_id = a.source_item_id "
+        "WHERE a.user_id = ? AND a.due_at IS NOT NULL AND c.status = 'open'",
+        (USER_ID,),
+    ).fetchall()
+
+    applied = 0
+    notes: list[str] = []
+    for row in rows:
+        current = str(row["commitment_due"] or "")
+        if current[:10] == str(row["due_at"])[:10]:
+            continue  # rule 3: the dates already agree, so there is nothing to write
+        applied += 1
+        notes.append(
+            f"commitment {row['commitment_id']}: due {current[:10] or '—'} → "
+            f"{str(row['due_at'])[:10]} ({row['title'][:48]})"
+        )
+        if dry_run:
+            continue
+        conn.execute(
+            "UPDATE commitment SET due_at = ? WHERE id = ?",
+            (row["due_at"], int(row["commitment_id"])),
+        )
+        claim_events.record(
+            conn,
+            subject_table="commitment",
+            subject_id=int(row["commitment_id"]),
+            field="due_at",
+            old_value=current or None,
+            new_value=str(row["due_at"]),
+            cause="canvas:due_moved",
+        )
+    return applied, notes
+
+
 @dataclass(frozen=True)
 class AssignmentRow:
     id: int

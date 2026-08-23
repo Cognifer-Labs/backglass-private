@@ -8,6 +8,7 @@ SELECT
   b.id, b.starts_at, b.ends_at, b.kind, b.title, b.pinned, b.outcome,
   b.rollover_count, b.commitment_id, b.goal_id,
   p.id AS day_plan_id, p.capacity_minutes, p.planned_minutes, p.overflow_count,
+  p.overflow_dated,
   p.tz, p.status AS plan_status,
   -- What has to be open before the block can start: the chapters, the browser the exam
   -- will not run without, the guide it links to (migration 0031). Read through the

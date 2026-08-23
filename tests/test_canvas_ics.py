@@ -464,3 +464,26 @@ def test_an_excluded_course_contributes_no_assignment_either(
 
     assert list(feed.fetch(None)) == []
     assert feed.assignments == []
+
+
+# ── an edit upstream is news, not a fault ─────────────────────────────────────
+
+
+def test_an_assignment_says_its_upstream_record_still_moves(permissive: Boundary) -> None:
+    """The flag that stops five moved due dates from failing the run forever.
+
+    `body_text` and `occurred_at` both carry the due date and both are hashed, so a date
+    Canvas moves reads back as a differing `content_hash` on a row migration 0002 forbids
+    updating. That is true of this source and false of Gmail, and only the connector knows
+    which it is.
+    """
+    feed = FakeFeed(calendar(assignment_event()), label="asu", boundary=permissive)
+    items = list(feed.fetch(None))
+    assert items and all(item.mutable_upstream for item in items)
+
+
+def test_a_class_meeting_is_not_emitted_at_all(permissive: Boundary) -> None:
+    """Guards the flag above against being read as "canvas items are mutable": only the
+    assignments are emitted, so only assignments can carry it."""
+    feed = FakeFeed(calendar(class_meeting()), label="asu", boundary=permissive)
+    assert list(feed.fetch(None)) == []

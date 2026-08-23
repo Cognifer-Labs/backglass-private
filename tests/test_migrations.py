@@ -261,6 +261,9 @@ FROZEN_CHECKSUMS = {
     "0032_claim_event.sql": (
         "92163efcf89b0394a11b7d358cead5c79ca446143a51222536f38017af50b18b"
     ),
+    "0033_day_plan_overflow_dated.sql": (
+        "8ba4ae43b36a7be983e9d674a7d8339cc88c4a16a2d9284eab8c28316ca684f7"
+    ),
 }
 
 

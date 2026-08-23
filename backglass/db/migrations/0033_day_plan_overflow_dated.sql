@@ -1,0 +1,24 @@
+-- What "did not fit" means, split into the two things it was conflating.
+--
+-- The owner, 2026-08-23: *"still says there are 173 items that dont work"*. That number
+-- is `day_plan.overflow_count`, rendered "N items did not fit" on the Today panel and on
+-- /schedule. It was 178 that morning and it was arithmetically correct: 386 open
+-- commitments, 153 of them with no date at all and 63 overdue, against a day of roughly
+-- 450 planned minutes. No amount of better planning shrinks it.
+--
+-- Read as one number it says the planner failed at something. It did not. Two different
+-- facts were being added together:
+--
+--   * work that had a date, was owed, and still did not fit the day — a real and
+--     actionable shortfall, and small;
+--   * an undated backlog that was never a candidate for *today* in the first place.
+--
+-- So the count keeps its meaning and gains a second one beside it. `overflow_count` is
+-- unchanged — every existing reader keeps working and nothing is rewritten — and
+-- `overflow_dated` is the first of the two.
+--
+-- NULL, not 0, on the 74 rows written before this existed. A zero would be a claim about
+-- plans nobody measured, and this repo's own convention (`backglass state`) is that a
+-- probe which cannot run says `unknown` and why. The templates render the old sentence
+-- for a NULL rather than inventing a split.
+ALTER TABLE day_plan ADD COLUMN overflow_dated INTEGER;

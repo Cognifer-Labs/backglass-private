@@ -192,6 +192,10 @@ def today_panel(conn: sqlite3.Connection, settings: Settings, today: date) -> Pa
             "capacity_minutes": first["capacity_minutes"],
             "planned_minutes": first["planned_minutes"],
             "overflow_count": first["overflow_count"],
+            # NULL on every plan written before migration 0033, which is why it is passed
+            # through rather than coalesced: the template says the old sentence for a
+            # plan nobody measured the split on, instead of printing a confident zero.
+            "overflow_dated": first["overflow_dated"],
             "tz": first["tz"],
             "has_protected": any(r["kind"] == "protected" for r in rows),
             # The same distinction the planner, the brief and the schedule page draw:
