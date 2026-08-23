@@ -254,6 +254,9 @@ FROZEN_CHECKSUMS = {
     "0029_logic_check.sql": (
         "56a420e97622348f7dc5f3214dc1d5dc54b567647dbc52d035f1fb06a74c64ef"
     ),
+    "0030_loop_pass.sql": (
+        "7b907200f4d0dcd6f16edd61752110bdf9bf5cddba94bbeef66c31bd6474a894"
+    ),
 }
 
 

@@ -602,3 +602,17 @@ CREATE TABLE logic_check (
 );
 
 CREATE INDEX idx_logic_check_pending ON logic_check(user_id, status) WHERE status = 'pending';
+
+CREATE TABLE loop_pass (
+  id          INTEGER PRIMARY KEY,
+  user_id     INTEGER NOT NULL DEFAULT 1,
+  run_id      INTEGER,           -- the sync run this rode with, when there was one
+  name        TEXT    NOT NULL,  -- catchup|replan|logic|questions|notify
+  trigger     TEXT    NOT NULL,  -- clock|data|always, as the pass declared it
+  status      TEXT    NOT NULL,  -- ok|failed|skipped
+  started_at  TEXT    NOT NULL,
+  finished_at TEXT    NOT NULL,
+  detail      TEXT               -- the lines it reported, or the exception that stopped it
+);
+
+CREATE INDEX loop_pass_by_name ON loop_pass (user_id, name, id DESC);

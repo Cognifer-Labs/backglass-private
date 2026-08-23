@@ -51,6 +51,10 @@ EXTRACT_PROMPT = "extract-commitments"
 
 @dataclass
 class SyncReport:
+    #: The `run` row this report was written as, once `_record_run` has written it. The
+    #: loop's `loop_pass` rows carry it so "what else happened in that sync" is one join
+    #: rather than a guess from timestamps. None on a dry run, which writes no row.
+    run_id: int | None = None
     fetched: int = 0
     excluded: int = 0
     excluded_by_rule: dict[str, int] = field(default_factory=dict)
@@ -1130,6 +1134,7 @@ def _record_run(conn: sqlite3.Connection, report: SyncReport, started_at: str) -
         degrade_reason=report.degrade_reason,
         errors=report.errors or None,
     )
+    report.run_id = run_id
     # After the run row, never before: a call happens while the run does not yet exist,
     # so the run stamps its calls. A crash between the two leaves the calls unstamped
     # rather than lost — run_id is nullable for exactly that.

@@ -756,8 +756,47 @@ def verdicts(state: State, conn: sqlite3.Connection, settings: Settings) -> list
                        detail="; ".join(str(d) for d in drift[:2]),
                        remedy="`backglass memory` — the drift line names the field"))
 
+    out.extend(_loop_verdicts(conn))
     out.extend(_morning_verdicts(conn, settings))
     return out
+
+
+def _loop_verdicts(conn: sqlite3.Connection) -> list[Verdict]:
+    """Is every pass after the pipeline still running, and still succeeding?
+
+    Two questions, not one, because they fail differently. A pass that *raises* leaves a
+    `failed` row and is loud here. A pass that stopped being **called** leaves nothing at
+    all — no failure to find, no error to report — and that is the shape of the 2026-08-17
+    incident, where the 05:45 job had not fired for weeks and every surface read green.
+    So the verdict is phrased against the declared registry rather than against the rows:
+    a pass with no successful row is reported by name, exactly like one that is throwing.
+
+    Silent before migration 0030 by design. A ledger without the table is not a broken
+    loop, it is one that has not run since the migration, and a red line for that would
+    be a false alarm on every fresh install.
+    """
+    from backglass import loop as loop_mod
+
+    try:
+        health = loop_mod.health(conn)
+    except sqlite3.Error:
+        return []  # pre-0030 ledger: nothing recorded yet, nothing to judge
+
+    if not any(p.last_ok or p.last_status for p in health):
+        return []  # the loop has not run once since the table existed
+
+    broken = [p for p in health if p.failing]
+    never = [p for p in health if p.last_ok is None and not p.failing]
+    detail = ", ".join(
+        [f"{p.name} failing ×{p.consecutive_failures}" for p in broken]
+        + [f"{p.name} has never succeeded" for p in never]
+    )
+    return [Verdict(
+        "every loop pass is succeeding",
+        ok=not broken and not never,
+        detail=detail or f"{len(health)} passes",
+        remedy="`backglass loop` prints what each one last did and why it stopped",
+    )]
 
 
 def _morning_verdicts(

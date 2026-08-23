@@ -433,9 +433,17 @@ def sync_command(
         # They were a hundred lines of `try/except: pass` here, which is why the app-open
         # trigger ran one of these five passes and this ran all of them with nothing
         # anywhere to compare the two against.
-        for outcome in loop.run(conn, settings):
+        outcomes = loop.run(conn, settings, run_id=report.run_id)
+        for outcome in outcomes:
             for line in outcome.lines:
                 typer.echo(line)
+            if outcome.error and outcome.status == loop.FAILED:
+                # Rule 5 in full: log, surface, continue, exit non-zero. The old shape
+                # implemented "continue" and nothing else, so a detector throwing for a
+                # week read exactly like a detector with nothing to find.
+                typer.echo(f"loop pass '{outcome.name}' failed: {outcome.error}", err=True)
+        if any(o.status == loop.FAILED for o in outcomes) and not report.exit_code:
+            raise typer.Exit(1)
     raise typer.Exit(report.exit_code)
 
 

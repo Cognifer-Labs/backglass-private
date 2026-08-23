@@ -32,12 +32,15 @@ invites a `while True: sleep(1800)`, which would re-open a closed decision.
 
 from __future__ import annotations
 
+import contextlib
 import sqlite3
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 
 from backglass.config import Settings
+from backglass.db import now_iso
+from backglass.ledger import USER_ID
 
 #: What decides whether a pass has work. Declared per pass so the gate lives with the
 #: thing it gates, and so increment 5 has one place to put the skip.
@@ -169,6 +172,8 @@ def run(
     *,
     now: datetime | None = None,
     passes: Sequence[Pass] | None = None,
+    run_id: int | None = None,
+    record: bool = True,
 ) -> list[Outcome]:
     """Run the owed passes once, under the lock, and report what each one did.
 
@@ -178,9 +183,13 @@ def run(
     `SyncLocked`. Before this module that contract was two-thirds absent: catchup took the
     lock and the four passes after it, replan included, did not.
 
-    Rule 5 is the other half: a pass that raises is caught, recorded as `FAILED` with its
-    exception, and the loop continues to the next one. One dead detector must not cost
-    the notification the day needed.
+    Rule 5 is the other half, and `record` is what completes it: a pass that raises is
+    caught, written to `loop_pass` as `failed` with its exception, and the loop continues
+    to the next one. One dead detector must not cost the notification the day needed —
+    and must not be indistinguishable from a detector with nothing to find, which is what
+    the old `except Exception: pass` made it.
+
+    `record=False` is for a dry run, which reports without leaving a trace.
     """
     from backglass.plan import timezones
     from backglass.sync import SyncLocked, run_lock
@@ -191,17 +200,145 @@ def run(
 
     try:
         with run_lock(settings):
-            return [_one(p, conn, settings, now) for p in selected]
+            return [_one(p, conn, settings, now, run_id, record) for p in selected]
     except SyncLocked as locked:
-        # Not silence: the whole loop skipping is a fact, and increment 2 records it.
-        # A run that skipped and a run that had nothing to do must not look the same.
-        return [Outcome(p.name, SKIPPED, error=str(locked)) for p in selected]
+        # Not silence: the whole loop skipping is a fact. A run that skipped because
+        # another process was already doing this work and a run that had nothing to do
+        # are different things, and only one of them means the loop is healthy.
+        #
+        # Recorded outside the lock, deliberately — these rows exist precisely because
+        # the lock could not be taken, and a write that waited for it would deadlock the
+        # explanation behind the thing it is explaining. `loop_pass` is append-only and
+        # touched by nothing else, so it is not what the lock is protecting.
+        at = _stamp(now)
+        outcomes = [Outcome(p.name, SKIPPED, error=str(locked)) for p in selected]
+        if record:
+            for entry, outcome in zip(selected, outcomes, strict=True):
+                _write(conn, entry, outcome, run_id, at, at)
+        return outcomes
 
 
 def _one(
-    entry: Pass, conn: sqlite3.Connection, settings: Settings, now: datetime
+    entry: Pass,
+    conn: sqlite3.Connection,
+    settings: Settings,
+    now: datetime,
+    run_id: int | None,
+    record: bool,
 ) -> Outcome:
+    #: Wall clock, not the injected `now`: `started_at`/`finished_at` answer "how long did
+    #: this take", and a frozen `now` would make every pass appear instantaneous. The
+    #: injected clock decides *what the passes do*; it does not decide how long they took.
+    started = now_iso()
     try:
-        return Outcome(entry.name, OK, tuple(entry.fn(conn, settings, now)))
+        outcome = Outcome(entry.name, OK, tuple(entry.fn(conn, settings, now)))
     except Exception as exc:  # noqa: BLE001 — rule 5: degrade, never block
-        return Outcome(entry.name, FAILED, error=f"{type(exc).__name__}: {exc}")
+        outcome = Outcome(entry.name, FAILED, error=f"{type(exc).__name__}: {exc}")
+    if record:
+        _write(conn, entry, outcome, run_id, started, now_iso())
+    return outcome
+
+
+def _write(
+    conn: sqlite3.Connection,
+    entry: Pass,
+    outcome: Outcome,
+    run_id: int | None,
+    started: str,
+    finished: str,
+) -> None:
+    """One row, including for the quiet passes.
+
+    The quiet ones are the point. A table holding only failures cannot answer "when did
+    this last run at all", which is the question `state` and `heartbeat` ask — a pass that
+    stopped being *called* leaves no failure to find, and that is exactly how the 05:45
+    job went unnoticed for weeks (2026-08-17 lesson).
+
+    Best-effort: a recording failure must not turn a healthy loop into a broken one. The
+    row is the observation, not the work.
+    """
+    detail = outcome.error or ("\n".join(outcome.lines) or None)
+    with contextlib.suppress(sqlite3.Error):
+        conn.execute(
+            "INSERT INTO loop_pass"
+            " (user_id, run_id, name, trigger, status, started_at, finished_at, detail)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (USER_ID, run_id, entry.name, entry.trigger, outcome.status,
+             started, finished, detail),
+        )
+
+
+def _stamp(now: datetime) -> str:
+    return now.astimezone(UTC).replace(microsecond=0).isoformat()
+
+
+# ── what the loop's own health looks like ─────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class PassHealth:
+    """One pass as a reader sees it: when it last succeeded, and what is wrong now.
+
+    `last_ok` is None for a pass that has never succeeded — which on a fresh install is
+    every one of them, and is why the readers below phrase their verdict against a grace
+    window rather than against "has it ever run".
+    """
+
+    name: str
+    last_ok: str | None
+    last_status: str | None
+    last_error: str | None
+    consecutive_failures: int
+
+    @property
+    def failing(self) -> bool:
+        return self.consecutive_failures > 0
+
+
+def health(conn: sqlite3.Connection) -> list[PassHealth]:
+    """Every declared pass, in registry order, with its last outcome.
+
+    Reads the declared list rather than the distinct names in the table, so a pass that
+    has never run once appears with `last_ok = None` instead of vanishing. A reader that
+    enumerates only what the table holds cannot see the pass that was never called, and
+    that is the failure this whole increment is about.
+    """
+    out: list[PassHealth] = []
+    for entry in PASSES:
+        rows = conn.execute(
+            "SELECT status, finished_at, detail FROM loop_pass"
+            " WHERE user_id = ? AND name = ? ORDER BY id DESC LIMIT 200",
+            (USER_ID, entry.name),
+        ).fetchall()
+        last_ok = next((str(r["finished_at"]) for r in rows if r["status"] == OK), None)
+        streak = 0
+        for row in rows:
+            # A skip is neither success nor failure — the pass was not attempted, so it
+            # neither proves health nor breaks a failing streak. Counting it as a failure
+            # would alarm on a contended lock, which is the normal case under launchd.
+            if row["status"] == SKIPPED:
+                continue
+            if row["status"] != FAILED:
+                break
+            streak += 1
+        out.append(
+            PassHealth(
+                name=entry.name,
+                last_ok=last_ok,
+                last_status=str(rows[0]["status"]) if rows else None,
+                last_error=str(rows[0]["detail"]) if rows and rows[0]["detail"] else None,
+                consecutive_failures=streak,
+            )
+        )
+    return out
+
+
+def failing(conn: sqlite3.Connection) -> list[PassHealth]:
+    return [p for p in health(conn) if p.failing]
+
+
+def recent(conn: sqlite3.Connection, *, limit: int = 20) -> list[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM loop_pass WHERE user_id = ? ORDER BY id DESC LIMIT ?",
+        (USER_ID, limit),
+    ).fetchall()

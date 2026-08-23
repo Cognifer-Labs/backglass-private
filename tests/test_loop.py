@@ -312,3 +312,250 @@ def _reported_done(conn: sqlite3.Connection, what: str) -> int:
         (USER_ID, what, source_id, now_iso()),
     )
     return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+
+class TestTheRecord:
+    """Rule 5's missing half: a pass that failed leaves a row, and so does a quiet one.
+
+    The quiet rows are not noise. A pass that *stopped being called* leaves no failure
+    to find — that is exactly how the 05:45 job went unnoticed for weeks — so the record
+    has to answer "when did this last run at all", not only "what went wrong".
+    """
+
+    def test_every_pass_leaves_a_row_including_the_quiet_ones(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        ran: list[str] = []
+        loop.run(
+            conn,
+            sett,
+            now=BEFORE_DAWN,
+            passes=[a_pass("quiet", ran), a_pass("loud", ran, lines=["did a thing"])],
+        )
+        rows = {r["name"]: r for r in loop.recent(conn)}
+        assert set(rows) == {"quiet", "loud"}
+        assert rows["quiet"]["status"] == loop.OK and rows["quiet"]["detail"] is None
+        assert rows["loud"]["detail"] == "did a thing"
+
+    def test_a_failure_writes_its_exception_into_the_row(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_boom("broken", [])])
+        row = loop.recent(conn)[0]
+        assert row["status"] == loop.FAILED
+        assert row["detail"] == "RuntimeError: detector is down"
+
+    def test_the_row_carries_the_trigger_the_pass_declared(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        # So a later reader can ask "which clock-driven pass is dead" without importing
+        # the registry and re-deriving it.
+        clock = loop.Pass("c", loop.CLOCK, spends=False, fn=lambda *_a: [])
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=[clock])
+        assert loop.recent(conn)[0]["trigger"] == loop.CLOCK
+
+    def test_a_lock_skip_is_written_down_rather_than_vanishing(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def locked(_settings: Settings):  # type: ignore[no-untyped-def]
+            raise SyncLocked("another sync is already running (pid 42)")
+
+        monkeypatch.setattr(loop_run_lock_target(), "run_lock", locked)
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_pass("one", [])])
+
+        row = loop.recent(conn)[0]
+        assert row["status"] == loop.SKIPPED and "pid 42" in str(row["detail"])
+
+    def test_a_dry_run_reports_without_leaving_a_trace(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        outcomes = loop.run(
+            conn, sett, now=BEFORE_DAWN, passes=[a_pass("x", [])], record=False
+        )
+        assert outcomes[0].status == loop.OK
+        assert loop.recent(conn) == []
+
+    def test_the_row_carries_the_sync_run_it_rode_with(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_pass("x", [])], run_id=77)
+        assert loop.recent(conn)[0]["run_id"] == 77
+
+    def test_a_loop_outside_a_sync_records_no_run(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        # The app-open trigger belongs to no sync run, which is why the column is
+        # nullable rather than a foreign key that would refuse the row.
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_pass("x", [])])
+        assert loop.recent(conn)[0]["run_id"] is None
+
+    def test_recording_failure_does_not_break_a_healthy_loop(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The row is the observation, not the work. A ledger that cannot take the
+        # observation must not turn a working pass into a reported failure.
+        conn.execute("DROP TABLE loop_pass")
+        outcomes = loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_pass("x", [])])
+        assert outcomes[0].status == loop.OK
+
+
+class TestHealth:
+    def test_a_pass_that_has_never_run_is_named_rather_than_absent(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """The whole point. A reader that enumerates the rows cannot see the pass nobody
+        called, and that is the failure this increment exists for."""
+        assert [p.name for p in loop.health(conn)] == list(loop.NAMES)
+        assert all(p.last_ok is None and p.last_status is None for p in loop.health(conn))
+
+    def test_last_ok_is_the_last_success_not_the_last_attempt(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        real = loop.PASSES[2]  # logic — a declared name, so health() looks for it
+        good = loop.Pass(real.name, real.trigger, spends=False, fn=lambda *_a: [])
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=[good])
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_boom(real.name, [])])
+
+        entry = next(p for p in loop.health(conn) if p.name == real.name)
+        assert entry.last_ok is not None       # the success is still findable
+        assert entry.last_status == loop.FAILED  # and the current state is honest
+        assert entry.consecutive_failures == 1
+
+    def test_a_success_clears_the_failing_streak(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        real = loop.PASSES[2]
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_boom(real.name, [])])
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_boom(real.name, [])])
+        assert loop.failing(conn)[0].consecutive_failures == 2
+
+        good = loop.Pass(real.name, real.trigger, spends=False, fn=lambda *_a: [])
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=[good])
+        assert loop.failing(conn) == []
+
+    def test_a_contended_lock_is_not_counted_as_a_failure(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A skip means the pass was not attempted, so it neither proves health nor
+        breaks a streak. Counting it as a failure would alarm on the normal case: two
+        launchd firings overlapping a long backfill."""
+        real = loop.PASSES[2]
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_boom(real.name, [])])
+
+        def locked(_settings: Settings):  # type: ignore[no-untyped-def]
+            raise SyncLocked("another sync is already running (pid 42)")
+
+        monkeypatch.setattr(loop_run_lock_target(), "run_lock", locked)
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_pass(real.name, [])])
+
+        entry = next(p for p in loop.health(conn) if p.name == real.name)
+        assert entry.consecutive_failures == 1  # the skip neither added nor cleared
+
+
+class TestTheStateVerdict:
+    """`backglass state` is where the owner is told to look first, so it is where a dead
+    pass has to appear. Two failure shapes, and the second is the one that hides."""
+
+    def _verdict(self, conn: sqlite3.Connection, sett: Settings):  # type: ignore[no-untyped-def]
+        from backglass import state as state_mod
+
+        checks = state_mod.verdicts(state_mod.collect(conn, sett), conn, sett)
+        return next((v for v in checks if v.name == "every loop pass is succeeding"), None)
+
+    def test_silent_until_the_loop_has_run_once(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        # A ledger where the loop has not run since the migration is not a broken loop,
+        # and a red line for it would be a false alarm on every fresh install.
+        assert self._verdict(conn, sett) is None
+
+    def test_a_failing_pass_is_named(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        real = loop.PASSES[2]
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_boom(real.name, [])])
+        verdict = self._verdict(conn, sett)
+        assert verdict is not None and verdict.ok is False
+        assert real.name in verdict.detail
+
+    def test_a_pass_that_was_never_called_is_named_too(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """The one that hides. A pass nobody calls leaves no failure to find — the 05:45
+        job was dead for weeks and every surface read green (2026-08-17 lesson)."""
+        real = loop.PASSES[2]
+        good = loop.Pass(real.name, real.trigger, spends=False, fn=lambda *_a: [])
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=[good])
+
+        verdict = self._verdict(conn, sett)
+        assert verdict is not None and verdict.ok is False
+        assert "notify has never succeeded" in verdict.detail
+
+    def test_green_once_every_pass_has_succeeded(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        every = [
+            loop.Pass(p.name, p.trigger, spends=False, fn=lambda *_a: [])
+            for p in loop.PASSES
+        ]
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=every)
+        verdict = self._verdict(conn, sett)
+        assert verdict is not None and verdict.ok is True
+
+
+class TestTheExitCode:
+    """"Log, surface, continue, exit non-zero" — the last clause was never implemented.
+
+    launchd is the only thing watching this command, and a zero exit is how it decides
+    the run was fine. A loop pass throwing for a week exited 0 every time.
+    """
+
+    def _sync(  # type: ignore[no-untyped-def]
+        self,
+        conn: sqlite3.Connection,
+        sett: Settings,
+        monkeypatch: pytest.MonkeyPatch,
+        outcomes: list[loop.Outcome],
+    ):
+        from typer.testing import CliRunner
+
+        import backglass.__main__ as cli
+        from backglass.sync import SyncReport
+
+        monkeypatch.setattr(cli, "get_settings", lambda: sett)
+        monkeypatch.setattr(cli, "_open", lambda _s: conn)
+        monkeypatch.setattr(cli, "migrate", lambda _c: [])
+        monkeypatch.setattr(cli, "_all_connectors", lambda _c, _s: ["a source"])
+        monkeypatch.setattr(cli, "_contacts_source", lambda _c, _s: None)
+        monkeypatch.setattr(cli, "_build_model_client", lambda _s: None)
+        monkeypatch.setattr(cli, "sync", lambda *_a, **_k: SyncReport())
+        monkeypatch.setattr(cli.loop, "run", lambda *_a, **_k: outcomes)
+        return CliRunner().invoke(cli.app, ["sync"])
+
+    def test_a_failed_pass_makes_the_run_fail(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = self._sync(
+            conn, sett, monkeypatch,
+            [loop.Outcome("logic", loop.FAILED, error="OSError: disk")],
+        )
+        assert result.exit_code == 1, result.output
+        assert "loop pass 'logic' failed: OSError: disk" in result.output
+
+    def test_a_quiet_loop_still_exits_clean(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = self._sync(conn, sett, monkeypatch, [loop.Outcome("logic", loop.OK)])
+        assert result.exit_code == 0, result.output
+
+    def test_a_contended_lock_is_not_a_failure(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Two launchd firings overlapping a long backfill is the normal case, not a
+        # broken machine. Exiting non-zero on it would train the owner to ignore the one
+        # signal this increment exists to give them.
+        result = self._sync(
+            conn, sett, monkeypatch,
+            [loop.Outcome("logic", loop.SKIPPED, error="another sync is already running")],
+        )
+        assert result.exit_code == 0, result.output
