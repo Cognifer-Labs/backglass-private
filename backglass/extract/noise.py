@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass, field
+from typing import Any
 
 from backglass.config import Settings
 from backglass.db import now_iso, query
@@ -257,3 +258,101 @@ def promote(
         )
         written += cursor.rowcount
     return written
+
+
+# ── the review surface, off the terminal ──────────────────────────────────────
+# `candidates` has always been read-only and `promote` has always been separate, which is
+# right — but the only caller of either was the CLI, so a sender that has cost the
+# expensive pass twenty-one reads and produced nothing was invisible unless the owner
+# typed a command. The alternative on offer was `noise_auto_promote`, a setting that
+# silently stops reading a sender on the machine's own judgement.
+#
+# Asking is strictly better than that flag. It costs the owner one click per sender and it
+# leaves a decision row saying who decided; the flag saves the click and makes "why did I
+# stop seeing mail from my landlord" unanswerable. So the flag stays off by default and
+# is not the thing being proposed here.
+
+#: Options, matched exactly by the answer hook like every other question kind.
+NOISE_STOP = "Stop reading this sender"
+NOISE_KEEP = "Keep reading it"
+
+#: Candidates asked about per refresh. Five, like the other batched kinds. On the owner's
+#: ledger there are 21 waiting, and twenty-one cards in one morning is a queue nobody
+#: finishes — which is the failure the batching exists to avoid, not a smaller version
+#: of it.
+NOISE_BATCH_LIMIT = 5
+
+
+def questions_for(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    *,
+    limit: int = NOISE_BATCH_LIMIT,
+) -> list[Any]:
+    """Promotable senders as cards, strongest evidence first.
+
+    The card shows which *kind* of evidence it is, because they mean different things and
+    `Candidate` keeps them apart for exactly this moment: a model drop is triage saying
+    "this looks like noise", and a barren bulk keep is triage saying "keep it" and the
+    expensive pass then finding nothing in it. The second is the stronger case and the
+    first is the one a person should look at twice.
+
+    A sample subject line rides along for the same reason it exists on `Candidate`:
+    `e.salliemae.com` looks like junk in a list and carries a real loan deadline once a
+    year.
+    """
+    from backglass.questions import Question
+
+    found = sorted(
+        candidates(conn, settings, min_evidence=settings.noise_promote_after),
+        key=lambda c: (-c.barren_bulk_keeps, -c.evidence_count, c.value),
+    )
+    out: list[Any] = []
+    for c in found[:limit]:
+        evidence = f"{c.model_drops} triaged out"
+        if c.barren_bulk_keeps:
+            evidence += f", {c.barren_bulk_keeps} read in full and empty"
+        detail = f"{c.evidence_count} messages · {evidence}"
+        if c.first_seen or c.last_seen:
+            detail += f"\nSeen {c.first_seen or '?'} → {c.last_seen or '?'}"
+        if c.sample_title:
+            detail += f"\nMost recent subject: {c.sample_title}"
+        if c.sample_reason:
+            detail += f"\nWhy triage dropped it: {c.sample_reason}"
+        out.append(
+            Question(
+                kind="noise",
+                subject_key=f"{c.kind}:{c.value}",
+                question=(
+                    f"{c.value} has sent {c.evidence_count} messages and produced "
+                    "nothing. Stop reading it?"
+                ),
+                detail=detail,
+                options=[NOISE_STOP, NOISE_KEEP],
+            )
+        )
+    return out
+
+
+def promote_value(
+    conn: sqlite3.Connection, settings: Settings, kind: str, value: str, *, by: str
+) -> int:
+    """Promote one candidate by name, re-derived from the evidence at answer time.
+
+    Re-derived rather than carried on the question, because the counts move: a sender
+    asked about on Monday may have produced something real by Thursday, and promoting a
+    stale `Candidate` would record evidence that is no longer true — and, worse, stop
+    reading a sender that has since earned its place. A value that is no longer a
+    candidate promotes nothing and says so by returning 0.
+    """
+    match = next(
+        (
+            c
+            for c in candidates(conn, settings, min_evidence=settings.noise_promote_after)
+            if c.kind == kind and c.value == value
+        ),
+        None,
+    )
+    if match is None:
+        return 0
+    return promote(conn, [match], by=by)

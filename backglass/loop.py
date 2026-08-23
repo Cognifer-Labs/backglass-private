@@ -190,6 +190,31 @@ def _duplicates(conn: sqlite3.Connection, settings: Settings, now: datetime) -> 
     return [f"{asked} duplicate cluster(s) to settle — /ask"]
 
 
+def _noise(conn: sqlite3.Connection, settings: Settings, now: datetime) -> list[str]:
+    """Senders that have cost the expensive pass a lot and produced nothing, as cards.
+
+    Gated daily for the same shape of reason as `duplicates`, at a tenth of the cost:
+    `noise.candidates` mines the whole triage history and takes ~1.2 s on the live ledger,
+    which is not a per-half-hour price for a queue whose cards persist until answered.
+
+    This is the alternative to `noise_auto_promote`, and it is why that setting stays off.
+    The flag saves the owner a click and makes "why did I stop seeing mail from my
+    landlord" unanswerable; a card costs one click and leaves a decision row naming who
+    decided. Twenty-one senders are waiting on the live ledger and none of them has ever
+    been reachable except by typing a command.
+    """
+    from backglass import questions as questions_mod
+    from backglass.extract import noise as noise_mod
+
+    if _ran_ok_today(conn, "noise", now):
+        raise Skip("already ran today; mining the triage history costs ~1.2s")
+
+    asked = questions_mod.record(conn, noise_mod.questions_for(conn, settings))
+    if not asked:
+        return []
+    return [f"{asked} sender(s) to decide about — /ask"]
+
+
 def _ran_ok_today(conn: sqlite3.Connection, name: str, now: datetime) -> bool:
     """Has this pass already succeeded on the owner's current local day?
 
@@ -222,13 +247,16 @@ def _ran_ok_today(conn: sqlite3.Connection, name: str, now: datetime) -> bool:
 #:   5. duplicates after questions rather than inside `detect`, because it is gated to
 #:      once a day and the others are not — see `_duplicates` for the measurement that
 #:      made the gate necessary.
-#:   6. notify last, so it can speak about anything the passes above just produced.
+#:   6. noise, beside duplicates: another queue that existed only behind a command, and
+#:      gated the same way for the same reason.
+#:   7. notify last, so it can speak about anything the passes above just produced.
 PASSES: tuple[Pass, ...] = (
     Pass("catchup", CLOCK, spends=True, fn=_catchup),
     Pass("replan", CLOCK, spends=True, fn=_replan),
     Pass("logic", DATA, spends=False, fn=_logic),
     Pass("questions", DATA, spends=False, fn=_questions),
     Pass("duplicates", DATA, spends=False, fn=_duplicates),
+    Pass("noise", DATA, spends=False, fn=_noise),
     Pass("notify", CLOCK, spends=False, fn=_notify),
 )
 

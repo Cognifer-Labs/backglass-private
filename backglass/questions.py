@@ -634,6 +634,7 @@ def answer(
     _apply_relevance_answer(conn, row, option)
     _apply_roadmap_answer(conn, settings, row, option)
     _apply_duplicate_answer(conn, row, option)
+    _apply_noise_answer(conn, settings, row, option)
 
 
 def _apply_roadmap_answer(
@@ -663,6 +664,29 @@ def _apply_roadmap_answer(
     instantiate_mod.instantiate(
         conn, settings, preset, timezones.local_now(settings).date()
     )
+
+
+def _apply_noise_answer(
+    conn: sqlite3.Connection, settings: Settings, row: Any, option: str | None
+) -> None:
+    """"Stop reading this sender" promotes it; anything else changes nothing.
+
+    "Keep reading it" writes no row on purpose. The ask-once key is what makes it
+    durable — an answered question is never re-asked — and a `learned_noise` row saying
+    "not noise" would be a second store for the same fact that could disagree with the
+    first. The decision row records what the owner said either way.
+    """
+    from backglass.extract.noise import NOISE_STOP
+
+    if str(row["kind"]) != "noise" or option != NOISE_STOP:
+        return
+    from backglass.extract import noise as noise_mod
+
+    kind, _, value = str(row["subject_key"]).partition(":")
+    if not kind or not value:
+        return
+    with contextlib.suppress(sqlite3.Error):
+        noise_mod.promote_value(conn, settings, kind, value, by="owner")
 
 
 def _apply_duplicate_answer(

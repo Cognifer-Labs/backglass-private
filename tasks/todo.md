@@ -367,12 +367,56 @@ the literal shape of the owner's complaint.
       "this is the same plan twice". The CLI already says this is resolver-phase policy
       rather than report policy, and inventing it inside a review card would be deciding
       it by accident. Left as its own increment.
-- [ ] 7. **Owner question, not a flip.** `noise_auto_promote` is off by default and domain
-      candidates are CLI-only by design. Raised as a question on the page; the default is
-      not changed silently.
-- [ ] 8. **Triage efficiency: measure before touching.** Batch triage and parallel passes
-      already exist. Read `model_call` for where latency and money actually go, and only
-      then decide whether anything in triage is worth reworking. No rewrite on a hunch.
+- [x] 7. **Owner question, not a flip** — and the premise was half wrong, found by
+      looking. The plan said domain candidates were the CLI-only ones. On the live ledger
+      there are **zero** domain candidates and **21 address** candidates, and those were
+      equally unreachable: `noise.candidates` had exactly one caller, the CLI.
+      landed: `noise.questions_for` (five per refresh, strongest evidence first, the card
+      naming which *kind* of evidence it is — a model drop and a keep the expensive pass
+      then proved empty are different observations), a daily-gated `noise` loop pass
+      (`candidates` mines the whole triage history: ~1.2 s), and `promote_value`, which
+      re-derives the candidate at answer time so a sender that earned its place between
+      the asking and the answering is not silenced on stale evidence.
+      `noise_auto_promote` stays off, and a test asserts it. The card is why: the flag
+      saves one click and makes "why did I stop seeing mail from my landlord"
+      unanswerable, while a card leaves a decision row naming who decided. "Keep reading
+      it" deliberately writes no row — ask-once is what makes it durable, and a
+      `learned_noise` row meaning "not noise" would be a second store for the same fact
+      that can disagree with the first. 6 tests.
+- [x] 8. **Triage efficiency: measured, and it is the wrong target.** `model_call` over
+      the last 14 days on the live ledger:
+
+          tier          calls    imputed $   total_s
+          extract        2909      336.35     69620
+          triage          396       19.59     14486
+          triage_batch     54        9.77      5038
+          recheck          43        3.31      1142
+          relevance        16        2.65       516
+
+      Triage is **5% of the spend and 17% of the model latency**. Reworking it would be
+      optimising the wrong thing, and the batch path and the parallel pass it would
+      target already exist. No rewrite; the measurement is the deliverable.
+
+      **What the measurement found instead, and it matters more than the efficiency
+      question.** Last 7 days, per model:
+
+          nvidia/nemotron-nano-9b-v2:free          310 calls,  67 ok   (22%)
+          nvidia/nemotron-3-super-120b-a12b:free   107 calls,  51 ok   (48%)
+          sonnet                                   249 calls, 244 ok   (98%)
+          haiku                                    120 calls, 120 ok  (100%)
+
+      The two free OpenRouter models carry the triage and extract tiers, and since the
+      2026-08-21 switch the triage tier has failed **78% of its calls** — 142 errors on
+      08-21, 87 on 08-22. Rule 5 is working exactly as designed, which is why nothing
+      complained: failed items stay pending, the next sync retries them, and the backlog
+      is genuinely zero (untriaged 0, kept-not-extracted 0). The cost is landing on
+      latency and retries rather than on correctness.
+
+      Not fixed here, because it is a model-choice decision and the owner's to make: the
+      remedy is to re-measure with the shootout script and move the triage tier off
+      `nemotron-nano-9b-v2:free`. Stated rather than quietly absorbed — a tier at 22%
+      success is one bad day from being a real backlog, and "autonomous" and "retrying
+      four times to get one answer" are not the same thing.
 
 ### Blocker found on 2026-08-23: this branch's migration numbers collide
 

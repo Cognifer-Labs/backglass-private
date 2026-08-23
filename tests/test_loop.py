@@ -56,7 +56,7 @@ def a_boom(name: str, ran: list[str]) -> loop.Pass:
 class TestRegistry:
     def test_the_passes_are_declared_in_the_order_they_run(self) -> None:
         assert loop.NAMES == (
-            "catchup", "replan", "logic", "questions", "duplicates", "notify",
+            "catchup", "replan", "logic", "questions", "duplicates", "noise", "notify",
         )
 
     def test_logic_runs_before_questions_so_a_mooted_question_is_never_asked(self) -> None:
@@ -1073,3 +1073,138 @@ class TestTheCardOnThePage:
         }
         assert statuses[min(ids)] == "open"
         assert all(statuses[i] == "superseded" for i in ids if i != min(ids))
+
+
+class TestNoiseLeavesTheTerminal:
+    """Twenty-one senders on the live ledger, reachable only by typing a command.
+
+    The alternative already in the codebase is `noise_auto_promote`, which stops reading
+    a sender on the machine's own judgement. This increment does not turn that on: it
+    makes the click cheap enough that the flag has nothing left to offer. A card leaves a
+    decision row naming who decided; the flag makes "why did I stop seeing mail from my
+    landlord" unanswerable.
+    """
+
+    def _barren_sender(self, conn: sqlite3.Connection, address: str, n: int = 6) -> None:
+        for i in range(n):
+            conn.execute(
+                "INSERT INTO source_item (user_id, source, external_id, fetched_at,"
+                " occurred_at, author, title, body_text, content_hash, triage_verdict,"
+                " triage_reason) VALUES (?, 'apple-mail', ?, '2026-08-10T00:00:00Z',"
+                " ?, ?, ?, 'body', ?, 'drop', 'model: marketing blast')",
+                (USER_ID, f"n-{address}-{i}", f"2026-08-{10 + i:02d}T09:00:00-07:00",
+                 address, f"Deal {i}", f"hn-{address}-{i}"),
+            )
+
+    def test_a_barren_sender_becomes_a_card(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        from backglass import questions as questions_mod
+        from backglass.extract import noise as noise_mod
+
+        self._barren_sender(conn, "deals@shop.example")
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=loop.by_name(["noise"]))
+
+        cards = [q for q in questions_mod.open_questions(conn) if q["kind"] == "noise"]
+        assert len(cards) == 1
+        assert "deals@shop.example" in cards[0]["question"]
+        assert cards[0]["options"] == [noise_mod.NOISE_STOP, noise_mod.NOISE_KEEP]
+
+    def test_stopping_a_sender_promotes_it(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        from backglass import questions as questions_mod
+        from backglass.extract import noise as noise_mod
+
+        self._barren_sender(conn, "deals@shop.example")
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=loop.by_name(["noise"]))
+        qid = int(
+            conn.execute(
+                "SELECT id FROM open_question WHERE kind = 'noise'"
+            ).fetchone()["id"]
+        )
+        questions_mod.answer(conn, sett, qid, option=noise_mod.NOISE_STOP)
+
+        rows = conn.execute(
+            "SELECT value, promoted_by FROM learned_noise WHERE user_id = ?", (USER_ID,)
+        ).fetchall()
+        assert [(str(r["value"]), str(r["promoted_by"])) for r in rows] == [
+            ("deals@shop.example", "owner")
+        ]
+
+    def test_keeping_it_writes_no_row_and_is_never_asked_again(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """Ask-once is what makes "keep reading it" durable. A `learned_noise` row saying
+        "not noise" would be a second store for the same fact that can disagree with the
+        first."""
+        from backglass import questions as questions_mod
+        from backglass.extract import noise as noise_mod
+
+        self._barren_sender(conn, "deals@shop.example")
+        only = loop.by_name(["noise"])
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=only)
+        qid = int(
+            conn.execute(
+                "SELECT id FROM open_question WHERE kind = 'noise'"
+            ).fetchone()["id"]
+        )
+        questions_mod.answer(conn, sett, qid, option=noise_mod.NOISE_KEEP)
+
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM learned_noise"
+        ).fetchone()["n"] == 0
+
+        tomorrow = BEFORE_DAWN.replace(day=BEFORE_DAWN.day + 1)
+        loop.run(conn, sett, now=tomorrow, passes=only)
+        assert [q for q in questions_mod.open_questions(conn) if q["kind"] == "noise"] == []
+
+    def test_a_sender_that_earned_its_place_since_the_card_is_not_promoted(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """The counts move between asking and answering. Promoting the `Candidate` the
+        card was built from would record evidence that is no longer true and stop reading
+        a sender that has since produced something real."""
+        from backglass import questions as questions_mod
+        from backglass.extract import noise as noise_mod
+
+        self._barren_sender(conn, "deals@shop.example")
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=loop.by_name(["noise"]))
+        qid = int(
+            conn.execute(
+                "SELECT id FROM open_question WHERE kind = 'noise'"
+            ).fetchone()["id"]
+        )
+
+        # It produced a real commitment after the card was raised.
+        item = int(
+            conn.execute(
+                "SELECT id FROM source_item WHERE author = ? LIMIT 1",
+                ("deals@shop.example",),
+            ).fetchone()["id"]
+        )
+        conn.execute(
+            "INSERT INTO commitment (user_id, direction, what, confidence, status,"
+            " estimated_minutes, estimate_source, source_item_id, created_at)"
+            " VALUES (?, 'i_owe', 'Return the mattress', 0.9, 'open', 30, 'manual', ?, ?)",
+            (USER_ID, item, now_iso()),
+        )
+
+        questions_mod.answer(conn, sett, qid, option=noise_mod.NOISE_STOP)
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM learned_noise"
+        ).fetchone()["n"] == 0
+
+    def test_it_runs_once_a_day(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        only = loop.by_name(["noise"])
+        assert loop.run(conn, sett, now=BEFORE_DAWN, passes=only)[0].status == loop.OK
+        later = BEFORE_DAWN.replace(hour=14)
+        assert loop.run(conn, sett, now=later, passes=only)[0].status == loop.SKIPPED
+
+    def test_the_auto_promote_flag_is_still_off(self, sett: Settings) -> None:
+        # The point of the card is that the flag has nothing left to offer. If a future
+        # change flips this default, mail stops arriving on the machine's judgement and
+        # nothing on any page says which sender or why.
+        assert sett.noise_auto_promote is False
