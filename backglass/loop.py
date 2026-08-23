@@ -342,3 +342,17 @@ def recent(conn: sqlite3.Connection, *, limit: int = 20) -> list[sqlite3.Row]:
         "SELECT * FROM loop_pass WHERE user_id = ? ORDER BY id DESC LIMIT ?",
         (USER_ID, limit),
     ).fetchall()
+
+
+def by_name(names: Sequence[str]) -> list[Pass]:
+    """The passes these names refer to, in registry order.
+
+    Raises on an unknown name rather than running the rest: `--only notifiy` silently
+    doing nothing is worse than an error, because the owner reads "no output" as "nothing
+    to do" and walks away believing the pass ran.
+    """
+    wanted = set(names)
+    unknown = sorted(wanted - set(NAMES))
+    if unknown:
+        raise KeyError(f"unknown pass(es): {', '.join(unknown)}; known: {', '.join(NAMES)}")
+    return [p for p in PASSES if p.name in wanted]

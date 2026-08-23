@@ -559,3 +559,135 @@ class TestTheExitCode:
             [loop.Outcome("logic", loop.SKIPPED, error="another sync is already running")],
         )
         assert result.exit_code == 0, result.output
+
+
+class TestTheCommand:
+    """`backglass loop` — one-shot, never a scheduler.
+
+    It exists for the two cases the automatic triggers do not cover: reading where the
+    loop stands, and nudging it after changing something the passes read. Everything
+    else in goal 3 is about the owner not needing it.
+    """
+
+    def _run(  # type: ignore[no-untyped-def]
+        self,
+        conn: sqlite3.Connection,
+        sett: Settings,
+        monkeypatch: pytest.MonkeyPatch,
+        *args: str,
+    ):
+        from typer.testing import CliRunner
+
+        import backglass.__main__ as cli
+
+        monkeypatch.setattr(cli, "get_settings", lambda: sett)
+        monkeypatch.setattr(cli, "_open", lambda _s: conn)
+        monkeypatch.setattr(cli, "migrate", lambda _c: [])
+        return CliRunner().invoke(cli.app, ["loop", *args])
+
+    def test_it_runs_the_loop_and_reports(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from backglass import search
+
+        monkeypatch.setattr(search, "index", lambda *_a, **_k: 0)
+        result = self._run(conn, sett, monkeypatch)
+        assert result.exit_code == 0, result.output
+        # Every pass left a row, which is what makes the loop readable afterwards.
+        assert {r["name"] for r in loop.recent(conn)} == set(loop.NAMES)
+
+    def test_only_runs_the_named_passes(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        result = self._run(conn, sett, monkeypatch, "--only", "logic", "--only", "questions")
+        assert result.exit_code == 0, result.output
+        assert {r["name"] for r in loop.recent(conn)} == {"logic", "questions"}
+
+    def test_a_misspelled_pass_is_an_error_not_a_silent_no_op(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Silence after `--only notifiy` reads as "nothing to do" and the owner walks
+        # away believing the pass ran.
+        result = self._run(conn, sett, monkeypatch, "--only", "notifiy")
+        assert result.exit_code == 2
+        assert "unknown pass" in result.output and "notify" in result.output
+        assert loop.recent(conn) == []
+
+    def test_a_failing_pass_makes_the_command_fail(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import backglass.__main__ as cli
+
+        monkeypatch.setattr(
+            cli.loop, "run",
+            lambda *_a, **_k: [loop.Outcome("logic", loop.FAILED, error="OSError: disk")],
+        )
+        result = self._run(conn, sett, monkeypatch)
+        assert result.exit_code == 1
+        assert "loop pass 'logic' failed" in result.output
+
+    def test_a_quiet_loop_says_so_rather_than_printing_nothing(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Someone typed this and is waiting on it. A blank terminal is not an answer.
+        import backglass.__main__ as cli
+
+        monkeypatch.setattr(cli.loop, "run", lambda *_a, **_k: [loop.Outcome("logic", loop.OK)])
+        result = self._run(conn, sett, monkeypatch)
+        assert "nothing owed" in result.output
+
+    def test_a_contended_lock_is_said_out_loud(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import backglass.__main__ as cli
+
+        monkeypatch.setattr(
+            cli.loop, "run",
+            lambda *_a, **_k: [
+                loop.Outcome("logic", loop.SKIPPED, error="another sync is already running")
+            ],
+        )
+        result = self._run(conn, sett, monkeypatch)
+        assert result.exit_code == 0
+        assert "skipped: another sync is already running" in result.output
+
+
+class TestTheDryRun:
+    def test_it_reads_where_each_pass_stands_and_writes_nothing(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Not "run it and roll back". These passes deliver notifications and supersede
+        plans; a rehearsal that called them would do both, which is not what dry run
+        means to anyone reading the word."""
+        from typer.testing import CliRunner
+
+        import backglass.__main__ as cli
+
+        real = loop.PASSES[2]
+        loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_boom(real.name, [])])
+        before = loop.recent(conn)
+
+        monkeypatch.setattr(cli, "get_settings", lambda: sett)
+        monkeypatch.setattr(cli, "_open", lambda _s: conn)
+        monkeypatch.setattr(cli, "migrate", lambda _c: [])
+        result = CliRunner().invoke(cli.app, ["loop", "--dry-run"])
+
+        assert result.exit_code == 0, result.output
+        assert [tuple(r) for r in loop.recent(conn)] == [tuple(r) for r in before]
+        assert "never run" in result.output          # the four that have not
+        assert "failing ×1" in result.output         # and the one that is
+        assert "RuntimeError: detector is down" in result.output
+
+    def test_it_names_every_declared_pass_including_the_ones_never_called(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from typer.testing import CliRunner
+
+        import backglass.__main__ as cli
+
+        monkeypatch.setattr(cli, "get_settings", lambda: sett)
+        monkeypatch.setattr(cli, "_open", lambda _s: conn)
+        monkeypatch.setattr(cli, "migrate", lambda _c: [])
+        result = CliRunner().invoke(cli.app, ["loop", "--dry-run"])
+        for name in loop.NAMES:
+            assert name in result.output

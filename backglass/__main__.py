@@ -447,6 +447,70 @@ def sync_command(
     raise typer.Exit(report.exit_code)
 
 
+@app.command("loop")
+def loop_command(
+    only: Annotated[
+        list[str] | None,
+        typer.Option("--only", help="Run just these passes; repeatable"),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Print where each pass stands, run nothing"),
+    ] = False,
+) -> None:
+    """Run the passes that follow a sync — catchup, replan, logic, questions, notify.
+
+    One-shot, always. `backglass sync` already runs these every thirty minutes, so this
+    exists for the two cases it does not cover: reading where the loop stands, and
+    nudging it after changing something the passes read. The point of the rest of goal 3
+    is that the owner never needs to type it.
+
+    **Not a scheduler.** launchd owns cadence (CLAUDE.md's decisions table); this runs
+    what is owed now, once, and exits. It does not sleep, and it must not learn to.
+    """
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+
+    try:
+        passes = loop.by_name(only) if only else None
+    except KeyError as exc:
+        typer.echo(str(exc).strip("'"), err=True)
+        raise typer.Exit(2) from None
+
+    if dry_run:
+        # Deliberately not "run everything and roll back". These passes write through
+        # planner, notify and the detectors, each with its own idempotency rule; a
+        # rehearsal that actually called them would deliver notifications and supersede
+        # plans, which is not what "dry run" means to anyone reading it. What the owner
+        # wants from this flag is where the loop stands, and that is a read.
+        for entry, health in zip(loop.PASSES, loop.health(conn), strict=True):
+            if passes is not None and entry not in passes:
+                continue
+            mark = "never run" if health.last_ok is None else f"last ok {health.last_ok}"
+            typer.echo(f"{entry.name:<10} {entry.trigger:<7} {mark}")
+            if health.failing:
+                typer.echo(
+                    f"           failing ×{health.consecutive_failures}: {health.last_error}"
+                )
+        raise typer.Exit(0)
+
+    outcomes = loop.run(conn, settings, passes=passes)
+    for outcome in outcomes:
+        for line in outcome.lines:
+            typer.echo(line)
+        if outcome.status == loop.FAILED:
+            typer.echo(f"loop pass '{outcome.name}' failed: {outcome.error}", err=True)
+        elif outcome.status == loop.SKIPPED:
+            # Said out loud here, unlike in `sync`, because someone typed this and is
+            # waiting on it: silence after an explicit command reads as "it ran and found
+            # nothing", which is the opposite of what happened.
+            typer.echo(f"skipped: {outcome.error}")
+    if all(o.quiet for o in outcomes):
+        typer.echo("nothing owed")
+    raise typer.Exit(1 if any(o.status == loop.FAILED for o in outcomes) else 0)
+
+
 @app.command("contacts")
 def contacts_command(
     dry_run: Annotated[
