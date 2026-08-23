@@ -354,6 +354,39 @@ the literal shape of the owner's complaint.
       already exist. Read `model_call` for where latency and money actually go, and only
       then decide whether anything in triage is worth reworking. No rewrite on a hunch.
 
+### Blocker found on 2026-08-23: this branch's migration numbers collide
+
+Found by pointing the measurement script at a `.backup` copy of the live ledger, which
+refused to migrate:
+
+    MigrationError: migration 0030 was applied as '0030_source_item_retraction.sql'
+                    but is now '0030_loop_pass.sql'
+
+The main checkout (`/Users/Dharsan/Downloads/backglass`, on `main` at 24773d3 — the same
+commit this branch forked from) holds three migrations **staged but uncommitted**:
+`0030_source_item_retraction`, `0031_assignment`, `0032_claim_event`. All three are
+already applied to the live ledger, because launchd runs backglass out of that working
+tree — the "scheduler runs the checkout" hazard, live again.
+
+So this branch's 0030 and 0031 are the second claim on those numbers. Nothing is wrong
+with either side; parallel worktrees make this structural, and whoever merges second
+renumbers.
+
+**Merge prerequisite, in this order:**
+
+1. The other session commits its 0030–0032.
+2. Rename this branch's `0030_loop_pass` → `0033_loop_pass` and
+   `0031_calendar_instant_index` → `0034_calendar_instant_index`.
+3. Reseal both in `FROZEN_CHECKSUMS` and regenerate `specs/schema.sql`.
+
+Renaming is legal here and only here: neither has ever been applied to a real database —
+only to per-test files — so the "never change an applied migration" rule is not in play.
+It stops being legal the moment this branch is run against the live ledger, which it must
+not be until step 2 is done.
+
+Contiguity is why they cannot simply be renumbered now: `test_init_creates_the_schema`
+asserts the file set runs 0001..N with no gaps, and this branch does not carry 0030–0032.
+
 ### Constraints that bite (carried forward)
 
 - Migration 0030 re-arms the frozen-sidecar crash; the rebuild is part of increment 2.

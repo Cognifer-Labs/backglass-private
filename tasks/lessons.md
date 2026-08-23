@@ -981,3 +981,25 @@ deterministic given the id.
   injected one — or the row can disagree with itself. And a test suite is not a gate if a
   failure can sit in it for three days: run the whole suite on a clean tree before
   starting a branch, not only after finishing one.
+
+- 2026-08-23 | Two migrations on this branch (`0030_loop_pass`, `0031_calendar_instant_index`)
+  collided with three the main checkout had staged-but-uncommitted and already applied to
+  the live ledger (`0030_source_item_retraction`, `0031_assignment`, `0032_claim_event`).
+  Nothing on this branch could see it: every test builds its own database from 0001, so
+  the numbering was self-consistent and green through five increments. It surfaced only
+  when a measurement script opened a `.backup` copy of the real ledger and `migrate()`
+  refused. | Before adding a migration on a branch, read the numbers the **live ledger**
+  has applied — `sqlite3 <db> "SELECT version, filename FROM schema_version ORDER BY
+  version DESC LIMIT 5"` — not the numbers on disk in this worktree. With a dozen
+  worktrees against one launchd-run checkout, the next free number is a fact about the
+  ledger, not about the branch. And a `git status` on the main checkout is part of that
+  read: uncommitted migrations there are already live.
+
+- 2026-08-23 | Ran `cd /Users/Dharsan/Downloads/backglass` inside a `Bash` call to read a
+  `.env`, and the working directory persisted across every later call — so a profiling
+  run silently imported and measured the **main checkout's** package instead of the
+  branch's. The environment brief says not to cd out of the worktree, and the reason is
+  exactly this: nothing in the output says which copy ran. | Read files in another
+  checkout by absolute path, and use `git -C <path>` for git there. Never `cd`. When a
+  tool prints module paths (a profile, a traceback), read them — they name the copy that
+  actually ran, and they are the only thing that will.
