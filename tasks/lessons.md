@@ -1222,3 +1222,33 @@ deterministic given the id.
   a delete nobody reports. And after adding N tests, assert the total moved by N: a
   suite that is green at the wrong size is the same failure shape as the 2026-07-30
   idempotency lesson, where the number was right for the wrong reason.
+
+- 2026-08-23 | Fixed the "N items did not fit" count on the Today panel, /schedule and
+  the week view, ran 2428 green tests, and was about to call it done — while the same
+  number went on being rendered by `brief/daily.py` in two places. The brief is the
+  surface the complaint arrived through: it is what gets pushed at 06:00, and the
+  dashboard is what gets opened afterwards. Three surfaces fixed, the one that talks
+  first untouched. | When a change is to something the owner *reads*, enumerate every
+  renderer of that value before writing any of them — `grep -rn` for the column name
+  across `.py`, `.html` and `.sql`, not just the file the complaint pointed at. A
+  rendered number has more readers than the page you were looking at, and the push
+  surfaces are the ones a dashboard-shaped mental model forgets.
+
+- 2026-08-23 | Made `planner.persist` able to decline (an empty rebuild must not replace
+  a plan that scheduled work) and did not follow the return value out: `replan.run`
+  still recorded a "Today's plan was updated" notification and reported `replaced`, so
+  the one path that most needed the guard would have announced a change that was never
+  written. | Changing a writer from "always writes" to "may decline" is a contract
+  change, and every caller that ignored the return value is now a potential false
+  claim. Grep the call sites in the same edit and make each one read the answer —
+  especially the ones that notify, because a wrong notification is worse than the bug
+  it was added to cover.
+
+- 2026-08-23 | Wrote a proof script against a copy of the live db using
+  `CanvasIcsConnector(label="asu")` because the feed is ASU's, where production uses
+  `label="ics"` — so `self.name` was `canvas:asu`, every lookup missed the stored
+  `canvas:ics` rows, and the script *inserted five new source_items* and reported
+  "0 conflicts, 0 revisions". A clean pass proving nothing, in the direction I wanted.
+  | When a probe reports the all-clear on the first run, distrust it before believing
+  it: check that it found the rows it was supposed to be judging. A verification whose
+  identifiers are wrong does not fail — it passes, on an empty set.
