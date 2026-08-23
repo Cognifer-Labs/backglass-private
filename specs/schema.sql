@@ -616,3 +616,7 @@ CREATE TABLE loop_pass (
 );
 
 CREATE INDEX loop_pass_by_name ON loop_pass (user_id, name, id DESC);
+
+CREATE INDEX idx_source_calendar_instant
+  ON source_item (user_id, datetime(occurred_at))
+  WHERE source LIKE 'calendar%';

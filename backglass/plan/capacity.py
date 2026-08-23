@@ -143,6 +143,23 @@ class Capacity:
         return max(self.slots, key=lambda s: s.minutes) if self.slots else None
 
 
+#: The one calendar-day read, as a constant so the index that serves it can be checked
+#: against the query that uses it rather than against a copy of it in a test. Migration
+#: 0031 indexes `(user_id, datetime(occurred_at))` on the calendar rows, and SQLite only
+#: matches an expression index when the predicate is written *exactly* this way — so an
+#: innocent-looking rewrite here would silently drop `logic` and `questions` from 8 ms
+#: and 65 ms back to 596 ms and 613 ms with no other test failing.
+#: `tests/test_capacity_index.py` asserts the plan still binds the expression, which is
+#: the only thing that notices: SQLite will happily keep using this index for the
+#: `source LIKE 'calendar%'` half alone, so "the index appears in the plan" is not the
+#: check — "the plan searches on the expression" is.
+CALENDAR_DAY_SQL = (
+    "SELECT raw_json, title FROM source_item "
+    "WHERE user_id = ? AND source LIKE 'calendar%' "
+    "  AND datetime(occurred_at) >= datetime(?) AND datetime(occurred_at) < datetime(?)"
+)
+
+
 def fixed_events(conn: sqlite3.Connection, day: date, tz: str) -> list[FixedEvent]:
     """Read calendar events for `day` out of the ledger.
 
@@ -156,12 +173,7 @@ def fixed_events(conn: sqlite3.Connection, day: date, tz: str) -> list[FixedEven
     # event after ~17:00 from its own day, so the planner scheduled work across it.
     # timezones.utc_bounds carries the full reasoning.
     starts_at, ends_before = timezones.day_bounds(day, tz)
-    rows = conn.execute(
-        "SELECT raw_json, title FROM source_item "
-        "WHERE user_id = ? AND source LIKE 'calendar%' "
-        "  AND datetime(occurred_at) >= datetime(?) AND datetime(occurred_at) < datetime(?)",
-        (USER_ID, starts_at, ends_before),
-    ).fetchall()
+    rows = conn.execute(CALENDAR_DAY_SQL, (USER_ID, starts_at, ends_before)).fetchall()
 
     events: list[FixedEvent] = []
     for row in rows:

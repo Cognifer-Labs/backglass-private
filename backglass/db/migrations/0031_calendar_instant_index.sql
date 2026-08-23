@@ -1,0 +1,32 @@
+-- The calendar day lookup stops scanning the whole ledger (tasks/todo.md goal 3, inc 5).
+--
+-- `capacity.fixed_events` asks for one day of calendar events, and it has to ask as an
+-- *instant* comparison rather than a `date()` one: the connector stores each event's own
+-- offset, and SQLite's `date()` normalizes to UTC first, which silently dropped every
+-- Phoenix event after ~17:00 from its own day. That reasoning is right and is not what
+-- this changes.
+--
+-- What it costs is the problem. `datetime(occurred_at)` in the predicate makes any plain
+-- index on the column unusable, so every call scanned all 10,533 `source_item` rows to
+-- find at most 317 calendar ones — and the callers ask per day, across a horizon:
+-- `questions.detect` calls it 46 times per refresh, `logic.check` 42 times, the planner
+-- on every propose. Measured on a copy of the live ledger (2026-08-23):
+--
+--     logic.run          596 ms  →   8 ms
+--     questions.refresh  613 ms  →  65 ms
+--     planner.propose    282 ms  →  26 ms
+--
+-- That is ~1.2 s of the loop's ~1.4 s, on a job that runs every thirty minutes, spent
+-- re-reading ten thousand emails to find a Tuesday.
+--
+-- A partial index on the same expression the query uses. Partial, because 317 of 10,533
+-- rows are calendar rows and indexing the other 10,216 would cost writes on every ingest
+-- for a query that can never want them. The expression must be written exactly as the
+-- predicate writes it or SQLite will not match it — `EXPLAIN QUERY PLAN` for that query
+-- is the check, and it reads SEARCH ... USING INDEX idx_source_calendar_instant.
+--
+-- No behaviour changes and no rows change. The same 119 events came back for August on
+-- the live copy with and without it.
+CREATE INDEX idx_source_calendar_instant
+  ON source_item (user_id, datetime(occurred_at))
+  WHERE source LIKE 'calendar%';

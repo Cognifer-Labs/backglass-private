@@ -307,10 +307,41 @@ the literal shape of the owner's complaint.
       than by care: every pass is idempotent and owed-gated, which is exactly what
       increment 1 made checkable. Still a daemon thread, still fire-and-forget, still
       degrades per rule 5.
-- [ ] 5. **Data-gating** — a `data` pass whose inputs have not changed since its last
-      successful run is skipped and says so. `clock` passes (catchup, notify, replan)
-      always evaluate: their gate is the owed-at hour and a zero-write sync still crosses
-      06:00. Timezone tests in both zones, per the 2026-08-17 lessons.
+- [x] 5. **Measured, and the gate was the wrong fix.** The plan here was to skip `data`
+      passes whose inputs had not changed. Measured first, on a `.backup` copy of the live
+      59 MB ledger, because a gate that wrongly skips is a silently missed detection —
+      the failure class four lessons cover — and it is only worth that risk if the work
+      it skips is expensive.
+
+      It was expensive, and not for the reason a gate would have fixed. `logic.run` cost
+      596 ms and `questions.refresh` 613 ms, and the profile put ~90% of both inside
+      `capacity.fixed_events`, called 42 and 46 times respectively — once per day of the
+      horizon. Its predicate wraps the column: `datetime(occurred_at) >= datetime(?)`,
+      which makes any plain index unusable, so each call scanned all 10,533 `source_item`
+      rows to find at most 317 calendar ones.
+
+      Migration 0031 is a partial expression index matching that predicate exactly.
+      Measured on the same copy:
+
+          logic.run          596 ms  →   8 ms   (70×)
+          questions.refresh  613 ms  →  65 ms   (9×)
+          planner.propose    282 ms  →  26 ms   (11×)
+
+      The loop's deterministic half went from ~1.2 s per sync to ~73 ms — better than
+      skipping it, because nothing is skipped. **Gating is therefore rejected, not
+      deferred**: there is no longer enough work to be worth the risk of not doing it.
+      The `trigger` field stays; it is read by `--dry-run` and written to every row, and
+      it documents what drives each pass.
+
+      `capacity.CALENDAR_DAY_SQL` is now a constant so the test asserts the plan for the
+      query the code issues. The first version of that test passed on a broken predicate:
+      a partial index can be chosen for its WHERE clause alone, so "the index is used" is
+      not the check — "the plan binds the expression" is. Both mutations run red.
+
+      Still un-gated and now the loop's largest cost: `duplicates.clusters` at **3.7 s**,
+      untouched by the index because it is O(n²) — 51,443 difflib ratios and 23,871 cosine
+      comparisons over 386 open commitments. That is increment 6's problem, and it is why
+      increment 6 bounds and gates that one pass where its inputs live.
 - [ ] 6. **Duplicates leaves the terminal.** The clustered review becomes a loop pass that
       raises cards on the page where `same`/`distinct` already live, bounded per refresh
       like staleness's five. Auto-collapse stays owner-gated — a row that vanishes with
