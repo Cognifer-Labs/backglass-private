@@ -106,6 +106,27 @@ class TestTheBoundary:
         assert replan.run(conn, settings, now=DAY) is None
         assert conn.execute("SELECT COUNT(*) AS n FROM day_plan").fetchone()["n"] == 1
 
+    def test_a_rebuild_that_schedules_nothing_says_nothing(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The 17:15 case arriving through this path instead of the plan job.
+
+        `persist` declines to replace a plan that scheduled work with one that schedules
+        none, so a drift detected after the day is over writes nothing — and a
+        "Today's plan was updated" banner for a plan that was not updated is a claim with
+        nothing behind it. Rule 1 does not have an exemption for notifications.
+        """
+        _commitment(conn, "alpha")
+        standing = _plan(conn, settings)
+        _commitment(conn, "beta")  # the world moves
+
+        assert replan.run(conn, settings, now=DAY.replace(hour=23, minute=50)) is None
+        live = conn.execute(
+            "SELECT id FROM day_plan WHERE status != 'superseded'"
+        ).fetchone()
+        assert int(live["id"]) == standing
+        assert conn.execute("SELECT COUNT(*) AS n FROM notification").fetchone()["n"] == 0
+
     def test_a_proposed_plan_is_regenerated_when_the_world_moves(
         self, conn: sqlite3.Connection, settings: Settings
     ) -> None:

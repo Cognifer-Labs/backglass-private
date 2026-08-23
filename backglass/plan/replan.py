@@ -71,7 +71,15 @@ def run(
         # The system's own plan: regenerate, supersede, say so once. The clock clamp
         # rides along, so an afternoon replacement plans the hours that are left.
         proposal = planner.propose(conn, settings, day, at_risk_goals=at_risk, now=now)
-        planner.persist(conn, settings, proposal)
+        written = planner.persist(conn, settings, proposal)
+        if written == int(row["id"]):
+            # `persist` declined: the rebuild schedules no work and the standing plan
+            # does, so the standing plan is still the day (see its docstring). Saying
+            # "your plan was updated" here would be a claim with nothing behind it, and
+            # rule 1 is that trust does not survive those. Nothing changed, so nothing
+            # is said — and the next sync will find the same drift and decline again,
+            # which is quiet rather than wrong.
+            return None
         detail = (
             f"{len(proposal.blocks)} block(s), {len(proposal.overflow)} did not fit"
         )

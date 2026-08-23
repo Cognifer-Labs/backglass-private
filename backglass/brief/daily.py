@@ -193,7 +193,7 @@ def failure_section(
     # events renders as a full Today section and an empty everything-else, which reads as
     # a normal day. It is not one, and the difference is worth a line at the top.
     plan = conn.execute(
-        "SELECT p.id, p.local_date, p.overflow_count, "
+        "SELECT p.id, p.local_date, p.overflow_count, p.overflow_dated, "
         "  (SELECT COUNT(*) FROM plan_block b WHERE b.day_plan_id = p.id "
         "   AND b.kind IN ('work', 'protected')) AS work_blocks "
         "FROM day_plan p WHERE p.user_id = ? AND p.local_date = ? AND p.status != 'superseded' "
@@ -201,9 +201,7 @@ def failure_section(
         (USER_ID, today.isoformat()),
     ).fetchone()
     if plan is not None and not int(plan["work_blocks"] or 0):
-        overflow = int(plan["overflow_count"] or 0)
-        plural = "s" if overflow != 1 else ""
-        tail = f" {overflow} item{plural} did not fit." if overflow else ""
+        tail = _overflow_tail(plan, lead=" ")
         # Same distinction the planner and the schedule page draw: a day with no window
         # is not a booked one, and telling the owner it is sends them hunting meetings
         # that do not exist. `day_plan` keeps no window, so ask the configuration.
@@ -335,11 +333,44 @@ def plan_section(conn: sqlite3.Connection, settings: Settings, today: date) -> S
     return section
 
 
+def _overflow_tail(row: Any, *, lead: str) -> str:
+    """The "did not fit" clause, split the way migration 0033 splits it.
+
+    One number was doing two jobs. On 2026-08-23 it read "178 items did not fit" over a
+    morning where the day had held everything it actually owed — 174 of the 178 had no
+    date at all and were never candidates for that day. The owner read the number as 178
+    broken things, which is the only way it can be read.
+
+    So the gold half is the work that had a date and was owed, and the undated backlog is
+    named separately as the standing pile it is. A plan written before 0033 recorded no
+    split and keeps the sentence it was written with: NULL is not zero, and inventing a
+    breakdown for a plan nobody measured is exactly the confident-answer-from-a-missing-
+    input this repo refuses everywhere else.
+    """
+    total = int(row["overflow_count"] or 0)
+    dated = row["overflow_dated"]
+    if dated is None:
+        return f"{lead}{total} item{'s' if total != 1 else ''} did not fit." if total else ""
+    dated = int(dated)
+    undated = total - dated
+    parts = []
+    if dated:
+        parts.append(f"{dated} due item{'s' if dated != 1 else ''} did not fit")
+    if undated:
+        parts.append(
+            f"{undated} undated item{'s are' if undated != 1 else ' is'} waiting on a date"
+        )
+    if not parts:
+        return ""
+    return f"{lead}{' and '.join(parts)}."
+
+
 def capacity_section(conn: sqlite3.Connection, today: date) -> Section:
     """docs/05 §3. One sentence, and only one."""
     section = Section(priority=3, title="Capacity")
     row = conn.execute(
-        "SELECT id, local_date, capacity_minutes, planned_minutes, overflow_count "
+        "SELECT id, local_date, capacity_minutes, planned_minutes, overflow_count, "
+        " overflow_dated "
         "FROM day_plan WHERE user_id = ? AND local_date = ? AND status != 'superseded' "
         "ORDER BY id DESC LIMIT 1",
         (USER_ID, today.isoformat()),
@@ -351,8 +382,7 @@ def capacity_section(conn: sqlite3.Connection, today: date) -> Section:
         total = int(minutes or 0)
         return f"{total // 60}h {total % 60:02d}m"
 
-    overflow = int(row["overflow_count"] or 0)
-    tail = f", {overflow} item{'s' if overflow != 1 else ''} did not fit" if overflow else ""
+    tail = _overflow_tail(row, lead=", ").rstrip(".")
     section.lines.append(
         Line(
             text=(

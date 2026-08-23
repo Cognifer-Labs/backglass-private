@@ -1334,6 +1334,46 @@ class TestConsistencyHeatmap:
 class TestWeekAgenda:
     """Phase 9: the week view is seven mini-timelines on one shared ruler."""
 
+    def _plan(
+        self, conn: sqlite3.Connection, *, count: int, dated: int | None
+    ) -> None:
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, planned_minutes,"
+            " overflow_count, overflow_dated, generated_at, status) VALUES ('2026-07-28',"
+            " 'America/Phoenix', 400, 300, ?, ?, '2026-07-28T05:50:00', 'accepted')",
+            (count, dated),
+        )
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, '2026-07-28T09:00:00-07:00', '2026-07-28T10:30:00-07:00',"
+            " 'work', 'Finish deck')"
+        )
+        conn.commit()
+
+    def test_a_day_cell_counts_only_the_overflow_that_had_a_date(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """A cell this size holds one number, and the undated backlog is the same on all
+        seven columns — repeating it would say nothing per day while making every day of
+        the week look equally over."""
+        self._plan(conn, count=178, dated=4)
+        page = client.get("/schedule/week?start=2026-07-27").text
+
+        assert "4 over" in page
+        assert "178 over" not in page
+
+    def test_a_day_that_left_out_nothing_dated_shows_no_chip(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._plan(conn, count=174, dated=0)
+        assert "over</span>" not in client.get("/schedule/week?start=2026-07-27").text
+
+    def test_a_plan_from_before_the_split_still_shows_its_own_count(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._plan(conn, count=178, dated=None)
+        assert "178 over" in client.get("/schedule/week?start=2026-07-27").text
+
     def test_blocks_are_positioned_at_half_scale(
         self, client: TestClient, conn: sqlite3.Connection
     ) -> None:
