@@ -774,3 +774,140 @@ class TestTheWeeklyBriefCountsAsTodaysBrief:
         )
         at_nine = datetime(monday.year, monday.month, monday.day, 9, 0, tzinfo=PHOENIX)
         assert [f.surface for f in catchup.run(conn, settings, now=at_nine)] == []
+
+
+class TestTheDayCloses:
+    """The third surface this net covers, and the one that had nothing under it.
+
+    `shutdown` is scheduled for 22:00 and fires at about 09:45 on the stale-timezone drift,
+    where it refuses — correctly, because what did not get done is not a judgement to make
+    about a day with eleven hours left. `TestTheEveningPassRefusesTheMorning` above is that
+    guard. What it had no partner for is the retry: nothing ever closed the day at the hour
+    it was actually over, so on the live ledger the last day ever closed was 2026-08-17 and
+    57 blocks across 7 days sat `pending` for three weeks.
+
+    The cost is not the pending rows. It is that `rollover_count` never grows, so nothing
+    can see what the plan keeps re-scheduling — and on the real backfill the answer turned
+    out to be "OrgTruth: run e2e:live", nine times.
+    """
+
+    def _planned(
+        self, conn: sqlite3.Connection, settings: Settings, day: date, what: str = "work"
+    ) -> int:
+        """One day plan holding one work block, the way `persist` would leave it."""
+        _commitment(conn, what)
+        proposal = planner.propose(conn, settings, day, events=[], now=_at(6))
+        return planner.persist(conn, settings, proposal)
+
+    def test_a_day_that_ended_unclosed_is_closed(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        yesterday = DAY - timedelta(days=1)
+        self._planned(conn, settings, yesterday)
+        assert catchup.unclosed_days(conn, DAY) == [yesterday]
+
+        filled = catchup.close_ended_days(conn, settings, DAY)
+
+        assert [f.surface for f in filled] == ["day"]
+        assert filled[0].day == yesterday
+        assert catchup.unclosed_days(conn, DAY) == []
+
+    def test_today_is_never_closed(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The one judgement that cannot be premature is one about a day that is over.
+        Closing today at 09:45 is the bug the `shutdown` guard exists to refuse, and a net
+        that did it from the sync path would be that bug with no guard at all."""
+        self._planned(conn, settings, DAY)
+
+        assert catchup.unclosed_days(conn, DAY) == []
+        assert catchup.close_ended_days(conn, settings, DAY) == []
+
+    def test_a_second_pass_writes_nothing(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """Rule 3, and it is what makes this safe on a thirty-minute timer."""
+        self._planned(conn, settings, DAY - timedelta(days=1))
+        assert catchup.close_ended_days(conn, settings, DAY)
+        assert catchup.close_ended_days(conn, settings, DAY) == []
+
+    def test_what_is_left_pending_is_what_was_never_a_debt(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """Three kinds stay `pending` for ever and each for its own reason, so a reader
+        asking "which days are still open" has to use `rollover.CLOSEABLE_KINDS` rather
+        than "everything pending" — on the live ledger the difference is 749 rows against
+        57. Breakfast is not deferred work; a calendar event belongs to the calendar; and
+        `study` is its own kind precisely so it is not rolled, in the planner's own words:
+        "an hour of reading nobody did is not a debt — rolled, it would arrive tomorrow as
+        an obligation the owner never made".
+
+        Written the other way round on purpose. Asserting the exact leftover set is what
+        caught `study`, which the first version of this test had never heard of."""
+        yesterday = DAY - timedelta(days=1)
+        plan_id = self._planned(conn, settings, yesterday)
+        catchup.close_ended_days(conn, settings, DAY)
+
+        from backglass.plan import rollover
+
+        left = conn.execute(
+            "SELECT kind, outcome FROM plan_block WHERE day_plan_id = ?", (plan_id,)
+        ).fetchall()
+        still_pending = {r["kind"] for r in left if r["outcome"] == "pending"}
+        assert still_pending
+        assert not (still_pending & set(rollover.CLOSEABLE_KINDS))
+        assert catchup.unclosed_days(conn, DAY) == []
+
+    def test_the_lookback_bounds_how_far_back_it_reaches(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """A rollover count is a claim about the owner's last fortnight. Reaching to June
+        to build one would make "you have deferred this nine times" mean nothing."""
+        old = DAY - timedelta(days=catchup.CLOSE_LOOKBACK_DAYS + 1)
+        self._planned(conn, settings, old)
+
+        assert catchup.unclosed_days(conn, DAY) == []
+        assert catchup.unclosed_days(conn, DAY, lookback=None) == [old]
+
+    def test_a_superseded_plan_is_history_and_is_left_alone(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The 9 days on the live ledger whose live plan is an empty one sitting on a real
+        one — the empty-plan supersede bug, fixed forward by `persist`'s guard. Reaching
+        into a superseded plan to close it would be rewriting the day's record rather than
+        completing it."""
+        yesterday = DAY - timedelta(days=1)
+        first = self._planned(conn, settings, yesterday)
+        planner.persist(
+            conn, settings,
+            planner.propose(conn, settings, yesterday, events=[], now=_at(6)),
+            force=True,
+        )
+        assert conn.execute(
+            "SELECT status FROM day_plan WHERE id = ?", (first,)
+        ).fetchone()["status"] == "superseded"
+
+        catchup.close_ended_days(conn, settings, DAY)
+        stale = conn.execute(
+            "SELECT outcome FROM plan_block WHERE day_plan_id = ? AND kind = 'work'",
+            (first,),
+        ).fetchall()
+        assert all(r["outcome"] == "pending" for r in stale)
+
+    def test_the_net_runs_it_before_planning_today(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """Order matters: closing a day rolls its work forward and bumps the counts the
+        planner ranks on, so a plan built first would be planning yesterday's board."""
+        self._planned(conn, settings, DAY - timedelta(days=1))
+
+        surfaces = [f.surface for f in catchup.run(conn, settings, now=_at(9))]
+        assert surfaces.index("day") < surfaces.index("plan")
+
+    def test_the_dashboard_gate_notices_an_unclosed_day(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """One indexed read, no model and no endpoint — the property that keeps retrieval
+        out of `hole_exists` and lets this in."""
+        self._planned(conn, settings, DAY - timedelta(days=1))
+        assert catchup.hole_exists(conn, settings, now=_at(5)) is True
