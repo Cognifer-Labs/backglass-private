@@ -1197,7 +1197,11 @@ def shutdown(
         rollover.record_shutdown(conn, day, learned=learned, blocked=blocked)
     made = weekly.link_completed_work(conn)
 
-    typer.echo(f"{day}: {report.done} done, {report.rolled} rolled, {made} checkpoint(s)")
+    dropped = f", {report.dropped} dropped" if report.dropped else ""
+    typer.echo(
+        f"{day}: {report.done} done, {report.rolled} rolled{dropped},"
+        f" {made} checkpoint(s)"
+    )
     for row in report.flagged:
         typer.echo(f"  · rolled {row['rollover_count']}x: {row['what']}")
 

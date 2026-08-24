@@ -24,6 +24,7 @@ import pytest
 
 from backglass import catchup
 from backglass.config import Settings
+from backglass.ledger import USER_ID
 from backglass.plan import capacity as capacity_mod
 from backglass.plan import planner
 
@@ -852,3 +853,86 @@ class TestTheDayCloses:
         out of `hole_exists` and lets this in."""
         self._planned(conn, settings, DAY - timedelta(days=1))
         assert catchup.hole_exists(conn, settings, now=_at(5)) is True
+
+
+class TestDroppedIsNotDone:
+    """A block closed because its obligation was dropped must not read as work done.
+
+    `logic._events_whose_day_has_passed` drops rather than resolves on purpose and states
+    the reason itself: Backglass does not know whether the owner attended, only that the
+    hour is gone, and "claiming `done` here would put a fact in the record that nothing
+    supports". The closer then claimed it anyway — `_commitment_resolved` returned true for
+    `dropped` and `superseded` alike and every one of them wrote `outcome = 'done'`.
+
+    Four readers make that fabrication rather than untidiness: `planner`'s `done_minutes`,
+    `web/actions`' copy of it, `plan/estimates`' calibrator, and
+    `brief/weekly.link_completed_work`, which turns a done block into a **goal
+    checkpoint**. The last was nearly harmless while one commitment in the ledger carried a
+    `goal_id`; goal linking is what made it expensive.
+    """
+
+    def _closed_block(
+        self, conn: sqlite3.Connection, settings: Settings, status: str
+    ) -> sqlite3.Row:
+        yesterday = DAY - timedelta(days=1)
+        cid = _commitment(conn, "attend the thing")
+        proposal = planner.propose(conn, settings, yesterday, events=[], now=_at(6))
+        planner.persist(conn, settings, proposal)
+        conn.execute("UPDATE commitment SET status = ? WHERE id = ?", (status, cid))
+        catchup.close_ended_days(conn, settings, DAY)
+        return conn.execute(
+            "SELECT outcome FROM plan_block WHERE commitment_id = ?", (cid,)
+        ).fetchone()
+
+    def test_a_dropped_obligation_closes_its_block_as_dropped(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        assert self._closed_block(conn, settings, "dropped")["outcome"] == "dropped"
+
+    def test_a_superseded_obligation_is_not_done_either(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        assert self._closed_block(conn, settings, "superseded")["outcome"] == "dropped"
+
+    def test_a_genuinely_finished_obligation_is_still_done(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The other half of the pair, so the two above cannot pass by breaking the
+        inference altogether."""
+        assert self._closed_block(conn, settings, "done")["outcome"] == "done"
+
+    def test_a_dropped_block_never_becomes_a_goal_checkpoint(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The reader that makes this a fabrication rather than a wrong label: a claim in
+        the owner's own goal record that work was completed."""
+        from backglass.brief import weekly
+
+        yesterday = DAY - timedelta(days=1)
+        cid = _commitment(conn, "attend the thing")
+        conn.execute(
+            "INSERT INTO goal (user_id, title, status, horizon, definition_of_done,"
+            " created_at) VALUES (?, 'A goal', 'active', 'annual', 'done',"
+            " '2026-08-01T00:00:00Z')",
+            (USER_ID,),
+        )
+        goal_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "UPDATE commitment SET goal_id = ?, status = 'dropped' WHERE id = ?",
+            (goal_id, cid),
+        )
+        planner.persist(
+            conn, settings,
+            planner.propose(conn, settings, yesterday, events=[], now=_at(6)),
+        )
+        catchup.close_ended_days(conn, settings, DAY)
+
+        assert weekly.link_completed_work(conn) == 0
+
+    def test_a_dropped_block_does_not_roll_into_tomorrow(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The other wrong answer. It is not owed any more, so rolling it would put a
+        rollover count on a dead row and keep re-asking about it."""
+        row = self._closed_block(conn, settings, "dropped")
+        assert row["outcome"] != "rolled"

@@ -34,11 +34,15 @@ class CloseReport:
     day: date
     done: int = 0
     rolled: int = 0
+    #: Closed because the obligation was dropped or superseded, not because it happened.
+    #: Kept apart from `done` for the reason `_inferred_outcome` documents: only `done`
+    #: feeds progress, estimate calibration and goal checkpoints.
+    dropped: int = 0
     flagged: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def anything_happened(self) -> bool:
-        return bool(self.done or self.rolled)
+        return bool(self.done or self.rolled or self.dropped)
 
 
 #: The block kinds a day close has an opinion about. A routine is not deferred work — it
@@ -83,13 +87,18 @@ def close_day(
             continue
 
         if done_block_ids is not None:
-            finished = block_id in done_block_ids
+            outcome = "done" if block_id in done_block_ids else None
         else:
-            finished = _commitment_resolved(conn, block["commitment_id"])
+            outcome = _inferred_outcome(conn, block["commitment_id"])
 
-        if finished:
-            conn.execute("UPDATE plan_block SET outcome = 'done' WHERE id = ?", (block_id,))
-            report.done += 1
+        if outcome is not None:
+            conn.execute(
+                "UPDATE plan_block SET outcome = ? WHERE id = ?", (outcome, block_id)
+            )
+            if outcome == "done":
+                report.done += 1
+            else:
+                report.dropped += 1
             continue
 
         # P12. The count lives on the commitment, and is denormalised onto the block so
@@ -111,13 +120,40 @@ def close_day(
     return report
 
 
-def _commitment_resolved(conn: sqlite3.Connection, commitment_id: object) -> bool:
+def _inferred_outcome(conn: sqlite3.Connection, commitment_id: object) -> str | None:
+    """What the ledger says happened to this block's work, or None for "still owed".
+
+    **`dropped` is not `done`, and conflating them fabricates progress.** This used to
+    return a bool over `("done", "dropped", "superseded")` and every one of those wrote
+    `outcome = 'done'`. But `logic._events_whose_day_has_passed` drops rather than resolves
+    on purpose, and says why in its own docstring: Backglass does not know whether the
+    owner attended, only that the hour is gone, and "claiming `done` here would put a fact
+    in the record that nothing supports". The closer then went and claimed it anyway.
+
+    Four readers make that expensive rather than untidy. `planner.done_minutes` and
+    `web/actions` count the block's minutes as progress that never happened;
+    `plan/estimates` feeds them to the estimate calibrator as a measured actual; and
+    `brief/weekly.link_completed_work` turns a done block into a **goal checkpoint** —
+    a claim, in the owner's own goal record, that work was completed. That last one was
+    nearly harmless while one commitment in the ledger carried a `goal_id`. It stopped
+    being harmless the moment goal linking started filling that column.
+
+    The schema has had the right word since migration 0001 (`pending|done|rolled|dropped`)
+    and nothing ever wrote it.
+    """
     if commitment_id is None:
-        return False
+        return None
     row = conn.execute(
         "SELECT status FROM commitment WHERE id = ?", (commitment_id,)
     ).fetchone()
-    return bool(row and row["status"] in ("done", "dropped", "superseded"))
+    if not row:
+        return None
+    status = str(row["status"])
+    if status == "done":
+        return "done"
+    # Dropped or superseded: the work is not owed any more and must not roll into
+    # tomorrow, but nothing says it happened.
+    return "dropped" if status in ("dropped", "superseded") else None
 
 
 def flagged_for_question(conn: sqlite3.Connection, settings: Settings) -> list[dict[str, Any]]:
