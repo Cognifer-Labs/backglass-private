@@ -185,9 +185,12 @@ def close_ended_days(
             filled.append(Filled("day", ended, f"failed: {type(exc).__name__}: {exc}"))
             continue
         if report.anything_happened:
-            filled.append(
-                Filled("day", ended, f"{report.done} done, {report.rolled} rolled")
-            )
+            detail = f"{report.done} done, {report.rolled} rolled"
+            if report.dropped:
+                # Named separately or the line reads as a day that went well. These are
+                # blocks whose obligation was dropped, not work anybody did.
+                detail += f", {report.dropped} dropped"
+            filled.append(Filled("day", ended, detail))
     if filled:
         # Completed goal-linked work becomes checkpoints, which is what makes a close
         # reach the goal engine at all. Idempotent by `checkpoints.from_*`, so calling it
