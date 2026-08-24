@@ -1168,6 +1168,37 @@ class TestNoiseLeavesTheTerminal:
         assert "deals@shop.example" in cards[0]["question"]
         assert cards[0]["options"] == [noise_mod.NOISE_STOP, noise_mod.NOISE_KEEP]
 
+    def test_the_card_says_what_its_evidence_is_about(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """Found by rendering the card against the owner's real ledger, not by a fixture.
+
+        `deadlines@scholarships.com` came back with "Most recent subject: Dharsan- Your
+        Approaching Scholarship Deadlines" and, on the next line, "Why triage dropped it:
+        no letters or digits". Both true — the rule reads the *extracted body*, and an
+        HTML-only marketing mail extracts to nothing — and together they read as a
+        contradiction. On a question whose answer permanently stops mail arriving, a card
+        that looks like it is reasoning from something false is worse than no card.
+        """
+        from backglass.extract import noise as noise_mod
+
+        self._barren_sender(conn, "deals@shop.example")
+        [card] = noise_mod.questions_for(conn, sett)
+
+        assert "dropped one of them" in card.detail  # a message, not the sender
+        assert "extracted body text, not the subject" in card.detail
+
+    def test_the_card_shows_days_rather_than_instants(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        from backglass.extract import noise as noise_mod
+
+        self._barren_sender(conn, "deals@shop.example")
+        [card] = noise_mod.questions_for(conn, sett)
+
+        seen = next(ln for ln in card.detail.splitlines() if ln.startswith("Seen "))
+        assert "T" not in seen and "+00:00" not in seen, seen
+
     def test_stopping_a_sender_promotes_it(
         self, conn: sqlite3.Connection, sett: Settings
     ) -> None:

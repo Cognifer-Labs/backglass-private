@@ -531,6 +531,36 @@ by a convergence test that the two-run assertion could not have caught.
 
 Not a regression from this branch: `logic` ran before `questions` in the old chain too.
 
+### Rendered against the owner's real ledger, 2026-08-24 — one card defect, one open question
+
+Increment 6 and 7 were tested through `TestClient` against fixtures. Fixtures are not the
+app, so both card kinds were rendered from a copy of the live ledger. Both work, and the
+content is the content they were built for — the first duplicate card is #218/#226, one
+ASU ID photo upload written down twice under two entity names, at a 1.00 match.
+
+**Defect found and fixed.** The noise card read:
+
+    Most recent subject: Dharsan- Your Approaching Scholarship Deadlines
+    Why triage dropped it: no letters or digits
+
+Both lines true and together nonsense to a reader: the rule reads the *extracted body*,
+and an HTML-only marketing mail extracts to nothing. On a question whose answer
+permanently stops mail arriving, a card that appears to reason from something false is
+worse than no card. Now "dropped one of them", with a line naming what the rule reads.
+The `Seen` line lost its ISO seconds and offsets in the same pass — a card a person reads
+should not spend half a line on `T14:57:01+00:00`. Two tests.
+
+**Open, and not this branch's to settle: the queue is 41 deep and the new cards are last.**
+`/ask` shows one question at a time ordered by `asked_at`, so the ten cards these two
+passes raise sit behind 31 older ones — 16 `priority`, 5 `stale`, 5 `nonsense`, and the
+rest. The passes announce "5 duplicate cluster(s) to settle — /ask" and the owner arrives
+at a backlog with the new thing at the bottom.
+
+Not a regression and not caused here: FIFO is the existing order for every kind, and
+changing it is a product decision about all of them, not about these two. Named because
+"the cards exist" and "the owner will see them" are different claims, and only the first
+one is proven.
+
 ### Constraints that bite (carried forward)
 
 ### Constraints that bite (carried forward)

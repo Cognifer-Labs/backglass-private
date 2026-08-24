@@ -314,11 +314,24 @@ def questions_for(
             evidence += f", {c.barren_bulk_keeps} read in full and empty"
         detail = f"{c.evidence_count} messages · {evidence}"
         if c.first_seen or c.last_seen:
-            detail += f"\nSeen {c.first_seen or '?'} → {c.last_seen or '?'}"
+            # Days, not instants. `first_seen`/`last_seen` are full ISO timestamps and
+            # this is a card a person reads: the seconds and the offset are noise in the
+            # literal sense, and they push the subject line — the one thing that says
+            # whether this sender is really junk — further down.
+            span = f"{str(c.first_seen or '?')[:10]} → {str(c.last_seen or '?')[:10]}"
+            detail += f"\nSeen {span}"
         if c.sample_title:
             detail += f"\nMost recent subject: {c.sample_title}"
         if c.sample_reason:
-            detail += f"\nWhy triage dropped it: {c.sample_reason}"
+            # "one of them", not "it". The reason is recorded against a single message,
+            # and the rule reasons describe the *extracted body* — so `no letters or
+            # digits` sits directly under a subject line full of them and reads as a
+            # contradiction. It is not one: an HTML-only marketing mail extracts to an
+            # empty body. Naming what the reason is about is the difference between a
+            # card the owner can act on and one that makes them distrust the evidence,
+            # on a question whose answer permanently stops mail arriving.
+            detail += f"\nWhy triage dropped one of them: {c.sample_reason}"
+            detail += "\n(triage rules read the extracted body text, not the subject)"
         out.append(
             Question(
                 kind="noise",
