@@ -418,45 +418,33 @@ the literal shape of the owner's complaint.
       success is one bad day from being a real backlog, and "autonomous" and "retrying
       four times to get one answer" are not the same thing.
 
-### Blocker found on 2026-08-23: this branch's migration numbers collide
+### RESOLVED 2026-08-23: the migration-number collision
 
-Found by pointing the measurement script at a `.backup` copy of the live ledger, which
+Found by pointing a measurement script at a `.backup` copy of the live ledger, which
 refused to migrate:
 
     MigrationError: migration 0030 was applied as '0030_source_item_retraction.sql'
                     but is now '0030_loop_pass.sql'
 
-The main checkout (`/Users/Dharsan/Downloads/backglass`, on `main` at 24773d3 — the same
-commit this branch forked from) holds three migrations **staged but uncommitted**:
-`0030_source_item_retraction`, `0031_assignment`, `0032_claim_event`. All three are
-already applied to the live ledger, because launchd runs backglass out of that working
-tree — the "scheduler runs the checkout" hazard, live again.
+Three migrations were staged-but-uncommitted in the main checkout and already applied to
+the live ledger, because launchd runs backglass out of that working tree. `backglass-43`
+committed them and added a fourth, and this branch's two were the second claim.
 
-So this branch's 0030 and 0031 are the second claim on those numbers. Nothing is wrong
-with either side; parallel worktrees make this structural, and whoever merges second
-renumbers.
+Closed by merging `fix/schedule-canvas-overflow` into this branch and renumbering:
+`0030_loop_pass` → `0034_loop_pass`, `0031_calendar_instant_index` →
+`0035_calendar_instant_index`, both resealed in `FROZEN_CHECKSUMS`, `specs/schema.sql`
+regenerated. A `git mv` leaves the bytes alone, so the two checksums are unchanged under
+new keys, and renaming was legal only because neither had ever been applied to a real
+database. Migrations run 0001–0035 with no gap, which is what
+`test_init_creates_the_schema` asks and why the rename could not happen before the merge.
 
-**Updated 2026-08-23 after `backglass-43` made contact.** Step 1 is done: that session
-committed the three as `60a9535` on `fix/schedule-canvas-overflow` in
-`/Users/Dharsan/Downloads/backglass-wt-0823`. It also added a fourth,
-`0033_day_plan_overflow_dated`, so the targets below moved up by one. Confirm the highest
-applied number again before renaming — a third session would move them again.
+Verified the way the collision was found, which is the only verification worth having
+here: a fresh `.backup` copy of the live 59 MB ledger now migrates clean, applying
+`[33, 34, 35]` and reporting 35 as highest. 2532 tests green with nothing deselected.
 
-**Merge prerequisite, in this order:**
-
-1. ~~The other session commits its 0030–0032.~~ Done: `60a9535`.
-2. `fix/schedule-canvas-overflow` merges, taking 0030–0033 with it.
-3. Rename this branch's `0030_loop_pass` → `0034_loop_pass` and
-   `0031_calendar_instant_index` → `0035_calendar_instant_index`.
-4. Reseal both in `FROZEN_CHECKSUMS` and regenerate `specs/schema.sql`.
-
-Renaming is legal here and only here: neither has ever been applied to a real database —
-only to per-test files — so the "never change an applied migration" rule is not in play.
-It stops being legal the moment this branch is run against the live ledger, which it must
-not be until step 2 is done.
-
-Contiguity is why they cannot simply be renumbered now: `test_init_creates_the_schema`
-asserts the file set runs 0001..N with no gaps, and this branch does not carry 0030–0032.
+**Still true and still owed before this reaches the live ledger:** two migrations means
+the frozen sidecar is re-armed. Rebuild the desktop app or it will not start against this
+schema.
 
 ### Settled 2026-08-23: the pass order (audit §1c), and the batch hole (§1a)
 
