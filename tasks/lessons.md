@@ -1324,3 +1324,30 @@ deterministic given the id.
   verification" means an independent *probe*, not an independent run of the same one; the
   2026-08-17 guard-clause lesson is this one wearing different clothes, and both come down
   to reading the writer before trusting the reader.
+
+- 2026-08-23 | Ran `backglass state` against the live ledger as a read-only orientation
+  check — CLAUDE.md calls it "ground truth, read fresh" and says to run it first — and it
+  applied migrations 0033, 0034 and 0035 to the owner's database from an unmerged branch.
+  `state_command` calls `migrate(conn)` at `__main__.py:789`, like every other command
+  that opens the ledger. The checkout launchd runs only carries files to 0032, so the
+  next `backglass sync` and the desktop app would both have died on
+  `MigrationError: schema_version records migration(s) 33, 34, 35 that are not on disk`.
+  Rolled back to 32 with the owner's go-ahead: all three objects were provably empty
+  (loop_pass 0 rows, overflow_dated all NULL, one index), safety copy first, every table
+  count identical afterwards. | `state` is read-only about the *report* and not about the
+  *ledger*. Before pointing ANY backglass command at `DB_PATH=<the live database>` from a
+  branch, check whether it opens the ledger through `_open` + `migrate` — nearly all of
+  them do. From a feature branch, run it against a `.backup` copy, always; the copy is one
+  command and there is no version of this mistake that is cheap. The docs calling
+  something a read does not make it one.
+
+- 2026-08-23 | Then "verified" the breakage was harmless by running the checkout's own
+  interpreter against a copy — and got `migrate ok: []`, because I invoked it with my
+  worktree as the working directory, so `import backglass` resolved to MY package with
+  all 35 migration files rather than the checkout's 32. Re-running from a neutral
+  directory printed `BROKEN: MigrationError`. Twice in one session a probe answered a
+  question I had not actually asked it. | When testing another checkout's code, make the
+  probe *print what it loaded* — `backglass.__file__` and the migrations directory it
+  resolved — and read those two lines before reading the verdict. A cross-checkout test
+  that does not name the copy under test is measuring the wrong thing by default, because
+  cwd wins the import.
