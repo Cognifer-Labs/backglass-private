@@ -42,11 +42,28 @@ def _open(settings: Settings) -> sqlite3.Connection:
     return connect(settings.db_path)
 
 
-def _build_model_client(settings: Settings) -> Any:
+def _build_model_client(settings: Settings, conn: Any | None = None) -> Any:
     """`model_client.build()`, but a missing key/CLI degrades (Rule 5) instead of an
-    uncaught `ModelError` producing a full stack trace for a fresh, unconfigured clone."""
+    uncaught `ModelError` producing a full stack trace for a fresh, unconfigured clone.
+
+    `conn` is optional and only buys the measured routing order: with one, the provider's
+    fallback array leads with whatever has recently been answering. Without one the body
+    is the configured order, which is what it always was — a caller that has no database
+    open must not be made to open one to send a prompt.
+    """
+    routes = None
+    if conn is not None:
+        # Rule 5 in its own right. Routing is an optimisation over telemetry, and a
+        # pipeline that will not run because it could not read its own call history
+        # would be the reporting layer becoming load-bearing.
+        try:
+            from backglass import modelhealth
+
+            routes = modelhealth.routes(conn, settings)
+        except Exception:  # noqa: BLE001
+            routes = None
     try:
-        return model_client.build(settings)
+        return model_client.build(settings, routes=routes)
     except model_client.ModelError as exc:
         typer.echo(str(exc), err=True)
         raise typer.Exit(code=1) from exc
@@ -414,7 +431,7 @@ def sync_command(
             conn,
             settings,
             connectors,
-            _build_model_client(settings),
+            _build_model_client(settings, conn),
             dry_run=dry_run,
             contacts_source=_contacts_source(conn, settings),
         )

@@ -376,6 +376,12 @@ class Settings(BaseSettings):
     #: Tried in order when the configured model will not serve, OpenRouter only. See
     #: `DeepInfraBackend.fallbacks` for why a free tier needs this to be usable at all.
     model_fallbacks: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    #: One model to try after every model in `model_fallbacks` has refused. Empty by
+    #: default and empty is a real choice: this is the only setting here that can turn a
+    #: free-tier install into a spending one, so it has to be typed by the owner rather
+    #: than arrive with a default. Bounded by `monthly_spend_cap_cents` like everything
+    #: else — on this backend the cap is real money and hard (rule 7).
+    model_escalation: str = ""
     model_triage: str = "haiku"
     model_extract: str = "sonnet"
     model_api_key: str = ""

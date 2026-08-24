@@ -415,6 +415,45 @@ class DeepInfraBackend:
     #: until it does not, and rule 5 would turn each of those minutes into a degraded run.
     fallbacks: tuple[str, ...] = ()
 
+    #: One model guaranteed the *last* routed slot, whenever it is set. It serves only
+    #: when every model above it has already refused, so it costs nothing on a day the
+    #: free tier is working and it ends the run's dead end on a day it is not.
+    #:
+    #: The dead end is the measured failure. On 2026-08-21 and 08-22, 241 of 288 triage
+    #: calls returned `error` — and an error here means the *whole array* refused, because
+    #: a free tier is one shared queue and its models rate-limit together. Every model in
+    #: `fallbacks` is on that queue, so the array had nowhere to fall back to. Empty by
+    #: default: this must not begin spending because a config file grew a field.
+    escalation: str = ""
+
+    #: Primary model → the order to send, measured (`backglass/modelhealth.py`). Absent
+    #: or empty means send the configured order, which is what every call did before this
+    #: existed — the healthy day is byte-identical, and only a model that is measurably
+    #: refusing changes the body.
+    routes: dict[str, tuple[str, ...]] = field(default_factory=dict)
+
+    def _routed(self, model: str) -> list[str]:
+        """The `models` array for this call, escalation last, never longer than the cap.
+
+        The truncation has to be deliberate rather than a trailing slice, and that is the
+        whole reason this is a method. `[model, *fallbacks][:3]` is what shipped, and with
+        three fallbacks configured it silently never sent the third — so the array was
+        chosen by list order and quietly shorter than the config claimed. Appending the
+        escalation model to that same expression would have dropped it exactly when it was
+        needed, since the array is only full when there are plenty of free models to try.
+        """
+        candidates = self.routes.get(model) or (model, *self.fallbacks)
+        # Deduplicated, because the array has three slots and a repeat spends one on
+        # nothing. This is not hypothetical tidying: MODEL_EXTRACT is currently also the
+        # first entry of MODEL_FALLBACKS, so the extract array has been sending the same
+        # model twice and a third of the fallback budget has never existed.
+        seen: set[str] = set()
+        order = [m for m in candidates if m and not (m in seen or seen.add(m))]
+        if not self.escalation:
+            return order[:MAX_ROUTED_MODELS]
+        order = [m for m in order if m != self.escalation]
+        return [*order[: MAX_ROUTED_MODELS - 1], self.escalation]
+
     def complete(
         self, *, system: str, user: str, schema: dict[str, Any], model: str, budget_usd: float
     ) -> ModelResult:
@@ -441,8 +480,9 @@ class DeepInfraBackend:
                 # and rejects unknown ones. Listed first-to-last; the primary repeats at
                 # the head so the array is the whole preference order in one place.
                 **(
-                    {"models": [model, *self.fallbacks][:MAX_ROUTED_MODELS]}
-                    if self.fallbacks and "openrouter" in self.base_url
+                    {"models": self._routed(model)}
+                    if (self.fallbacks or self.escalation)
+                    and "openrouter" in self.base_url
                     else {}
                 ),
                 # OpenRouter reports what a call cost only when asked; DeepInfra returns
@@ -721,7 +761,15 @@ def anthropic_api_key(settings: Settings) -> str:
     return settings.model_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
 
 
-def build(settings: Settings) -> ModelClient:
+def build(
+    settings: Settings, *, routes: dict[str, tuple[str, ...]] | None = None
+) -> ModelClient:
+    """The configured backend.
+
+    `routes` is the measured routing order from `modelhealth.routes` — optional, and a
+    keyword, because most callers have no connection to read it from and must not need
+    one. Omitted, every request body is exactly what it was before the option existed.
+    """
     primary: ModelClient
     if settings.model_backend == "deepinfra":
         if not settings.model_api_key:
@@ -738,6 +786,8 @@ def build(settings: Settings) -> ModelClient:
             api_key=settings.model_api_key or "not-needed",
             base_url=settings.model_base_url or settings.deepinfra_base_url,
             fallbacks=tuple(settings.model_fallbacks),
+            escalation=settings.model_escalation,
+            routes=routes or {},
         )
     elif settings.model_backend == "anthropic":
         key = anthropic_api_key(settings)
