@@ -2,6 +2,64 @@
 
 Format: `[date] | what went wrong | rule to prevent it`
 
+---
+
+## Before you believe a check — read this part every session
+
+The log below is 1,290 lines and grows daily, which means the entry that would have saved
+you is almost certainly one you did not reach. This section is the part that keeps
+repeating, hoisted to where it gets read.
+
+**One failure shape accounts for most of it: a check that passed without being able to
+fail.** Not a wrong answer — a *right-looking* answer produced by a check aimed at
+nothing. It happened four times on 2026-08-23/24 alone, twice to two different sessions on
+the same day, and every time the number agreed with what was expected, which is why nobody
+looked twice. `scripts/truth.py` was built on the same insight from the other direction:
+*a checker keyed to a mirror cannot detect drift in that mirror.*
+
+The five pre-flights below are cheap. Run the one that matches before writing a finding
+down, shipping a guard, or telling somebody a number.
+
+**1. Before a zero becomes a finding, name what a non-zero would have looked like — and
+confirm the writer writes *there*.**
+`source_item WHERE source LIKE '%contact%'` → 0 was read as "the connector never ran".
+Contacts writes aliases onto `entity`; that query returns 0 whether it has run daily for a
+month or never once. A zero from the wrong table is the most believable wrong answer there
+is, because it confirms whatever story you brought.
+
+**2. Make a new guard fail on purpose, once, before trusting it green.**
+A launchd check went green on a substring that could never have matched the real labels
+(2026-07-30). A test asserting "state does not migrate" passed against a state that
+migrates, because its fixture carried a placeholder checksum. A check nobody has seen fail
+is a check nobody has seen work — and that includes the pass branch *and* the fail branch.
+
+**3. A predicate's name can be true where its use is false. Read what each writer does
+with the answer.**
+`_commitment_resolved` was accurate — `dropped` really is resolved — and every caller wrote
+`outcome = 'done'`, which four readers treat as "this happened", including the one that
+writes a goal checkpoint. Resolved is not done; closed is not succeeded; present is not
+correct. Check the writes, not the name.
+
+**4. Bound a window by time, not by count, wherever two readers will compare notes.**
+A count-bounded window makes a busy tier's window shorter in *time* than a quiet one's, so
+the same outage is current to one reader and expired to the other. Both were "correct".
+And when two readers legitimately need different windows, say the window in the output: a
+bare "failing 53%" reads as *now*.
+
+**5. Two changes that are each correct can compose into a defect. Ask what they do
+together.**
+The day-closer's `dropped`-as-`done` bug was harmless while one commitment in the ledger
+carried a `goal_id`. Goal-linking landed an hour later and filled that column. Neither
+change was wrong; the pair wrote fabricated goal progress. Before ending a session that
+landed more than one thing, name what the new pieces do to each other's state.
+
+**And when a peer, or the advisor, asks about sequencing — simulate the interaction rather
+than reasoning about the order.** "Does the order matter?" and "is either one right?" come
+from the same trace, and only the first one gets asked. That question is what surfaced
+rule 5's bug.
+
+---
+
 2026-07-30 | A bare `claude -p` call inherited the full session context (CLAUDE.md, MCP
 tool schemas, skill listings) — 29,919 cache-creation tokens and $0.31 for a 17-token
 answer. | Every pipeline invocation of the Claude CLI must pass `--safe-mode --tools ""
@@ -1296,3 +1354,17 @@ deterministic given the id.
   rather than by reasoning about the order, because the answer to "does the order matter"
   and the answer to "is either one right" come from the same trace, and only one of them
   was being asked.
+
+- 2026-08-24 | Wrote four lessons in one day about checks that passed without being able to
+  fail, and hit the same shape twice more *after* writing them — once in a probe of my own
+  and once in a doc I had already shipped. A peer session hit it twice independently on the
+  same day. The lessons were not wrong and were not ignored on purpose: `tasks/lessons.md`
+  had reached 1,298 lines, the newest entries were at line 1,226, and CLAUDE.md's
+  session-start instruction to "apply all lessons before touching anything" had quietly
+  become aspirational. A log that only grows stops being a control at some length, and it
+  passes that length without anything announcing it. | Lessons that keep recurring get
+  hoisted out of the chronology into a short standing section at the top of the file, and
+  the chronological entry stays below as the evidence. Length is the failure mode of this
+  file, so the section is capped at what will actually be read — when a sixth rule earns a
+  place, one of the five has to have stopped happening, or the section is not working
+  either. Same test as any other guard: if it cannot fail, it is not doing anything.
