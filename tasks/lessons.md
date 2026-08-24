@@ -1309,3 +1309,18 @@ deterministic given the id.
   ceiling against a pathological backfill. And when two readers legitimately need
   different windows, say the window in the output — "failing 53%" with no window reads as
   "right now", which is how a flap that ended gets acted on.
+
+- 2026-08-23 | Relayed to the owner, as verified, that `apple-contacts` "has produced zero
+  items" — evidence a configured connector was not running. The probe was
+  `SELECT ... FROM source_item WHERE source LIKE '%contact%'` → 0, and it is structurally
+  incapable of answering the question asked of it: contacts writes aliases onto `entity`,
+  not `source_item` rows, and `_contacts_pass` runs on every sync. Checked properly after
+  a peer session disproved its own claim: 70 entities carry a phone alias, 13 an email
+  alias, 5 both. The connector runs; it just does not bridge the two populations. I ran
+  the probe independently and still got it wrong, because running the same wrong query
+  twice is not a second opinion. | A count of zero is only evidence when the writer would
+  have written *there*. Before treating an empty table as proof a thing never ran, find
+  the INSERT — grep the module for what it actually writes — and probe that. "Independent
+  verification" means an independent *probe*, not an independent run of the same one; the
+  2026-08-17 guard-clause lesson is this one wearing different clothes, and both come down
+  to reading the writer before trusting the reader.
