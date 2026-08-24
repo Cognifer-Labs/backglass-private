@@ -9,8 +9,25 @@
       {# docs/05 §3 and docs/06: one capacity sentence, not a dashboard of gauges. #}
       <p class="cap">
         {{ (meta.capacity_minutes // 60) }}h {{ '%02d'|format(meta.capacity_minutes % 60) }}m available,
-        {{ (meta.planned_minutes // 60) }}h {{ '%02d'|format(meta.planned_minutes % 60) }}m planned{% if meta.overflow_count %},
-        <span class="over">{{ meta.overflow_count }} item{{ 's' if meta.overflow_count != 1 }} did not fit</span>{% endif %}.
+        {{ (meta.planned_minutes // 60) }}h {{ '%02d'|format(meta.planned_minutes % 60) }}m planned{%
+          if meta.overflow_count %},
+        {#- The split migration 0033 exists for. One number said "178 items did not fit"
+            and read as breakage; 174 of them had no date and were never candidates for
+            today. The gold ink goes to the handful that were actually owed, and the
+            backlog is stated in plain type beside it — a real number the owner should
+            see, just not an alarm. A plan written before 0033 recorded no split, so it
+            keeps the sentence it was written with rather than being given a made-up one. -#}
+        {%- set dated = meta.overflow_dated %}
+        {%- set undated = meta.overflow_count - dated if dated is not none else 0 %}
+        {%- if dated is none %}
+        <span class="over">{{ meta.overflow_count }} item{{ 's' if meta.overflow_count != 1 }} did not fit</span>
+        {%- elif dated %}
+        <span class="over">{{ dated }} due item{{ 's' if dated != 1 }} did not fit</span>
+        {%- if undated %} and {{ undated }} undated {{ 'item is' if undated == 1 else 'items are' }}
+        waiting on a date{% endif %}
+        {%- else %} nothing due was left out — {{ undated }} undated
+        {{- ' item is' if undated == 1 else ' items are' }} waiting on a date
+        {%- endif %}{% endif %}.
       </p>
       {% if not meta.has_protected %}
         {# docs/05 §Failure states: say the day is fully booked rather than showing an
@@ -45,10 +62,13 @@
             <p class="b1"><span class="cond">{{ b['title'] }}</span></p>
             {{ m.chip('protected') }}
           </div>
-        {% elif b['kind'] == 'routine' %}
+        {% elif b['kind'] in ('routine', 'study') %}
           {# Routines get no verbs, hovered or not: "Roll" on breakfast is a question
-             nobody asked. Life holds its place; only work carries actions. #}
-          <div class="row sched k-routine">
+             nobody asked. Life holds its place; only work carries actions. A study
+             block is here for the same reason and not by analogy: it is time the plan
+             set aside, not an obligation anybody made, so there is nothing to tick and
+             nothing to roll — and `rollover.open_blocks` agrees, leaving its kind out. #}
+          <div class="row sched k-{{ b['kind'] }}">
             <span class="time">{{ b['starts_at']|t12 }}–{{ b['ends_at']|t12 }}</span>
             <p class="b1"><span>{{ b['title'] }}</span></p>
           </div>
@@ -64,7 +84,8 @@
             <span class="time">{{ b['starts_at']|t12 }}–{{ b['ends_at']|t12 }}</span>
             <p class="b1"><span>{{ b['title'] }}</span>
               {%- if b['pinned'] %} <span class="kbd">pinned</span>{% endif %}
-              {%- if b['rollover_count'] %} <span class="b2i">rolled {{ b['rollover_count'] }}x</span>{% endif %}</p>
+              {%- if b['rollover_count'] %} <span class="b2i">rolled {{ b['rollover_count'] }}x</span>{% endif %}
+              {%- if b['needs'] %}<br><span class="b2i">needs {{ b['needs'] }}</span>{% endif %}</p>
             <div class="acts">
               <button class="btn ok" hx-post="/blocks/{{ b['id'] }}/outcome/done"
                       hx-target="#panel-today" hx-swap="outerHTML">Done</button>

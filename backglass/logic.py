@@ -10,11 +10,20 @@ lessons were written about. The boundary is **positive contradiction**, never si
 - `extract/recheck.py` closes a chat promise only on a quoted later message.
 - `staleness.py` never closes at all — it stops *scheduling* and asks.
 - This module closes only where the ledger disagrees with itself: an obligation whose own
-  text reports it already happened, a question about a day that has ended, a question
-  about a commitment that is no longer open.
+  text reports it already happened, an obligation to attend something on a day that has
+  ended, a question about a day that has ended, a question about a commitment that is no
+  longer open.
 
 Nothing here reasons from "nobody mentioned it since". A rule that cannot point at the
 row that contradicts the row it is closing does not belong in this file.
+
+**The one exception, and it is an owner ruling rather than a contradiction.**
+`_canvas_assignments_past_grace` closes a *deliverable* on elapsed time alone. It is here
+because the Canvas ICS feed structurally cannot report submission (docs/07 §Canvas), so
+those rows can never close themselves and 141 of them landed in a single afternoon; the
+owner ruled on 2026-08-20 that time should close them. It is bounded by source, not by the
+shape of the sentence, and it is the only place in this file where absence of evidence is
+allowed to act. Do not read it as a precedent for the rest.
 
 Two properties keep it reversible, because an automatic disposal nobody can find is worse
 than a wrong one they can:
@@ -35,7 +44,7 @@ from __future__ import annotations
 import re
 import sqlite3
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from typing import Any
 
 from backglass.config import Settings
@@ -55,6 +64,61 @@ _REPORTED_DONE = re.compile(
     r"|\bcompleted\s*$",
     re.I,
 )
+
+#: An obligation to *be somewhere at a time*, which the time passing answers by itself.
+#: The owner, 2026-08-20: *"it is planning for things that are obviously done, for example
+#: i already moved in on the 9th"* — commitment 8, `Move-in: Willow Hall 502, 8:00am`, due
+#: 2026-08-09 and still open eleven days later because `staleness` waits fourteen and then
+#: only asks.
+#:
+#: Attendance, and nothing else. "Submit the housing contract" is past due and still owed;
+#: closing it would be the silent data loss this module's docstring exists to forbid. The
+#: separation is the whole safety of the rule, so the verbs are the narrow, physical ones:
+#: you cannot still owe your presence at something that already happened.
+#:
+#: `move-in` is matched anywhere because the owner's own rows write it as a label
+#: ("Move-in: Willow Hall 502"), not as a verb in a sentence.
+_ATTENDANCE = re.compile(
+    r"^\s*(attend|arrive|check\s*in|go\s+to|show\s+up|be\s+at|drop\s+in)\b"
+    r"|\bmove[\s-]?in\b",
+    re.I,
+)
+
+#: The same obligation written as the second half of a sentence. Commitment 342 on the
+#: live ledger is `"RSVP + attend Arizona AI & Emerging Technology meetup … Thu 13 Aug
+#: 5:30pm"`, due 2026-08-12 and still being scheduled into 2026-08-23 — the anchor above
+#: reads "RSVP" and stops, and the row outlives the evening it was about.
+#:
+#: Deliberately a *shorter* verb list than the anchored one. At the start of a sentence
+#: "go to" and "check in" are the whole obligation; after a clause boundary they are as
+#: likely to be a step inside a deliverable — "submit the form and go to the portal" is
+#: still owed after the day passes, and dropping it would be the silent data loss this
+#: module's docstring forbids. Only the verbs that can mean nothing but being physically
+#: present are trusted here.
+_ATTENDANCE_CLAUSE = re.compile(
+    r"(?:^|[+/&,;]|\band\b|\bthen\b)\s*(attend|show\s+up|arrive)\b",
+    re.I,
+)
+
+
+def _is_attendance(what: str) -> bool:
+    """Is this an obligation to be somewhere, rather than to deliver something?
+
+    The separation is the whole safety of `_events_whose_day_has_passed`: a day that has
+    ended answers a presence obligation and says nothing at all about a deliverable.
+    """
+    return bool(_ATTENDANCE.search(what) or _ATTENDANCE_CLAUSE.search(what))
+
+#: How long a Canvas assignment stays owed after its due date. The owner ruled on
+#: 2026-08-20 that these expire: the ICS feed carries no submission state (docs/07
+#: §Canvas), so an assignment already handed in reads `open` forever, and 141 of them
+#: landed in one afternoon. Seven days clears the late-submission window most courses
+#: allow while still closing the row long before `staleness` would think to ask.
+#:
+#: Scoped to `canvas:ics` by source, never by shape. This is the one place the module
+#: closes a *deliverable*, it does so only under an explicit ruling, and it must not
+#: generalise to anything the owner did not rule on.
+CANVAS_GRACE_DAYS = 7
 
 
 @dataclass
@@ -237,11 +301,114 @@ def _questions_the_calendar_no_longer_supports(
     return out
 
 
+def _events_whose_day_has_passed(
+    conn: sqlite3.Connection, today: date
+) -> list[Disposal]:
+    """Being somewhere on a day that is over is not an open obligation.
+
+    The same rule shape as `_questions_about_days_that_ended`, one table across: the day
+    is in the row, the check is a date comparison, and there is no re-detection and no
+    guessing. Positive contradiction, because a date that has passed is a fact the ledger
+    holds about the row it closes — not "nobody has mentioned it since".
+
+    Strictly `<` today, so an event this morning survives until tomorrow. The owner moves
+    between UTC-7 and UTC+5:30 and `today` is resolved in their local zone by the caller;
+    a same-day comparison would retire tonight's obligations from the other side of the
+    world.
+
+    Dropped rather than resolved, and the wording of the note is the reason. Backglass does
+    not know whether the owner attended — only that the hour is gone — and `_reported_done`
+    resolves precisely because there the ledger *says* the work happened. Claiming `done`
+    here would put a fact in the record that nothing supports.
+    """
+    out: list[Disposal] = []
+    for row in conn.execute(
+        "SELECT id, what, due_at FROM commitment"
+        " WHERE user_id = ? AND status = 'open' AND due_at IS NOT NULL ORDER BY id",
+        (USER_ID,),
+    ):
+        what = str(row["what"])
+        if not _is_attendance(what):
+            continue
+        try:
+            due = date.fromisoformat(str(row["due_at"])[:10])
+        except ValueError:
+            continue
+        if due >= today:
+            continue
+        out.append(
+            Disposal(
+                kind="commitment",
+                subject_id=int(row["id"]),
+                rule="event-day-passed",
+                action="dropped",
+                reason=(
+                    f'"{what}" was to be attended on {due.isoformat()}, which is over; '
+                    "whether it happened is not something the ledger records"
+                ),
+            )
+        )
+    return out
+
+
+def _canvas_assignments_past_grace(
+    conn: sqlite3.Connection, today: date
+) -> list[Disposal]:
+    """Coursework whose due date passed long enough ago that the feed will never answer.
+
+    `canvas.py` drops submitted and graded work before it is ever ingested, and that
+    filter is the most valuable thing the Canvas API gives. The ICS fallback has none of
+    it, so every assignment stays `open` after it is handed in — 141 of them arrived on
+    2026-08-20 when the connector's cursor bug was fixed, and not one can ever close
+    itself.
+
+    So the owner ruled that time closes them, and `CANVAS_GRACE_DAYS` carries the reason.
+    This is the module's only rule that closes a deliverable, which is why it is bounded
+    by source rather than by the shape of the sentence: a mail asking for the same essay
+    is still owed, and only the row that came from the feed with no submission state is
+    disposed of here.
+
+    If `CANVAS_TOKEN` is ever granted, `canvas.py` supersedes the feed, submission state
+    returns, and this rule should be deleted rather than retuned.
+    """
+    horizon = today - timedelta(days=CANVAS_GRACE_DAYS)
+    out: list[Disposal] = []
+    for row in conn.execute(
+        "SELECT c.id, c.what, c.due_at FROM commitment c"
+        " JOIN source_item si ON si.id = c.source_item_id"
+        " WHERE c.user_id = ? AND c.status = 'open' AND c.due_at IS NOT NULL"
+        "   AND si.source = 'canvas:ics' ORDER BY c.id",
+        (USER_ID,),
+    ):
+        try:
+            due = date.fromisoformat(str(row["due_at"])[:10])
+        except ValueError:
+            continue
+        if due >= horizon:
+            continue
+        out.append(
+            Disposal(
+                kind="commitment",
+                subject_id=int(row["id"]),
+                rule="canvas-past-grace",
+                action="dropped",
+                reason=(
+                    f'"{row["what"]}" was due {due.isoformat()}, more than '
+                    f"{CANVAS_GRACE_DAYS} days ago; the Canvas feed carries no "
+                    "submission state and will never close it"
+                ),
+            )
+        )
+    return out
+
+
 def check(conn: sqlite3.Connection, settings: Settings, today: date) -> Report:
     """Every rule, each failing on its own. Read-only: `check` decides, `apply` writes."""
     report = Report()
     for rule in (
         lambda: _reported_done(conn),
+        lambda: _events_whose_day_has_passed(conn, today),
+        lambda: _canvas_assignments_past_grace(conn, today),
         lambda: _questions_about_closed_commitments(conn),
         lambda: _questions_about_days_that_ended(conn, today),
         lambda: _questions_the_calendar_no_longer_supports(conn, settings, today),

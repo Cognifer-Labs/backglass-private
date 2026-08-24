@@ -76,11 +76,33 @@ def _sharpens(new: str | None, current: str | None, *, aimed: bool = False) -> b
     return has_clock or not had_clock
 
 
+@dataclass(frozen=True)
+class Revision:
+    """One already-stored item whose upstream record has since been edited.
+
+    Carries the hashes rather than a rendered sentence: the caller has to decide whether
+    it has seen *this* edit before, and only the observed hash can answer that.
+    """
+
+    source: str
+    external_id: str
+    source_item_id: int
+    stored_hash: str
+    observed_hash: str
+
+    @property
+    def key(self) -> str:
+        return f"{self.source}:{self.external_id}"
+
+
 @dataclass
 class LedgerStats:
     source_items_inserted: int = 0
     source_items_unchanged: int = 0
     source_item_conflicts: list[str] = field(default_factory=list)
+    #: Upstream edits to items that say they are `mutable_upstream`. Kept apart from the
+    #: conflicts above because they are not failures and must not degrade the run.
+    source_item_revisions: list[Revision] = field(default_factory=list)
     entities_created: int = 0
     commitments_inserted: int = 0
     commitments_deduped: int = 0
@@ -127,7 +149,24 @@ class Ledger:
 
         if existing is not None:
             if existing["content_hash"] != item.content_hash:
-                self.stats.source_item_conflicts.append(f"{item.source}:{item.external_id}")
+                if item.mutable_upstream:
+                    # Not a fault: the upstream record moved and its mutable half lives in
+                    # a table of its own (migration 0031). The caller decides whether this
+                    # particular move has been announced before — that question needs the
+                    # change ledger, which the ledger writer has no business reading.
+                    self.stats.source_item_revisions.append(
+                        Revision(
+                            source=item.source,
+                            external_id=item.external_id,
+                            source_item_id=int(existing["id"]),
+                            stored_hash=str(existing["content_hash"]),
+                            observed_hash=item.content_hash,
+                        )
+                    )
+                else:
+                    self.stats.source_item_conflicts.append(
+                        f"{item.source}:{item.external_id}"
+                    )
             self.stats.source_items_unchanged += 1
             return int(existing["id"]), False
 

@@ -14,6 +14,26 @@ One page, server-rendered, responsive. Opened during the day rather than pushed.
 | Review queue | Low-confidence extractions, accept or reject |
 | Sources | Last successful sync per source, item counts, triage kill rate, failures |
 
+## Classes
+
+A second read-only page, `/classes`, added 2026-08-21 when the owner's semester became the
+thing the ledger mostly holds. One card per course: how it meets (pattern, room,
+instructor, and the count of calendar rows that pattern was folded out of, so the line can
+be re-derived rather than believed), what is due next with its effort estimate and the
+materials it needs, the open commitments that belong to the course, and the archive
+documents ingested for it.
+
+It owns no table and stores nothing — `backglass/courses.py` reads `calendar:asu` rows,
+the `assignment` tables, open commitments and `files` items, and joins them on the course
+code. Two absences are stated on the page itself rather than left to be discovered: all-day
+calendar rows never enter the ledger, and a timed exam only appears once it is inside the
+calendar connector's 21-day horizon (docs/07 §Two things a calendar write does not put in
+the ledger).
+
+A class the calendar knows and Canvas does not still gets a card — LSB 191 has no Canvas
+shell at all, and a page built from Canvas enrollments would have silently dropped a class
+the owner attends every Monday.
+
 ## Write-back is required
 
 Dashboard state changes write to the ledger. Resolving a commitment on the board marks it

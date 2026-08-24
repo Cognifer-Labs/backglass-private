@@ -42,6 +42,10 @@ Scopes requested (read-only, nothing else — docs/08): `gmail.readonly`,
       `IMESSAGE_DB_PATH`, `INBOX_FOLDER_PATH`, `OBSIDIAN_VAULT_PATH`,
       `APPLE_NOTES=1`, `APPLE_REMINDERS=1`, `CANVAS_BASE_URL`+`CANVAS_TOKEN`.
 - [ ] Optional privacy screen: `APPLE_TRIAGE=1` (step 5 creates the shortcut).
+- [ ] If you set `INBOX_FOLDER_PATH`, keep anything *derived* from those files — text
+      extractions especially — in a sibling folder, not inside the drop root. The
+      connector reads `.txt`, so a text twin beside its PDF ingests the same document
+      twice and pays extraction for both (docs/07 §The drop folder in practice).
 
 ## 4. OAuth runs
 

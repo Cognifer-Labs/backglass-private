@@ -319,6 +319,22 @@ def _ledger(conn: sqlite3.Connection, settings: Settings, state: State) -> None:
     del settings
 
 
+def modelhealth_report_days() -> int:
+    """Named in the verdict's own text, because "failing 53%" with no window reads as
+    "right now" — and the window is three days precisely so it can show a bad yesterday."""
+    from backglass import modelhealth
+
+    return modelhealth.REPORT_DAYS
+
+
+def modelhealth_unhealthy_at() -> float:
+    """The one number the verdict shares with the router, read rather than repeated —
+    a threshold defined twice is two thresholds the first time one of them moves."""
+    from backglass import modelhealth
+
+    return modelhealth.UNHEALTHY_AT
+
+
 def _pipeline(conn: sqlite3.Connection, state: State) -> None:
     last = conn.execute("SELECT * FROM run ORDER BY id DESC LIMIT 1").fetchone()
     if last is None:
@@ -340,6 +356,25 @@ def _pipeline(conn: sqlite3.Connection, state: State) -> None:
               "GROUP BY tier over model_call",
               "model_call is empty; it fills from the first sync after Phase 0"
               if not calls else None),
+    )
+    # Per tier and model, over recent calls rather than all time. The all-time average is
+    # what hid the 2026-08-21 outage in plain sight: 241 of 288 triage calls failed over
+    # two days, the number above went on looking unremarkable because it was diluted by
+    # three healthy weeks, and the backlog stayed at zero the whole time because rule 5
+    # retries cleared it. Nothing the owner can look at said anything was wrong.
+    from backglass import modelhealth
+
+    health = modelhealth.by_tier(conn)
+    state.add(
+        "pipeline", "model_health",
+        Claim({h.model: {"calls": h.calls, "failures": h.failures,
+                         "rate": round(h.rate, 3) if h.known else None}
+               for h in health},
+              f"model_call over the last {modelhealth.REPORT_DAYS} days, per tier and"
+              f" model; rate is null below {modelhealth.MIN_CALLS} calls. The router"
+              f" reads a shorter window ({modelhealth.ROUTING_DAYS}d) on purpose —"
+              f" see modelhealth",
+              "model_call is empty" if not health else None),
     )
 
 
@@ -688,6 +723,35 @@ def verdicts(state: State, conn: sqlite3.Connection, settings: Settings) -> list
                                       "over /Applications/Backglass.app"))
         elif _value(state, "deployed", "matches_source") is True:
             out.append(Verdict("installed app matches this checkout", ok=True))
+
+    # A tier that is refusing is invisible everywhere else: the backlog clears on retry,
+    # the run exits 0, and the all-time averages absorb it. This is the one place it
+    # shows up on the day rather than two days later in a hand-written query.
+    health = _value(state, "pipeline", "model_health")
+    if not health:
+        out.append(Verdict("every model tier is answering", ok=False, unknown=True,
+                           detail="no model calls recorded yet"))
+    else:
+        judged = {k: v for k, v in health.items() if v.get("rate") is not None}
+        failing = {
+            k: v for k, v in judged.items()
+            if v["rate"] >= modelhealth_unhealthy_at()
+        }
+        if not judged:
+            out.append(Verdict("every model tier is answering", ok=False, unknown=True,
+                               detail="too few recent calls on any tier to judge"))
+        else:
+            out.append(Verdict(
+                "every model tier is answering",
+                ok=not failing,
+                detail=", ".join(
+                    f"{k} failing {round(v['rate'] * 100)}% of {v['calls']}"
+                    for k, v in sorted(failing.items())
+                ) + f" (last {modelhealth_report_days()}d)",
+                remedy="the free tier is a shared queue and its models rate-limit"
+                       " together — set MODEL_ESCALATION to a model that answers, or"
+                       " change MODEL_TRIAGE/MODEL_EXTRACT",
+            ))
 
     # A plist on disk is a wish; only a loaded label is a schedule. This is the gap
     # that silently stopped the ledger for thirteen hours on 2026-08-18: the sync

@@ -302,3 +302,186 @@ def test_the_confirmation_script_is_loaded_wherever_a_write_can_happen() -> None
     """Every page can write, which is why the failed-write strip is in base.html. Drop's
     confirmation is the same kind of thing and belongs in the same place."""
     assert "/static/confirm.js" in BASE.read_text()
+
+
+# ── the scripted layer (static/motion.js) ────────────────────────────────────
+#
+# Two things moved out of the stylesheet in 2026-08-21 because CSS cannot express them:
+# a stagger, and a row that moves because another row left. Everything else stayed. The
+# tests above read the sheet because that is where the rules live; these read the script
+# for the same reason, and they exist because a scripted duration is the easiest way in
+# the world to reintroduce the drift §9 spends five tokens preventing.
+
+MOTION_JS = ROOT / "backglass" / "web" / "static" / "motion.js"
+STATIC = ROOT / "backglass" / "web" / "static"
+
+
+def _script() -> str:
+    """The script with its comments removed, for the reason `_sheet` strips the sheet's:
+    the block comments here quote token names and durations while explaining them."""
+    source = MOTION_JS.read_text()
+    source = re.sub(r"/\*.*?\*/", "", source, flags=re.S)
+    return re.sub(r"^\s*//.*$", "", source, flags=re.M)
+
+
+def test_the_script_invents_no_duration_distance_or_curve() -> None:
+    """§9 rule 3, enforced one layer further out than it used to reach.
+
+    A component that invents a speed has made a system decision alone, and a *script*
+    that invents one is worse: it is invisible to every test in this file, to the
+    stylesheet, and to anyone reading design/tokens.css to find out what this product
+    does. So the script is allowed to read tokens and is allowed to do arithmetic on
+    them, and is not allowed to write a number with a unit on it.
+    """
+    body = _script()
+    literals = re.findall(r"\b\d+(?:\.\d+)?(?:ms|s|px)\b", body)
+    assert not literals, (
+        f"motion.js writes {literals} literally; every duration and distance is a token"
+    )
+    assert "cubic-bezier" not in body, (
+        "the curve belongs to --ease-out; a second copy of it is a second curve the "
+        "moment either one is edited"
+    )
+    for name in ("--motion", "--motion-travel", "--ease-out", "--ease-in-out"):
+        assert name in body, f"{name} is no longer where motion.js gets its values"
+
+
+def test_the_script_stands_down_for_reduced_motion() -> None:
+    """The token layer zeroes travel and press, which is enough for anything that moves
+    by a distance. A stagger and a FLIP have no distance token to zero — a FLIP's
+    distance is however far the row happened to move — so they are gated on the query
+    itself, and this is the assertion that they still are."""
+    assert "prefers-reduced-motion" in _script(), (
+        "motion.js no longer asks; a FLIP cannot be zeroed by a token the way a "
+        "transition can"
+    )
+
+
+def test_only_transform_and_opacity_are_scripted() -> None:
+    """§9 rule 1 does not stop applying because the animation moved into JavaScript.
+    Anything else animated here would be a layout or paint property being tweened from
+    the main thread, sixty times a second, on the page this file exists to unblock."""
+    animated = set()
+    for call in re.findall(r"\.animate\(\s*\{(.*?)\}\s*,", _script(), flags=re.S):
+        animated.update(re.findall(r"(\w[\w-]*)\s*:", call))
+    assert animated, "no animate() calls found — has the file moved?"
+    assert animated <= {"opacity", "transform"}, (
+        f"motion.js animates {sorted(animated - {'opacity', 'transform'})}; §9 rule 1"
+    )
+
+
+def test_the_motion_script_carries_no_engine() -> None:
+    """The animation is `Element.animate`, and that is the point.
+
+    This file first shipped on Motion's `mini` build — 12 KB whose whole job is to call
+    the API used here directly. docs/10 §Web layer asks for no build step, no npm and no
+    bundler, and a browser API satisfies that more completely than a vendored copy of a
+    wrapper around it: there is no file to check in, no hash to keep in step with it,
+    and nothing to upgrade.
+
+    Asserted rather than remembered, because the next animation that wants a spring will
+    reach for a package, and the argument for not having one is easy to lose.
+    """
+    body = _script()
+    assert ".animate(" in body, "the animations are gone"
+    assert "import" not in body, (
+        "motion.js pulls in an engine again; the Web Animations API is already in the "
+        "browser and §Web layer rules out the build step a package implies"
+    )
+    assert not list(STATIC.glob("motion.min*")), (
+        "a vendored animation engine is back in static/ — see this test's docstring"
+    )
+
+
+def test_the_motion_script_is_loaded_wherever_a_write_can_happen() -> None:
+    """Same rule as the confirmation script above: every page can write, and the FLIP is
+    what a write looks like. Deferred, so it never blocks the parse it decorates."""
+    base = BASE.read_text()
+    assert re.search(r'<script src="/static/motion\.js"\s+defer></script>', base)
+
+
+def test_the_script_does_not_stagger() -> None:
+    """§9: "No stagger anywhere. Panels arrive together."
+
+    This test exists because the rule was broken. A stagger was added to the swapped-in
+    rows on 2026-08-21, along with a sixth duration token to space it — in a system whose
+    stated argument for having five is that you pay per duration. Both were reverted the
+    same day on re-reading §9, which had refused the idea in advance and given the
+    reason: the last item ends up a third of a second behind the first, on writes the
+    owner fires tens of times a day.
+
+    Asserted against `delay`, because that is the only way to express a stagger with the
+    Web Animations API, and against the token, because reintroducing one would need it
+    back.
+    """
+    body = _script()
+    assert "delay" not in body, (
+        "motion.js delays an animation; §9 refuses a stagger and every animation here "
+        "belongs to the same beat"
+    )
+    assert "--motion-stagger" not in body, "the sixth duration token is back; §9 has five"
+    assert "--motion-stagger" not in TOKENS.read_text(), (
+        "tokens.css defines a stagger duration §9 forbids spending"
+    )
+
+
+def test_each_curve_is_used_for_what_it_was_defined_for() -> None:
+    """§9 assigns the two curves by role: `--ease-out` for anything entering,
+    `--ease-in-out` for anything moving on screen.
+
+    The FLIP is the first thing in this product that moves on screen rather than
+    arriving, and it went in on `--ease-out` because that was the curve everything else
+    used. The distinction is the whole reason there are two.
+    """
+    source = MOTION_JS.read_text()
+    flip = re.search(r"── 1\.(.*?)── 2\.", source, flags=re.S)
+    fold = re.search(r"── 2\.(.*)", source, flags=re.S)
+    assert flip and fold, "the two sections are no longer where this test looks"
+
+    def curve(section: str) -> str | None:
+        found = re.findall(r'ease\("(--ease-[\w-]+)"\)', section)
+        return found[0] if found else None
+
+    assert curve(flip.group(1)) == "--ease-in-out", (
+        "the FLIP moves a row that is already on screen; §9 holds --ease-in-out for "
+        "exactly that, and nothing else in the product had ever used it"
+    )
+    assert curve(fold.group(1)) == "--ease-out", (
+        "an opening panel is content entering, and §9 gives everything that enters "
+        "--ease-out"
+    )
+
+
+def test_the_fold_reveal_animates_opening_only() -> None:
+    """§9's first omission: nothing leaves. A panel closing is a disappearance, and
+    animating it would mean holding the fold open while it faded."""
+    body = _script()
+    assert ".open" in body, "the fold reveal no longer checks which way the panel went"
+    assert re.search(r"!\w+\.open", body), (
+        "the fold reveal must return early when the panel is closing, not animate it out"
+    )
+
+
+def test_the_flip_measures_the_live_document() -> None:
+    """The bug that logged perfectly and drew nothing.
+
+    For an `outerHTML` swap — which is what every write on this dashboard uses — htmx
+    reports `event.detail.target` as the element it replaced, and that element is
+    already detached when `htmx:afterSwap` runs. `getBoundingClientRect` on a detached
+    node returns zeros, so the FLIP's delta came out as each row's absolute offset
+    rather than the distance it moved, and the animation was handed to a node that
+    would never be painted again. Nothing threw and every log line looked right.
+
+    The `before` map is keyed by commitment id, so the live document is both the
+    correct and the simplest thing to ask.
+    """
+    body = _script()
+    flip = re.search(r"afterSwap.*?before = new Map\(\);", body, flags=re.S)
+    assert flip, "the FLIP's afterSwap handler is no longer recognisable"
+    assert "document.querySelectorAll" in flip.group(0), (
+        "the FLIP must read the live document after a swap"
+    )
+    assert "detail" not in flip.group(0), (
+        "event.detail.target is the element htmx replaced, and it is detached by now — "
+        "measuring it gives a rect of zeros and animates a node that will never paint"
+    )

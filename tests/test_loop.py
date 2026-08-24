@@ -578,7 +578,9 @@ class TestTheExitCode:
         monkeypatch.setattr(cli, "migrate", lambda _c: [])
         monkeypatch.setattr(cli, "_all_connectors", lambda _c, _s: ["a source"])
         monkeypatch.setattr(cli, "_contacts_source", lambda _c, _s: None)
-        monkeypatch.setattr(cli, "_build_model_client", lambda _s: None)
+        # `_build_model_client` gained an optional conn on fix/schedule-canvas-overflow
+        # (model health reads `model_call`); the stub takes whatever it is handed.
+        monkeypatch.setattr(cli, "_build_model_client", lambda *_a, **_k: None)
         monkeypatch.setattr(cli, "sync", lambda *_a, **_k: SyncReport())
         monkeypatch.setattr(cli.loop, "run", lambda *_a, **_k: outcomes)
         return CliRunner().invoke(cli.app, ["sync"])

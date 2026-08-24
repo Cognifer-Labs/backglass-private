@@ -58,8 +58,14 @@
               <span class="wbn">{{ c.free_minutes // 60 }}h{{ '%02d' % (c.free_minutes % 60) }}</span>
               <span class="lbl wbf">free</span>
             {% endif %}
-            {% if c.cap and c.cap['overflow_count'] %}
-              <span class="over"><span aria-hidden="true">◆</span>{{ c.cap['overflow_count'] }} over</span>
+            {#- One number only, in a cell this size, and it is the one that means a day
+                fell short: work that had a date. The undated backlog is the same on every
+                column of the week, so repeating it seven times would say nothing per day
+                while making every day look equally bad. -#}
+            {% set over = c.cap['overflow_count'] if c.cap and c.cap['overflow_dated'] is none
+                          else (c.cap['overflow_dated'] if c.cap else 0) %}
+            {% if over %}
+              <span class="over"><span aria-hidden="true">◆</span>{{ over }} over</span>
             {% endif %}
           </a>
         {% endfor %}

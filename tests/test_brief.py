@@ -564,6 +564,86 @@ def test_a_day_off_the_working_days_list_is_not_called_fully_booked(
     assert "4 items did not fit" in text
 
 
+class TestTheBriefSplitsWhatDidNotFit:
+    """The surface the owner actually reads at 06:00, and the one this complaint came
+    through. Migration 0033; the panels and /schedule got the same treatment."""
+
+    def _plan(
+        self, conn, *, count: int, dated: int | None, day: date = TODAY  # type: ignore[no-untyped-def]
+    ) -> None:
+        conn.execute(
+            "INSERT INTO day_plan (user_id, local_date, tz, capacity_minutes, "
+            " planned_minutes, overflow_count, overflow_dated, generated_at) "
+            "VALUES (?, ?, 'America/Phoenix', 480, 300, ?, ?, ?)",
+            (USER_ID, day.isoformat(), count, dated, now_iso()),
+        )
+        plan_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title) "
+            "VALUES (?, ?, ?, 'work', 'Finish deck')",
+            (plan_id, f"{day}T09:00:00-07:00", f"{day}T10:00:00-07:00"),
+        )
+
+    def _capacity_line(self, conn, settings: Settings) -> str:  # type: ignore[no-untyped-def]
+        brief = daily.build(conn, settings, TODAY)
+        section = next(s for s in brief.ordered() if s.title == "Capacity")
+        return section.lines[0].text
+
+    def test_the_capacity_sentence_names_the_two_numbers_apart(
+        self, conn, settings: Settings  # type: ignore[no-untyped-def]
+    ) -> None:
+        self._plan(conn, count=178, dated=4)
+        line = self._capacity_line(conn, settings)
+
+        assert "4 due items did not fit" in line
+        assert "174 undated items are waiting on a date" in line
+        assert "178 items did not fit" not in line
+
+    def test_a_day_that_held_everything_owed_does_not_report_a_shortfall(
+        self, conn, settings: Settings  # type: ignore[no-untyped-def]
+    ) -> None:
+        """The morning this was written, that was the true state of the day — and the
+        brief was saying 178 things had failed."""
+        self._plan(conn, count=174, dated=0)
+        line = self._capacity_line(conn, settings)
+
+        assert "did not fit" not in line
+        assert "174 undated items are waiting on a date" in line
+
+    def test_a_brief_over_a_plan_from_before_the_split_is_unchanged(
+        self, conn, settings: Settings  # type: ignore[no-untyped-def]
+    ) -> None:
+        self._plan(conn, count=178, dated=None)
+        line = self._capacity_line(conn, settings)
+
+        assert "178 items did not fit" in line
+        assert "undated" not in line
+
+    def test_the_fully_booked_line_splits_it_too(
+        self, conn, settings: Settings  # type: ignore[no-untyped-def]
+    ) -> None:
+        """Two readers, one sentence each, and they must not disagree — a brief that says
+        "8 due did not fit" in one section and "183 did not fit" in another is worse than
+        either number alone."""
+        conn.execute(
+            "INSERT INTO day_plan (user_id, local_date, tz, capacity_minutes, "
+            " planned_minutes, overflow_count, overflow_dated, generated_at) "
+            "VALUES (?, ?, 'America/Phoenix', 0, 0, 178, 4, ?)",
+            (USER_ID, TODAY.isoformat(), now_iso()),
+        )
+        plan_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title) "
+            "VALUES (?, ?, ?, 'fixed', 'Board prep')",
+            (plan_id, f"{TODAY}T09:00:00-07:00", f"{TODAY}T18:00:00-07:00"),
+        )
+        text = daily.build(conn, settings, TODAY).ordered()[0].lines[0].text
+
+        assert "Fully booked" in text
+        assert "4 due items did not fit" in text
+        assert "174 undated items are waiting on a date" in text
+
+
 def test_a_day_with_a_protected_block_is_not_flagged_as_fully_booked(
     conn, settings: Settings
 ) -> None:  # type: ignore[no-untyped-def]

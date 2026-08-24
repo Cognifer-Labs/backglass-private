@@ -94,7 +94,7 @@
            the newer into the older with its citations; Different is remembered so
            the pair is never asked about again. #}
         <details class="addform">
-          <summary class="lbl">Looks the same ({{ d.board.meta.suspects|length }})</summary>
+          <summary class="lbl">Looks the same ({{ d.board.meta.suspects_total }})</summary>
           {% for s in d.board.meta.suspects %}
             {# The counterparty is on the row because without it the question cannot be
                answered: one mail asking for an intro to three instructors produces three
@@ -118,6 +118,14 @@
               </div>
             </div>
           {% endfor %}
+          {# Counted, not dropped — the sidebar's "N more" rule, applied to a queue that
+             outgrew the fold it sits in. Answering a pair here removes it and the next
+             one takes its place, so the pile still drains from this page; the clustered
+             pass is simply the faster way through several hundred of them. #}
+          {% if d.board.meta.suspects_total > d.board.meta.suspects|length %}
+            <p class="b2">{{ d.board.meta.suspects_total - d.board.meta.suspects|length }} more —
+              <code>backglass duplicates</code> groups them into clusters</p>
+          {% endif %}
         </details>
       {% endif %}
       {% if d.board.meta.stale %}

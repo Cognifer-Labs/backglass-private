@@ -32,7 +32,8 @@ hard constraint rather than a display value.
 working_window    = configured per weekday (default 09:00–18:00 local);
                     `weekend_window` overrides it on Sat/Sun when set
 fixed             = calendar events marked busy, minus declined,
-                    plus confirmed engagements with a stated hour
+                    plus confirmed engagements with a stated hour,
+                    plus the configured routines that fall inside the window (§1.9)
 buffer            = 10 min after any meeting ≥ 30 min, 5 min otherwise
 commute/travel    = any calendar event tagged travel, plus its buffer
 capacity_minutes  = working_window − fixed − buffer − travel − reserve
@@ -153,6 +154,79 @@ prompt with three fields.
 Shutdown is optional and skippable. If skipped, the planner infers completion from
 ledger state and marks the rest rollover. **Never nag about a missed shutdown.** A
 productivity system that scolds gets deleted.
+
+### 1.9 Routines, relaxation, and study
+
+*Owner's ruling, 2026-08-21: "everything should be planned around my schedule and fixed
+events; breakfast, lunch, dinner and gym should be planned around this, along with some
+amount of relaxation time and study time and homework time."*
+
+A day is not a working window with meetings punched out of it. It is a life with a
+working window inside it, and the parts that are not work — eating, the gym, the shower
+after it, the evening — are the parts a planner is most tempted to treat as empty. They
+are configured as **routines** (`ROUTINES`, parsed by `config.parse_routines`), and they
+sit on the day exactly as a meeting does.
+
+**The hour in a routine is a preference, not a decree.** This is the whole of §1.9 and
+it was learned the plain way: the live plan for Monday 2026-08-24 read
+
+```
+12:20pm–1:10pm  CHM 113 [fixed]
+12:30pm–1:15pm  Lunch [routine]
+```
+
+which is not a scheduling conflict so much as a plan that is wrong about when the owner
+eats. Nothing in the capacity arithmetic was wrong — overlapping spans are merged, so
+the minute was charged once — and that is what makes it the dangerous shape: a plan that
+is internally consistent and describes a day nobody lived.
+
+So a routine whose preferred span lands inside a class, a meeting or a confirmed
+engagement **moves to the nearest free gap**, searching outward from the preferred
+start, the earlier of two equally distant gaps winning. Eating before the class beats
+eating after it, and either beats a coin toss — the tie is broken deterministically
+because 0028's `inputs_fingerprint` hashes the placement, and a routine that lands on a
+different minute on two runs over one unchanged day reports drift that is only
+arithmetic, superseding a live plan every sync.
+
+**The drift is bounded** (`capacity.ROUTINE_MAX_SHIFT_MINUTES`, two hours). Unbounded, a
+fully-booked afternoon puts lunch at four o'clock, and a meal moved that far is not the
+meal that was asked for: it is the planner rewriting the day and still calling it lunch.
+Past the bound the routine keeps its hour and states what it collided with, which is a
+fact the owner can act on — by moving something, or by eating anyway and knowing the
+plan knows.
+
+**A routine that is an obligation rather than a habit is pinned** with a trailing `!`
+(`banner@16:00+240!@wed`). Wednesday volunteering at a stated hour is an appointment
+somebody else made; a planner that quietly moved it to five o'clock would be inventing
+one. Pinned routines are placed first, and every placed routine joins the obstacle set,
+so breakfast cannot be shifted onto lunch.
+
+**The evening is protected by the working window, not by new machinery.** "Relaxation
+from nine, and no work after it" is exactly a window that ends at 21:00 with
+`relax@21:00+120` outside it: the block renders on the schedule, spends no capacity, and
+there is nothing left for the planner to fill. A separate work-hours ceiling would be a
+second concept that means the same thing as the first and can disagree with it.
+
+**Homework is what the planner already does; study is what a day without it should still
+hold.** A coursework commitment carries an estimate read off the assignment (§1.3,
+`estimate_source = 'analyzed'`) and is scheduled by name. A day where none of that was
+selected gets one `study` block instead — a block, not a commitment: nothing is written
+to the ledger, nothing rolls over, and there is nothing to mark done but the block
+itself. A plan may say "read" without inventing an obligation the owner never made, and
+`rollover.open_blocks` leaves the kind out for that reason: an hour of reading nobody
+did is not a debt, and rolled it would arrive tomorrow as work, then eventually trigger
+P11's drop-or-do question about a commitment that does not exist.
+
+| ID | Requirement |
+|----|-------------|
+| P17 | A routine's configured time is preferred, not fixed. A routine overlapping a fixed event moves to the nearest free gap that fits it — earlier wins ties — bounded by `ROUTINE_MAX_SHIFT_MINUTES`. |
+| P18 | A routine that cannot be placed within that bound keeps its preferred hour and the plan states what it overlaps. Never silently dropped, never silently moved out of the day. |
+| P19 | A routine marked pinned (`!`) never moves, is placed before flexible ones, and reports no conflict — a pin is a decision, not a collision. |
+| P20 | A day whose plan holds no coursework gets one study block, capacity-permitting. It is never rolled over and never becomes a commitment. |
+
+Placement happens in `capacity.day_events` — the one builder the capacity model, the
+persisted plan and the schedule page all read — so the three cannot disagree about when
+lunch is.
 
 ---
 
@@ -370,7 +444,10 @@ whether the planner is actually any good.
 Ordered. Sections vanish entirely when empty rather than rendering an empty header.
 
 1. **Timezone change**, if today differs from yesterday. First, above everything.
-2. **Today's plan** — the proposed blocks, with the protected block marked.
+2. **Today's plan** — the proposed blocks, with the protected block marked, and any
+   routine the day left no room for (P18). The conflict is recomputed from the day's
+   events rather than stored: the CLI's proposal notes are in-memory, and a fact that
+   never reaches the brief reaches nobody.
 3. **Capacity line** — one sentence: "6h 15m available, 5h 30m planned, 3 items did not
    fit."
 4. **Slipping** — due within 48 hours with no progress.
@@ -399,6 +476,12 @@ Under 400 words total. Every line links to its source.
   with no checkpoints for 8 days shows stale but not at risk.
 - Breaking a checklist streak produces no copy beyond the count resetting.
 - Regenerating a day plan supersedes rather than deletes the prior one.
+- A lunch routine at 12:30 against a class from 12:20 to 13:10 is planned at 13:10, and
+  planning the same unchanged day twice places it on the same minute both times.
+- A day with no gap wide enough for a meal still shows the meal, at its preferred hour,
+  with the sentence naming what it overlaps.
+- A day whose plan holds no coursework holds a study block; a day holding coursework
+  does not, and no study block is ever rolled into tomorrow.
 
 ---
 

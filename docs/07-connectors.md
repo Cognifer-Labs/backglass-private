@@ -138,6 +138,48 @@ reading as an open obligation until closed by hand. `CANVAS_TOKEN` therefore win
 it is set, and `_all_connectors` builds the two on an `elif` — running both would ingest
 every assignment twice under two source names.
 
+**Why it has no watermark, corrected 2026-08-20.** It shipped with one, on the due date,
+and that cost the owner a semester of coursework. A due date is not monotonic with
+publication: the feed is a single document that gains assignments due *before* the
+furthest date already stored. The read on 2026-08-11 parked the cursor at 2026-09-04; the
+read on 08-17 saw one course publish "Excused Absence Requests" due 2027-03-07 and parked
+there; every read after emitted nothing, because no real coursework is due after March.
+157 assignments upstream, 6 in the ledger, `status = ok` throughout. `canvas.py` is not
+affected — it watermarks on Canvas's `updated_at`, which does move forward.
+
+So `fetch` ignores `since` and emits every assignment the feed publishes. The whole
+document is downloaded either way, and an unchanged assignment costs zero writes because
+`ledger.upsert_source_item` short-circuits on `content_hash` before any model runs. The
+cursor now records the instant of the read — the one monotonic fact available — and
+nothing reads it back as a bound. `doctor`'s `canvas:ics fully ingested` check, which
+compares `upstream_count()` against the ledger, is what named this and is the check to
+read first if the feed ever looks quiet again.
+
+### What the feed does not carry, and the 2026-08-21 archive read
+
+The ICS feed is a list of dated obligations. It is not the course: it has no syllabus, no
+course schedule, no page, no file, and no room or instructor. Everything a student
+actually reads lives behind the Canvas UI, and on this installation there is no token to
+reach it with.
+
+So on 2026-08-21 the eight Fall-C shells were read **by hand, once**, through the
+already-logged-in Safari session — Canvas's own API called from a canvas.asu.edu tab, GET
+only, no scraping and no borrowed token, the same boundary the paragraphs above draw. The
+result is a folder of documents (`~/Documents/ASU Fall 2026`), not a connector. It is
+recorded here because it is a source of ledger evidence and this file is the place a
+source is audited, and because the next person will otherwise try the paths that do not
+work: the Files API is 403 on seven of the eight shells (the Files tab is disabled per
+course), `/pages` is 404, `content_exports` returns a 22-byte empty zip for exactly those
+shells, `public_url` is 404 for a student, and `/login/session_token` is 401 without a
+token. What works is per-file `GET /api/v1/courses/:id/files/:id` in the live session.
+`tasks/lessons.md` 2026-08-21 carries the full account, including why the browser will not
+simply download the files for you.
+
+**A repeat is a hand operation, deliberately.** Automating it would mean holding a
+session, which is the thing this project declined to do when the token was refused. What
+keeps the archive current instead is that a syllabus changes about once a semester, and
+the schedule that matters is already in the ledger through the feed.
+
 ## Local and later-phase sources
 
 The sections above are the network sources the first phases were built around. These
@@ -169,6 +211,46 @@ before anything is persisted, health-checked by `doctor`, and it runs from `sync
 the same rule 5 wrapper as every connector. What it buys is the Conversations page: the
 consent prompt used to ask whether to read `+14802411748`, which is not a question
 anybody can answer.
+
+### The drop folder in practice, live since 2026-08-21
+
+`INBOX_FOLDER_PATH` had never been set. It now points at `~/Documents/ASU Fall 2026`, the
+Canvas archive described under Canvas above, and the first real drop folder taught three
+things worth writing down:
+
+- **Derived text belongs outside the drop root.** The connector reads `.txt`, so a
+  plain-text extraction sitting beside its own PDF is the same syllabus ingested twice,
+  triaged twice and extracted twice. The extractions live in a sibling folder,
+  `ASU Fall 2026 — extracted text`, and the archive's own README says why so nobody
+  helpfully moves them back.
+- **`MAX_BYTES` went 512 KB → 4 MB.** Seven of the archive's documents were over the old
+  ceiling and every one of them was a document — a 784 KB lab syllabus, a 2.8 MB
+  recitation activity, a 2.3 MB textbook chapter. They are large because they are typeset
+  and full of figures, not because they are dumps; the comment above the constant carries
+  the same reasoning. `MAX_CHARS` is what bounds extraction cost, so the only thing this
+  number ever protected was memory.
+- **Triage does the curation.** Run 521 ingested 29 files, kept 4 — both CHM 113 lecture
+  documents, the recitation activity, the HON 171 syllabus — and dropped 25 readings,
+  worksheets and transcripts. Extraction wrote 12 commitments from those 4, including two
+  HON 171 paper deadlines that existed in no other source. Unsupported types (.docx,
+  .xlsx, images, .svg) are counted and reported rather than silently skipped, which is
+  the rule the whole table above is built on.
+
+### Two things a calendar write does not put in the ledger
+
+Recorded here because both were learned by writing 28 syllabus-derived dates to a new
+Apple Calendar and then finding 13 of them in the ledger:
+
+- **All-day events never ingest.** `apple_calendar._to_item` returns `None` for them by
+  design — an all-day row is not capacity — so a drop deadline, a no-class day or an
+  all-day reminder can live on the owner's calendar and be invisible to every Backglass
+  surface. Nothing fails; the row simply is not there.
+- **The window is 21 days ahead, 7 behind.** A timed exam in November is not in the ledger
+  in August. It arrives when it comes inside the window.
+
+The durable record of a dated obligation is therefore the commitment extraction made from
+the document, not the calendar event — which is the ledger-primary rule in CLAUDE.md,
+arrived at from the other direction.
 
 Two rules those local stores exist to teach:
 

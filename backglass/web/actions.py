@@ -20,6 +20,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
+from backglass import claim_events
 from backglass.db import now_iso
 from backglass.ledger import USER_ID
 from backglass.plan import timezones
@@ -94,6 +95,10 @@ def resolve(conn: sqlite3.Connection, commitment_id: int, note: str | None = Non
         "WHERE id = ? AND status = 'open'",
         (now_iso(), note, commitment_id),
     )
+    claim_events.record(
+        conn, subject_table="commitment", subject_id=commitment_id, cause="resolved",
+        field="status", old_value="open", new_value="done",
+    )
     return Result(ok=True, detail="done")
 
 
@@ -108,6 +113,10 @@ def drop(conn: sqlite3.Connection, commitment_id: int, note: str | None = None) 
         "UPDATE commitment SET status = 'dropped', resolved_at = ?, resolution_note = ? "
         "WHERE id = ? AND status = 'open'",
         (now_iso(), note, commitment_id),
+    )
+    claim_events.record(
+        conn, subject_table="commitment", subject_id=commitment_id, cause="dropped",
+        field="status", old_value="open", new_value="dropped",
     )
     return Result(ok=True, detail="dropped")
 
@@ -458,15 +467,46 @@ def set_block_outcome(conn: sqlite3.Connection, block_id: int, outcome: str) -> 
         (outcome, 1 if outcome == "rolled" else 0, block_id),
     )
     if outcome == "done" and row["commitment_id"] is not None:
-        # Already closed elsewhere (the board's own resolve, a stale answer, the recheck
-        # pass) is the ordinary case, not an error: the block's outcome still stands.
-        with contextlib.suppress(ActionError):
-            resolve(
-                conn,
-                int(row["commitment_id"]),
-                note=f"marked done on the day plan (block {block_id})",
-            )
+        # …but only when the sittings add up. `planner.Candidate.sitting` caps a block at
+        # `max_block_minutes`, so a 344-minute CIS 236 milestone arrives as four blocks
+        # across four days; closing the obligation on the first of them would delete
+        # three days of work with one click, and the row would read `done` while most of
+        # the deliverable was unwritten. Single-session work — which is nearly all of it
+        # — still resolves on the click exactly as it did, because one sitting is the
+        # whole estimate.
+        if _work_is_finished(conn, int(row["commitment_id"])):
+            # Already closed elsewhere (the board's own resolve, a stale answer, the
+            # recheck pass) is the ordinary case, not an error: the outcome still stands.
+            with contextlib.suppress(ActionError):
+                resolve(
+                    conn,
+                    int(row["commitment_id"]),
+                    note=f"marked done on the day plan (block {block_id})",
+                )
+        else:
+            return Result(ok=True, detail="progress recorded")
     return Result(ok=True, detail=outcome)
+
+
+def _work_is_finished(conn: sqlite3.Connection, commitment_id: int) -> bool:
+    """Have the blocks marked done covered the estimate?
+
+    An obligation with no estimate resolves on the first done block, which is the old
+    behaviour and the right default: without a number there is nothing to be part-way
+    through.
+    """
+    row = conn.execute(
+        "SELECT c.estimated_minutes AS est, COALESCE(("
+        "  SELECT SUM((julianday(b.ends_at) - julianday(b.starts_at)) * 1440) "
+        "  FROM plan_block b WHERE b.commitment_id = c.id AND b.outcome = 'done'"
+        "), 0) AS done FROM commitment c WHERE c.id = ?",
+        (commitment_id,),
+    ).fetchone()
+    if row is None or row["est"] is None:
+        return True
+    # A minute of slack: a block is placed in whole minutes and the sum comes back from
+    # julianday arithmetic, so an exact-fit final sitting can land a hair under.
+    return float(row["done"]) + 1 >= float(row["est"])
 
 
 def pin_block(conn: sqlite3.Connection, block_id: int, pinned: bool = True) -> Result:

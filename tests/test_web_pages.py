@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backglass.config import Settings
+from backglass.db import now_iso
 from backglass.web.app import create_app
 from tests.conftest import panel_slice
 
@@ -48,6 +49,10 @@ class TestShell:
             assert page.status_code == 200, path
             for label in ("Dashboard", "Schedule", "Goals", "People", "Roadmaps"):
                 assert label in page.text, (path, label)
+
+    def test_the_classes_tab_is_in_the_nav(self, client: TestClient) -> None:
+        page = client.get("/")
+        assert 'href="/classes"' in page.text
 
     def test_dashboard_content_survived_the_base_refactor(self, client: TestClient) -> None:
         page = client.get("/")
@@ -755,6 +760,53 @@ class TestScheduleTimeline:
         assert "EST" not in page  # no staged table columns
         assert "did not fit</summary>" not in page  # not a disclosure yet
 
+    def _plan_with_split(
+        self, conn: sqlite3.Connection, *, count: int, dated: int | None
+    ) -> None:
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, planned_minutes,"
+            " overflow_count, overflow_dated, generated_at, status) VALUES ('2026-07-28',"
+            " 'America/Phoenix', 375, 330, ?, ?, '2026-07-28T05:50:00', 'accepted')",
+            (count, dated),
+        )
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, '2026-07-28T09:00:00-07:00', '2026-07-28T10:00:00-07:00',"
+            " 'work', 'Finish deck')"
+        )
+        conn.commit()
+
+    def test_the_gold_chip_is_spent_on_what_was_actually_owed(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """Migration 0033. The owner read "178 items did not fit" as 178 broken things;
+        174 of them had no date and were never candidates for that day."""
+        self._plan_with_split(conn, count=178, dated=4)
+        page = client.get("/schedule?date=2026-07-28").text
+        assert "4 due did not fit" in page
+        assert "174 undated" in page
+        assert "178 did not fit" not in page
+
+    def test_a_day_that_left_out_nothing_dated_shows_no_chip(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """The common case, and the one the old sentence got most wrong: the day held
+        everything it owed, and said so in gold as though it had failed."""
+        self._plan_with_split(conn, count=174, dated=0)
+        page = client.get("/schedule?date=2026-07-28").text
+        assert "did not fit" not in page
+        assert "174 undated" in page
+
+    def test_a_plan_from_before_the_split_keeps_its_own_sentence(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """NULL is not zero. A plan nobody measured the split on gets the sentence it was
+        written with rather than a breakdown invented for it."""
+        self._plan_with_split(conn, count=178, dated=None)
+        page = client.get("/schedule?date=2026-07-28").text
+        assert "178 did not fit" in page
+        assert "undated" not in page
+
     def test_tiny_entries_drop_their_title_to_the_title_attribute(
         self, client: TestClient, conn: sqlite3.Connection
     ) -> None:
@@ -1281,6 +1333,46 @@ class TestConsistencyHeatmap:
 
 class TestWeekAgenda:
     """Phase 9: the week view is seven mini-timelines on one shared ruler."""
+
+    def _plan(
+        self, conn: sqlite3.Connection, *, count: int, dated: int | None
+    ) -> None:
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, planned_minutes,"
+            " overflow_count, overflow_dated, generated_at, status) VALUES ('2026-07-28',"
+            " 'America/Phoenix', 400, 300, ?, ?, '2026-07-28T05:50:00', 'accepted')",
+            (count, dated),
+        )
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (1, '2026-07-28T09:00:00-07:00', '2026-07-28T10:30:00-07:00',"
+            " 'work', 'Finish deck')"
+        )
+        conn.commit()
+
+    def test_a_day_cell_counts_only_the_overflow_that_had_a_date(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """A cell this size holds one number, and the undated backlog is the same on all
+        seven columns — repeating it would say nothing per day while making every day of
+        the week look equally over."""
+        self._plan(conn, count=178, dated=4)
+        page = client.get("/schedule/week?start=2026-07-27").text
+
+        assert "4 over" in page
+        assert "178 over" not in page
+
+    def test_a_day_that_left_out_nothing_dated_shows_no_chip(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._plan(conn, count=174, dated=0)
+        assert "over</span>" not in client.get("/schedule/week?start=2026-07-27").text
+
+    def test_a_plan_from_before_the_split_still_shows_its_own_count(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._plan(conn, count=178, dated=None)
+        assert "178 over" in client.get("/schedule/week?start=2026-07-27").text
 
     def test_blocks_are_positioned_at_half_scale(
         self, client: TestClient, conn: sqlite3.Connection
@@ -1912,6 +2004,83 @@ class TestRecentRunErrors:
         assert "1 item failed triage" in panel_slice(page.text, "panel-sources")
 
 
+def _flowed(markup: str) -> str:
+    """The markup as the sentence a reader sees, not as the source wrapped it.
+
+    A capacity line built out of conditionals is authored across several source lines and
+    the browser flows it back into one. Asserting on the source spacing would make every
+    reflow of a template a test failure about nothing.
+    """
+    return re.sub(r"\s+", " ", markup)
+
+
+class TestTheTodayPanelSaysWhatDidNotFit:
+    """The sentence the owner actually complained about, on 2026-08-23: *"still says there
+    are 173 items that dont work"*. It was `overflow_count`, it was 178, and it was right —
+    386 open commitments meeting a day of 450 minutes. Read as one number it accused the
+    planner of failing; 174 of the 178 had no date and were never candidates for that day.
+    """
+
+    def _plan(
+        self, conn: sqlite3.Connection, *, count: int, dated: int | None
+    ) -> str:
+        day = date.today().isoformat()
+        conn.execute(
+            "INSERT INTO day_plan (local_date, tz, capacity_minutes, planned_minutes,"
+            " overflow_count, overflow_dated, generated_at, status)"
+            " VALUES (?, 'America/Phoenix', 375, 330, ?, ?, ?, 'proposed')",
+            (day, count, dated, f"{day}T05:50:00"),
+        )
+        plan_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title)"
+            " VALUES (?, ?, ?, 'protected', 'Finish deck')",
+            (plan_id, f"{day}T09:00:00-07:00", f"{day}T10:00:00-07:00"),
+        )
+        conn.commit()
+        return day
+
+    def test_the_two_numbers_are_named_separately(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._plan(conn, count=178, dated=4)
+        panel = _flowed(panel_slice(client.get("/").text, "panel-today"))
+
+        assert "4 due items did not fit" in panel
+        assert "174 undated items are waiting on a date" in panel
+        assert "178 item" not in panel
+
+    def test_a_day_that_held_everything_owed_says_so(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._plan(conn, count=174, dated=0)
+        panel = _flowed(panel_slice(client.get("/").text, "panel-today"))
+
+        assert "nothing due was left out" in panel
+        assert "174 undated items are waiting on a date" in panel
+        assert "did not fit" not in panel
+
+    def test_one_of_each_is_singular(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        self._plan(conn, count=2, dated=1)
+        panel = _flowed(panel_slice(client.get("/").text, "panel-today"))
+
+        assert "1 due item did not fit" in panel
+        assert "1 undated item is waiting on a date" in panel
+
+    def test_a_plan_from_before_the_split_keeps_its_own_sentence(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """NULL is not zero, and this repo's convention is that a probe which cannot run
+        says so rather than printing a confident number."""
+        self._plan(conn, count=178, dated=None)
+        panel = _flowed(panel_slice(client.get("/").text, "panel-today"))
+
+        assert "178 items did not fit" in panel
+        assert "undated" not in panel
+
+
 class TestAllDayReachesEveryReader:
     """Three surfaces read a day, and an adversarial review found the new all-day kind
     had only reached one of them. Each gap below rendered as a different wrong thing."""
@@ -1944,6 +2113,59 @@ class TestAllDayReachesEveryReader:
         assert "12:00am" not in panel
         assert "All day" in panel
 
+    def test_a_block_names_what_has_to_be_open_before_it_starts(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """Goal 4: the materials half of "time needed and materials needed". Recording
+        them and leaving them in a table the owner never opens is not the feature — the
+        point is reading "needs Respondus LockDown Browser" the evening before, not the
+        moment the exam refuses to start."""
+        day = date.today().isoformat()
+        conn.execute(
+            "INSERT INTO source_item (user_id, source, external_id, fetched_at, "
+            " occurred_at, author, title, body_text, raw_json, content_hash) "
+            "VALUES (1, 'canvas:ics', 'assignment:1', ?, ?, 'PSY101', 't', 'b', '{}', 'h')",
+            (now_iso(), day),
+        )
+        item_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO commitment (user_id, direction, what, due_at, confidence, "
+            " status, source_item_id, created_at) "
+            "VALUES (1, 'i_owe', 'Take PSY101 Exam 4', ?, 0.9, 'open', ?, ?)",
+            (day, item_id, now_iso()),
+        )
+        commitment_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO assignment (user_id, source, external_id, source_item_id, course, "
+            " title, due_at, description_hash, first_seen_at, last_changed_at) "
+            "VALUES (1, 'canvas:ics', 'assignment:1', ?, 'PSY101', 'Exam 4', ?, 'h', ?, ?)",
+            (item_id, day, now_iso(), now_iso()),
+        )
+        assignment_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        materials = (("software", "Respondus LockDown Browser"), ("reading", "Ch. 13–15"))
+        for kind, name in materials:
+            conn.execute(
+                "INSERT INTO assignment_material (user_id, assignment_id, kind, name, "
+                " created_at) VALUES (1, ?, ?, ?, ?)",
+                (assignment_id, kind, name, now_iso()),
+            )
+        conn.execute(
+            "INSERT INTO day_plan (user_id, local_date, tz, capacity_minutes, generated_at)"
+            " VALUES (1, ?, 'America/Phoenix', 480, ?)",
+            (day, now_iso()),
+        )
+        plan_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title, "
+            " commitment_id) VALUES (?, ?, ?, 'work', 'Take PSY101 Exam 4', ?)",
+            (plan_id, f"{day}T09:00:00-07:00", f"{day}T10:30:00-07:00", commitment_id),
+        )
+        conn.commit()
+
+        panel = panel_slice(client.get("/").text, "panel-today")
+
+        assert "needs Ch. 13–15 · Respondus LockDown Browser" in panel
+
     def test_the_week_grid_shows_a_programme_it_cannot_draw_an_hour_for(
         self, client: TestClient, conn: sqlite3.Connection
     ) -> None:
@@ -1972,3 +2194,40 @@ class TestAllDayReachesEveryReader:
 
         assert col.busy is True
         assert WeekCol(view=view, entries=[], now_top=None, cap=None).busy is False
+
+
+class TestClassesPage:
+    """The semester as a page: one card per course, and an empty state that says what
+    would fill it rather than rendering a blank panel."""
+
+    def test_an_empty_ledger_says_what_would_fill_the_page(
+        self, client: TestClient
+    ) -> None:
+        page = client.get("/classes")
+        assert page.status_code == 200
+        panel = panel_slice(page.text, "panel-classes")
+        assert "No classes in the ledger" in panel
+        assert "backglass doctor" in panel
+
+    def test_a_course_card_carries_its_meeting_room_and_instructor(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        from tests.test_courses import _lecture_week
+
+        _lecture_week(conn)
+        page = client.get("/classes")
+        panel = panel_slice(page.text, "panel-course-chm113-meetings")
+        assert "Mon/Wed/Fri 12:20 pm–1:10 pm" in panel
+        assert "Tempe LSA 191" in panel
+        assert "Wei Wang" in panel
+        # The occurrence count is what makes the folded pattern checkable.
+        assert "3 calendar rows" in panel
+
+    def test_the_page_says_why_all_day_dates_are_missing(
+        self, client: TestClient
+    ) -> None:
+        """28 dates were written to the calendar and only the timed ones can reach the
+        ledger. The page states that rather than leaving the owner to count."""
+        panel = panel_slice(client.get("/classes").text, "panel-semester")
+        assert "all-day" in panel.lower()
+        assert "docs/07" in panel

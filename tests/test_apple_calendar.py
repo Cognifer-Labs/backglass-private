@@ -215,6 +215,115 @@ class TestOneCalendarIsNotTheSource:
         assert "Shared" in connector_.failed_calendars[0]
         assert "-1712" in connector_.failed_calendars[0]
 
+    def test_a_failure_is_not_dressed_up_as_a_boundary_exclusion(
+        self, settings: Settings
+    ) -> None:
+        """The bug that hid this for weeks. The failure path used to also write
+        `excluded_by_rule["calendar:<name>"]`, so the sync line read `boundary excluded 1
+        by rule calendar:dkesava2@asu.edu` — a privacy rule doing its job, not the owner's
+        main calendar timing out on every scheduled run. `excluded_by_rule` means the
+        boundary refused an item; a source that fell over says so somewhere else."""
+        connector_ = connector(
+            settings, [event(calendar="Shared", uid="B")], fail={"Shared"}
+        )
+        list(connector_.fetch(None))
+
+        assert connector_.failed_calendars
+        assert connector_.excluded_by_rule == {}
+
+    def test_a_lost_calendar_is_out_of_scope_and_the_rest_still_certifies(
+        self, settings: Settings
+    ) -> None:
+        """The safety property, at the seam where it is decided — and scoped per calendar.
+
+        A timed-out Apple Event returns nothing, indistinguishable from a calendar somebody
+        emptied, so the failed calendar may not be used to conclude anything. The healthy
+        one still can: an all-or-nothing rule let the owner's one slow calendar veto
+        retraction everywhere, on every run, forever."""
+        connector_ = connector(
+            settings,
+            [event(calendar="Work", uid="A"), event(calendar="Shared", uid="B")],
+            fail={"Shared"},
+        )
+        list(connector_.fetch(None))
+
+        window = connector_.retractable_window()
+
+        assert window is not None
+        assert window.calendars == {"Work"}, "the calendar that failed is not evidence"
+
+    def test_a_run_that_lost_every_calendar_certifies_nothing(
+        self, settings: Settings
+    ) -> None:
+        connector_ = connector(
+            settings, [event(calendar="Shared", uid="B")], fail={"Shared"}
+        )
+        list(connector_.fetch(None))
+
+        assert connector_.retractable_window() is None
+
+    def test_a_clean_run_certifies_what_it_saw(self, settings: Settings) -> None:
+        connector_ = connector(settings, [event(calendar="Work", uid="A")])
+
+        emitted = [i.external_id for i in connector_.fetch(None)]
+        window = connector_.retractable_window()
+
+        assert window is not None
+        assert window.starts_at < window.ends_before
+        assert window.seen_ids == set(emitted)
+
+    def test_a_duplicate_the_connector_suppressed_still_counts_as_seen(
+        self, settings: Settings
+    ) -> None:
+        """The near-miss. The connector keeps one of two identical events across
+        calendars, so the loser is never emitted — and the first reconciler read "not
+        emitted" as "deleted upstream". On the owner's machine that meant HON 171, PSY
+        101, CIS 236 and thirteen more live classes were one clean run away from being
+        retracted. `seen_ids` answers "does the store still have this", so both uids
+        belong in it."""
+        connector_ = connector(
+            settings,
+            [
+                event(calendar="Work", uid="WIN", title="HON 171"),
+                event(calendar="Family", uid="LOSE", title="HON 171"),
+            ],
+        )
+
+        emitted = [i.external_id for i in connector_.fetch(None)]
+        window = connector_.retractable_window()
+
+        assert len(emitted) == 1, "the duplicate is still suppressed"
+        assert window is not None
+        assert window.seen_ids == {"WIN", "LOSE"}, "but both are known to exist upstream"
+
+    def test_an_all_day_event_counts_as_seen_though_it_is_never_emitted(
+        self, settings: Settings
+    ) -> None:
+        """Same rule, different filter. `_to_item` drops all-day banners because they are
+        not capacity — which is not a claim that the calendar no longer has them."""
+        connector_ = connector(
+            settings, [event(calendar="Work", uid="BANNER", all_day=True)]
+        )
+
+        emitted = list(connector_.fetch(None))
+        window = connector_.retractable_window()
+
+        assert emitted == []
+        assert window is not None and "BANNER" in window.seen_ids
+
+    def test_an_abandoned_fetch_certifies_nothing(self, settings: Settings) -> None:
+        """`fetch` is a generator. A caller that stops reading part-way never reaches the
+        line that records the window, so a half-consumed read cannot claim to have seen
+        everything the store holds."""
+        connector_ = connector(
+            settings,
+            [event(calendar="Work", uid="A"), event(calendar="Work", uid="B")],
+        )
+
+        next(iter(connector_.fetch(None)))
+
+        assert connector_.retractable_window() is None
+
     def test_a_skipped_calendar_is_never_queried(self, settings: Settings) -> None:
         """Each query is an Apple Event, and not spending one on a subscribed holiday feed
         is most of what keeps a run inside the ceiling. A skipped calendar that still got

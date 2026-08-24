@@ -37,8 +37,21 @@
           {% if cap %}
             <p class="cap">{{ (cap['capacity_minutes'] // 60) }}h {{ '%02d' % (cap['capacity_minutes'] % 60) }}m available ·
               {{ (cap['planned_minutes'] // 60) }}h {{ '%02d' % (cap['planned_minutes'] % 60) }}m planned
-              {%- if cap['overflow_count'] %}
+              {#- Migration 0033's split, in the compact form this band has room for. The
+                  gold chip is reserved for work that had a date and was owed; an undated
+                  backlog is stated in plain type because it is not a shortfall in this
+                  day. A plan from before 0033 has no split and keeps its old sentence. -#}
+              {%- if cap['overflow_dated'] is none %}
+                {%- if cap['overflow_count'] %}
                 <span class="over"><span aria-hidden="true">◆</span>{{ cap['overflow_count'] }} did not fit</span>
+                {%- endif %}
+              {%- else %}
+                {%- if cap['overflow_dated'] %}
+                <span class="over"><span aria-hidden="true">◆</span>{{ cap['overflow_dated'] }} due did not fit</span>
+                {%- endif %}
+                {%- if cap['overflow_count'] > cap['overflow_dated'] %}
+                · {{ cap['overflow_count'] - cap['overflow_dated'] }} undated
+                {%- endif %}
               {%- endif %}</p>
           {% endif %}
         </div>

@@ -41,6 +41,7 @@ import sqlite3
 from datetime import date, timedelta
 from typing import Any
 
+from backglass import staleness
 from backglass.config import Settings
 from backglass.ledger import USER_ID
 
@@ -67,6 +68,13 @@ LINE_LIMIT = 5
 
 #: Due-soon horizon, matching the planner's near week.
 DUE_SOON_DAYS = 7
+
+#: How many *lapsed* commitments the situation section spells out, on top of the count.
+#: Two, not five: a deadline that has gone past is live in a way a count cannot say, and
+#: a longer list of them is the backlog again — which is the failure this number bounds.
+#: The rest of the list belongs to what is coming, which is the part a count cannot
+#: carry at all.
+RECENT_OVERDUE_LIMIT = 2
 
 
 def assemble(
@@ -194,25 +202,74 @@ def _situation(conn: sqlite3.Connection, day: date, *, limit: int = NOW_CHARS) -
             f"{totals['due_soon'] or 0} due within {DUE_SOON_DAYS} days"
         ]
 
-    nearest = conn.execute(
+    # Two buckets, not one ordered list, and the reason is measurable. This query used
+    # to read `due_at <= horizon ORDER BY due_at ASC` with no floor, so overdue rows
+    # satisfied it and sorted first — and with 63 overdue against 386 open on the live
+    # ledger, the five lines every triage and extraction prompt reads as "the owner's
+    # current situation" were the five *oldest* rows in the ledger. The top of that list
+    # on 2026-08-23 was "Clean fishtank", due 2026-01-06, and a counsellor's phone number
+    # asked for in March. The block was spending the model's attention on the backlog and
+    # telling it that was the present.
+    #
+    # The counts above already carry the backlog honestly. What the list is for is the
+    # part a model cannot infer from a number: what is actually coming.
+    held = staleness.stale_ids(conn, day)
+
+    def _line(row: Any) -> str:
+        owed = "they owe the owner" if row["direction"] == "owed_to_me" else "the owner owes"
+        who = f" {row['canonical_name']}" if row["canonical_name"] else ""
+        flag = " OVERDUE" if row["due_day"] < today else ""
+        return f'- {owed}{who}: "{_clip(row["what"])}" (due {row["due_day"]}{flag})'
+
+    def _rows(where: str, params: dict[str, Any], limit: int) -> list[Any]:
+        """Open, dated, not held by the staleness gate, nearest first.
+
+        Held ids are dropped in Python rather than in SQL: `stale_ids` is the predicate
+        the planner already reads (plan/planner.py), and re-expressing its rule as a
+        second WHERE clause here is how the two quietly come to disagree. Over-fetching
+        by the number of held rows and then filtering keeps one definition of stale.
         """
-        SELECT c.what, substr(c.due_at, 1, 10) AS due_day, c.direction, e.canonical_name
-        FROM commitment c
-        LEFT JOIN entity e ON e.id = c.counterparty_entity_id
-        WHERE c.user_id = :user_id AND c.status = 'open'
-          AND c.due_at IS NOT NULL AND substr(c.due_at, 1, 10) <= :horizon
-        ORDER BY substr(c.due_at, 1, 10) ASC, c.id ASC
-        LIMIT :limit
-        """,
-        {"user_id": USER_ID, "horizon": horizon, "limit": LINE_LIMIT},
-    ).fetchall()
-    for r in nearest:
-        owed = "they owe the owner" if r["direction"] == "owed_to_me" else "the owner owes"
-        who = f" {r['canonical_name']}" if r["canonical_name"] else ""
-        flag = " OVERDUE" if r["due_day"] < today else ""
-        head_lines.append(
-            f'- {owed}{who}: "{_clip(r["what"])}" (due {r["due_day"]}{flag})'
+        found = conn.execute(
+            f"""
+            SELECT c.id, c.what, substr(c.due_at, 1, 10) AS due_day, c.direction,
+                   e.canonical_name
+            FROM commitment c
+            LEFT JOIN entity e ON e.id = c.counterparty_entity_id
+            WHERE c.user_id = :user_id AND c.status = 'open' AND c.due_at IS NOT NULL
+              AND {where}
+            ORDER BY substr(c.due_at, 1, 10) {params.pop("_order")}, c.id ASC
+            LIMIT :fetch
+            """,
+            {**params, "user_id": USER_ID, "fetch": limit + len(held)},
+        ).fetchall()
+        return [r for r in found if int(r["id"]) not in held][:limit]
+
+    # Overdue, newest lapse first, at most two — and "still live" is decided by the
+    # staleness gate rather than by a second date window of this module's own. That is
+    # deliberate: a parallel cutoff here would agree with the gate until someone tuned
+    # one of them, and it would get the interesting case backwards. A row twenty days
+    # past due that the owner answered "still on my plate" is not held, and the planner
+    # is still scheduling it — so the model should see it. A row twenty days past due
+    # that nothing has mentioned since is held, is out of the plan, and is exactly the
+    # backlog this section used to lead with.
+    head_lines.extend(
+        _line(r)
+        for r in _rows(
+            "substr(c.due_at, 1, 10) < :today",
+            {"today": today, "_order": "DESC"},
+            RECENT_OVERDUE_LIMIT,
         )
+    )
+
+    # Then what is coming, which is what the list is for.
+    head_lines.extend(
+        _line(r)
+        for r in _rows(
+            "substr(c.due_at, 1, 10) BETWEEN :today AND :horizon",
+            {"today": today, "horizon": horizon, "_order": "ASC"},
+            LINE_LIMIT,
+        )
+    )
 
     plans = conn.execute(
         """
