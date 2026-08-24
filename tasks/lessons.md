@@ -27,11 +27,21 @@ Contacts writes aliases onto `entity`; that query returns 0 whether it has run d
 month or never once. A zero from the wrong table is the most believable wrong answer there
 is, because it confirms whatever story you brought.
 
-**2. Make a new guard fail on purpose, once, before trusting it green.**
+**2. A probe needs a negative control before its result is evidence. Print what it
+loaded, or run it where it MUST fail and check that it does — and check it fails for the
+right reason.**
 A launchd check went green on a substring that could never have matched the real labels
 (2026-07-30). A test asserting "state does not migrate" passed against a state that
-migrates, because its fixture carried a placeholder checksum. A check nobody has seen fail
-is a check nobody has seen work — and that includes the pass branch *and* the fail branch.
+migrates, because its fixture's placeholder checksum made `migrate()` raise on the
+immutability guard before it applied anything. That second one is why "I made it fail once"
+is not enough on its own: **the mutation has to go red on the assertion the test is about,
+not on any assertion.** Red for the wrong reason is the same false confidence as green.
+
+Two concrete negative controls worth keeping to hand. Print the resolved path of what a
+cross-checkout probe actually imported — `cwd` wins, so a script meant to inspect another
+checkout will happily load the package it is standing in. And in a git worktree `.git` is a
+*file*, not a directory, so `test -f .git/MERGE_HEAD` reports "no merge in progress" no
+matter what is in progress; every session in this repo is currently in a worktree.
 
 **3. A predicate's name can be true where its use is false. Read what each writer does
 with the answer.**
@@ -1368,3 +1378,18 @@ deterministic given the id.
   file, so the section is capped at what will actually be read — when a sixth rule earns a
   place, one of the five has to have stopped happening, or the section is not working
   either. Same test as any other guard: if it cannot fail, it is not doing anything.
+
+- 2026-08-24 | Wrote pre-flight 2 as "make a new guard fail on purpose, once, before
+  trusting it green" and that is not sufficient. The peer session's counter-example: a
+  fixture carrying a placeholder checksum made `migrate()` raise on the immutability guard
+  *before applying anything*, so the mutation run went red — on the wrong assertion — and
+  "state does not migrate" passed against a state that migrates. Red for the wrong reason
+  is the same false confidence as green, and my version of the rule would have accepted
+  it. | The mutation has to go red **on the assertion the test is about**, not on any
+  assertion. Generalised: a probe is evidence only once it has a negative control — print
+  what it actually loaded, or run it somewhere it MUST fail and confirm both that it fails
+  and why. Two that have already bitten in this repo: `cwd` wins the import, so a
+  cross-checkout probe loads the package it is standing in rather than the one it means to
+  inspect; and in a git worktree `.git` is a file, so `test -f .git/MERGE_HEAD` reports "no
+  merge in progress" unconditionally. Rule 2 rewritten rather than a sixth rule added —
+  the section is capped, and this is the same rule stated correctly.
