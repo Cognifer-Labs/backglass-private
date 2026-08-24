@@ -498,6 +498,39 @@ as: this backend flaps, and nothing surfaces it on the day.
 That surfacing is `backglass-43`'s work, not this branch's — `modelhealth.py` ranking the
 routed array by measured success, plus a `state` verdict. Noted so it is not duplicated.
 
+### Verified against the live ledger after the merge, 2026-08-23 — two corrections
+
+The index measurement in increment 5 was taken before the merge folded a
+`source_item_retraction` join into `CALENDAR_DAY_SQL`. Re-run as a proper A/B on the
+merged code and one copy of the live ledger — same database, same process, index dropped
+for the counterfactual:
+
+                        with index    without    ratio
+    logic.run                 11 ms     612 ms      55×
+    questions.refresh        137 ms     743 ms     5.4×
+    planner.propose           41 ms      71 ms     1.7×
+
+The join costs nothing measurable and the plan still binds the expression. **Correction:**
+increment 5 reported the planner at 282 ms → 26 ms (11×). The honest current figure is
+1.7×. The earlier pair was measured across two different database states rather than as
+an A/B, which flattered it; `questions.refresh` also does more work now than it did then.
+The headline claim — the loop's deterministic half costs milliseconds instead of over a
+second — holds, and for `logic` it is better than reported.
+
+**Rule 3 over the whole loop needs three runs on live data, not two.** The fixture test
+settles on the second run and passes. On a copy of the live ledger, run 2 wrote one more
+`decision` row — a machine disposal of a question run 1's own passes had left behind — and
+runs 3 through 6 wrote nothing. It converges; it does not oscillate, which is the
+distinction that matters, because an oscillation would write a row every thirty minutes
+forever (the 13-briefs-a-day shape in lessons.md).
+
+I did not isolate which row, and am not claiming to have: the full loop reproduces it and
+a logic+questions-only loop on a fresh copy does not, so it depends on what `replan`,
+`duplicates` and `noise` do in the same pass. Stated rather than tidied away, and pinned
+by a convergence test that the two-run assertion could not have caught.
+
+Not a regression from this branch: `logic` ran before `questions` in the old chain too.
+
 ### Constraints that bite (carried forward)
 
 ### Constraints that bite (carried forward)

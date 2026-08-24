@@ -297,6 +297,30 @@ class TestIdempotency:
             (o.name, o.error) for o in outcomes if o.error
         ]
 
+    def test_it_reaches_a_fixed_point_and_stays_there(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """Convergence, which is the property rule 3 is really asking about here.
+
+        The fixture case above settles on the second run. On a copy of the live ledger
+        (2026-08-23, 10,563 items) it settles on the **third**: run 2 wrote one more
+        `decision` row — a machine disposal of a question run 1's own passes had left
+        behind — and runs 3 through 6 wrote nothing at all. That is a settling cost, not
+        an oscillation, and the difference matters: an oscillation would write a decision
+        row every thirty minutes forever, which is the shape of the 13-briefs-a-day defect
+        in tasks/lessons.md.
+
+        Pinned as its own property because the two-run assertion cannot see it. A loop
+        that converged on run 50 would pass a test that only compares 1 and 2 on a fixture
+        small enough to settle immediately.
+        """
+        _reported_done(conn, "Send the updated resume — sent updated resume yesterday")
+        seen = []
+        for _ in range(4):
+            loop.run(conn, sett, now=BEFORE_DAWN)
+            seen.append(_snapshot(conn))
+        assert seen[-1] == seen[-2] == seen[-3], "the loop has not stopped writing"
+
     def test_the_first_run_actually_did_something(
         self, conn: sqlite3.Connection, sett: Settings
     ) -> None:
