@@ -1824,9 +1824,17 @@ details.panel:not([open]){padding-bottom:0}
     opacity:0;transform:translateY(var(--motion-travel))}
 }
 /* The week-pace readout is an inline span mid-sentence — a transform would not apply
- * to it and making it a block to earn one would move the text. It fades only. */
-#wk-pace{transition:opacity var(--motion) var(--ease-out)}
-@starting-style{#wk-pace{opacity:0}}
+ * to it and making it a block to earn one would move the text. It fades only.
+ *
+ * `#cmdrun` fades only for a different reason worth writing down: it is the one swap
+ * target that replaces itself on a timer, every 700ms while a command runs. A
+ * translate on each poll would make a running job jitter four pixels a second, which
+ * reads as a fault rather than as progress; a fade at that cadence reads as working.
+ * Snapping was the third option and the one §9 rules out — it would sit beside
+ * fragments that fade, which is the inconsistency `test_every_swap_target_arrives`
+ * exists to catch, and it caught this one. */
+#wk-pace,#cmdrun{transition:opacity var(--motion) var(--ease-out)}
+@starting-style{#wk-pace,#cmdrun{opacity:0}}
 
 /* 2 — the press, and every colour that changes.
  * One declaration covers three separate feedbacks because they share a duration: the
@@ -1940,3 +1948,53 @@ details.panel:not([open]){padding-bottom:0}
    mid-pass and a green flash eighty-seven times is noise, not feedback. */
 .scrubdone{font:700 11px/14px system-ui,sans-serif;letter-spacing:.06em;
   text-transform:uppercase;color:var(--ink-muted)}
+
+
+/* ── the command palette ──────────────────────────────────────────────────────
+ * §7b: every content unit is outlined and the colour rides the keyline, not the fill.
+ * No shadow under the overlay — the decisions table forbids them — so the box separates
+ * from the page by a 2px rule and a dimmed scrim instead of by depth. Radii are the
+ * 2/4/6 scale: --radius-3 on the container, --radius-2 on the controls inside it, which
+ * is the concentric nesting rule rather than a smaller number chosen by eye. */
+.cmdk{position:fixed;inset:0;z-index:40;display:flex;align-items:flex-start;
+  justify-content:center;padding:10vh var(--sp-5) var(--sp-5)}
+.cmdk[hidden]{display:none}
+.cmdk-scrim{position:absolute;inset:0;background:var(--ink);opacity:.16}
+.cmdk-box{position:relative;width:min(640px,100%);background:var(--paper);
+  border:2px solid var(--rule);border-radius:var(--radius-3);overflow:hidden;
+  display:flex;flex-direction:column;max-height:76vh}
+.cmdk-q{font:inherit;font-size:15px;line-height:22px;color:var(--ink);background:var(--paper);
+  border:0;border-bottom:2px solid var(--rule);padding:var(--sp-3) var(--sp-4);outline:0}
+.cmdk-q::placeholder{color:var(--ink-muted)}
+.cmdk-list{overflow-y:auto;flex:1 1 auto}
+.cmdrow{display:flex;flex-direction:column;gap:2px;width:100%;text-align:left;
+  font:inherit;color:var(--ink);background:none;cursor:pointer;
+  padding:var(--sp-3) var(--sp-4);border:0;border-bottom:1px solid var(--rule-hair);
+  /* Carried transparent on every row rather than added to the selected one, so moving
+   * the selection cannot shift the text a pixel sideways. */
+  border-left:3px solid transparent}
+.cmdrow[hidden]{display:none}
+.cmdrow:hover,.cmdrow.on{background:var(--fill-mild)}
+/* A keyline, not a fill flip and not a shadow. The decisions table forbids shadows, and
+ * an inverted row would put the sidebar's "you are here" ink on something merely under
+ * the cursor. The design-system test caught the inset box-shadow this started as. */
+.cmdrow.on{border-left-color:var(--ink)}
+.cmdname{font-size:14px;line-height:20px;display:flex;align-items:baseline;gap:var(--sp-2)}
+.cmdslash{color:var(--ink-muted)}
+.cmdblurb{font-size:12px;line-height:17px;color:var(--ink-muted)}
+.cmdtag{font-size:10px;line-height:14px;letter-spacing:.04em;text-transform:uppercase;
+  color:var(--ink-muted);border:1px solid var(--rule);border-radius:var(--radius-1);
+  padding:0 4px}
+.cmdk-run{border-top:2px solid var(--rule);padding:var(--sp-3) var(--sp-4);
+  max-height:34vh;overflow-y:auto}
+.cmdk-run:empty{display:none}
+.cmdnote{margin:0 0 var(--sp-2);font-size:12px;line-height:17px;color:var(--ink-muted)}
+.cmdhd{margin:0 0 var(--sp-2);font-size:13px;line-height:18px;display:flex;
+  align-items:baseline;justify-content:space-between;gap:var(--sp-3)}
+.cmdstat{font-size:11px;line-height:16px;color:var(--ink-muted)}
+.cmdout{font:400 12px/18px ui-monospace,monospace;white-space:pre-wrap;margin:0;
+  border-left:4px solid var(--rule);padding:var(--sp-2) var(--sp-3);
+  background:var(--fill-mild);border-radius:0 var(--radius-2) var(--radius-2) 0}
+/* Reserved ink, spent the way §8 rule 1 spends it: on something actually wrong, never
+ * on a command that merely finished. */
+.cmdout.k-bad{border-left-color:var(--verm-line)}

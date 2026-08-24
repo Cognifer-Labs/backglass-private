@@ -1328,3 +1328,76 @@ The dashboard's Today panel does not show the conflict; the brief and the CLI do
 panel reads `plan_block` rows and the conflict is not a block, so putting it there is
 plumbing (`panels.today_panel` would have to read the day's events too) rather than a
 line of markup. Say the word and it is a small change; it is not silently missing.
+
+
+## Goal 4 (2026-08-24): the operational commands leave the terminal
+
+Owner's directive: "all slash commands should be triggered with gui and never have the
+user touch the terminal." Confirmed with them as the Backglass dashboard rather than
+Claude Code's own slash commands, and scoped to the safe operational set rather than all
+74 CLI verbs.
+
+**The gap, read rather than assumed.** The dashboard already covers the *data* half:
+fourteen route modules, and per-row actions for answering, accepting, ticking, merging,
+resolving. What has no GUI at all is the *operational* half — the verbs that make the app
+run. `sync`, `loop`, `logic`, `relevance`, `recheck`, `duplicates`, `index`, `plan`,
+`brief`, `state`, `doctor`, `status`, `backup`, `notifications`, `context`. Every one of
+them is a terminal command today, which is why goal 3 kept finding surfaces the owner
+could not reach.
+
+**Decided with the owner:** destructive verbs stay terminal-only. `purge-boundary`,
+`prune`, `restore` and `scrub` carry data-loss or legal weight (docs/08), and putting them
+one fuzzy-search from a mis-click buys nothing the terminal does not already give.
+
+### The shape
+
+- **The palette calls the library, not the CLI.** Every command in the set already exists
+  as a function the CLI wraps — `sync.sync`, `loop.run`, `logic.run`, `backup.run`,
+  `state.collect`. The palette calls the same function. No subprocess, no `uv run` path to
+  get wrong, no stdout scraping, and no second implementation that can drift from the
+  first. A registry entry is a name, a sentence, and a callable.
+- **One job at a time, on a daemon thread.** These take minutes and take `run_lock`; a
+  request thread must never wait on one. The page starts a job and polls. `run_lock`
+  already makes a second concurrent run skip rather than corrupt, so the in-process guard
+  is about not lying to the owner, not about safety.
+- **Nothing arbitrary.** The route takes a registry key, never a command string. There is
+  no path from the browser to a shell.
+- **The record is the ledger's, not the palette's.** A job's output is transient and lives
+  in memory; what a run *did* is already written by `loop_pass`, `run` and `decision`. No
+  migration.
+
+### Increments
+
+- [x] 1. `backglass/web/commands.py` — the registry: name, one-line description, callable,
+      whether it takes the lock. Plus `jobs.py`: start one, poll it, read its lines, with
+      the same rule-5 stance as the loop (a job that raises is a recorded failure, not a
+      dead page).
+      landed: nine commands — loop, logic, questions, duplicates, noise, notifications,
+      index, state, backup. `Result` carries the command's own lines and its own `ok`,
+      kept separate from the job's `status`: a degraded sync RAN and is reporting
+      something true, and merging the two would render a crash as bad news or bad news as
+      a crash depending on which way the merge went.
+- [x] 2. Routes and the palette itself — ⌘K overlay, fuzzy filter, Enter to run, output
+      streamed by HTMX polling. Design system applies: cream and black, no shadows or
+      gradients, `--radius-2` on the controls and `--radius-3` on the container, the
+      keyline carrying the colour.
+      landed: ⌘K overlay in base.html, substring filter over key+label+blurb (not fuzzy —
+      nine commands do not need ranking, and a fuzzy matcher is how a destructive verb
+      ends up one keystroke away), arrow keys, Enter runs and the palette STAYS open
+      because the output lands in it. Three routes; the run route takes a registry key and
+      can express nothing else. 13 tests.
+      Two design-system tests caught this rather than review: an inset `box-shadow` used
+      as a selection keyline (the decisions table forbids shadows — now a transparent
+      border that cannot shift the text), and `#cmdrun` snapping in beside fragments that
+      fade. It fades without a translate, because it re-renders every 700ms while a
+      command runs and a translate at that cadence reads as a fault.
+- [ ] 3. The commands that need arguments (`plan <date>`, `brief <date>`, `context`) get
+      the smallest input that works, or are left out of increment 1 rather than guessed at.
+- [x] 4. Verify against a copy of the live ledger, not fixtures — goal 3's own lesson: the
+      noise card's wording defect was invisible until it rendered real data.
+
+### Constraint carried from goal 3
+
+Every claim the palette prints about what a command did comes from the command's own
+report. A palette that says "sync complete" when the report says `degraded` would be the
+first surface in this app to invent one.

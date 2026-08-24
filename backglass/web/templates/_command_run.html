@@ -1,0 +1,28 @@
+{# The running job, polled while it lives. The polling trigger is only emitted while the
+   job is running, so a finished one costs no further requests — a page left open all
+   night must not be a request a second until morning. #}
+{% if refusal %}
+  <p class="cmdnote">{{ refusal }}. Wait for it, or watch it below.</p>
+{% endif %}
+{% if job %}
+  <div class="cmdjob k-{{ job.status }}"
+       {% if job.running %}hx-get="/commands/running" hx-trigger="load delay:700ms"
+       hx-target="#cmdrun" hx-swap="innerHTML"{% endif %}>
+    <p class="cmdhd">
+      <span class="cmdslash">/</span>{{ job.key }}
+      <span class="cmdstat">
+        {%- if job.running %}running…
+        {%- elif job.status == 'failed' %}failed
+        {%- elif not job.ok %}finished with something to say
+        {%- else %}done{% endif -%}
+      </span>
+    </p>
+    {# The command's own words, never the palette's. A surface that invents a success
+       message is a surface that can be wrong about one (CLAUDE.md rule 1). #}
+    {% if job.error %}<pre class="cmdout k-bad">{{ job.error }}</pre>{% endif %}
+    {% if job.lines %}<pre class="cmdout{% if not job.ok %} k-bad{% endif %}">
+{%- for line in job.lines %}{{ line }}
+{% endfor -%}
+</pre>{% endif %}
+  </div>
+{% endif %}

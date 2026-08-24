@@ -81,7 +81,94 @@
    alone — and a test already guards that a page with nothing wrong carries none. #}
 <div id="oops" class="oops" role="alert" aria-live="assertive" hidden></div>
 
+{# The command palette. ⌘K from anywhere, because a command is something the owner reaches
+   for mid-task — navigating to a page of buttons would mean leaving the thing that made
+   them reach for it. Closed and inert at rest: the list is fetched on first open, so a
+   dashboard nobody opens the palette on pays one element and no requests. #}
+<div id="cmdk" class="cmdk" hidden>
+  <div class="cmdk-scrim" data-close></div>
+  <div class="cmdk-box" role="dialog" aria-modal="true" aria-label="Commands">
+    <input id="cmdq" class="cmdk-q" type="text" autocomplete="off" spellcheck="false"
+           placeholder="Type a command — /loop, /logic, /backup" aria-label="Filter commands">
+    <div id="cmdlist" class="cmdk-list" role="listbox"
+         hx-get="/commands" hx-trigger="bg:open-palette from:body once" hx-swap="innerHTML"></div>
+    <div id="cmdrun" class="cmdk-run" aria-live="polite"></div>
+  </div>
+</div>
+
+
 <script>
+// ── the command palette ────────────────────────────────────────────────────────
+// Keyboard-first because that is what a palette is for, but every affordance here is
+// also reachable by pointer: the rows are real buttons, and the scrim closes on click.
+(function () {
+  const box = document.getElementById('cmdk');
+  if (!box) return;
+  const q = document.getElementById('cmdq');
+  const list = document.getElementById('cmdlist');
+
+  function open() {
+    box.hidden = false;
+    // Fires the one-shot hx-get the first time only; HTMX's `once` handles the rest.
+    document.body.dispatchEvent(new CustomEvent('bg:open-palette'));
+    q.value = '';
+    filter();
+    q.focus();
+  }
+  function close() { box.hidden = true; }
+
+  function rows() { return Array.from(list.querySelectorAll('.cmdrow')); }
+
+  // Substring over "key label blurb", not fuzzy matching. Nine commands do not need
+  // ranking, and a fuzzy matcher that puts `backup` under `b` next to a destructive
+  // verb is exactly the mis-click the registry is scoped to avoid.
+  function filter() {
+    const needle = q.value.replace(/^\//, '').toLowerCase().trim();
+    let first = null;
+    rows().forEach((row) => {
+      const hit = !needle || row.dataset.search.includes(needle);
+      row.hidden = !hit;
+      if (hit && !first) first = row;
+    });
+    rows().forEach((r) => r.classList.remove('on'));
+    if (first) first.classList.add('on');
+  }
+
+  function move(delta) {
+    const shown = rows().filter((r) => !r.hidden);
+    if (!shown.length) return;
+    const at = shown.findIndex((r) => r.classList.contains('on'));
+    const next = shown[Math.min(shown.length - 1, Math.max(0, at + delta))];
+    shown.forEach((r) => r.classList.remove('on'));
+    next.classList.add('on');
+    next.scrollIntoView({ block: 'nearest' });
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      box.hidden ? open() : close();
+      return;
+    }
+    if (box.hidden) return;
+    if (e.key === 'Escape') { e.preventDefault(); close(); }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); move(1); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); move(-1); }
+    else if (e.key === 'Enter') {
+      const on = rows().find((r) => r.classList.contains('on') && !r.hidden);
+      // The palette stays open on Enter. A command takes minutes and its output lands
+      // in this box; closing on launch would hide the only place the answer appears.
+      if (on) { e.preventDefault(); on.click(); }
+    }
+  });
+
+  q.addEventListener('input', filter);
+  box.addEventListener('click', (e) => { if (e.target.dataset.close !== undefined) close(); });
+  document.body.addEventListener('htmx:afterSwap', (e) => {
+    if (e.target && e.target.id === 'cmdlist') filter();
+  });
+})();
+
 function toggleTheme() {
   const root = document.documentElement;
   const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';

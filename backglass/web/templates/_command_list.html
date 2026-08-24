@@ -1,0 +1,15 @@
+{# The palette's contents. Nine rows, server-rendered — there is no build step here
+   (docs/10) and a list that changes only when the registry does has nothing to gain
+   from being assembled in the browser. #}
+{% for c in commands %}
+  <button class="cmdrow" role="option" data-cmd="{{ c.key }}"
+          data-search="{{ c.key }} {{ c.label|lower }} {{ c.blurb|lower }}"
+          hx-post="/commands/{{ c.key }}/run" hx-target="#cmdrun" hx-swap="innerHTML">
+    <span class="cmdname">
+      <span class="cmdslash">/</span>{{ c.key }}
+      {%- if c.spends %} <span class="cmdtag">spends</span>{% endif %}
+      {%- if c.locking %} <span class="cmdtag">takes the lock</span>{% endif %}
+    </span>
+    <span class="cmdblurb">{{ c.blurb }}</span>
+  </button>
+{% endfor %}
