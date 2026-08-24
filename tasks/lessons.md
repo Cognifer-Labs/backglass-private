@@ -1273,3 +1273,26 @@ deterministic given the id.
   ceiling against a pathological backfill. And when two readers legitimately need
   different windows, say the window in the output — "failing 53%" with no window reads as
   "right now", which is how a flap that ended gets acted on.
+
+- 2026-08-24 | Wired the day-closer to run on every sync, and it wrote `outcome = 'done'`
+  for blocks whose obligation had been *dropped* — 34 of them on a real backfill, of which
+  zero were actually done. The predicate was `_commitment_resolved`, and its name was
+  accurate: `dropped` and `superseded` really are resolved. Its *use* was not, because four
+  readers treat `done` as "this happened" — including the one that writes a goal
+  checkpoint. Neither the closer nor the logic checker is wrong on its own, and reading
+  either file alone shows nothing; the fabrication only exists in the composition, and it
+  became expensive the same hour goal-linking started filling the column that reader keys
+  on. | Two rules. When a predicate answers "is this finished", check what every writer
+  does with the answer before reusing it — `resolved` is not `done`, `closed` is not
+  `succeeded`, and a name that is true of the query can still be false of the write. And
+  when two changes land in one session, ask what they do *together*: each was tested, each
+  was correct, and the defect was created by the pair.
+
+- 2026-08-24 | Found by a peer session asking a question about pass ORDERING, not about
+  correctness — "should the closer run before the logic checker?" Checking the interaction
+  is what surfaced the bug above; the ordering itself turned out not to matter much (two
+  runs to converge, stable after). | A question about sequencing is a free excuse to trace
+  what two components do to each other's state. Answer it by simulating the interaction
+  rather than by reasoning about the order, because the answer to "does the order matter"
+  and the answer to "is either one right" come from the same trace, and only one of them
+  was being asked.
