@@ -13,8 +13,9 @@ Eleven sources, 10,563 items, and the ledger almost never joins two of them.
 | commitments with evidence from more than one source | `commitment_evidence` ⋈ `source_item`, `HAVING COUNT(DISTINCT source) > 1` | **3** of 386 open |
 | people whose evidence spans more than one source | same shape over `commitment.counterparty_entity_id` | **9** of 127 |
 | rows in `touchpoint` | `SELECT COUNT(*)` | **1**, and its source is `manual` |
-| people carrying both an email and a phone alias | `aliases_json LIKE '%@%' AND GLOB '*+1*'` | **5** of 237 |
-| has the contacts connector ever run | `source_item WHERE source LIKE '%contact%'` | **0** items; credential row says `ok` |
+| people carrying a phone alias | `aliases_json GLOB '*+1*'` | 66 of 237 |
+| people carrying an email alias | `aliases_json LIKE '%@%'` | 13 of 237 |
+| people carrying **both** — the bridge | both of the above | **5** of 237 |
 
 The sources themselves are healthy — apple-mail 5,261, imessage 4,554, calendar 317,
 canvas 160. The evidence is all there. Nothing is joining it.
@@ -23,10 +24,28 @@ canvas 160. The evidence is all there. Nothing is joining it.
 
 **1. Identity is the join key, and the two loudest sources speak different languages.**
 Mail identifies people by address, iMessage by phone number. `resolve_entity` matches on
-what the item carries, so the same person arrives as two entities and neither knows about
-the other. Five people out of 237 carry both kinds of alias. `apple-contacts` is
-configured, its credential reads `ok`, and it has produced zero items — Contacts.app is
-holding exactly the address↔number pairs that would bridge this, and nothing has asked it.
+what the item carries, so the same person arrives as two entities and neither knows the
+other exists.
+
+**Correction, and it changes the remedy.** The first version of this section said the
+contacts connector had never run, on the evidence of `source_item WHERE source LIKE
+'%contact%'` → 0. That probe was wrong: contacts does not write source items, it writes
+aliases onto `entity`, and `_contacts_pass` is wired into every sync. Zero is what that
+query returns whether or not the connector has ever run — the same shape as this repo's
+2026-08-23 lesson about a verification whose identifiers are wrong passing on an empty
+set, made again on the same day.
+
+It has run. `APPLE_CONTACTS=1` is set and 66 people carry a phone alias. What it did not
+do is bridge: only 13 people carry an email alias at all, and **5 carry both**. So the
+address book supplied numbers for people the ledger mostly knows *by* number already, and
+the mail side of the same person stayed separate. The bridge is not missing because a
+command was never typed — it is missing because the two populations barely overlap.
+
+That makes the real question narrower and more answerable: for the handful of people who
+matter (the ~127 with an open commitment), which are present in both mail and messages
+under different identifiers, and is the missing link in Contacts.app at all or does it
+need the owner? `contacts.py` already refuses to guess when two cards claim one number
+(`report.ambiguous`) — that refusal is correct, and it is also a list nobody reads.
 
 **2. `touchpoint` is empty, so the people tier of every model call is blank.**
 `people/touch.py:217` is the only writer and it is reached only from `backglass people
@@ -50,9 +69,12 @@ disagree.
 
 ## The order these would go in
 
-1. **Run the contacts connector.** It is configured, it is one command, and it is what
-   turns two half-people into one. Every join below gets better the moment it lands, and
-   nothing else on this list is worth building before it.
+1. **Measure the bridge before widening it.** Contacts already runs. For the 127 people
+   carrying an open commitment, count how many appear in both mail and messages under
+   different identifiers, and how many of those Contacts.app could reconcile if asked.
+   That number decides whether this is a connector problem, a matching problem, or a
+   handful of rows the owner should merge by hand on `/people`. It is a query, not a
+   build, and every remedy below depends on which of the three it is.
 2. **Write a touchpoint from ingest.** Every kept item that resolves to an entity is a
    touch. Deterministic, no model, no new table, and it fills the people tier that three
    surfaces already read.
