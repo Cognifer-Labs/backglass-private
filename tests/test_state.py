@@ -12,6 +12,8 @@ import json
 import sqlite3
 from pathlib import Path
 
+import pytest
+
 from backglass import state as state_mod
 from backglass.config import Settings
 
@@ -369,3 +371,78 @@ class TestTheDeployedPythonIsCompared:
         assert note is None
         assert one not in drifted
         assert "backglass/state.py" in drifted
+
+
+class TestStateReportsWithoutMutating:
+    """`backglass state` must not migrate the ledger it is reporting on.
+
+    CLAUDE.md sends the reader here *before trusting anything about the installation*, and
+    for as long as this command called `migrate()` that instruction was a trap: run from a
+    feature branch against the owner's database it applied that branch's migrations, and
+    the checkout launchd runs could no longer start. That happened on 2026-08-23 and is in
+    tasks/lessons.md.
+
+    The quieter half is that migrating here made the module lie about itself. The
+    migration ran two lines before the probe looking for pending ones, so
+    `schema.unapplied` was structurally always empty and the "schema is behind" branch of
+    its own verdict was unreachable — a state report whose schema section could not report
+    a pending migration.
+    """
+
+    def _behind(self, tmp_path: Path) -> Path:
+        """A ledger one migration short of the files on disk."""
+        from backglass.db import MIGRATIONS_DIR, _checksum, connect
+
+        db = tmp_path / "behind.db"
+        conn = connect(db)
+        every = sorted(Path(MIGRATIONS_DIR).glob("[0-9]" * 4 + "_*.sql"))
+        for path in every[:-1]:
+            # The REAL checksum, not a placeholder. With a fake one `migrate()` raises on
+            # the immutability guard before it applies anything, so a test asserting
+            # "state did not migrate" would pass against a `state` that migrates — which
+            # is exactly what the mutation run caught.
+            conn.executescript(
+                f"BEGIN;\n{path.read_text()}\nINSERT INTO schema_version"
+                " (version, filename, checksum, applied_at) VALUES"
+                f" ({int(path.name[:4])}, '{path.name}', '{_checksum(path)}',"
+                " '2026-01-01T00:00:00+00:00');\nCOMMIT;"
+            )
+        conn.commit()
+        conn.close()
+        return db
+
+    def test_running_it_applies_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings: Settings
+    ) -> None:
+        from typer.testing import CliRunner
+
+        import backglass.__main__ as cli
+        from backglass.db import connect
+
+        db = self._behind(tmp_path)
+        row = connect(db).execute("SELECT MAX(version) v FROM schema_version").fetchone()
+        before = row["v"]
+
+        behind = settings.model_copy(update={"db_path": db})
+        monkeypatch.setattr(cli, "get_settings", lambda: behind)
+        CliRunner().invoke(cli.app, ["state", "--quiet"])
+
+        again = connect(db).execute("SELECT MAX(version) v FROM schema_version").fetchone()
+        after = again["v"]
+        assert after == before, "state migrated the ledger it was asked to describe"
+
+    def test_it_reports_the_pending_migration_instead_of_applying_it(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, settings: Settings
+    ) -> None:
+        # The field and the verdict that were unreachable while this command migrated.
+        from typer.testing import CliRunner
+
+        import backglass.__main__ as cli
+
+        db = self._behind(tmp_path)
+        behind = settings.model_copy(update={"db_path": db})
+        monkeypatch.setattr(cli, "get_settings", lambda: behind)
+        result = CliRunner().invoke(cli.app, ["state"])
+
+        assert "1 migration(s) on disk not applied" in result.output
+        assert "unapplied" in result.output

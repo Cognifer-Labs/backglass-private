@@ -785,8 +785,26 @@ def state_command(
     from backglass import state as state_mod
 
     settings = get_settings()
+    # Deliberately NOT `migrate(conn)`, unlike every other command that opens the ledger.
+    #
+    # Two reasons, and the second is why the first was not noticed for so long. This is
+    # the command CLAUDE.md tells a reader to run *before trusting anything about the
+    # installation*, and a report that mutates what it is reporting on is not a report:
+    # run from a feature branch against the owner's database, it silently applied that
+    # branch's migrations and left the checkout launchd runs unable to start (2026-08-23,
+    # tasks/lessons.md).
+    #
+    # And migrating here made this module lie about itself. `schema.unapplied` and the
+    # "schema is behind" branch of its own verdict were both unreachable — the migration
+    # ran two lines before the probe that looks for pending ones, so the field was
+    # structurally always empty and the verdict could only ever say "current". A state
+    # report whose schema section cannot report a pending migration is missing the one
+    # thing it exists to catch.
+    #
+    # An unmigrated ledger is therefore a state this command must survive rather than
+    # repair: probes over tables that do not exist yet answer `unknown`, which is the
+    # founding rule, and the verdict names the pending migrations and the remedy.
     conn = _open(settings)
-    migrate(conn)
     snapshot = state_mod.collect(conn, settings)
     checks = state_mod.verdicts(snapshot, conn, settings)
     failed = [v for v in checks if not v.ok]
