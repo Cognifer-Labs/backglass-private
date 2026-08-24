@@ -3212,8 +3212,14 @@ def batch_collect() -> None:
     )
     if report.still_processing:
         typer.echo(f"{report.still_processing} batch(es) still processing — retry later")
+    # The recognition loop ran inside `collect`, under its lock. Printed here because the
+    # report carries it: the chain no longer belongs to whichever command remembered it.
+    for line in report.loop_lines:
+        typer.echo(line)
     for error in report.errors:
         typer.echo(f"  {error}", err=True)
+    for failure in report.loop_failed:
+        typer.echo(f"  {failure}", err=True)
     raise typer.Exit(report.exit_code)
 
 

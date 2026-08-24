@@ -53,16 +53,48 @@ def a_boom(name: str, ran: list[str]) -> loop.Pass:
     return loop.Pass(name, loop.ALWAYS, spends=False, fn=fn)
 
 
+def a_declared(name: str) -> loop.Pass:
+    """The registry entry for `name`. Named rather than indexed: `health()` and the gate
+    both look a pass up by name, and an index silently means a different pass the next
+    time the order changes — which it did on 2026-08-23."""
+    return next(p for p in loop.PASSES if p.name == name)
+
+
 class TestRegistry:
     def test_the_passes_are_declared_in_the_order_they_run(self) -> None:
         assert loop.NAMES == (
-            "catchup", "replan", "logic", "questions", "duplicates", "noise", "notify",
+            "logic", "questions", "catchup", "replan", "duplicates", "noise", "notify",
         )
 
     def test_logic_runs_before_questions_so_a_mooted_question_is_never_asked(self) -> None:
         # Disposal ahead of detection is the decision increment 8 landed. A swap here
         # costs the owner a question the checker would have thrown out.
         assert loop.NAMES.index("logic") < loop.NAMES.index("questions")
+
+    def test_the_planning_passes_run_after_the_disposal(self) -> None:
+        """The reorder of 2026-08-23, and the invariant the old order violated.
+
+        A logic disposal changes the open set, which changes the planner pool, which
+        changes `inputs_fingerprint`. With replan ahead of logic — which is how the chain
+        ran for as long as it existed — replan compared today's plan against a world
+        logic was about to edit, so the drift it should have caught arrived on the next
+        sync thirty minutes later, or at 05:45. Nothing was ever wrong in the ledger; the
+        board was simply half an hour stale every time the checker did anything.
+
+        Argument from `tasks/pipeline-audit-2026-08-21.md` §1c, which this loop was built
+        without knowing existed.
+        """
+        for planner_pass in ("catchup", "replan"):
+            assert loop.NAMES.index("logic") < loop.NAMES.index(planner_pass)
+            assert loop.NAMES.index("questions") < loop.NAMES.index(planner_pass)
+
+    def test_the_card_passes_run_before_notify_and_after_the_planning(self) -> None:
+        # Before notify because its questions-waiting decider counts what they raise;
+        # after the planning passes because a card changes nothing the planner reads —
+        # the merge happens on the owner's answer, not when the card goes up.
+        for cards in ("duplicates", "noise"):
+            assert loop.NAMES.index("replan") < loop.NAMES.index(cards)
+            assert loop.NAMES.index(cards) < loop.NAMES.index("notify")
 
     def test_every_pass_declares_what_drives_it(self) -> None:
         assert {p.trigger for p in loop.PASSES} <= {loop.CLOCK, loop.DATA, loop.ALWAYS}
@@ -430,7 +462,7 @@ class TestHealth:
     def test_last_ok_is_the_last_success_not_the_last_attempt(
         self, conn: sqlite3.Connection, sett: Settings
     ) -> None:
-        real = loop.PASSES[2]  # logic — a declared name, so health() looks for it
+        real = a_declared("logic")
         good = loop.Pass(real.name, real.trigger, spends=False, fn=lambda *_a: [])
         loop.run(conn, sett, now=BEFORE_DAWN, passes=[good])
         loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_boom(real.name, [])])
@@ -443,7 +475,7 @@ class TestHealth:
     def test_a_success_clears_the_failing_streak(
         self, conn: sqlite3.Connection, sett: Settings
     ) -> None:
-        real = loop.PASSES[2]
+        real = a_declared("logic")
         loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_boom(real.name, [])])
         loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_boom(real.name, [])])
         assert loop.failing(conn)[0].consecutive_failures == 2
@@ -458,7 +490,7 @@ class TestHealth:
         """A skip means the pass was not attempted, so it neither proves health nor
         breaks a streak. Counting it as a failure would alarm on the normal case: two
         launchd firings overlapping a long backfill."""
-        real = loop.PASSES[2]
+        real = a_declared("logic")
         loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_boom(real.name, [])])
 
         def locked(_settings: Settings):  # type: ignore[no-untyped-def]
@@ -491,7 +523,7 @@ class TestTheStateVerdict:
     def test_a_failing_pass_is_named(
         self, conn: sqlite3.Connection, sett: Settings
     ) -> None:
-        real = loop.PASSES[2]
+        real = a_declared("logic")
         loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_boom(real.name, [])])
         verdict = self._verdict(conn, sett)
         assert verdict is not None and verdict.ok is False
@@ -502,7 +534,7 @@ class TestTheStateVerdict:
     ) -> None:
         """The one that hides. A pass nobody calls leaves no failure to find — the 05:45
         job was dead for weeks and every surface read green (2026-08-17 lesson)."""
-        real = loop.PASSES[2]
+        real = a_declared("logic")
         good = loop.Pass(real.name, real.trigger, spends=False, fn=lambda *_a: [])
         loop.run(conn, sett, now=BEFORE_DAWN, passes=[good])
 
@@ -682,7 +714,7 @@ class TestTheDryRun:
 
         import backglass.__main__ as cli
 
-        real = loop.PASSES[2]
+        real = a_declared("logic")
         loop.run(conn, sett, now=BEFORE_DAWN, passes=[a_boom(real.name, [])])
         before = loop.recent(conn)
 
@@ -1208,3 +1240,100 @@ class TestNoiseLeavesTheTerminal:
         # change flips this default, mail stops arriving on the machine's judgement and
         # nothing on any page says which sender or why.
         assert sett.noise_auto_promote is False
+
+
+class TestTheBatchPathRecognises:
+    """The last hole in the audit's §1a: a batch collect applied hundreds of extractions
+    and triggered no disposal, no detection, no replan, no notification.
+
+    Overnight batch mode is when the largest change to the ledger happens, so it was the
+    entry point that needed the recognition loop most and had it least.
+    """
+
+    def test_a_collect_that_applied_something_runs_the_loop(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from backglass import batch as batch_mod
+
+        ran: list[str] = []
+
+        def fake_collect(c, s_, _client=None):  # type: ignore[no-untyped-def]
+            report = batch_mod.CollectReport(batches=1, extracted=12, run_id=99)
+            return report
+
+        monkeypatch.setattr(batch_mod, "_collect", fake_collect)
+        monkeypatch.setattr(
+            loop,
+            "run",
+            lambda c, s_, **kw: ran.append(str(kw.get("run_id"))) or [
+                loop.Outcome("logic", loop.OK, ("disposed of 3",))
+            ],
+        )
+
+        report = batch_mod.collect(conn, sett)
+
+        assert ran == ["99"]  # the loop rows join to the run this collect wrote
+        assert report.loop_lines == ["disposed of 3"]
+
+    def test_a_collect_with_nothing_to_apply_leaves_the_loop_alone(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Nothing changed, and the thirty-minute sync owns the clock-driven passes. Two
+        # callers racing to fill the same hole is not redundancy, it is two plans.
+        from backglass import batch as batch_mod
+
+        ran: list[str] = []
+        monkeypatch.setattr(
+            batch_mod,
+            "_collect",
+            lambda c, s_, _client=None: batch_mod.CollectReport(still_processing=2),
+        )
+        monkeypatch.setattr(loop, "run", lambda *a, **k: ran.append("go") or [])
+
+        batch_mod.collect(conn, sett)
+        assert ran == []
+
+    def test_a_failing_pass_makes_the_collect_fail(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from backglass import batch as batch_mod
+
+        monkeypatch.setattr(
+            batch_mod,
+            "_collect",
+            lambda c, s_, _client=None: batch_mod.CollectReport(batches=1, extracted=4),
+        )
+        monkeypatch.setattr(
+            loop,
+            "run",
+            lambda *a, **k: [loop.Outcome("logic", loop.FAILED, error="OSError: disk")],
+        )
+
+        report = batch_mod.collect(conn, sett)
+        assert report.exit_code == 1
+        assert "loop pass 'logic' failed" in report.loop_failed[0]
+
+    def test_the_recognition_happens_inside_the_collects_lock(
+        self, conn: sqlite3.Connection, sett: Settings, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """One critical section, not two. A sync slotting between the collect and the
+        recognition would plan around a half-recognised board."""
+        from pathlib import Path
+
+        from backglass import batch as batch_mod
+        from backglass import sync as sync_mod
+
+        held: list[bool] = []
+        key = str(Path(sett.db_path).expanduser().resolve())
+
+        monkeypatch.setattr(
+            batch_mod,
+            "_collect",
+            lambda c, s_, _client=None: batch_mod.CollectReport(batches=1, extracted=1),
+        )
+        monkeypatch.setattr(
+            loop, "run", lambda *a, **k: held.append(key in sync_mod._HELD) or []
+        )
+
+        batch_mod.collect(conn, sett)
+        assert held == [True]

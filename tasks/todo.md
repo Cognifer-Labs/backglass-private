@@ -458,26 +458,59 @@ not be until step 2 is done.
 Contiguity is why they cannot simply be renumbered now: `test_init_creates_the_schema`
 asserts the file set runs 0001..N with no gaps, and this branch does not carry 0030–0032.
 
-### Open, and it is a real disagreement: the pass order (audit §1c)
+### Settled 2026-08-23: the pass order (audit §1c), and the batch hole (§1a)
 
-`tasks/pipeline-audit-2026-08-21.md` §1c — which this branch was built without knowing
-existed — argues the chain should run **logic → questions → catchup → replan → notify**.
-Dispose first, ask second, plan around the cleaned board, knock last.
+`tasks/pipeline-audit-2026-08-21.md` — which this branch was built without knowing existed
+— was raised by `backglass-43`, and it was right on both counts. Both landed here at that
+session's request; the audit's items are its branch's, these two are this one's.
 
-Its reasoning beats the reasoning behind what shipped here. A logic disposal changes the
-open set, which changes the planner pool, which changes `inputs_fingerprint` — so with
-`replan` running *before* `logic`, the drift a disposal causes is caught one sync (30
-minutes) later, or not until 05:45.
+**§1c, the order.** Now `logic → questions → catchup → replan → duplicates → noise →
+notify`. It ran `catchup → replan → logic → questions` for as long as the chain existed,
+which put replan *ahead* of the disposal: a logic disposal changes the open set, which
+changes the planner pool, which changes `inputs_fingerprint`, so replan compared today's
+plan against a world logic was about to edit and the drift it should have caught arrived
+thirty minutes later or at 05:45. Nothing was ever wrong in the ledger; the board was
+half an hour stale every time the checker did anything. Increment 1's zero-behaviour-change
+rule preserved that order and a test then pinned it — the test was right about a smaller
+claim (logic before questions) and silent about the larger one. Two tests now pin the
+larger one, and the registry made the change a tuple reorder.
 
-What shipped is the legacy order — `catchup → replan → logic → questions → duplicates →
-noise → notify` — because increment 1 was deliberately a zero-behaviour-change extraction,
-and the order was then pinned by a test asserting logic-before-questions is a decision.
-That test is right about its own claim and silent about the larger one.
+The card passes sit after the planning passes rather than before: a card changes nothing
+the planner reads, because the merge happens on the owner's answer. They stay ahead of
+notify, whose questions-waiting decider counts what they raise.
 
-Not changed unilaterally: it is a behaviour change to a chain another session is actively
-working in, and the registry makes it a tuple reorder plus one assertion whenever it is
-settled. Raised with `backglass-43`; whichever branch takes it should take the whole
-reorder, not half.
+**§1a, the batch hole.** `batch.collect` applied hundreds of extractions and triggered no
+disposal, no detection, no replan and no notification — overnight batch mode is when the
+largest change to the ledger happens, so it was the entry point that needed the loop most
+and had it least. It now runs inside the collect's own `run_lock` (reentrant within a
+process), so the collect and the recognition over its results are one critical section and
+no sync can slot between them to plan around a half-recognised board. Only when something
+was applied: a collect that found no outstanding batches changed nothing, and the
+thirty-minute sync owns the clock-driven passes.
+
+Reported through `CollectReport` rather than echoed — `loop_lines`, `loop_failed`,
+`run_id` — so every caller of `collect()` sees it, and a failed pass reaches the exit
+code. The audit's complaint about the CLI owning the chain applied to its output too.
+
+### Corrected 2026-08-23: the model-failure number was a flap, not a state
+
+Increment 8 reported the triage tier failing 78% of its calls and framed it as current.
+`backglass-43` re-derived it independently and the average hid its own shape. Confirmed
+here against the same copy, per day:
+
+    triage tier   08-17  0%   08-18  0%   08-19  0%   08-20  0%
+                  08-21 78%   08-22 78%   08-23  9%
+    extract tier  08-20 22%   08-21 13%   08-22 36%   08-23  0%
+
+Two bad days, on either side of which the free models answer normally. So "the loop burns
+4× the calls it needs" was true on 08-21 and 08-22 and is not true now, and a model swap
+decided on the seven-day average would be tuning against a flap. The finding stands only
+as: this backend flaps, and nothing surfaces it on the day.
+
+That surfacing is `backglass-43`'s work, not this branch's — `modelhealth.py` ranking the
+routed array by measured success, plus a `state` verdict. Noted so it is not duplicated.
+
+### Constraints that bite (carried forward)
 
 ### Constraints that bite (carried forward)
 

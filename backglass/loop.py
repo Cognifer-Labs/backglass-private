@@ -234,27 +234,38 @@ def _ran_ok_today(conn: sqlite3.Connection, name: str, now: datetime) -> bool:
     return row is not None
 
 
-#: The loop, in the order it has always run. The order is not arbitrary and moving an
-#: entry is a decision, not a tidy-up:
+#: The loop, in the order it runs. The order is not arbitrary and moving an entry is a
+#: decision, not a tidy-up:
 #:
-#:   1. catchup first, because everything after it reads the plan it may have just built.
-#:   2. replan second — catchup fills the plan that is *missing*, replan refreshes the
+#:   1. logic first. It disposes of what the record contradicts — an obligation whose own
+#:      text says it happened, a question about a day that ended — and everything after it
+#:      reads the set it just cleaned.
+#:   2. questions second, so detection runs over the cleaned board. A question the checker
+#:      mooted is one the owner never has to read; asking and disposing in the other order
+#:      asks about rows that were about to go.
+#:   3. catchup third. It fills the plan and the brief the morning owed, and it should
+#:      build them from the board the two passes above just settled rather than from the
+#:      one they were about to change.
+#:   4. replan fourth — catchup fills the plan that is *missing*, replan refreshes the
 #:      plan that exists and has drifted. Neither is the other's fallback.
-#:   3. logic before questions, deliberately: a question mooted by the checker is one the
-#:      owner never has to read, and an obligation resolved here is one nothing re-asks
-#:      about. Detection after disposal, never the reverse.
-#:   4. questions.
-#:   5. duplicates after questions rather than inside `detect`, because it is gated to
-#:      once a day and the others are not — see `_duplicates` for the measurement that
-#:      made the gate necessary.
-#:   6. noise, beside duplicates: another queue that existed only behind a command, and
-#:      gated the same way for the same reason.
-#:   7. notify last, so it can speak about anything the passes above just produced.
+#:
+#:      Points 1 and 4 are why this order changed on 2026-08-23. It ran
+#:      catchup → replan → logic → questions for as long as the chain existed, which put
+#:      replan *ahead* of the disposal: a logic disposal changes the open set, which
+#:      changes the planner pool, which changes `inputs_fingerprint` — so replan saw a
+#:      world logic was about to edit, and the drift it should have caught arrived thirty
+#:      minutes later or at 05:45. Dispose, ask, plan around the cleaned board, knock
+#:      last. The argument is `tasks/pipeline-audit-2026-08-21.md` §1c's.
+#:   5. duplicates and noise raise review cards. After the planning passes because they
+#:      change nothing the planner reads — a card is a proposal, and the merge happens on
+#:      the owner's answer, not here.
+#:   6. notify last, so it can speak about anything the passes above just produced —
+#:      including the cards from 5, which its questions-waiting decider counts.
 PASSES: tuple[Pass, ...] = (
-    Pass("catchup", CLOCK, spends=True, fn=_catchup),
-    Pass("replan", CLOCK, spends=True, fn=_replan),
     Pass("logic", DATA, spends=False, fn=_logic),
     Pass("questions", DATA, spends=False, fn=_questions),
+    Pass("catchup", CLOCK, spends=True, fn=_catchup),
+    Pass("replan", CLOCK, spends=True, fn=_replan),
     Pass("duplicates", DATA, spends=False, fn=_duplicates),
     Pass("noise", DATA, spends=False, fn=_noise),
     Pass("notify", CLOCK, spends=False, fn=_notify),

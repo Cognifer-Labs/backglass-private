@@ -70,10 +70,17 @@ class CollectReport:
     review_queue: int = 0
     spend_cents: int = 0
     errors: list[str] = field(default_factory=list)
+    #: The `run` row this collect was written as, so its `loop_pass` rows join to it.
+    run_id: int | None = None
+    #: What the recognition loop did with what this collect just extracted. Reported
+    #: through here rather than echoed, so every caller of `collect()` sees it — the
+    #: audit's §1a complaint about the CLI owning the chain applies to its output too.
+    loop_lines: list[str] = field(default_factory=list)
+    loop_failed: list[str] = field(default_factory=list)
 
     @property
     def exit_code(self) -> int:
-        return 1 if self.errors else 0
+        return 1 if self.errors or self.loop_failed else 0
 
 
 def _real_client(settings: Settings) -> Any:
@@ -212,7 +219,39 @@ def collect(
     # Collect applies extractions through the same ledger paths sync uses; overlapping
     # a live sync double-writes the same items exactly like two syncs would.
     with run_lock(settings):
-        return _collect(conn, settings, anthropic_client)
+        report = _collect(conn, settings, anthropic_client)
+        _recognise(conn, settings, report)
+        return report
+
+
+def _recognise(
+    conn: sqlite3.Connection, settings: Settings, report: CollectReport
+) -> None:
+    """Run the recognition loop over what this collect just extracted.
+
+    The hole `tasks/pipeline-audit-2026-08-21.md` §1a named and the last one left: a batch
+    collect could apply hundreds of extractions and trigger no disposal, no detection, no
+    replan and no notification, because the chain lived in `sync_command` and nothing here
+    called it. Overnight batch mode is exactly when the largest change to the ledger
+    happens, so it was the entry point that needed it most and had it least.
+
+    Inside the caller's `run_lock` — reentrant within a process — so the collect and the
+    recognition over its results are one critical section rather than two, and no sync can
+    slot between them and plan around a half-recognised board.
+
+    Only when something was actually applied. A collect that found no outstanding batches
+    changed nothing, and the thirty-minute sync owns the clock-driven passes; running them
+    from here as well would be two callers racing to fill the same hole for no reason.
+    Same condition `_collect` uses to decide whether this was a run worth recording.
+    """
+    if not (report.batches or report.extracted):
+        return
+    from backglass import loop
+
+    for outcome in loop.run(conn, settings, run_id=report.run_id):
+        report.loop_lines.extend(outcome.lines)
+        if outcome.status == loop.FAILED:
+            report.loop_failed.append(f"loop pass {outcome.name!r} failed: {outcome.error}")
 
 
 def _collect(
@@ -403,7 +442,7 @@ def _collect(
     report.extracted = extracted
     report.spend_cents = round(spend_usd * 100)
     if report.batches or report.errors:
-        record_run(
+        report.run_id = record_run(
             conn,
             started_at=started_at,
             extracted=extracted,
