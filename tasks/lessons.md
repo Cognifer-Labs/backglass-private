@@ -1374,3 +1374,18 @@ deterministic given the id.
   rather than by reasoning about the order, because the answer to "does the order matter"
   and the answer to "is either one right" come from the same trace, and only one of them
   was being asked.
+
+- 2026-08-23 | Four probes in one session passed for the wrong reason. `source LIKE
+  '%contact%'` → 0 read as "the connector never ran" when contacts writes to `entity`,
+  not `source_item`. A cross-checkout `migrate()` check ran green because cwd won the
+  import and it loaded my own package. A `state`-does-not-migrate test passed against a
+  `state` that migrates, because its fixture's placeholder checksum made `migrate()` raise
+  on the immutability guard before applying anything. And `test -f .git/MERGE_HEAD` said
+  "no merge state" in a worktree, where `.git` is a file pointing elsewhere. Every one of
+  them returned a clean, confident answer to a question I had not asked. | A probe needs
+  its own negative control before its result is evidence: make it print what it loaded, or
+  run it against a case where it MUST fail and check that it does. For a test, that is the
+  mutation run — and it has to fail on the assertion the test is about, not on any
+  assertion, which is what caught the checksum fixture. Budget the extra minute; three of
+  these four were caught only because something downstream disagreed, and the fourth cost
+  a rollback of the owner's live ledger.
