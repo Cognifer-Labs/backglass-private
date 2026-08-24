@@ -436,12 +436,19 @@ So this branch's 0030 and 0031 are the second claim on those numbers. Nothing is
 with either side; parallel worktrees make this structural, and whoever merges second
 renumbers.
 
+**Updated 2026-08-23 after `backglass-43` made contact.** Step 1 is done: that session
+committed the three as `60a9535` on `fix/schedule-canvas-overflow` in
+`/Users/Dharsan/Downloads/backglass-wt-0823`. It also added a fourth,
+`0033_day_plan_overflow_dated`, so the targets below moved up by one. Confirm the highest
+applied number again before renaming — a third session would move them again.
+
 **Merge prerequisite, in this order:**
 
-1. The other session commits its 0030–0032.
-2. Rename this branch's `0030_loop_pass` → `0033_loop_pass` and
-   `0031_calendar_instant_index` → `0034_calendar_instant_index`.
-3. Reseal both in `FROZEN_CHECKSUMS` and regenerate `specs/schema.sql`.
+1. ~~The other session commits its 0030–0032.~~ Done: `60a9535`.
+2. `fix/schedule-canvas-overflow` merges, taking 0030–0033 with it.
+3. Rename this branch's `0030_loop_pass` → `0034_loop_pass` and
+   `0031_calendar_instant_index` → `0035_calendar_instant_index`.
+4. Reseal both in `FROZEN_CHECKSUMS` and regenerate `specs/schema.sql`.
 
 Renaming is legal here and only here: neither has ever been applied to a real database —
 only to per-test files — so the "never change an applied migration" rule is not in play.
@@ -450,6 +457,27 @@ not be until step 2 is done.
 
 Contiguity is why they cannot simply be renumbered now: `test_init_creates_the_schema`
 asserts the file set runs 0001..N with no gaps, and this branch does not carry 0030–0032.
+
+### Open, and it is a real disagreement: the pass order (audit §1c)
+
+`tasks/pipeline-audit-2026-08-21.md` §1c — which this branch was built without knowing
+existed — argues the chain should run **logic → questions → catchup → replan → notify**.
+Dispose first, ask second, plan around the cleaned board, knock last.
+
+Its reasoning beats the reasoning behind what shipped here. A logic disposal changes the
+open set, which changes the planner pool, which changes `inputs_fingerprint` — so with
+`replan` running *before* `logic`, the drift a disposal causes is caught one sync (30
+minutes) later, or not until 05:45.
+
+What shipped is the legacy order — `catchup → replan → logic → questions → duplicates →
+noise → notify` — because increment 1 was deliberately a zero-behaviour-change extraction,
+and the order was then pinned by a test asserting logic-before-questions is a decision.
+That test is right about its own claim and silent about the larger one.
+
+Not changed unilaterally: it is a behaviour change to a chain another session is actively
+working in, and the registry makes it a tuple reorder plus one assertion whenever it is
+settled. Raised with `backglass-43`; whichever branch takes it should take the whole
+reorder, not half.
 
 ### Constraints that bite (carried forward)
 
