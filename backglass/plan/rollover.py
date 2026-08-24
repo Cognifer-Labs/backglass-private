@@ -41,13 +41,22 @@ class CloseReport:
         return bool(self.done or self.rolled)
 
 
+#: The block kinds a day close has an opinion about. A routine is not deferred work — it
+#: either happened or the evening did, and rolling breakfast into tomorrow is meaningless.
+#: A fixed event belongs to the calendar rather than to the plan. So both stay `pending`
+#: for ever by design, and any reader asking "which days are still open" has to use this
+#: same set or it will count 585 breakfasts as unfinished work.
+CLOSEABLE_KINDS = ("work", "protected", "small")
+
+
 def open_blocks(conn: sqlite3.Connection, day: date) -> list[dict[str, Any]]:
+    placeholders = ", ".join("?" for _ in CLOSEABLE_KINDS)
     return conn.execute(
         "SELECT b.id, b.title, b.commitment_id, b.outcome, b.rollover_count "
         "FROM plan_block b JOIN day_plan p ON p.id = b.day_plan_id "
         "WHERE p.user_id = ? AND p.local_date = ? AND p.status != 'superseded' "
-        "  AND b.kind IN ('work', 'protected', 'small')",
-        (USER_ID, day.isoformat()),
+        f"  AND b.kind IN ({placeholders})",
+        (USER_ID, day.isoformat(), *CLOSEABLE_KINDS),
     ).fetchall()
 
 

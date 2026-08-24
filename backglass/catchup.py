@@ -50,10 +50,18 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
+from typing import Any
 
 from backglass.config import Settings
 from backglass.ledger import USER_ID
+
+#: How far back the net will reach to close a day nobody closed. Bounded for two reasons
+#: and neither is performance: a machine off for a month should catch up over several runs
+#: rather than rewrite a quarter of history in one transaction, and a rollover count is a
+#: claim about the owner's last fortnight — "you have deferred this nine times" stops
+#: meaning anything if the nine reach back to June.
+CLOSE_LOOKBACK_DAYS = 14
 
 
 @dataclass(frozen=True)
@@ -109,6 +117,87 @@ def brief_is_missing(conn: sqlite3.Connection, day: date) -> bool:
     return row is None
 
 
+def unclosed_days(
+    conn: sqlite3.Connection, day: date, *, lookback: int | None = CLOSE_LOOKBACK_DAYS
+) -> list[date]:
+    """Days before `day` whose live plan still holds work nobody accounted for.
+
+    `lookback=None` lifts the bound, which is the one-time backfill and nothing else.
+
+    Reads `rollover.CLOSEABLE_KINDS` rather than naming the kinds again: routines and
+    fixed events stay `pending` for ever by design, and a reader that forgot that would
+    report every breakfast since August as an unclosed day.
+    """
+    from backglass.plan import rollover
+
+    placeholders = ", ".join("?" for _ in rollover.CLOSEABLE_KINDS)
+    params: list[Any] = [USER_ID, day.isoformat(), *rollover.CLOSEABLE_KINDS]
+    floor = ""
+    if lookback is not None:
+        floor = " AND p.local_date >= ?"
+        params.append((day - timedelta(days=lookback)).isoformat())
+    rows = conn.execute(
+        "SELECT DISTINCT p.local_date FROM day_plan p"
+        " JOIN plan_block b ON b.day_plan_id = p.id"
+        " WHERE p.user_id = ? AND p.status != 'superseded' AND p.local_date < ?"
+        f"   AND b.outcome = 'pending' AND b.kind IN ({placeholders}){floor}"
+        " ORDER BY p.local_date",
+        params,
+    ).fetchall()
+    return [date.fromisoformat(str(r["local_date"])) for r in rows]
+
+
+def close_ended_days(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    day: date,
+    *,
+    lookback: int | None = CLOSE_LOOKBACK_DAYS,
+) -> list[Filled]:
+    """Close every day that ended without anyone closing it.
+
+    The third surface this net covers, and the one that had nothing under it. The evening
+    pass is scheduled for 22:00 and, on a machine whose calendar agent holds the timezone
+    it last booted in, fires at about 09:45 — where it correctly refuses, because deciding
+    what did not get done is not a judgement to make about a day with eleven hours left.
+    That guard is right and it has no partner: nothing retried at the hour the day was
+    actually over, so the refusal became permanent. Measured on 2026-08-23, the last day
+    the ledger ever closed was 2026-08-17.
+
+    The cost of that is not the pending rows. It is that `rollover_count` never grows, so
+    the planner cannot see what it keeps re-scheduling, `done_minutes` stays zero so
+    partial progress is never tracked, and the weekly brief's deferred section has nothing
+    to report. The plan kept being made and nothing ever asked how it went.
+
+    Only days that are over, so the judgement this makes cannot be premature — the same
+    rule the `shutdown` command enforces for today, and the case its own comment already
+    calls "the ordinary catch-up case". No model, no network: this is SQL and it is safe
+    on the request path, unlike the plan fill above it.
+    """
+    from backglass.brief import weekly
+    from backglass.plan import rollover
+
+    filled: list[Filled] = []
+    for ended in unclosed_days(conn, day, lookback=lookback):
+        try:
+            report = rollover.close_day(conn, settings, ended)
+        except Exception as exc:  # noqa: BLE001 — rule 5: one bad day is not the net
+            filled.append(Filled("day", ended, f"failed: {type(exc).__name__}: {exc}"))
+            continue
+        if report.anything_happened:
+            filled.append(
+                Filled("day", ended, f"{report.done} done, {report.rolled} rolled")
+            )
+    if filled:
+        # Completed goal-linked work becomes checkpoints, which is what makes a close
+        # reach the goal engine at all. Idempotent by `checkpoints.from_*`, so calling it
+        # once after the batch costs nothing and matches what `shutdown` already does.
+        made = weekly.link_completed_work(conn)
+        if made:
+            filled.append(Filled("day", day, f"{made} checkpoint(s) from closed work"))
+    return filled
+
+
 def run(
     conn: sqlite3.Connection, settings: Settings, *, now: datetime | None = None
 ) -> list[Filled]:
@@ -121,6 +210,11 @@ def run(
     now = now or _local_now(settings)
     day = now.date()
     filled: list[Filled] = []
+
+    # Before the plan, deliberately. Closing a day rolls its unfinished work forward and
+    # bumps the counts the planner ranks on, so a plan built first would be planning
+    # yesterday's board.
+    filled.extend(close_ended_days(conn, settings, day))
 
     if _owed(now, settings.plan_at) and plan_is_missing(conn, day):
         try:
@@ -169,6 +263,10 @@ def hole_exists(
     """
     now = now or _local_now(settings)
     day = now.date()
+    # Cheap enough to belong here: one indexed read, no model and no endpoint, which is
+    # the property that kept retrieval out of this function and lets this one in.
+    if unclosed_days(conn, day):
+        return True
     if _owed(now, settings.plan_at) and plan_is_missing(conn, day):
         return True
     return _owed(now, settings.brief_at) and brief_is_missing(conn, day)

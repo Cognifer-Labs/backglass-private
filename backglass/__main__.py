@@ -1108,6 +1108,10 @@ def shutdown(
         bool,
         typer.Option("--force", help="Close today even though the working window is open"),
     ] = False,
+    catch_up: Annotated[
+        bool,
+        typer.Option("--catch-up", help="Close every past day nobody closed, unbounded"),
+    ] = False,
 ) -> None:
     """The evening pass. docs/04 §1.8.
 
@@ -1135,6 +1139,44 @@ def shutdown(
     # is a guard that disagrees with itself the week the owner is in Coimbatore.
     now = timezones.local_now(settings)
     day = _day_option(for_date, "--date") or now.date()
+
+    if catch_up:
+        # The one-time counterpart to the net in `catchup.py`, with the fortnight bound
+        # lifted. Separate from the ordinary path on purpose: this rewrites rollover
+        # counts across history, which is a thing to type deliberately rather than a
+        # thing a scheduled job decides to do.
+        from backglass import catchup as catchup_mod
+
+        produced = catchup_mod.close_ended_days(conn, settings, day, lookback=None)
+        conn.commit()
+        for item in produced:
+            typer.echo(f"closed {item.day}: {item.detail}")
+        # Days whose live plan holds no work because an empty one superseded a real plan
+        # cannot be closed from here and must not be: a superseded plan is the day's
+        # history, and reaching back into it would be rewriting the record rather than
+        # completing it. `planner.persist`'s guard stops new ones being made; these are
+        # the ones made before it existed, and they are named rather than fixed.
+        stranded = conn.execute(
+            "SELECT COUNT(*) AS n FROM (SELECT p.local_date FROM day_plan p"
+            "  WHERE p.user_id = ? AND p.status != 'superseded' AND p.planned_minutes = 0"
+            "    AND p.local_date < ?"
+            "    AND EXISTS (SELECT 1 FROM day_plan q JOIN plan_block b"
+            "                  ON b.day_plan_id = q.id"
+            "                WHERE q.user_id = p.user_id AND q.local_date = p.local_date"
+            "                  AND q.status = 'superseded' AND b.kind IN ('work',"
+            "                      'protected', 'small'))"
+            "  GROUP BY p.local_date)",
+            (USER_ID, day.isoformat()),
+        ).fetchone()
+        if stranded and int(stranded["n"]):
+            typer.echo(
+                f"{stranded['n']} day(s) hold no closeable work because an empty plan"
+                " superseded a real one — left as they are; their history is in the"
+                " superseded rows"
+            )
+        if not produced:
+            typer.echo("nothing to catch up — every past day is closed")
+        return
 
     # Only today can be premature; a `--date` in the past is a day that is genuinely over,
     # and the evening pass on a finished day is the ordinary catch-up case.
@@ -1537,6 +1579,11 @@ def _print_report(report: Any, *, dry_run: bool) -> None:
         typer.echo(f"  upstream: {revision}")
     for note in getattr(report, "coursework_notes", []):
         typer.echo(f"  coursework: {note}")
+    # Said out loud for the same reason, and a stronger one: a goal link changes what the
+    # planner promotes tomorrow. A reprioritised day whose cause appears nowhere in the
+    # run's own output is the visibility rule failing at the last step.
+    for note in getattr(report, "goal_link_notes", []):
+        typer.echo(f"  goal: {note}")
     typer.echo(f"  writes {report.writes}, spend {report.spend_cents}c")
     # startswith, because the reason carries which stage stopped ('rate_limit:triage').
     if (report.degrade_reason or "").startswith("rate_limit"):

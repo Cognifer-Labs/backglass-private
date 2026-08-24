@@ -211,6 +211,32 @@ class RelevanceResponse(Strict):
     verdicts: list[RelevanceVerdict] = Field(default_factory=list)
 
 
+class GoalLink(Strict):
+    """Which long-term goal an obligation moves forward, or none of them.
+
+    `goal_id` is intersected with the goals the pass actually sent before anything is
+    written, the same guard `cites_fact` gets above — the tables overlap in range, so a
+    plausible integer is not evidence of anything (lessons, 2026-08-12).
+
+    `quote` is copied from the obligation's own text and checked against it. It is what
+    makes the link answerable a year later: `commitment.goal_id` is a bare integer, and a
+    link nobody can reconstruct is a plan reprioritised for a reason that has been lost.
+    Required for a link, meaningless for `null`.
+    """
+
+    commitment_id: int
+    #: `goal.id`, or None for "serves no long-term goal" — the ordinary answer.
+    goal_id: int | None = None
+    confidence: float = Field(ge=0.0, le=1.0)
+    #: Verbatim, from the obligation. Checked before the link is applied.
+    quote: str | None = None
+    reason: str | None = None
+
+
+class GoalLinkResponse(Strict):
+    links: list[GoalLink] = Field(default_factory=list)
+
+
 def json_schema(model: type[BaseModel]) -> dict[str, Any]:
     """A self-contained JSON Schema for `--json-schema` / a tool `input_schema`.
 

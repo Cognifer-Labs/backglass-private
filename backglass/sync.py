@@ -94,6 +94,11 @@ class SyncReport:
     #: home (`assignment`) and a record (`claim_event`), and a run that reports failure
     #: every thirty minutes reports nothing.
     upstream_revisions: list[str] = field(default_factory=list)
+    #: The roadmap reaching the day's work. `judged` counts every verdict including the
+    #: "no goal" ones, which is what stops the next sync re-asking about the same rows.
+    goals_linked: int = 0
+    goal_links_judged: int = 0
+    goal_link_notes: list[str] = field(default_factory=list)
     #: Ledger rows a windowed connector's complete re-read no longer returns — a class
     #: that stopped meeting, a meeting that was cancelled. Reported because it changes
     #: the day's capacity, and a silent change to the plan is the thing the owner cannot
@@ -367,6 +372,12 @@ def _sync(
         _relevance_pass(
             conn, settings, Metered(client, "relevance", report.calls), cap, report
         )
+        # And which long-term goal the surviving work serves. After relevance on purpose:
+        # there is no sense paying to link an obligation that pass is about to retire, and
+        # the ordering makes the two agree about what is still owed.
+        _goal_link_pass(
+            conn, settings, Metered(client, "goal_link", report.calls), cap, report
+        )
 
     # Review-day tallies → checkpoints. Deterministic — the data arrives structured,
     # so this is code, not a model call, and it costs nothing on the cap. Skipped on
@@ -431,6 +442,31 @@ def _sync(
     if not dry_run:
         _record_run(conn, report, started_at)
     return report
+
+
+def _goal_link_pass(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    client: ModelClient,
+    cap: SpendCap,
+    report: SyncReport,
+) -> None:
+    """Link open obligations to the goals they move forward. Best-effort (rule 5).
+
+    Quiet in the steady state: `candidates` returns only what has never been judged, so a
+    ledger whose backlog has been read once costs nothing per sync until new work arrives.
+    """
+    from backglass.goals import linking
+
+    try:
+        result = linking.run(conn, settings, client, cap)
+    except Exception as exc:  # noqa: BLE001 — a pass down is not the sync down
+        report.errors.append(f"goal linking: {type(exc).__name__}: {exc}")
+        return
+    report.goals_linked = result.linked
+    report.goal_links_judged = result.judged
+    report.errors.extend(result.errors)
+    report.goal_link_notes.extend(result.notes)
 
 
 def _announce_revisions(
