@@ -37,11 +37,23 @@ immutability guard before it applied anything. That second one is why "I made it
 is not enough on its own: **the mutation has to go red on the assertion the test is about,
 not on any assertion.** Red for the wrong reason is the same false confidence as green.
 
-Two concrete negative controls worth keeping to hand. Print the resolved path of what a
+**This applies hardest to the throwaway script, not the test.** A test at least lives in a
+suite that runs again; a one-off verification runs once, is believed, and is deleted. Every
+probe that went wrong in this repo on 2026-08-23/24 was a scratch script. The sharpest
+case: a rollback that ran `ALTER TABLE … DROP COLUMN` was called lossless on the evidence
+that table *counts* matched. SQLite implements that by rewriting the whole table, so a
+corrupted or reordered rewrite preserves every count — the check tested the one property
+that survives the failure mode. Redone by hashing every row it came back byte-identical,
+and only then, with a deliberate `+1` to one field on a copy, did the comparison prove it
+could report a difference at all.
+
+Three concrete negative controls worth keeping to hand. Print the resolved path of what a
 cross-checkout probe actually imported — `cwd` wins, so a script meant to inspect another
-checkout will happily load the package it is standing in. And in a git worktree `.git` is a
+checkout will happily load the package it is standing in. In a git worktree `.git` is a
 *file*, not a directory, so `test -f .git/MERGE_HEAD` reports "no merge in progress" no
-matter what is in progress; every session in this repo is currently in a worktree.
+matter what is in progress; every session in this repo is currently in a worktree. And
+before comparing two copies of a database, change one row on purpose and confirm the
+comparison says so.
 
 **3. A predicate's name can be true where its use is false. Read what each writer does
 with the answer.**
@@ -1472,34 +1484,16 @@ deterministic given the id.
   merge in progress" unconditionally. Rule 2 rewritten rather than a sixth rule added —
   the section is capped, and this is the same rule stated correctly.
 
-- 2026-08-24 | Verified the live-ledger rollback by comparing **table counts** against the
-  pre-rollback copy and called it lossless. Counts are not evidence for a rollback that
-  ran `ALTER TABLE day_plan DROP COLUMN`, because SQLite rewrites the whole table to do
-  it: a corrupted or reordered rewrite keeps every count and changes every row. Caught by
-  a peer session asking whether the one artifact with no second copy had a negative
-  control. Redone properly: hash every row of every table, separate legitimate growth
-  (the loop kept syncing — model_call +2, run +1, source_item +5) from mutation of
-  pre-existing rows, and confirm the two mutations are ordinary bookkeeping
-  (`credential.cursor/updated_at`, `monitored_chat.last_seen_at/messages_seen`). Result:
-  `day_plan` — the rewritten table — byte-identical, 34 tables unchanged entirely. Then
-  ran the negative control the first attempt lacked: `+1` to one `planned_minutes` on a
-  copy, and the comparison reported `day_plan: rows CHANGED`. | A count is the weakest
-  check that still looks like one. When the operation rewrites storage rather than
-  appending to it, compare contents; and pre-flight 2 applies to a one-off verification
-  script exactly as it does to a test — I had no reason to believe that comparison could
-  detect damage until I made it detect some.
-
-- 2026-08-23 | Four probes in one session passed for the wrong reason. `source LIKE
-  '%contact%'` → 0 read as "the connector never ran" when contacts writes to `entity`,
-  not `source_item`. A cross-checkout `migrate()` check ran green because cwd won the
-  import and it loaded my own package. A `state`-does-not-migrate test passed against a
-  `state` that migrates, because its fixture's placeholder checksum made `migrate()` raise
-  on the immutability guard before applying anything. And `test -f .git/MERGE_HEAD` said
-  "no merge state" in a worktree, where `.git` is a file pointing elsewhere. Every one of
-  them returned a clean, confident answer to a question I had not asked. | A probe needs
-  its own negative control before its result is evidence: make it print what it loaded, or
-  run it against a case where it MUST fail and check that it does. For a test, that is the
-  mutation run — and it has to fail on the assertion the test is about, not on any
-  assertion, which is what caught the checksum fixture. Budget the extra minute; three of
-  these four were caught only because something downstream disagreed, and the fourth cost
-  a rollback of the owner's live ledger.
+- 2026-08-24 | A rollback of the owner's live ledger was verified by comparing table row
+  COUNTS against a pre-rollback copy and pronounced lossless. The operation was
+  `ALTER TABLE day_plan DROP COLUMN`, which SQLite implements by rewriting the entire
+  table — so a corrupted or reordered rewrite preserves every count exactly. The check
+  tested the single property that survives the failure mode it was aimed at, on the one
+  artifact in this project that has no second copy. (Peer session's finding, on their own
+  work; redone by hashing every row, and the result was byte-identical.) | Pre-flight 2 is
+  not a rule about tests, it is a rule about probes, and the throwaway verification script
+  is where it bites hardest — a test lives in a suite that runs again, a one-off runs once
+  and is believed. Before comparing two copies of anything, mutate one on purpose and
+  confirm the comparison reports it. Every probe that went wrong in this repo over these
+  two days was a scratch script, mine included, and none of them had that control.
+  Evidence from the redone check, kept because the numbers are the argument: `day_plan` byte-identical after the rewrite, 34 tables unchanged entirely, and the only pre-existing rows that moved were `credential.cursor/updated_at` and `monitored_chat.last_seen_at/messages_seen`. The control that made it evidence: `+1` to one `planned_minutes` on a copy, and the comparison reported `day_plan: rows CHANGED`.
