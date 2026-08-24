@@ -106,8 +106,14 @@ class Health:
 
 
 #: Which tiers each configured model serves, from the call sites that pass it:
-#: `sync.py:769` and `:833` (triage, batch triage) send `model_triage`; `sync.py:953`,
-#: `extract/recheck.py:347` and `extract/relevance.py:327` send `model_extract`.
+#: `sync.py`'s triage and batch-triage passes send `model_triage`; its extraction pass,
+#: `extract/recheck.py`, `extract/relevance.py` and `goals/linking.py` send `model_extract`.
+#:
+#: This tuple has to be edited when a pass is added, and forgetting is quiet in exactly one
+#: direction: `by_tier` enumerates whatever `model_call` holds, so a missing tier still
+#: reaches `backglass state` — while the router, which reads this, goes on ranking the
+#: array as though those calls never happened. The verdict would report a model failing
+#: every goal-link call and the router would keep it at the head.
 #:
 #: This grouping is not bookkeeping, it is the difference between a right and a wrong
 #: answer. Measured on the live ledger on 2026-08-23, `nemotron-3-super` was failing 32%
@@ -116,7 +122,7 @@ class Health:
 #: A router that reads the pooled number leaves a broken model at the head of the array
 #: and reports it healthy.
 TIERS_FOR_TRIAGE = ("triage", "triage_batch")
-TIERS_FOR_EXTRACT = ("extract", "recheck", "relevance")
+TIERS_FOR_EXTRACT = ("extract", "recheck", "relevance", "goal_link")
 
 
 def recent(

@@ -1544,6 +1544,11 @@ def _print_report(report: Any, *, dry_run: bool) -> None:
         typer.echo(f"  upstream: {revision}")
     for note in getattr(report, "coursework_notes", []):
         typer.echo(f"  coursework: {note}")
+    # Said out loud for the same reason, and a stronger one: a goal link changes what the
+    # planner promotes tomorrow. A reprioritised day whose cause appears nowhere in the
+    # run's own output is the visibility rule failing at the last step.
+    for note in getattr(report, "goal_link_notes", []):
+        typer.echo(f"  goal: {note}")
     typer.echo(f"  writes {report.writes}, spend {report.spend_cents}c")
     # startswith, because the reason carries which stage stopped ('rate_limit:triage').
     if (report.degrade_reason or "").startswith("rate_limit"):

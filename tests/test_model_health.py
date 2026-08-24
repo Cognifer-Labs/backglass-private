@@ -150,6 +150,27 @@ class TestWhatCountsAsHealthy:
         assert scoped.healthy is False
 
 
+class TestEveryTierIsRouted:
+    """Forgetting to register a new tier is quiet in one direction only, which is why this
+    exists. `by_tier` enumerates whatever `model_call` holds, so a missing tier still shows
+    up in `backglass state` — while the router, which reads the tuples, ranks the array as
+    though those calls never happened. The verdict would report a model failing every
+    goal-link call and the router would keep it at the head of the array."""
+
+    def test_the_tier_tuples_cover_every_tier_the_pipeline_records(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        known = set(modelhealth.TIERS_FOR_TRIAGE) | set(modelhealth.TIERS_FOR_EXTRACT)
+        for tier in ("triage", "triage_batch", "extract", "recheck", "relevance",
+                     "goal_link"):
+            _calls(conn, "m", tier=tier, ok=1)
+        recorded = {
+            str(r["tier"])
+            for r in conn.execute("SELECT DISTINCT tier FROM model_call")
+        }
+        assert recorded <= known, f"unrouted tier(s): {sorted(recorded - known)}"
+
+
 class TestTheTwoWindows:
     def test_the_router_does_not_demote_over_a_flap_that_has_ended(
         self, conn: sqlite3.Connection, settings: Settings

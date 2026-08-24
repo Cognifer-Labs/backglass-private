@@ -79,15 +79,22 @@ Obligations to judge:
 {{commitments}}
 ```
 
-## Fixtures
+## Cases
 
-`tests/fixtures/goal_linking/` — the negatives carry the weight, as in `check-relevance`.
+Covered by `tests/test_goal_linking.py` rather than by JSON fixtures, and named here so
+the table points at evidence that exists. Every guard below fails the suite if removed.
 
-| fixture | shape | expected |
-|---|---|---|
-| `01-named-project.json` | "OrgTruth: run e2e:live against a real key" | links to the OrgTruth goal — rule 4 |
-| `02-target-not-title.json` | "Call the phone-only hospices about volunteering" | links to med school via a volunteering target — rule 3 |
-| `03-generic-verb.json` | "Submit MMR immunization records" | `null` — the exact false positive the matcher produced |
-| `04-coursework.json` | "Complete CIS236 assignment 1-1-1" | `null` — rule 5 |
-| `05-unquoted.json` | a link whose quote is not in the obligation | discarded in code, never applied |
-| `06-two-goals.json` | plausibly two goals | `null` — rule 2 |
+| case | shape | expected | test |
+|---|---|---|---|
+| named project | "OrgTruth: run e2e:live against a real key" | links — rule 4 | `test_a_quoted_link_survives` |
+| target, not title | goal titled "med school", target "Non-clinical volunteering hours" | the targets reach the prompt — rule 3 | `test_the_goals_carry_their_targets` |
+| generic verb | "Submit MMR immunization records" | `null` — the exact false positive the matcher produced | `test_no_goal_needs_no_quote` |
+| unquoted link | a link with no quote | discarded, never applied — rule 1 | `test_a_link_with_no_quote_is_discarded` |
+| invented quote | a quote not present in the obligation | discarded — rule 1 | `test_a_quote_not_in_the_obligation_is_discarded` |
+| unsent id | an id the pass never sent | discarded (2026-08-12 guard) | `test_an_id_the_pass_never_sent_is_discarded` |
+| unsent goal | a goal id not among those sent | discarded | `test_a_goal_that_was_not_sent_is_discarded` |
+| silence | sent, and absent from the response | not a verdict; retired after two attempts | `TestARowTheModelWillNotAnswerAbout` |
+
+The last one is not hypothetical. The first live run answered about 16 of 25 obligations
+and a later one about 1 of 25, so the response being incomplete is the normal case here,
+not the exceptional one.
