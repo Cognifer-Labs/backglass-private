@@ -14,7 +14,7 @@ from datetime import date
 
 import pytest
 
-from backglass import context
+from backglass import context, staleness
 from backglass.config import Settings
 from backglass.db import query
 from backglass.facts import remember
@@ -84,6 +84,82 @@ class TestTheSituation:
         assert '"due soon thing" (due 2026-08-20)' in block
         # Beyond the horizon: counted, never spelled out.
         assert "far future thing" not in block
+
+    def test_the_list_is_what_is_coming_not_the_oldest_thing_in_the_ledger(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The measured failure, 2026-08-23. This query had no lower bound and sorted
+        ascending, so overdue rows satisfied it and sorted first — with 63 overdue against
+        386 open on the live ledger, the five lines every triage and extraction prompt
+        read as "the owner's current situation" were the five *oldest* rows in it. The top
+        was "Clean fishtank", due 2026-01-06. The block was spending the model's attention
+        on the backlog and calling it the present."""
+        _commitment(conn, "clean fishtank", due="2026-01-06", occurred="2026-01-06T00:00:00Z")
+        _commitment(
+            conn, "ask about car insurance", due="2026-03-19", occurred="2026-03-19T00:00:00Z"
+        )
+        for n, due in enumerate(("2026-08-19", "2026-08-20", "2026-08-21")):
+            _commitment(conn, f"coming up {n}", due=due)
+
+        block = context.assemble(conn, settings, day=TODAY)
+
+        assert "5 open commitments: 2 overdue" in block, "the backlog is still counted"
+        assert "clean fishtank" not in block
+        assert "car insurance" not in block
+        for n in range(3):
+            assert f"coming up {n}" in block
+
+    def test_an_overdue_row_the_owner_kept_is_still_the_present(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """Why "still live" is the staleness gate rather than a date window of this
+        module's own. A parallel cutoff would agree with the gate right up until someone
+        tuned one of them, and it gets this case backwards: the owner was asked about a
+        long-lapsed row and said it was still on their plate, so the planner schedules it
+        and the model should see it."""
+        cid = _commitment(
+            conn, "submit the housing contract", due="2026-05-18",
+            occurred="2026-05-18T00:00:00Z",
+        )
+        conn.execute(
+            "INSERT INTO open_question (user_id, kind, subject_key, question, asked_at,"
+            " status, answer_option) VALUES (1, 'stale', ?, 'still?', ?, 'answered', ?)",
+            (str(cid), "2026-08-15T00:00:00Z", staleness.STALE_KEEP),
+        )
+
+        block = context.assemble(conn, settings, day=TODAY)
+        assert '"submit the housing contract" (due 2026-05-18 OVERDUE)' in block
+
+    def test_the_same_row_unanswered_and_silent_is_held_out(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The other half of the pair, so the test above cannot pass by accident: with no
+        answer and nothing said since, the identical row is what `staleness` holds out of
+        the plan — and re-asserting it to the model is telling it the planner is wrong."""
+        _commitment(
+            conn, "submit the housing contract", due="2026-05-18",
+            occurred="2026-05-18T00:00:00Z",
+        )
+        block = context.assemble(conn, settings, day=TODAY)
+
+        assert "1 open commitments: 1 overdue" in block
+        assert "housing contract" not in block
+
+    def test_at_most_two_lapsed_rows_are_spelled_out(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """A longer list of them is the backlog again, which is the failure the limit
+        bounds. Newest lapse first: the one that went past yesterday is the one still
+        worth a sentence."""
+        for due in ("2026-08-08", "2026-08-11", "2026-08-14", "2026-08-17"):
+            _commitment(conn, f"lapsed {due}", due=due)
+
+        block = context.assemble(conn, settings, day=TODAY)
+
+        assert "lapsed 2026-08-17" in block
+        assert "lapsed 2026-08-14" in block
+        assert "lapsed 2026-08-11" not in block
+        assert "lapsed 2026-08-08" not in block
 
     def test_an_offset_datetime_due_at_is_judged_on_its_local_day(
         self, conn: sqlite3.Connection, settings: Settings
