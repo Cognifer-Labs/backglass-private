@@ -1252,3 +1252,24 @@ deterministic given the id.
   | When a probe reports the all-clear on the first run, distrust it before believing
   it: check that it found the rows it was supposed to be judging. A verification whose
   identifiers are wrong does not fail — it passes, on an empty set.
+
+- 2026-08-24 | Wrote "the contacts connector has never run" into a findings doc on the
+  evidence of `source_item WHERE source LIKE '%contact%'` → 0, and made it recommendation
+  #1. Contacts does not write source items — it writes aliases onto `entity`, and
+  `_contacts_pass` runs on every sync. Zero is what that query returns whether or not the
+  connector has ever run. `APPLE_CONTACTS=1` was set and 66 people already carried a phone
+  alias. Same failure shape as the connector-label probe earlier the same day, and it got
+  past me twice because the number agreed with what I expected. | Before a zero becomes a
+  finding, name what a *non*-zero would have looked like and check the writer actually
+  writes there. A probe aimed at the wrong table does not fail, it returns 0 — and 0 is
+  the most believable wrong answer there is when it confirms the story.
+
+- 2026-08-24 | Built health-aware model routing and bounded "recent" by call count. A busy
+  tier's last 40 calls span hours and a quiet tier's span a fortnight, so one stated
+  window was two effective windows: `backglass state` reported a model failing 53% while
+  the router, reading the same table, ranked it healthy. Two answers from one file, on the
+  first read against real data. | A window over events must be bounded by time, not by
+  count, whenever two readers will compare notes. Count caps belong there only as a
+  ceiling against a pathological backfill. And when two readers legitimately need
+  different windows, say the window in the output — "failing 53%" with no window reads as
+  "right now", which is how a flap that ended gets acted on.
