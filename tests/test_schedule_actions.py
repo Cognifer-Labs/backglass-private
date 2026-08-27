@@ -449,10 +449,16 @@ def test_an_empty_runway_says_so_rather_than_rendering_nothing(conn, client) -> 
     assert "Nothing to allocate" in body
 
 
-def test_the_runway_says_how_much_of_the_board_it_could_not_reach(conn, client, settings) -> None:  # type: ignore[no-untyped-def]
-    """The panel is a window on the board, not the board. On the owner's ledger it drew
-    137 obligations out of 267 and said nothing about the other 130 — so it read as
-    complete while two thirds of the coursework was outside it."""
+def test_the_panel_is_the_whole_board_and_not_a_window_on_it(conn, client, settings) -> None:  # type: ignore[no-untyped-def]
+    """The concern this began as, answered a different way.
+
+    It was written when the panel walked a fortnight: it drew 137 obligations out of 267
+    and said nothing about the other 130, so it read as complete while two thirds of the
+    coursework sat outside it. The first fix was to count what fell outside and say so.
+    The better one is not to have an outside — the panel now walks to the last deadline
+    on the board, so a November exam gets days like everything else and the "has no day"
+    line correctly has nothing to report.
+    """
     from tests.test_planner import add_commitment
 
     add_commitment(conn, settings, "November exam", minutes=4_000, n=1,
@@ -461,8 +467,9 @@ def test_the_runway_says_how_much_of_the_board_it_could_not_reach(conn, client, 
 
     body = client.get(f"/schedule/runway?date={DAY.isoformat()}").text
 
-    assert "obligation(s) has no day" in body
-    assert "Nothing is late" in body
+    assert "November exam" in body, "work due in ten weeks is outside the panel again"
+    assert "The board clears on" in body
+    assert "obligation(s) has no day" not in body
 
 
 def test_a_runway_that_reached_everything_says_nothing_extra(conn, client, settings) -> None:  # type: ignore[no-untyped-def]

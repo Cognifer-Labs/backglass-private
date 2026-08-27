@@ -11,6 +11,18 @@
     what follows is optimistic by whatever they hold.</p>
 {% endif %}
 
+{% if clears_on %}
+  {# The sentence the panel exists for. "216 did not fit" and "109 obligations have no
+     day" are both true of a fortnight and neither answers the question the owner
+     actually asked — whether the semester holds. This walks every deadline on the board
+     and says when the last of it lands. #}
+  <p class="b1">The board clears on {{ clears_on.strftime('%a %-d %b') }} —
+    {{ items }} obligations, {{ hours }}h, every one of them with a day.</p>
+  <p class="b2">Capacity past the next fortnight is the class timetable and nothing else,
+    so this is a floor rather than a promise: work that cannot fit even here genuinely
+    cannot fit, while a clean run still loses days to things nobody has scheduled yet.</p>
+{% endif %}
+
 {% if not rows %}
   <p class="b2">Nothing to allocate. No open obligation carries both an estimate and a date.</p>
 {% else %}

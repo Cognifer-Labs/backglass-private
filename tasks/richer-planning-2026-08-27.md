@@ -199,3 +199,57 @@ Both cost the owner real hours and neither is about readings.
    owner's own "reduce time for other things", applied to the two things on the day that
    nobody promised anyone.
 
+## "continue to improve and fit everything into schedule" — the answer is that it does
+
+Measured before changing anything: 449 open commitments, 291 hours; 213 of those hours
+dated, 78 undated. Fortnight capacity, day by day through `capacity.compute`: **91.7
+hours**, and the fortnight walk allocated **91.7 of 91.7** — saturated, with 109
+obligations and 95 hours reported as `beyond`. That reads as a semester badly underwater.
+
+It is not what it means. **The fourteen-day horizon was the thing failing, not the
+semester.** Run the same allocator to the last deadline on the board — 106 days — and the
+whole thing places: **263 obligations, 199 hours, clearing on 26 September**, with four
+items left unreachable, all of them due the next morning. Nothing is beyond. The board
+holds a month of work, not a semester of debt.
+
+So the improvement is not a better packer. It is asking the right question:
+
+- `runway.solvency` — the same EDF walk, run to the last deadline rather than to a
+  fortnight, bounded at `MAX_SOLVENCY_DAYS = 400` (the owner carries a 2027 internship
+  application and walking to it would compute a year of capacity for a question nobody
+  asked). Two horizons because there are two questions: fourteen days is how far the
+  *calendar* is real, and that is the right horizon for telling the planner what to start
+  today; it is the wrong one for "does all of this fit".
+- `runway.clears_on` — the day the last sitting lands.
+- Both surfaced: the Schedule page's Runway panel and `backglass plan --runway` now open
+  with *"The board clears on Sat 26 Sep — 263 obligations, 199h, every one of them with a
+  day."*
+
+The optimism is stated rather than hidden. Capacity past the sync window is the class
+timetable and nothing else, so this is a **floor on infeasibility** — work that cannot fit
+even here genuinely cannot fit — and a promise about nothing.
+
+## Also fixed
+
+**A duplicate-title collision this session introduced.** A seminar spends two meetings on
+one text (Dante 10 and 12 November, Chaucer 17 and 19), and both became commitments named
+"Read for HON 171: Dante Alighieri, Inferno". `backglass duplicates` scored that pair 1.00
+and offered to drop one — deleting a real obligation. The meeting date is now part of the
+name, the certain-duplicate count fell from 3 to 1, and the pairs are no longer
+collapsible. The 22 existing rows were renamed in place.
+
+**One genuine duplicate collapsed** (`duplicates --apply`): two copies of "upload ASU ID
+photo and verify identity", one from Sun Devil Card Services and one from ASU.
+
+## Two tests from a concurrent session, retargeted rather than deleted
+
+That session added `Runway.beyond` — the fortnight's honest statement about its own edge —
+with tests asserting the CLI and the panel both print "N obligation(s) has no day in the
+next 14". Walking the whole board makes that line correctly empty, so both tests were
+failing on a behaviour that had deliberately changed.
+
+Their concern was right and is kept: far-future work must not become invisible. Both tests
+now assert that property against the new mechanism — a November exam appears with days
+against it — and `beyond` keeps its own direct test on the fortnight path, which is
+unchanged and still correct.
+

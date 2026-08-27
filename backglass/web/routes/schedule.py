@@ -827,12 +827,31 @@ def build_router(
         pool = planner.candidates(
             conn, settings, day, health.at_risk_goal_ids(conn, settings, day)
         )
-        horizon = runway_mod.allocate(conn, settings, pool, day)
+        # The whole board, not the fortnight. This panel exists to answer "does all of
+        # this fit", and a fourteen-day walk cannot: measured 2026-08-27, it reported 109
+        # obligations and 95 hours it could not place — which reads as a semester
+        # underwater and only means the fortnight stopped. Walked to the last deadline
+        # instead, the same board allocates completely and clears on 26 September, with
+        # four items left over, all due the next morning.
+        #
+        # One walk, not two: about five seconds against the fortnight's half a second, on
+        # a fold that is opened deliberately and loads once.
+        #
+        # `beyond` stays wired up and will normally be empty now — it counts work whose
+        # deadline sits past the horizon, and this horizon is chosen so that none does.
+        # It is the correct reading rather than a disabled feature: over a horizon that
+        # reaches every deadline, nothing is beyond it.
+        horizon = runway_mod.solvency(conn, settings, pool, day)
         return templates.TemplateResponse(
             request,
             "_runway.html",
             {
                 "rows": _runway_rows(pool, horizon),
+                "clears_on": runway_mod.clears_on(horizon),
+                "hours": round(
+                    sum(s.minutes for v in horizon.sittings.values() for s in v) / 60
+                ),
+                "items": len(horizon.sittings),
                 "horizon_days": runway_mod.DEFAULT_HORIZON_DAYS,
                 "unreadable": horizon.unreadable,
                 "beyond": _beyond(horizon),

@@ -1002,10 +1002,20 @@ def _echo_runway(conn: Any, settings: Any, day: Any) -> None:
     from backglass.plan import planner, runway
 
     pool = planner.candidates(conn, settings, day, health.at_risk_goal_ids(conn, settings, day))
-    horizon = runway.allocate(conn, settings, pool, day)
+    # Walked to the last deadline on the board rather than to a fortnight — the question
+    # this view is opened to answer is whether all of it fits, and fourteen days cannot
+    # answer that. See `runway.solvency`.
+    horizon = runway.solvency(conn, settings, pool, day)
     by_id = {c.commitment_id: c for c in pool}
 
-    typer.echo(f"\n  runway — the next {runway.DEFAULT_HORIZON_DAYS} days")
+    clears = runway.clears_on(horizon)
+    placed = sum(s.minutes for v in horizon.sittings.values() for s in v)
+    if clears:
+        typer.echo(
+            f"\n  the board clears on {clears:%a %d %b} — "
+            f"{len(horizon.sittings)} obligations, {placed // 60}h, all with a day"
+        )
+    typer.echo("  runway")
     rows = sorted(
         horizon.sittings.items(),
         key=lambda kv: (str(by_id[kv[0]].due_at or "9999"), kv[0]),

@@ -160,7 +160,7 @@ def test_promotion_writes_one_commitment_per_reading(conn, sett) -> None:  # typ
         "SELECT what, due_at, estimated_minutes, estimate_source, confidence "
         "FROM commitment WHERE due_at = '2026-09-01'"
     ).fetchone()
-    assert row["what"] == "Read for HON 171: The Epic of Gilgamesh"
+    assert row["what"] == "Read for HON 171, Tue 1 Sep: The Epic of Gilgamesh"
     assert row["estimated_minutes"] == sett.reading_minutes
     assert row["estimate_source"] == "analyzed", "the planner must treat reading as homework"
     assert row["confidence"] == 1.0, "nothing here was inferred"
@@ -205,3 +205,37 @@ def test_a_file_that_is_not_a_syllabus_is_left_alone(conn, sett) -> None:  # typ
     written, _ = syllabus.promote_from_ledger(conn, sett, on_or_after=date(2026, 8, 24))
 
     assert written == 0
+
+
+def test_two_meetings_on_one_text_are_two_distinguishable_obligations(conn, sett) -> None:  # type: ignore[no-untyped-def]
+    """A seminar routinely spends two meetings on one text — Dante on 10 and 12 November,
+    Chaucer on 17 and 19 — and those are two evenings of reading with two deadlines.
+
+    Named without the date they were two rows reading "Read for HON 171: Dante Alighieri,
+    Inferno", and `backglass duplicates` scored that pair 1.00 and offered to drop one.
+    A deduplicator cannot be blamed for that; the names were genuinely identical, and the
+    fix belongs where the name is made.
+    """
+    from backglass.db import now_iso
+    from backglass.ledger import USER_ID
+
+    conn.execute(
+        "INSERT INTO source_item (user_id, source, external_id, fetched_at, occurred_at,"
+        " title, body_text, raw_json, content_hash, triage_verdict) "
+        "VALUES (?, 'files', 'syl-1', ?, '2026-08-21T00:00:00-07:00', ?, ?, '{}', "
+        " 'h1', 'keep')",
+        (USER_ID, now_iso(), "HON 171 Syllabus - Fall 2026.pdf", TEXT),
+    )
+    conn.commit()
+    syllabus.promote_from_ledger(conn, sett, on_or_after=date(2026, 8, 24))
+    conn.commit()
+
+    dante = [
+        str(row["what"])
+        for row in conn.execute(
+            "SELECT what FROM commitment WHERE what LIKE '%Inferno%' ORDER BY due_at"
+        )
+    ]
+    assert len(dante) == 2
+    assert dante[0] != dante[1], "two evenings of Dante, one name between them"
+

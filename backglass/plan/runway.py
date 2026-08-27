@@ -229,6 +229,64 @@ def allocate(
     return runway
 
 
+#: The furthest a solvency walk will look, whatever the board says. A commitment dated
+#: eighteen months out is real (the owner carries a 2027 internship application), and
+#: walking to it would compute a year of capacity for a question nobody asked. Beyond a
+#: year the answer is not arithmetic anyway.
+MAX_SOLVENCY_DAYS = 400
+
+
+def solvency(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    items: list[Candidate],
+    start: date,
+    *,
+    not_before: datetime | None = None,
+) -> Runway:
+    """The same walk, run to the last deadline on the board rather than to a fortnight.
+
+    Two horizons because there are two questions, and one number cannot answer both.
+
+    `DEFAULT_HORIZON_DAYS` is fourteen because that is how far the *calendar* is real:
+    past the Apple Calendar sync window the only fixed events are the registrar's class
+    rows, so every meeting and dinner that will exist by then is missing and capacity out
+    there reads optimistically. That is the right horizon for telling the planner what to
+    start today, where an optimistic day would quietly displace real work.
+
+    It is the wrong horizon for "does all of this fit". Measured on 2026-08-27, the
+    fourteen-day walk reported 109 obligations and 95 hours it could not place — which
+    reads as a semester underwater and is not what it means. It means the fortnight
+    stopped. Run to the last deadline instead, the same board allocates **completely**,
+    with four items left over, all due the next morning.
+
+    The optimism is what makes the answer worth having rather than what spoils it. This
+    is a **floor on infeasibility**: anything that cannot fit even when every future day
+    is assumed as free as the class timetable allows genuinely cannot fit, and that is a
+    strong claim. The converse is not a promise — a semester that allocates cleanly here
+    will still lose days to things nobody has scheduled yet.
+    """
+    deadlines = [d for d in (_deadline(c) for c in items) if d is not None]
+    if not deadlines:
+        return allocate(conn, settings, items, start, not_before=not_before)
+    span = (max(deadlines) - start).days + 1
+    return allocate(
+        conn, settings, items, start,
+        horizon_days=max(DEFAULT_HORIZON_DAYS, min(span, MAX_SOLVENCY_DAYS)),
+        not_before=not_before,
+    )
+
+
+def clears_on(plan: Runway) -> date | None:
+    """The day the last allocated sitting lands — when the board runs out of work.
+
+    Only meaningful over a solvency horizon. Over a fortnight it just says "the fortnight
+    ended", which is the confusion this pair of functions exists to remove.
+    """
+    days = [s.day for sittings in plan.sittings.values() for s in sittings]
+    return max(days) if days else None
+
+
 def _earliest_deadline_first(items: list[Candidate], start: date) -> list[Candidate]:
     """EDF, with the undated work behind all of it.
 

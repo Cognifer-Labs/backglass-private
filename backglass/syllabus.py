@@ -207,7 +207,7 @@ def promote(
     written = 0
     notes: list[str] = []
     for reading in found:
-        what = f"Read for {course}: {reading.title}"
+        what = _what(course, reading)
         if _key(what, reading.due.isoformat()) in existing:
             continue
         written += 1
@@ -232,6 +232,20 @@ def promote(
         )
         existing.add(_key(what, reading.due.isoformat()))
     return written, notes
+
+
+def _what(course: str, reading: Reading) -> str:
+    """The obligation's name, with the meeting date in it.
+
+    The date is not decoration. A seminar routinely spends two meetings on one text —
+    Dante on 10 and 12 November, Chaucer on 17 and 19 — and those are two separate
+    evenings of reading with two separate deadlines. Named without the date they are two
+    rows reading "Read for HON 171: Dante Alighieri, Inferno", and `duplicates` scored
+    that pair 1.00 and offered to drop one, which would have deleted a real obligation on
+    the owner's say-so. The date is what makes them distinguishable to a person and to
+    the deduplicator.
+    """
+    return f"Read for {course}, {reading.due.strftime('%a %-d %b')}: {reading.title}"
 
 
 def _key(what: str, due: str) -> tuple[str, str]:

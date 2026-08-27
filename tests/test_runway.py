@@ -368,10 +368,16 @@ def test_undated_work_is_never_reported_as_unreached(conn, sett) -> None:  # typ
     assert plan.beyond == []
 
 
-def test_the_runway_prints_what_the_fortnight_could_not_reach(conn, sett, capsys) -> None:  # type: ignore[no-untyped-def]
-    """Counted, with three named. The same shape `_echo_overflow` settled on: a hundred
-    restatements of "due in November" is a wall nobody reads, and printing nothing at all
-    is how two thirds of the board became invisible."""
+def test_far_future_work_never_becomes_invisible(conn, sett, capsys) -> None:  # type: ignore[no-untyped-def]
+    """The concern this started as, kept, with the mechanism moved out from under it.
+
+    It was written when `_echo_runway` walked a fortnight, and it asserted the count of
+    what the fortnight could not reach — "printing nothing at all is how two thirds of
+    the board became invisible". Since `solvency`, the CLI walks to the last deadline
+    instead, so there is nothing it cannot reach and that line correctly prints nothing.
+    The property worth holding on to is not the sentence; it is that work due in two
+    months appears at all, with days against it. That is what is asserted now.
+    """
     from backglass.__main__ import _echo_runway
 
     for i in range(4):
@@ -381,5 +387,91 @@ def test_the_runway_prints_what_the_fortnight_could_not_reach(conn, sett, capsys
     _echo_runway(conn, sett, MONDAY)
 
     printed = capsys.readouterr().out
-    assert "obligation(s) has no day in the next 14" in printed
     assert "far assignment 0" in printed
+    assert "clears on" in printed, "the board's own end date is the headline"
+
+
+def test_a_fortnight_walk_still_counts_what_it_could_not_reach(conn, sett) -> None:  # type: ignore[no-untyped-def]
+    """`Runway.beyond` is unchanged and still correct — it is the fortnight's honest
+    statement about its own edge. Only the CLI stopped asking a fortnight."""
+    for i in range(4):
+        add_commitment(conn, sett, f"far assignment {i}", minutes=4_000, n=i,
+                       due=MONDAY + timedelta(days=60 + i), estimate_source="analyzed")
+
+    fortnight = runway.allocate(conn, sett, pool(conn, sett), MONDAY)
+
+    assert fortnight.beyond, "the fortnight stopped short and said nothing about it"
+    assert all(u.minutes > 0 for u in fortnight.beyond)
+
+
+# ── does all of it fit? ───────────────────────────────────────────────────
+
+
+def test_the_fortnight_cannot_answer_whether_the_semester_fits(conn, sett) -> None:  # type: ignore[no-untyped-def]
+    """The confusion `solvency` exists to remove.
+
+    Measured on the live ledger 2026-08-27: the fourteen-day walk reported 109
+    obligations and 95 hours it could not place. That reads as a semester underwater and
+    means nothing of the kind — it means the fortnight stopped. Work due after the
+    horizon has not failed to fit; it has not been looked at.
+    """
+    # More work than a fortnight holds, all of it due comfortably later. EDF frontloads,
+    # so the fortnight fills up with the earliest of it and then has nowhere to put the
+    # rest — which it reports as `beyond`, and which reads as a semester in trouble.
+    for i in range(30):
+        add_commitment(conn, sett, f"assignment {i}", minutes=240,
+                       due=MONDAY + timedelta(days=40 + i), n=i, estimate_source="analyzed")
+
+    fortnight = runway.allocate(conn, sett, pool(conn, sett), MONDAY)
+
+    assert fortnight.beyond, "the fixture fits in a fortnight, so it proves nothing"
+    assert fortnight.unreachable == [], (
+        "nothing has missed a deadline — the fortnight simply stopped, and the two must "
+        "not be reported as the same thing"
+    )
+
+
+def test_the_whole_board_is_walked_to_its_last_deadline(conn, sett) -> None:  # type: ignore[no-untyped-def]
+    for i in range(30):
+        add_commitment(conn, sett, f"assignment {i}", minutes=240,
+                       due=MONDAY + timedelta(days=40 + i), n=i, estimate_source="analyzed")
+
+    plan = runway.solvency(conn, sett, pool(conn, sett), MONDAY)
+
+    assert len(plan.sittings) == 30, "work past the fortnight was never allocated"
+    assert plan.beyond == [], "nothing is beyond a horizon that reaches every deadline"
+
+
+def test_it_says_when_the_board_runs_out_of_work(conn, sett) -> None:  # type: ignore[no-untyped-def]
+    """The sentence the panel is opened for. On the owner's real board, 263 obligations
+    and 199 hours clear on 26 September — a month out, not a semester underwater."""
+    add_commitment(conn, sett, "one thing", minutes=60, due=MONDAY + timedelta(days=20))
+
+    plan = runway.solvency(conn, sett, pool(conn, sett), MONDAY)
+
+    assert runway.clears_on(plan) == MONDAY, "frontloaded work clears on the first day"
+
+
+def test_a_board_with_no_deadlines_still_answers(conn, sett) -> None:  # type: ignore[no-untyped-def]
+    """`max()` over an empty sequence is the shape of bug that takes a page down. Undated
+    work has no last deadline, so there is nothing to walk to and the fortnight stands."""
+    add_commitment(conn, sett, "someday", minutes=60, due=None)
+
+    plan = runway.solvency(conn, sett, pool(conn, sett), MONDAY)
+
+    assert plan.start == MONDAY
+
+
+def test_the_walk_is_bounded_however_far_out_the_board_reaches(conn, sett) -> None:  # type: ignore[no-untyped-def]
+    """The owner carries a 2027 internship application. Walking to it would compute a
+    year of capacity for a question nobody asked, and past a year the answer is not
+    arithmetic anyway."""
+    add_commitment(conn, sett, "internship application", minutes=60,
+                   due=MONDAY + timedelta(days=900))
+
+    plan = runway.solvency(conn, sett, pool(conn, sett), MONDAY)
+
+    latest = max(
+        (s.day for v in plan.sittings.values() for s in v), default=MONDAY
+    )
+    assert (latest - MONDAY).days <= runway.MAX_SOLVENCY_DAYS
