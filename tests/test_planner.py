@@ -1024,14 +1024,24 @@ def test_backfill_only_fills_what_is_missing(conn, sett: Settings) -> None:  # t
 
 def test_estimates_are_never_auto_adjusted(conn) -> None:  # type: ignore[no-untyped-def]
     """docs/04 §1.3: "Do not auto-adjust silently." `ratio_report` computes a number and
-    writes nothing."""
+    writes nothing.
+
+    The thin-sample half of this used to assert `sentence() is None`. Silence was the
+    mechanism, not the rule — and on the owner's real ledger it meant the loop had been
+    doing nothing for months with no surface saying why (2 finished blocks in 94 days).
+    Since 2026-08-27 it describes its own emptiness instead. What must not change is that
+    it draws no *conclusion* from a sample too small to have one, which is what is
+    asserted here now.
+    """
     import inspect
 
     source = inspect.getsource(estimates.ratio_report)
     assert "UPDATE" not in source.upper()
     report = estimates.ratio_report(conn)
     assert not report.ready
-    assert report.sentence() is None
+    said = report.sentence() or ""
+    assert "type defaults" not in said, "it advised a change on no evidence"
+    assert "within 5%" not in said
 
 
 # ══ ordering ══════════════════════════════════════════════════════════════

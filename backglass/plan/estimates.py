@@ -63,7 +63,49 @@ TYPE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("errand", re.compile(r"\b(pick up|pick-up|drop off|drop-off|bring|collect|buy|"
                           r"pay|order|return|mail|ship)\b", re.I)),
     ("log", re.compile(r"\b(log|record|track|jot|note down)\b", re.I)),
+    # ── The four below were added 2026-08-27 by the same method as the five above:
+    # counting the leading verbs of what was still landing in `unknown` on the owner's
+    # real board, rather than imagining what a student's ledger contains.
+    #
+    # 62 open commitments were classified `unknown` and therefore carried an identical
+    # 45-minute estimate — 46 hours of the board on a figure nobody chose, and the single
+    # largest source of guessed time in the planner. Their leading verbs, counted: get 5,
+    # run 5, come 3, schedule 3, reprint 2, give 2, pick 2, let 2, communicate 2,
+    # contact 2, replace 1, explain 1, tell 1, verify 1, look 1, find 1.
+    #
+    # These sit at the end because first match wins and every one of them is broader than
+    # what precedes it. `get` in particular would otherwise take half the board: placed
+    # here it only ever catches what the nine patterns above have already declined.
+    ("message_extra", re.compile(r"\b(tell|explain|communicate|contact|inform|answer)\b|"
+                                r"\blet\s+\S+\s+know\b|\breach\s+out\b|"
+                                r"\bkeep\s+\S+\s+posted\b|\bconnect\s+\S+\s+with\b", re.I)),
+    # Looking something up, which is a `review` in everything but the verb: the owner's
+    # were "look for scholarships at ASU", "verify real deadlines for Neuroscience
+    # Scholars and Helios TGen", "find out how late court is free". Last rather than
+    # folded into `review` above, because `review` is third in this table and putting
+    # `verify` there rebinned "Upload ASU ID photo and verify identity" out of `form`.
+    ("review_lookup", re.compile(r"\b(verify|research)\b|\blook\s+for\b|"
+                                 r"\bfind\s+out\b", re.I)),
+    # After the message patterns, because the verb of the sentence is what the
+    # obligation *is*. "Tell Mrs. Gathas he's back in Arizona for diploma reprint" is a
+    # message that happens to mention an errand, and with `reprint` matched first the
+    # owner's own row was filed as a thirty-minute trip across town.
+    ("errand_extra", re.compile(r"\b(get|fetch|grab|reprint|replace|exchange|swap)\b", re.I)),
+    ("errand_ride", re.compile(r"\bpick\s+\S+\s+up\b|\bgive\s+(\S+\s+)?a\s+ride\b", re.I)),
+    ("call_booking", re.compile(r"\b(schedule|book|arrange)\b", re.I)),
 ]
+
+#: Patterns added later that mean an existing type. Kept as separate entries above so the
+#: comment explaining each addition sits with the pattern it justifies, and folded to
+#: their real type here — a new key would need a new default, and an unmeasured default
+#: is the thing this whole pass exists to reduce.
+_ALIASES = {
+    "errand_extra": "errand",
+    "errand_ride": "errand",
+    "message_extra": "message",
+    "review_lookup": "review",
+    "call_booking": "call",
+}
 
 #: docs/04 §1.3: "After 30 completed items, report the ratio of estimated to actual."
 RATIO_MIN_SAMPLE = 30
@@ -89,10 +131,15 @@ def defaults(settings: Settings) -> dict[str, int]:
 
 
 def classify(what: str) -> str:
-    """Which type default applies. `unknown` when nothing matches, per docs/04 §1.3."""
+    """Which type default applies. `unknown` when nothing matches, per docs/04 §1.3.
+
+    The alias fold is what keeps the 2026-08-27 additions from inventing four new types
+    with four new defaults nobody measured. They are separate entries in the table so the
+    reasoning for each sits beside it, and one type by the time anyone asks.
+    """
     for kind, pattern in TYPE_PATTERNS:
         if pattern.search(what or ""):
-            return kind
+            return _ALIASES.get(kind, kind)
     return "unknown"
 
 
@@ -188,9 +235,26 @@ class RatioReport:
         return (self.actual_minutes / self.estimated_minutes) if self.estimated_minutes else 0.0
 
     def sentence(self) -> str | None:
-        """One line for the Friday retro. None until there is enough sample to mean anything."""
-        if not self.ready or not self.estimated_minutes:
-            return None
+        """One line for the Friday retro.
+
+        Never a conclusion drawn from a sample too small to have one — the same honesty
+        rule `corrections.py` is built around — but no longer *silence* either. It
+        returned None below the threshold, so the one loop docs/04 §1.3 asks for
+        ("track actuals … and let the owner adjust the type defaults") had been quietly
+        doing nothing since it was written and nothing anywhere said so.
+
+        Measured 2026-08-27: **2 completed blocks in 94 days of plans.** Not a broken
+        feature — the owner resolves commitments (52 of them) and does not press Done on
+        the blocks, which is the only place an actual duration can come from. That is a
+        fact about how the product is used, and it is worth one line rather than an
+        absence, because the fix is a button the owner already has.
+        """
+        if not self.estimated_minutes or not self.ready:
+            return (
+                f"Estimates cannot be checked yet — {self.sample} of "
+                f"{RATIO_MIN_SAMPLE} finished blocks. Mark blocks Done on the schedule "
+                "and this starts answering."
+            )
         if self.ratio > 1.05:
             return (
                 f"Estimates run {self.ratio:.1f}x short over {self.sample} items. "
