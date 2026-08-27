@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import date, timedelta
@@ -271,6 +272,172 @@ def _contradictions(conn: sqlite3.Connection) -> list[Question]:
     return out
 
 
+#: The two answers to "you already decided this".
+SETTLED_STANDS = "The decision stands — drop this"
+SETTLED_NEW = "This is different — keep it"
+
+#: The marker `answer()` writes into every decision it records. Lives here because this is
+#: the module that writes it; `context.py` imports it rather than matching the wording a
+#: second time.
+ANSWERED_MARK = "answered in the questions surface"
+
+
+def settles_an_obligation(decision: Any) -> bool:
+    """Was this decision the owner stating a choice, rather than answering a question?
+
+    Both readers of the decision table filter on this — the block every model call carries,
+    and `_settled` below — and it is load-bearing for two separate reasons.
+
+    **It breaks a loop.** Answering any question records a decision whose title is the
+    question. So "Is 'Clean fishtank' still yours? — yes" becomes a standing decision that
+    shares every word with the commitment it was about, and `_settled` would ask about it,
+    and answering *that* would record another. A question generated from the answer to a
+    question is the shape of an infinite surface.
+
+    **It removes the noise.** "Are Nyasha and Mrs. Shepard the same person? — Same person"
+    is a real decision and belongs in the audit trail, but it was applied when the entities
+    merged and its words are generic enough to collide with anything: the UT Dallas merge
+    matched two housing commitments through "university" and "housing", while the one
+    decision that mattered matched one row.
+
+    What is left is what the owner wrote down themselves — `backglass decide`, or the
+    Decisions page. "BioBridge: I dropped it for the MLSBE summer program" is that, and it
+    is the case this whole path exists for.
+    """
+    return ANSWERED_MARK not in str(getattr(decision, "reasoning", "") or "")
+
+#: Words too common to carry a match on their own. A decision titled "Apply to the
+#: scholarship" must not settle every commitment containing "apply" and "the".
+_COMMON = frozenset(
+    (
+        "a", "an", "the", "to", "for", "of", "in", "on", "at", "and", "or", "is", "are",
+        "be", "do", "this", "that", "it", "my", "your", "with", "about", "from",
+        "submit", "complete", "send", "get", "ask", "make", "take", "pay",
+    )
+)
+
+#: How many meaningful words a decision's title must share with a commitment before this
+#: will ask about it.
+_SETTLED_MIN_TOKENS = 2
+
+#: …unless the one word they share is a name. The decision that motivated this detector is
+#: titled "BioBridge" — one token, which the floor above rejects, and the natural shape for
+#: a decision about a named thing.
+#:
+#: Length was the first attempt at "distinctive" and it is wrong: "application" is eleven
+#: characters and settles nothing, so "Sallie Mae application" matched "Submit the housing
+#: application". What separates the two is that BioBridge is capitalised in the title and
+#: application is not. A proper noun names one thing; a long common noun names a category.
+_SETTLED_NAME_CHARS = 4
+
+
+def _shares_enough(shared: set[str], title: str) -> bool:
+    """Two meaningful words in common, or one that the decision's title capitalises."""
+    if len(shared) >= _SETTLED_MIN_TOKENS:
+        return True
+    names = {
+        word.lower()
+        for word in re.findall(r"[A-Za-z0-9]+", title)
+        if word[:1].isupper() and len(word) >= _SETTLED_NAME_CHARS
+    }
+    return bool(shared & names)
+
+
+def _which_first(created_at: str, decided_at: str) -> str:
+    """Which came first, in words, for the question's detail.
+
+    Days rather than instants: `decided_at` is local-with-offset and `created_at` is the
+    ledger's UTC stamp, and comparing those two strings directly is the mixed-shape bug
+    tasks/lessons.md 2026-08-01 is about. The leading ten characters are the local day
+    under every shape the ledger holds, which is the resolution this sentence needs.
+
+    Both directions matter and they mean different things. Older means the decision should
+    have closed this and did not; newer means something re-opened what was settled.
+    """
+    if created_at[:10] < decided_at[:10]:
+        return "before the decision — it should have been closed by it"
+    return "after the decision — something re-opened it"
+
+
+def _tokens(text: str) -> set[str]:
+    return {w for w in re.findall(r"[a-z0-9]+", text.lower()) if w not in _COMMON}
+
+
+def _settled(conn: sqlite3.Connection) -> list[Question]:
+    """A commitment that restates something the owner already decided against.
+
+    The gap, 2026-08-23: `decisions.record` closes the commitment a decision settles, and
+    nothing looks at the ones that arrive *afterwards*. The owner dropped BioBridge on 12
+    August; a mail on the 20th about BioBridge orientation extracts as a live obligation,
+    because the extractor is reading one message and the decision is in a table. Since the
+    same day, `context._decided` puts standing decisions in front of every model call —
+    this is the second line, for what still gets through.
+
+    Asked, never disposed of. `logic.py`'s boundary is that nothing closes unless it can
+    point at the row that contradicts it, and a shared-words match is not a contradiction:
+    "I dropped BioBridge" and "return the BioBridge deposit" can both be true. So this
+    surfaces the pair, quotes the decision, and lets the owner say which stands — and the
+    answer is applied, so saying it once is enough.
+
+    **Both directions, and the older one is the live failure.** The first draft of this
+    only looked at commitments recorded *after* the decision, on the reasoning that a
+    decision cannot settle something the owner had not yet been promised. That is
+    backwards: a decision settles what already exists, and `decisions.record` closes only
+    the one commitment explicitly handed to it. On this ledger the BioBridge decision was
+    made on 12 August and "Withdraw from or confirm BioBridge Aug 5-15" — recorded on the
+    2nd — is still open, which is precisely the row a reader of the decision would expect
+    to be gone. So neither direction is filtered; the detail states which came first and
+    lets the owner read it.
+
+    Two bounds keep the queue from filling with near-misses. Never the commitment the
+    decision itself closed — that is already handled, and re-asking it would be asking
+    about its own answer. And the overlap has to clear `_shares_enough`: two meaningful
+    words, or one the title capitalises.
+    """
+    from backglass import decisions
+
+    standing = [d for d in decisions.active(conn) if d.choice and settles_an_obligation(d)]
+    if not standing:
+        return []
+
+    rows = conn.execute(
+        "SELECT id, what, created_at FROM commitment"
+        " WHERE user_id = ? AND status = 'open' ORDER BY id",
+        (USER_ID,),
+    ).fetchall()
+    if not rows:
+        return []
+
+    out: list[Question] = []
+    for decision in standing:
+        wanted = _tokens(decision.title)
+        if not wanted:
+            continue
+        for row in rows:
+            if decision.commitment_id == int(row["id"]):
+                continue
+            shared = wanted & _tokens(str(row["what"]))
+            if not _shares_enough(shared, decision.title):
+                continue
+            out.append(
+                Question(
+                    kind="settled",
+                    subject_key=f"{decision.decision_id}|{row['id']}",
+                    question=(
+                        f'You decided "{decision.title}" — is "{row["what"]}" still yours?'
+                    ),
+                    detail=(
+                        f"decided {decision.decided_at[:10]}: {decision.choice}\n"
+                        f"— this commitment was recorded {str(row['created_at'])[:10]}"
+                        f" ({_which_first(str(row['created_at']), decision.decided_at)})"
+                        f" and shares: {', '.join(sorted(shared))}"
+                    ),
+                    options=[SETTLED_STANDS, SETTLED_NEW],
+                )
+            )
+    return out
+
+
 def _priority(conn: sqlite3.Connection, settings: Settings, today: date) -> list[Question]:
     """When two things could not both fit, which should have won.
 
@@ -504,6 +671,75 @@ def _roadmap_candidates(
     return out
 
 
+#: How many duplicate cards one refresh may raise. Same reasoning as `STALE_BATCH_LIMIT`:
+#: the board already shows every suspect pair, so this queue exists to walk the owner
+#: through the worst of them a few at a time, not to move the whole pile into /ask.
+DUPLICATE_BATCH_LIMIT = 3
+
+DUPLICATE_SAME = "Same promise — merge them"
+DUPLICATE_DIFFERENT = "Different things — leave both"
+
+
+def _duplicate_obligations(conn: sqlite3.Connection, settings: Settings) -> list[Question]:
+    """One promise extracted several times, asked about rather than merged.
+
+    The five-UT-Dallas-rows shape: commitments 64, 69, 73, 83 and 178 were five readings
+    of one obligation, and the board's own note has said "dedup, a separate pass" since
+    2026-08-18. Deliberately the only rule added in this pass that **cannot write**.
+    Which row survives is a judgement — they differ in wording, in due date and in which
+    message they came from — and `actions.same_thing` keeps the older row, folds the
+    newer, and takes the earlier deadline. That is the right default and it is still a
+    merge of two real rows; a checker that did it unasked would be guessing, and a wrong
+    merge is not a click to undo.
+
+    So this asks, and the owner's answer runs the same action the board's "Same thing"
+    button runs. Its star clusters come from `duplicates.clusters`, which already refuses
+    to chain (similarity is not transitive — a 37-member cluster is unanswerable), and
+    only the centre and its strongest suspect are put in the question: two rows is a
+    decision a person can make from one card.
+
+    The floor is `dedup_threshold` — the score at which ingest merges two rows without
+    asking anyone. Asking exactly there is the principled line: this queue is for the
+    pairs the auto-joiner *would* have merged had they arrived together, which is what
+    `dedup.suspects` already calls "the strongest kind of suspect". It was 0.75 for
+    about an hour, until measuring real pairs showed "send the housing form to Barrett"
+    and "send the housing deposit to Barrett" — two genuinely different obligations —
+    scoring 0.83. A floor below the merge threshold asks the owner to adjudicate things
+    the system itself would not have joined.
+    """
+    from backglass import duplicates
+
+    out: list[Question] = []
+    for cluster in duplicates.clusters(conn):
+        if len(cluster.members) < 2 or cluster.weakest < settings.dedup_threshold:
+            continue
+        first, second = cluster.members[0], cluster.members[1]
+        pair = sorted((int(first["id"]), int(second["id"])))
+        out.append(
+            Question(
+                kind="duplicate_commitment",
+                subject_key="|".join(str(p) for p in pair),
+                question=(
+                    f"Are “{_clip(str(first['what']))}” and “{_clip(str(second['what']))}” "
+                    "the same promise?"
+                ),
+                detail=(
+                    f"[{pair[0]}] {first['what']}\n[{pair[1]}] {second['what']}\n"
+                    f"Merging keeps the older row and the earlier due date."
+                ),
+                options=[DUPLICATE_SAME, DUPLICATE_DIFFERENT],
+            )
+        )
+        if len(out) >= DUPLICATE_BATCH_LIMIT:
+            break
+    return out
+
+
+def _clip(text: str, *, at: int = 60) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= at else text[: at - 1] + "…"
+
+
 def detect(conn: sqlite3.Connection, settings: Settings, today: date) -> list[Question]:
     """Every detector, each failing on its own.
 
@@ -516,7 +752,9 @@ def detect(conn: sqlite3.Connection, settings: Settings, today: date) -> list[Qu
         lambda: _conflicts(conn, settings, today),
         lambda: _untitled(conn, settings, today),
         lambda: _duplicate_entities(conn),
+        lambda: _duplicate_obligations(conn, settings),
         lambda: _contradictions(conn),
+        lambda: _settled(conn),
         lambda: _priority(conn, settings, today),
         lambda: _stale_commitments(conn, settings, today),
         lambda: _protected_conflicts(conn, settings, today),
@@ -620,7 +858,33 @@ def answer(
     )
     _apply_stale_answer(conn, row, option)
     _apply_relevance_answer(conn, row, option)
+    _apply_duplicate_answer(conn, row, option)
     _apply_roadmap_answer(conn, settings, row, option)
+    _apply_settled_answer(conn, row, option)
+
+
+def _apply_settled_answer(conn: sqlite3.Connection, row: Any, option: str | None) -> None:
+    """"The decision stands" closes the commitment the decision had already settled.
+
+    The point of asking is that answering ends it. Without this the owner confirms the
+    obligation is dead and it stays open on the board, which teaches them that answering
+    changes nothing — and a surface nobody believes acts is a surface nobody answers.
+
+    Exact option match only, like the stale and relevance hooks: free text records the
+    answer and touches nothing. The note names the decision id, so the drop is traceable
+    back to the row that justified it rather than to "a question, once".
+    """
+    if str(row["kind"]) != "settled" or option != SETTLED_STANDS:
+        return
+    from backglass.web import actions
+
+    decision_id, _, commitment_id = str(row["subject_key"]).partition("|")
+    try:
+        target = int(commitment_id)
+    except ValueError:
+        return
+    with contextlib.suppress(actions.ActionError):
+        actions.drop(conn, target, note=f"settled by decision {decision_id}: owner confirmed")
 
 
 def _apply_roadmap_answer(
@@ -713,6 +977,26 @@ def _apply_relevance_answer(conn: sqlite3.Connection, row: Any, option: str | No
     # answer still stands either way.
     with contextlib.suppress(actions.ActionError):
         actions.drop(conn, commitment_id, note="logic: owner confirmed it is overtaken")
+
+
+def _apply_duplicate_answer(conn: sqlite3.Connection, row: Any, option: str | None) -> None:
+    """"Same promise" runs the merge the board's own button runs, and nothing else does.
+
+    `Different` records the answer and writes nothing on purpose: `duplicates` re-derives
+    its suspects from wording every time, so a pair the owner has separated would come
+    back tomorrow — but the ask-once index on (kind, subject_key) is what stops it being
+    *asked* again, which is the part that costs the owner anything.
+    """
+    if str(row["kind"]) != "duplicate_commitment" or option != DUPLICATE_SAME:
+        return
+    from backglass.web import actions
+
+    try:
+        a_id, b_id = (int(part) for part in str(row["subject_key"]).split("|"))
+    except ValueError:
+        return
+    with contextlib.suppress(actions.ActionError):
+        actions.same_thing(conn, a_id, b_id)
 
 
 def dismiss(conn: sqlite3.Connection, question_id: int) -> None:

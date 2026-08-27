@@ -9,9 +9,15 @@
       is owed from the day it reaches its cadence until it is done, which for a
       semiannual obligation is half a year. Same ink and same glyph, because it is the
       same state — only the label differs, and "Due today" printed on day 200 of 182
-      would be a claim that is false. Not a sixth ink; a second label on k-black. -#}
+      would be a claim that is false. Not a sixth ink; a second label on k-black.
+
+      `wont_fit` is the same move on k-verm, and it was added because the runway reached
+      for `overdue` and got a chip that lied: work due *today* that the next fortnight
+      has nowhere to put is not late, it is about to be. Same alarm, same ink — a
+      different sentence, because the owner does something different about each. -#}
   {%- set map = {
     'overdue':      ('k-verm',  '▲', 'Overdue'),
+    'wont_fit':     ('k-verm',  '▲', "Won't fit"),
     'due_today':    ('k-black', '●', 'Due today'),
     'due':          ('k-black', '●', 'Due'),
     'slipping':     ('k-gold',  '◆', 'Slipping'),
@@ -106,7 +112,7 @@
       <span><i style="background:var(--cobalt-wash);border-color:var(--cobalt-line)"></i>Work</span>
       <span><i style="background:var(--turq-wash);border-color:var(--turq-line)"></i>Small items</span>
       <span><i style="background:var(--ink-wash);border-color:var(--ink-line)"></i>Fixed</span>
-      <span><i style="border-color:var(--rule-hair)"></i>Routine</span>
+      <span><i style="border-color:var(--rule-hair)"></i>Routine · study</span>
       <span><i class="hatch"></i>Protected</span>
     </div>
   </details>

@@ -29,6 +29,23 @@ def env_settings(**values: str) -> Settings:
         os.environ.update(previous)
 
 
+def test_slack_channel_ids_keep_their_case_while_names_are_folded() -> None:
+    """A Slack conversation ID is an API identifier, not a name.
+
+    `_csv` lowercases every other list here, which is right for addresses, weekdays and
+    chat titles and wrong for `C0FOUNDERS` — lowercased it reaches `conversations.history`
+    as `c0founders` and Slack answers `channel_not_found`. It never surfaced from the
+    allowlist, because `chats.normalise` casefolds both sides of that comparison; it only
+    surfaces at the wire, which is where nothing was looking.
+    """
+    settings = env_settings(
+        SLACK_CHANNELS="C0FOUNDERS, D0DIRECT ,GMPDM01",
+        IMESSAGE_CHATS="Pih Ball, Family",
+    )
+    assert settings.slack_channels == ["C0FOUNDERS", "D0DIRECT", "GMPDM01"]
+    assert settings.imessage_chats == ["pih ball", "family"], "names still fold"
+
+
 def test_comma_separated_lists_parse_from_the_environment() -> None:
     settings = env_settings(
         OWNER_EMAILS="alex.rivera@example.com, arivera@example.edu",

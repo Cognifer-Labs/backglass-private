@@ -12,6 +12,7 @@ on ranking, since a real embedder's scores are not knowable in advance.
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
 
 import pytest
 
@@ -344,3 +345,61 @@ class TestEmbeddingRequestsAreBoundedByCharacters:
             search, "_embed_request", lambda s, t: pytest.fail("should not be called")
         )
         assert search.embed(sett, []) == []
+
+def test_embeddings_do_not_follow_chat_to_a_provider_that_has_none(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """One setting used to answer both "where is chat" and "where is /v1/embeddings".
+
+    When chat moved to OpenRouter's free tier, that would have sent embedding calls there
+    too — where `nomic-embed-text` does not exist. Every index run would die on a 404, and
+    any vector that did come back would belong to a different model's space than the 1,248
+    already stored, which the `embedding` identity forbids and which returns plausible
+    nonsense rather than an error.
+    """
+    from tests.conftest import build_settings
+
+    settings = build_settings(tmp_path).model_copy(
+        update={
+            "model_base_url": "https://openrouter.ai/api/v1",
+            "embedding_base_url": "http://127.0.0.1:11434/v1",
+        }
+    )
+    seen: dict[str, str] = {}
+
+    def capture(request: Any, timeout: int = 0) -> Any:
+        seen["url"] = request.full_url
+        raise RuntimeError("stop here — the URL is the whole assertion")
+
+
+    import backglass.search as search_mod
+
+    monkeypatch.setattr(search_mod.urllib.request, "urlopen", capture)
+    with pytest.raises(RuntimeError):
+        search_mod.embed(settings, ["anything"])
+
+    assert seen["url"].startswith("http://127.0.0.1:11434/v1")
+
+
+def test_a_config_that_never_split_them_still_means_what_it_meant(
+    tmp_path: Any, monkeypatch: Any
+) -> None:
+    """Empty `embedding_base_url` falls through to the chat URL — every existing config."""
+    from tests.conftest import build_settings
+
+    settings = build_settings(tmp_path).model_copy(
+        update={"model_base_url": "http://127.0.0.1:11434/v1", "embedding_base_url": ""}
+    )
+    seen: dict[str, str] = {}
+
+    def capture(request: Any, timeout: int = 0) -> Any:
+        seen["url"] = request.full_url
+        raise RuntimeError("stop — the URL is the whole assertion")
+
+    import backglass.search as search_mod
+
+    monkeypatch.setattr(search_mod.urllib.request, "urlopen", capture)
+    with pytest.raises(RuntimeError):
+        search_mod.embed(settings, ["anything"])
+
+    assert seen["url"].startswith("http://127.0.0.1:11434/v1")

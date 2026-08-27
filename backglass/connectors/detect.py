@@ -457,8 +457,12 @@ def _credentialed(settings: Settings, authed: set[str]) -> list[Detection]:
         ("github", bool(settings.github_token), "set GITHUB_TOKEN (a PAT) in .env"),
         (
             "slack",
-            bool(settings.slack_token and settings.slack_channels),
-            "set SLACK_TOKEN + SLACK_CHANNELS in .env",
+            # The token alone, since 2026-08-24: conversations are chosen on /chats, and
+            # requiring SLACK_CHANNELS here reported a correctly-configured workspace as
+            # unconfigured for as long as the owner had not hand-copied a channel ID.
+            bool(settings.slack_token),
+            "set SLACK_TOKEN in .env (a user token, xoxp-, from your own Slack app — "
+            "docs/07 §Slack), then choose conversations on /chats",
         ),
         (
             "canvas",

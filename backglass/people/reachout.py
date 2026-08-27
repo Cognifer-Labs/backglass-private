@@ -70,7 +70,7 @@ TEMPLATES: dict[str, Template] = {
         paragraphs=(
             "Hi {first},",
             "Thank you for taking the time to talk{where}. {note}",
-            "I won't take more of your time — I mainly wanted to say the conversation "
+            "I won't take more of your time. I mainly wanted to say the conversation "
             "stuck with me, and that I'm glad we met.",
             "If it's ever useful to trade notes again, I'd welcome it.",
             "Best,\n{owner}{owner_email_line}",
@@ -86,7 +86,7 @@ TEMPLATES: dict[str, Template] = {
             "It's been a while since we last spoke{gap} and you came to mind, so I "
             "thought I'd say hello.",
             "{note}",
-            "No ask here at all — I'd just like to stay in touch. If you're ever up for "
+            "No ask here at all. I'd just like to stay in touch. If you're ever up for "
             "a short call or a coffee, I'm around.",
             "Best,\n{owner}{owner_email_line}",
         ),
@@ -98,10 +98,10 @@ TEMPLATES: dict[str, Template] = {
         subject="A quick question, {first}",
         paragraphs=(
             "Hi {first},",
-            "I hope things are going well{at_org}. I've thought back on our "
-            "conversation{where} more than once since.",
+            "I've thought back on our conversation{where} more than once since, and "
+            "on what you're working on{at_org}.",
             "{note}",
-            "If now isn't a good time, no need to reply — I'll assume it isn't and "
+            "If now isn't a good time, no need to reply. I'll assume it isn't and "
             "won't take it as anything else.",
             "Best,\n{owner}{owner_email_line}",
         ),
@@ -279,7 +279,12 @@ def draft(
         )
 
     org = str(record.get("org") or "").strip()
-    if org:
+    # Only claim a source for something the reader can actually find in the draft.
+    # Two of the three templates never render {at_org}, and an evidence line naming a
+    # row that produced no words is the shape of a provenance list nobody checks twice
+    # (CLAUDE.md rule 1). The org still reaches the draft through the entity row when a
+    # template asks for it; it is silent otherwise.
+    if org and "{at_org}" in spec.subject + "".join(spec.paragraphs):
         evidence.append(f"organisation: entity.org = '{org}'")
     if owner_name:
         evidence.append("sign-off: fact identity/name")

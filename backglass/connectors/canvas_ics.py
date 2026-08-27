@@ -12,7 +12,7 @@ feed URL is revoked this connector stops working, which is the correct behaviour
 
 **Why not just subscribe in Calendar.app.** Because `apple_calendar` would collect it and
 tier 0 would immediately drop it — docs/02 rules calendar invites out of extraction, and
-the owner's 200 `calendar:asu` rows are the proof: every one kept, zero extracted. Read
+the owner's 200 `calendar:asu` rows are the proof: every one dropped at tier 0. Read
 that way an assignment feeds the capacity model and never becomes a commitment, so it
 appears on the schedule and never in the brief, the due-today list, or the planner's work
 selection. Emitting `canvas:ics` instead routes the same facts through extraction, which
@@ -41,10 +41,11 @@ import urllib.error
 import urllib.request
 from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from backglass.connectors.base import Cursor, Health, SourceItem, content_hash, safe_error
 from backglass.connectors.boundary import Boundary
+from backglass.retraction import RetractableWindow
 
 #: Canvas's own discriminator. Everything else in the feed is a calendar event, which is
 #: `apple_calendar`'s job and not an obligation.
@@ -124,6 +125,26 @@ def _events(text: str) -> Iterator[dict[str, str]]:
     # assignment is not an assignment, and the next sync re-reads the whole document.
 
 
+@dataclass(frozen=True)
+class ParsedAssignment:
+    """One assignment as the feed currently publishes it.
+
+    Everything the VEVENT holds, not the one sentence the `SourceItem` can carry. The item
+    is immutable and cannot be widened after the fact — `ledger.upsert_source_item` treats
+    a differing `content_hash` on a stored `external_id` as a conflict and skips it — so
+    the description, the URL and the current due date reach `coursework` on this object
+    instead. See migration 0031 for why that is not a workaround.
+    """
+
+    assignment_id: str
+    external_id: str
+    course: str
+    title: str
+    due_at: str
+    url: str
+    description: str
+
+
 @dataclass
 class CanvasIcsConnector:
     """The published Canvas calendar feed. No token, no cursor state on the server."""
@@ -136,6 +157,26 @@ class CanvasIcsConnector:
     cursor: Cursor = None
     excluded: int = 0
     excluded_by_rule: dict[str, int] = field(default_factory=dict)
+
+    #: Every assignment id the *document* contained on the last read, recorded before the
+    #: boundary check and before anything is emitted. That distinction is the whole safety
+    #: property of `retraction.reconcile`: an assignment the boundary excludes was still
+    #: returned by the store, and recording only what was emitted is precisely the
+    #: near-miss retraction.py documents — it came one clean run from deleting sixteen
+    #: live classes.
+    seen_ids: set[str] = field(default_factory=set)
+    #: False until a read parses the whole document without raising. A partial or failed
+    #: read must certify nothing at all: "the feed returned nothing" and "the feed no
+    #: longer has anything" are the same bytes to everything downstream.
+    read_complete: bool = False
+
+    #: Every assignment this fetch parsed, in feed order. Read by `sync` after the loop
+    #: through `getattr`, the same seam `seen_chats`, `excluded_by_rule` and
+    #: `failed_calendars` already use: a connector emits SourceItems and nothing else, and
+    #: anything richer is an attribute the caller may or may not know about. One fetch
+    #: fills both, so the assignment record and the ledger row can never disagree about
+    #: what the document said.
+    assignments: list[ParsedAssignment] = field(default_factory=list)
 
     @property
     def name(self) -> str:
@@ -179,30 +220,87 @@ class CanvasIcsConnector:
             return None
 
     def fetch(self, since: Cursor) -> Iterator[SourceItem]:
-        """Assignments in the feed, newest-first watermark on the due date.
+        """Every assignment the feed publishes. `since` is deliberately not a filter.
 
-        The feed is a whole document with no server-side filter, so `since` bounds what is
-        *emitted*, not what is fetched — there is nothing cheaper to ask for. Items at the
-        watermark are re-read for `canvas.py`'s reason: an unchanged row costs zero writes
-        because `content_hash` short-circuits it, and dropping it loses it permanently.
+        This read *used* to watermark on the latest due date, and that silently cost the
+        owner a semester. A due date is not monotonic with publication: the feed is one
+        document that gains assignments whose due dates fall *before* the furthest date
+        already seen. The first read on 2026-08-11 stored four items and parked the cursor
+        at 2026-09-04; the read on 08-17 saw a course publish "Excused Absence Requests"
+        due 2027-03-07 and parked there; every read after that emitted nothing at all,
+        because no real coursework is due after March. 157 assignments upstream, 6 in the
+        ledger, and the credential row said `ok` the entire time.
+
+        So there is nothing to bound. The document is fetched whole either way — there is
+        no server-side filter to ask for — and emitting all of it costs zero writes on an
+        unchanged assignment because `ledger.record` short-circuits on `content_hash`
+        before any model is invoked. The watermark bought nothing and dropped everything.
+
+        The cursor is still advanced, to the instant of the read rather than to a due
+        date: it says when the feed was last successfully read, which is the only
+        monotonic fact here, and nothing reads it back as a bound. A timestamp cannot
+        park ahead of the data.
         """
         self.excluded = 0
         self.excluded_by_rule = {}
-        latest = str(since or "")
+        self.assignments = []
+        self.seen_ids = set()
+        self.read_complete = False
 
         for event in _events(self._get()):
-            item = self._to_item(event)
-            if item is None:
+            parsed = self._parse(event)
+            if parsed is None:
                 continue
-            if since and item.occurred_at < str(since):
-                continue
-            latest = max(latest, item.occurred_at)
-            yield item
+            self.assignments.append(parsed)
+            yield self._item_for(parsed)
 
-        if latest:
-            self.cursor = latest
+        # Only here, after the generator has been driven to exhaustion without raising.
+        # `_get()` failing, the HTTP layer timing out, or a caller abandoning the iterator
+        # all leave this False, and `retractable_window` then certifies nothing.
+        self.read_complete = True
+        self.cursor = datetime.now(UTC).isoformat()
 
-    def _to_item(self, event: dict[str, str]) -> SourceItem | None:
+    def retractable_window(self) -> RetractableWindow | None:
+        """What this read certifies, for `retraction.reconcile`. None when it certifies
+        nothing.
+
+        The Canvas feed is one document fetched whole with no server-side filter — see
+        `fetch` — so a completed read has seen everything the store publishes. That is the
+        `Reconcilable` contract, and it is why an assignment deleted or unpublished
+        upstream can be retracted here while an incremental source could never say so.
+
+        The window is the span of what the read actually returned, not "all of time".
+        Bounding it that way is conservative in the safe direction: an assignment deleted
+        at the very edge of the span shrinks the span past itself and is simply not
+        retracted this run, which is a missed retraction rather than deleted history.
+
+        `calendars=None` — a Canvas feed has no sub-stores, so this read is evidence about
+        every row it covers.
+        """
+        if not self.read_complete or not self.seen_ids:
+            return None
+        dues = sorted(str(a.due_at) for a in self.assignments if a.due_at)
+        if not dues:
+            return None
+        # Exclusive upper bound, so the latest assignment in the feed is inside its own
+        # window. One second past the last due date rather than a day: anything further
+        # out was never in this read's scope and absence says nothing about it.
+        last = datetime.fromisoformat(dues[-1]) + timedelta(seconds=1)
+        return RetractableWindow(
+            starts_at=dues[0],
+            ends_before=last.isoformat(),
+            seen_ids=set(self.seen_ids),
+        )
+
+    def _parse(self, event: dict[str, str]) -> ParsedAssignment | None:
+        """One VEVENT as the whole assignment, or None when it is not one of ours.
+
+        Split out of `_to_item` because the `SourceItem` is the lossy half. The item
+        carries one sentence by design — docs/02's cost model, and a Canvas description is
+        often boilerplate — but the description is also where the tools, the chapter
+        ranges and the page counts live, and `coursework` needs those to say how long the
+        work takes. Parsing once and rendering twice keeps the two from drifting.
+        """
         uid = event.get("UID", "")
         match = ASSIGNMENT_UID.search(uid)
         if match is None:
@@ -221,6 +319,11 @@ class CanvasIcsConnector:
             course = tail.rstrip("]").strip()
             title = title.strip()
 
+        # Recorded before the boundary check, deliberately: this is what the *store*
+        # returned. An assignment the boundary excludes is still an assignment Canvas
+        # published, and leaving it out here would make the next run read it as deleted.
+        self.seen_ids.add(f"assignment:{match.group(1)}")
+
         verdict = self.boundary.check([course] if course else [])
         if not verdict.allowed:
             self.excluded += 1
@@ -228,22 +331,50 @@ class CanvasIcsConnector:
             self.excluded_by_rule[rule] = self.excluded_by_rule.get(rule, 0) + 1
             return None
 
+        # DESCRIPTION is the plain-text half of the pair Canvas emits; X-ALT-DESC is the
+        # same content as HTML. Taking the plain one is not laziness — it is already
+        # unescaped prose with its links rendered as `[label] (url)`, so nothing here has
+        # to strip tags, and a tag-stripper is a thing that silently eats content.
+        description = _unescape(event.get("DESCRIPTION", "")).strip()
+        return ParsedAssignment(
+            assignment_id=match.group(1),
+            external_id=f"assignment:{match.group(1)}",
+            course=course,
+            title=title,
+            due_at=due,
+            url=event.get("URL", ""),
+            description=description,
+        )
+
+    def _to_item(self, event: dict[str, str]) -> SourceItem | None:
+        parsed = self._parse(event)
+        return None if parsed is None else self._item_for(parsed)
+
+    def _item_for(self, parsed: ParsedAssignment) -> SourceItem:
+        course, title, due = parsed.course, parsed.title, parsed.due_at
         author = course or "Canvas"
         heading = f"{course} — {title}" if course else title
         body = f"{author}: {title} is due {due}."
         return SourceItem(
             source=self.name,
-            external_id=f"assignment:{match.group(1)}",
+            external_id=parsed.external_id,
             occurred_at=due,
             author=author,
             title=heading,
             body_text=body,
+            # `content_hash` covers (author, title, body_text, occurred_at) and not this,
+            # so widening the raw record costs no conflict on the 159 items already
+            # stored — they keep the terse shape they were written with, and everything
+            # from here on carries the document. `body_text` deliberately stays as it was:
+            # putting the description there would rewrite every stored hash, and an
+            # immutable item answers that with a run error, not an update.
             raw_json=json.dumps(
                 {
-                    "assignment_id": match.group(1),
+                    "assignment_id": parsed.assignment_id,
                     "due_at": due,
                     "course": course,
-                    "html_url": event.get("URL", ""),
+                    "html_url": parsed.url,
+                    "description": parsed.description,
                     # Named in the row itself, not only in this module's docstring: a
                     # reader asking why a submitted assignment is still open should find
                     # the answer on the item rather than in the source tree.

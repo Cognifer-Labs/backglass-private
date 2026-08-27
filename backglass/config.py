@@ -65,6 +65,13 @@ class Routine:
     start_minute: int  # minute of the local day
     minutes: int
     days: frozenset[str] = frozenset()
+    #: Whether the hour is decreed or merely preferred. Flexible is the default because
+    #: most of life is: lunch at 12:30 means "around then", and a chemistry class at
+    #: 12:20 does not stop the owner eating, it moves the meal. `plan/capacity.py`
+    #: shifts a flexible routine to the nearest free gap; a pinned one never moves.
+    #: Pinned exists for the routine that is an obligation at a stated hour rather than
+    #: a habit around one — Wednesday volunteering, spelled `banner@16:00+240!@wed`.
+    pinned: bool = False
 
     def falls_on(self, day: date) -> bool:
         return not self.days or DAY_NAMES[day.weekday()] in self.days
@@ -75,13 +82,24 @@ class RoutineError(ValueError):
 
 
 _ROUTINE_RE = re.compile(
-    r"^(?P<name>[^@,]+)@(?P<hh>\d{2}):(?P<mm>\d{2})\+(?P<dur>\d+)"
+    r"^(?P<name>[^@,]+)@(?P<hh>\d{2}):(?P<mm>\d{2})\+(?P<dur>\d+)(?P<pin>!)?"
     r"(?:@(?P<days>[a-z]{3}(?:\|[a-z]{3})*))?$"
 )
 
 
 def parse_routines(raw: str) -> list[Routine]:
-    """`name@HH:MM+MINUTES[@day|day],...` → routines sorted by start.
+    """`name@HH:MM+MINUTES[!][@day|day],...` → routines sorted by start.
+
+    `HH:MM` is the hour the owner prefers, not one they are held to: the planner shifts
+    a routine to the nearest free gap when the preferred span collides with a class or a
+    confirmed engagement (`plan/capacity.routine_events`). Owner's ruling, 2026-08-21 —
+    the live plan for the 24th put lunch at 12:30 inside CHM 113 at 12:20, which is not
+    a scheduling conflict so much as a plan that is wrong about when they eat.
+
+    A trailing `!` pins the routine to its hour and opts out of the shift. That is for
+    the entry that is an obligation rather than a habit — `banner@16:00+240!@wed` is
+    volunteering somebody else scheduled, and a planner that quietly moved it to 5pm
+    would be inventing an appointment.
 
     The day scope is what makes a weekly commitment expressible. Banner volunteering is
     Wednesdays 4–8pm; without a scope it had to be spelled as an everyday routine, which
@@ -120,6 +138,7 @@ def parse_routines(raw: str) -> list[Routine]:
                 start_minute=hour * 60 + minute,
                 minutes=duration,
                 days=days,
+                pinned=bool(match["pin"]),
             )
         )
     return sorted(out, key=lambda r: r.start_minute)
@@ -172,10 +191,12 @@ class Settings(BaseSettings):
         default_factory=lambda: ["mon", "tue", "wed", "thu", "fri"]
     )
     #: The other things in life, as fixed events: `name@HH:MM+MINUTES`, comma-separated,
-    #: with an optional day scope — `banner@16:00+240@wed`, or `gym@17:30+60@mon|wed|fri`
+    #: with an optional day scope — `banner@16:00+240!@wed`, or `gym@17:30+60@mon|wed|fri`
     #: for several. Unscoped means every day, which is what most of life is. They render
     #: on the schedule and the planner plans around them; only the ones inside the working
-    #: window spend capacity (lunch does, breakfast does not). Empty string means none.
+    #: window spend capacity (lunch does, relaxation at nine does not). The hour is a
+    #: preference — a routine shifts to the nearest free gap rather than sit inside a
+    #: class — unless a trailing `!` pins it. Empty string means none.
     #: Parsed and validated by `parse_routines` above — the same function capacity
     #: consumes it through, so a malformed entry fails at startup, not at 05:45.
     routines: str = (
@@ -191,6 +212,29 @@ class Settings(BaseSettings):
     min_block_minutes: int = 25
     #: P3. "If capacity is under 60 minutes, do not propose a plan."
     min_capacity_minutes: int = 60
+    #: The study block a day with no coursework in it still gets (owner's ruling,
+    #: 2026-08-21). Homework is already scheduled by name — a coursework commitment with
+    #: an estimate read off the assignment — so this is the other thing: reading, review,
+    #: keeping up, the work that has no deliverable to make it show up on a board. Zero
+    #: turns it off.
+    study_block_minutes: int = 90
+    #: The coding block, owner's ruling 2026-08-24: a weekday should hold coding time.
+    #: Same shape as the study block above and placed the same way — synthetic,
+    #: capacity-bounded, never rolled — but unconditional, because the owner asked for it
+    #: daily rather than only on days that lack something else.
+    #:
+    #: Two settings rather than one `STANDING_BLOCKS=study@90,coding@90` mini-language,
+    #: deliberately: the two blocks differ only in their *condition*, and a config grammar
+    #: whose entire job is to encode one boolean per entry is harder to read than the two
+    #: numbers it replaces. If a third standing block ever arrives with a third condition,
+    #: that is the moment to generalise — not before.
+    coding_block_minutes: int = 90
+    #: How much of a day coursework gets first claim on (owner's ruling, 2026-08-24:
+    #: "more home work time"). A reservation inside `planner.select`, not a target the
+    #: planner invents work to hit: it caps at what the day's coursework actually wants
+    #: and lapses to nothing when there is none, so a day with nothing due is never held
+    #: empty waiting for homework that does not exist. Zero turns it off.
+    homework_target_minutes: int = 120
     #: docs/04 §1.2 buffer rule: 10 min after any meeting >= 30 min, 5 otherwise.
     buffer_long_minutes: int = 10
     buffer_short_minutes: int = 5
@@ -225,6 +269,88 @@ class Settings(BaseSettings):
             "unknown:45",
         ]
     )
+
+    #: Coursework types, in minutes, for the assignment record (goal 4). Separate from
+    #: `estimate_defaults` because these are read off a different thing: the type table
+    #: above classifies a *sentence someone wrote in a mail*, and this one classifies an
+    #: assignment as its own course publishes it. The names come from the owner's real
+    #: feed rather than from taste — 31 LearningCurve items, 38 videos, 28 labs, 17
+    #: quizzes and 12 exams were in the ASU document on 2026-08-20, and a system that
+    #: called all of them thirty minutes is what this goal exists to fix.
+    #:
+    #: These are a floor, not a verdict. Where the assignment states its own size — a
+    #: runtime, a word count, a chapter range — the stated number wins and carries the
+    #: quote it was read from; this table only answers the ones that say nothing.
+    coursework_defaults: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: [
+            "learningcurve:25",
+            "video:20",
+            "quiz:30",
+            # An exam is the studying, not the sitting. The sitting is on the calendar.
+            "exam:120",
+            "lab:90",
+            "discussion:25",
+            "reading:45",
+            "milestone:180",
+            "homework:45",
+            "module:30",
+            # An administrative form — an absence request, a submission link, a consent
+            # box. Minutes, not an afternoon, and it sits first in `TYPE_PATTERNS`
+            # because the cost of calling one an exam is two hours of the owner's day.
+            "form:15",
+            "assignment:45",
+        ]
+    )
+    #: The longest single sitting the planner will place for one commitment. An honest
+    #: 180-minute milestone is unschedulable without this: `planner.select` drops any
+    #: candidate larger than the capacity left in the day, so raising estimates without a
+    #: clamp makes the biggest work vanish from every plan — strictly worse than the flat
+    #: 30 minutes it replaced.
+    max_block_minutes: int = 90
+    #: Minutes to walk between two back-to-back commitments in different rooms. Owner's
+    #: ask, 2026-08-27: "also account for travel and walk to classes."
+    #:
+    #: `capacity` has modelled travel since it was written and nothing ever set it — the
+    #: flag lives in a calendar event's `raw_json`, and the ASU registrar import does not
+    #: carry one. So a Monday running CIS 236 in BA 396, BIO 181 in MUR 101, CHM 113 in
+    #: LSA 191 and LSB 191 in ARM L1-17 reported `travel 0m`, and the gaps between those
+    #: buildings were offered to the planner as time to work in.
+    #:
+    #: A flat number, deliberately. A distance matrix built from building codes would be
+    #: a precise-looking figure nobody measured; fifteen minutes is a walk across Tempe
+    #: campus, it is the honest shape of the answer, and it is a knob because the owner
+    #: is the one who knows. Zero switches the feature off.
+    walk_minutes: int = 15
+    #: How long one class's assigned reading is planned for. A flat number on purpose:
+    #: a syllabus cites where a text *starts* ("Vol. A, pp. 885"), never how long it is,
+    #: so any figure computed from that citation would be fiction wearing arithmetic.
+    #: Ninety minutes is a sitting, which is what `max_block_minutes` already calls one.
+    reading_minutes: int = 90
+
+    # ── the relief pass (owner's ruling, 2026-08-27) ──────────────────────
+    #
+    #   "if things dont fit remove relax time and mcat study time or reduce time
+    #    for other things"
+    #
+    #: How late the day may run when deadline-pressed work will not otherwise fit. The
+    #: working window ends at 21:00 and `relax@21:00+120` sits entirely outside it, so
+    #: "remove relax time" is not a matter of freeing minutes inside the day — it is
+    #: extending the day into the evening, which is a bigger thing to do to somebody than
+    #: the sentence sounds. Blank switches the relief pass off entirely.
+    relief_window_end: str = "23:00"
+    #: Routines the day may take back, in the order it takes them. The owner named the
+    #: first two. `gym` is not on the list: it is compressed rather than removed (see
+    #: `relief_compressible`), because an hour of exercise deleted to fit a quiz is the
+    #: trade nobody actually wants to make.
+    #:
+    #: Meals and shower are deliberately absent and must stay absent. They were not named,
+    #: and a planner that eats dinner to fit a practice quiz is a planner that gets turned
+    #: off in week one.
+    relief_sacrificial: list[str] = Field(default_factory=lambda: ["relax", "study", "mcat"])
+    #: Routines the day may shorten but never delete, and the floor it may shorten them
+    #: to, as a fraction of their stated length.
+    relief_compressible: list[str] = Field(default_factory=lambda: ["gym"])
+    relief_compress_floor: float = 0.5
 
     # ── goals (docs/04 §2.5) ──────────────────────────────────────────────
     #: G11: staleness and risk are computed independently and never merged into one
@@ -295,11 +421,45 @@ class Settings(BaseSettings):
     #: re-indexes rather than mixing vector spaces — the identity in `embedding` enforces
     #: it, because ranking two models' vectors against each other returns plausible
     #: nonsense instead of an error.
+    #: Where `/v1/embeddings` lives, when that is not where chat lives. One setting used
+    #: to answer both, and on 2026-08-21 that became a contradiction: pointing
+    #: `model_base_url` at OpenRouter for the free chat tier would have sent embedding
+    #: calls there too, where `nomic-embed-text` does not exist — every index run dying
+    #: on a 404, and any vector that *did* come back belonging to a different model's
+    #: space than the 1,248 already in the table. The identity in `embedding` forbids
+    #: mixing those, and mixing them silently returns plausible nonsense rather than an
+    #: error, so the two endpoints need to be separable.
+    #:
+    #: Empty means "wherever chat is", which is what every existing config already meant.
+    embedding_base_url: str = ""
     embedding_model: str = "nomic-embed-text"
     embedding_timeout_seconds: int = 120
+    #: Tried in order when the configured model will not serve, OpenRouter only. See
+    #: `DeepInfraBackend.fallbacks` for why a free tier needs this to be usable at all.
+    model_fallbacks: Annotated[list[str], NoDecode] = Field(default_factory=list)
     model_triage: str = "haiku"
     model_extract: str = "sonnet"
     model_api_key: str = ""
+
+    #: Where a call goes when the primary will not serve it — owner's instruction
+    #: 2026-08-24, "use whatever is free, then fall back on Anthropic models". Empty
+    #: disables the chain and the primary's failures stay failures.
+    #:
+    #: Distinct from `model_fallbacks`, which is a *model* list handed to one gateway.
+    #: That cannot help when the gateway itself refuses, and on a free tier the gateway
+    #: is what refuses: OpenRouter allows 50 requests a day against an arrival rate
+    #: measured at 50–276 items a day.
+    model_fallback_backend: Literal[
+        "", "claude_cli", "deepinfra", "anthropic", "openai_compatible"
+    ] = ""
+    model_fallback_base_url: str = ""
+    #: Empty falls back to `model_api_key`, then to the backend's own default — the CLI
+    #: needs no key at all, which is what makes it the cheap secondary here.
+    model_fallback_api_key: str = ""
+    #: The secondary's own names. `MODEL_TRIAGE=nvidia/nemotron-nano-9b-v2:free` means
+    #: nothing to the Claude CLI, so the model is remapped as the call crosses over.
+    model_fallback_triage: str = "haiku"
+    model_fallback_extract: str = "sonnet"
     deepinfra_base_url: str = "https://api.deepinfra.com/v1/openai"
 
     #: Screen (triage) through Apple's model via a Shortcuts "Use Model" action set
@@ -403,6 +563,13 @@ class Settings(BaseSettings):
     drive_accounts: Annotated[list[str], NoDecode] = Field(default_factory=list)
 
     obsidian_vault_path: Path | None = None
+    #: Where `backglass vault export` writes the ledger back out as markdown. Separate
+    #: from the path above because these are two directions, not one setting: that one is
+    #: the vault Backglass reads, this one is the vault it writes. Pointing both at the
+    #: same folder is the intended arrangement — the owner writes in `Inbox/`, Backglass
+    #: writes everything else, and the generated files carry a marker the notes connector
+    #: skips so the record never reads its own output back in.
+    vault_export_path: Path | None = None
     canvas_base_url: str = ""
     canvas_token: str = ""
     #: The published Canvas calendar feed (Calendar → Calendar Feed), for institutions
@@ -416,11 +583,20 @@ class Settings(BaseSettings):
     # ── Phase 7 sources ───────────────────────────────────────────────────
     #: GitHub personal access token (classic or fine-grained; needs repo+read:user).
     github_token: str = ""
-    #: Slack user token (xoxp-) plus the explicit conversations to read. Deliberately
-    #: not "every channel" — a personal tool reads the handful of threads the owner
-    #: names, and enumerating a workspace is how scope creep starts.
+    #: Slack user token (xoxp-). The token is the whole gate: which conversations get
+    #: read is decided on /chats, not here (2026-08-24 ruling — see connectors/slack.py).
     slack_token: str = ""
+    #: Legacy explicit conversation IDs. Still honoured, and seeded into `monitored_chat`
+    #: as `monitor` rows on the first sync, after which the table is what decides.
     slack_channels: Annotated[list[str], NoDecode] = Field(default_factory=list)
+    #: A Slack thread with no activity in this many days leaves the cursor's thread map.
+    #: Bounds the per-thread re-poll pass: each tracked thread costs one request per run,
+    #: and a month-quiet thread is not where today's commitment is being made.
+    slack_thread_window_days: int = 30
+    #: Seconds one Slack sync may spend asleep obeying `Retry-After` before it stops
+    #: cleanly and keeps what it read. A scheduled sync that sleeps for an hour is a sync
+    #: that never ran.
+    slack_rate_limit_budget_seconds: int = 120
     #: macOS Messages store. Empty disables. Requires Full Disk Access for the
     #: process running the sync.
     imessage_db_path: Path | None = None
@@ -524,8 +700,9 @@ class Settings(BaseSettings):
         "calendar_accounts",
         "drive_accounts",
         "estimate_defaults",
+        "coursework_defaults",
+        "model_fallbacks",
         "tz_ranges",
-        "slack_channels",
         "instagram_chats",
         "imessage_chats",
         "apple_calendar_skip",
@@ -536,6 +713,25 @@ class Settings(BaseSettings):
     def _split_csv(cls, value: object) -> list[str]:
         if isinstance(value, str | list) or value is None:
             return _csv(value)
+        raise TypeError(f"expected a comma-separated string or list, got {type(value)}")
+
+    @field_validator("slack_channels", mode="before")
+    @classmethod
+    def _split_csv_preserving_case(cls, value: object) -> list[str]:
+        """Slack conversation IDs are case-sensitive API identifiers, not names.
+
+        Every other list in the validator above is a name, an address or a weekday, where
+        folding case is the point. `C0FOUNDERS` is not: lowercased it reaches
+        `conversations.history` as `c0founders`, and Slack answers `channel_not_found`.
+        Matching against the allowlist is unaffected either way, because `chats.normalise`
+        casefolds both sides — so the defect was invisible from the table and fatal at the
+        wire, which is why nothing caught it until a real call was made.
+        """
+        if value is None:
+            return []
+        if isinstance(value, str | list):
+            items = value if isinstance(value, list) else value.split(",")
+            return [str(item).strip() for item in items if str(item).strip()]
         raise TypeError(f"expected a comma-separated string or list, got {type(value)}")
 
     @field_validator("routines")

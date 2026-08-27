@@ -369,3 +369,86 @@ class TestTheDeployedPythonIsCompared:
         assert note is None
         assert one not in drifted
         assert "backglass/state.py" in drifted
+
+
+class TestTheVaultIsPartOfGroundTruth:
+    """The Obsidian vault is a report over the ledger, so its freshness is checkable.
+
+    Not a re-render: `vault.render` asks this module for `STATE.md`, so a probe that
+    rendered the vault to diff it would recurse. The question is the cheap one — was the
+    vault written after the ledger last moved.
+    """
+
+    def test_an_unconfigured_vault_is_unknown_not_zero(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        sett = settings.model_copy(update={"vault_export_path": None})
+        claim = state_mod.collect(conn, sett).sections["vault"]["root"]
+        assert claim.unknown and "VAULT_EXPORT_PATH" in claim.unknown
+
+    def test_a_missing_folder_says_so_rather_than_reporting_no_notes(
+        self, conn: sqlite3.Connection, settings: Settings, tmp_path: Path
+    ) -> None:
+        gone = tmp_path / "never-exported"
+        snapshot = state_mod.collect(
+            conn, settings.model_copy(update={"vault_export_path": gone})
+        )
+        assert "notes" in snapshot.sections["vault"]
+        assert snapshot.sections["vault"]["notes"].unknown
+
+    def test_an_exported_vault_reports_its_notes_and_its_marker_count(
+        self, conn: sqlite3.Connection, settings: Settings, tmp_path: Path
+    ) -> None:
+        from datetime import datetime
+
+        from backglass import vault as vault_mod
+
+        root = tmp_path / "vault"
+        sett = settings.model_copy(
+            update={"vault_export_path": root, "obsidian_vault_path": root}
+        )
+        built = state_mod.State()
+        built.add("ledger", "source_items", state_mod.Claim(0, "SELECT COUNT(*)"))
+        vault_mod.export(
+            conn, sett, root=root, now=datetime(2026, 8, 23, 9, 30), snapshot=(built, [])
+        )
+        # An unmarked note is the owner's own, and it must read as a note the connector
+        # will ingest rather than be counted among the generated ones.
+        (root / "Inbox" / "mine.md").write_text("a note of my own\n", encoding="utf-8")
+
+        section = state_mod.collect(conn, sett).sections["vault"]
+
+        assert section["notes"].value == section["generated"].value + 1
+        assert section["also_ingested"].value is True
+        assert section["exported_at"].value.startswith("2026-08-23T09:30")
+
+    def test_a_vault_older_than_the_last_run_is_graded_stale(
+        self, conn: sqlite3.Connection, settings: Settings, tmp_path: Path
+    ) -> None:
+        from datetime import datetime
+
+        from backglass import vault as vault_mod
+        from backglass.ledger import USER_ID
+
+        root = tmp_path / "vault"
+        sett = settings.model_copy(update={"vault_export_path": root})
+        built = state_mod.State()
+        built.add("ledger", "source_items", state_mod.Claim(0, "SELECT COUNT(*)"))
+        vault_mod.export(
+            conn,
+            sett,
+            root=root,
+            now=datetime.fromisoformat("2026-08-23T09:30:00-07:00"),
+            snapshot=(built, []),
+        )
+        conn.execute(
+            "INSERT INTO run (user_id, started_at) VALUES (?, '2026-08-23T20:00:00+00:00')",
+            (USER_ID,),
+        )
+
+        snapshot = state_mod.collect(conn, sett)
+        graded = {v.name: v for v in state_mod.verdicts(snapshot, conn, sett)}
+        stale = graded["the vault is newer than the last sync"]
+
+        assert stale.ok is False
+        assert "backglass vault export" in stale.remedy

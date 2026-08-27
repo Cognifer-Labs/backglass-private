@@ -64,14 +64,26 @@ class Judgement:
     cites_fact: int | None
     quote: str | None
     reason: str | None
+    #: Fact ids this obligation's standing rests on, already intersected with the set the
+    #: call was given. Empty means "rests on no recorded fact", which is an answer.
+    depends_on: tuple[int, ...] = ()
 
 
 @dataclass
 class Work:
-    """One call's worth: the owner's facts, and the obligations judged against them."""
+    """One call's worth: the owner's facts, the situation, and the obligations judged.
+
+    `situation` is `backglass/situation.py`'s state doc minus its facts section, which
+    this pass already carries under its own header. The facts alone say what is true; they
+    do not say what recently stopped being true, what the week actually holds, or which
+    obligations are already resting on which claim — and every one of those changes the
+    answer to "has something the owner recorded made this moot?". Empty on a ledger with
+    nothing to report, in which case the prompt renders exactly as it did at version 1.
+    """
 
     facts: list[dict[str, Any]] = field(default_factory=list)
     commitments: list[dict[str, Any]] = field(default_factory=list)
+    situation: str = ""
 
     @property
     def sent_ids(self) -> set[int]:
@@ -115,11 +127,43 @@ def facts_for(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 
 
 def candidates(conn: sqlite3.Connection, *, limit: int = PER_RUN) -> list[dict[str, Any]]:
-    """Open obligations never judged, oldest first.
+    """Open obligations never judged — or judged against a fact that has since moved.
 
     `LEFT JOIN logic_check` is the judged-once rule and the whole of rule 3 here: a run
     that judges everything leaves nothing for the next run to send, so two consecutive
     syncs over an unchanged ledger make exactly one pass's worth of calls and then none.
+
+    **Judged once is not judged forever, since 2026-08-24.** A `keep` issued when the
+    ledger said one thing was never revisited when it said another, which is the owner's
+    complaint ("the checker has no way to notice the situation moved") restated in schema.
+    A verdict is re-opened by exactly one condition: **every dependency it recorded has
+    been broken.** `facts.remember` supersedes a fact, `claim_events.invalidate_fact`
+    marks its dependents `superseded`, and a commitment whose recorded dependencies are
+    all superseded is one whose verdict was reached from facts that no longer hold.
+
+    Stated as row state rather than as "an event newer than the verdict", which is what
+    this first was and could not work: `now_iso()` is second-resolution, so a fact
+    superseded in the same second as the verdict was decided compares equal, and the
+    fix in either direction is a loop or a miss. Row state has no such ambiguity and it
+    clears itself — the re-judgment writes fresh `active` rows (a fact, or `none`), so the
+    condition is false again the moment the obligation is judged, with no timestamp
+    arithmetic anywhere.
+
+    Narrow on purpose. Not "re-judge everything periodically", which is a bill; not "the
+    world may have changed", which is unfalsifiable. One fact moved, and only what stood
+    on it is re-asked.
+
+    A `pending` verdict is never re-opened: it is already a question sitting in front of
+    the owner, and asking the model again would both spend money on a decision that is
+    waiting on a person and risk contradicting the question they are looking at.
+
+    One backfill clause, and it is why the feature is not permanently empty: a commitment
+    judged before v3 has a verdict and no dependency rows at all, so neither of the rules
+    above would ever send it. On the owner's live ledger that was every open obligation —
+    226 of them, judged in one pass on 2026-08-19 — and the index would have filled only
+    from rows created after the prompt bump. It costs one pass over the backlog and then
+    nothing: a v3 judgment always writes a row, so the clause is false for that commitment
+    forever after.
     """
     return [
         dict(row)
@@ -129,7 +173,27 @@ def candidates(conn: sqlite3.Connection, *, limit: int = PER_RUN) -> list[dict[s
             "  JOIN source_item s ON s.id = c.source_item_id"
             "  LEFT JOIN logic_check l ON l.commitment_id = c.id AND l.user_id = c.user_id"
             " WHERE c.user_id = ? AND c.status = 'open' AND c.direction = 'i_owe'"
-            "   AND l.id IS NULL"
+            "   AND (l.id IS NULL"
+            # Judged before v3 ever asked the question. Without this clause the
+            # dependency index could only ever fill from commitments created after the
+            # bump: every row already on the board carries a verdict, so it is never
+            # re-queued, so it never records what it rests on, so nothing can ever
+            # invalidate it — the feature would be live and permanently empty on the one
+            # ledger it was built for. Self-clearing: a v3 judgment writes a row (a fact,
+            # or `none`), and this clause is false for that commitment forever after.
+            "        OR (l.status != 'pending' AND NOT EXISTS ("
+            "             SELECT 1 FROM claim_dependency d"
+            "              WHERE d.user_id = c.user_id AND d.subject_table = 'commitment'"
+            "                AND d.subject_id = c.id))"
+            "        OR (l.status != 'pending'"
+            "        AND EXISTS (SELECT 1 FROM claim_dependency d"
+            "                     WHERE d.user_id = c.user_id"
+            "                       AND d.subject_table = 'commitment'"
+            "                       AND d.subject_id = c.id AND d.status = 'superseded')"
+            "        AND NOT EXISTS (SELECT 1 FROM claim_dependency d"
+            "                         WHERE d.user_id = c.user_id"
+            "                           AND d.subject_table = 'commitment'"
+            "                           AND d.subject_id = c.id AND d.status = 'active')))"
             " ORDER BY c.id LIMIT ?",
             (USER_ID, limit),
         )
@@ -150,7 +214,11 @@ def render(work: Work, *, prompt: Prompt) -> tuple[str, str]:
         for c in work.commitments
     )
     static, _ = prompt.split()
-    return static, prompt.render_dynamic(facts=facts, commitments=commitments)
+    return static, prompt.render_dynamic(
+        facts=facts,
+        situation=work.situation or "(nothing else recorded)",
+        commitments=commitments,
+    )
 
 
 def parse(data: dict[str, Any], work: Work) -> tuple[list[Judgement], int]:
@@ -173,7 +241,7 @@ def parse(data: dict[str, Any], work: Work) -> tuple[list[Judgement], int]:
             discarded += 1
             continue
         if v.verdict == "keep":
-            kept.append(_judgement(v))
+            kept.append(_judgement(v, work.fact_ids))
             continue
         # 2. A drop with no fact behind it. This pass exists to act on a recorded
         #    contradiction; without one it is just an opinion about an old row.
@@ -189,11 +257,22 @@ def parse(data: dict[str, Any], work: Work) -> tuple[list[Judgement], int]:
         if _normalize(v.quote or "") not in sources.get(v.commitment_id, ""):
             discarded += 1
             continue
-        kept.append(_judgement(v))
+        kept.append(_judgement(v, work.fact_ids))
     return kept, discarded
 
 
-def _judgement(v: Any) -> Judgement:
+def _judgement(v: Any, fact_ids: set[int] | None = None) -> Judgement:
+    # Intersected with the facts actually sent, the same 2026-08-12 guard `cites_fact`
+    # gets: the tables overlap in range, so an id the model invented or half-remembered
+    # would otherwise become a dependency pointing at an unrelated row — and a wrong
+    # dependency is what later decides an obligation is dead.
+    #
+    # Filtered rather than discarded, unlike a bad `cites_fact`. A citation is the
+    # justification for closing something and must be right or absent; a dependency is a
+    # note about what to re-check later, and dropping one bad id out of three leaves a
+    # narrower index, not a wrong verdict.
+    raw = tuple(int(i) for i in (getattr(v, "depends_on", None) or []))
+    depends = tuple(dict.fromkeys(i for i in raw if fact_ids is None or i in fact_ids))
     return Judgement(
         commitment_id=int(v.commitment_id),
         verdict=str(v.verdict),
@@ -201,6 +280,7 @@ def _judgement(v: Any) -> Judgement:
         cites_fact=v.cites_fact,
         quote=v.quote,
         reason=v.reason,
+        depends_on=depends,
     )
 
 
@@ -234,6 +314,7 @@ def apply(
             report.kept += 1
             if not dry_run:
                 _record(conn, j, status="kept")
+                _record_dependencies(conn, j)
             continue
 
         fact = facts_by_id.get(int(j.cites_fact or 0), {})
@@ -250,6 +331,7 @@ def apply(
             continue
 
         _record(conn, j, status="applied" if confident else "pending")
+        _record_dependencies(conn, j)
         if confident:
             actions.drop(
                 conn,
@@ -263,17 +345,87 @@ def apply(
     return report
 
 
+def _record_dependencies(conn: sqlite3.Connection, j: Judgement) -> None:
+    """What this obligation rests on, into `claim_dependency` (0032).
+
+    The point of asking on **every** verdict, keeps included: `logic_check` is judged once
+    per commitment, so a keep issued when the facts said one thing was never revisited
+    when they said another — "the checker has no way to notice the situation moved", which
+    is the owner's own complaint restated in schema. These rows are the invalidation index
+    that answers "which obligations did this fact hold up?", and nothing else in the
+    ledger can.
+
+    `none` is recorded, not omitted. An obligation judged to rest on no fact is a
+    different thing from one nobody has judged, and `claim_events` states the rule this
+    upholds: an empty result must read as *unknown*, never as *confirmed independent*.
+    Writing the `none` row is what moves a commitment from the first to the second.
+    """
+    from backglass import claim_events
+
+    if j.depends_on:
+        for fact_id in j.depends_on:
+            claim_events.depends_on_fact(
+                conn,
+                subject_table="commitment",
+                subject_id=j.commitment_id,
+                fact_id=fact_id,
+                quote=(j.quote or "").strip(),
+                reason=(j.reason or f"relevance verdict: {j.verdict}").strip(),
+            )
+        return
+    claim_events.depends_on_none(
+        conn,
+        subject_table="commitment",
+        subject_id=j.commitment_id,
+        reason=(j.reason or "judged: rests on no recorded fact").strip(),
+    )
+
+
 def _record(conn: sqlite3.Connection, j: Judgement, *, status: str) -> None:
+    """The verdict, and on a re-judgment the new one *replaces* the old.
+
+    It used to be `DO NOTHING`, which was right while a commitment could only be judged
+    once. Now that a broken dependency re-opens one (`candidates`), doing nothing would
+    leave the stale verdict in place with its old `decided_at` — so the re-queue predicate
+    would still be true on the next sync, and the same obligation would be re-judged, and
+    re-paid for, every sync forever. A loop that only shows up as a bill.
+
+    An UPDATE rather than a superseding row, and that is a compromise worth naming: house
+    style is supersession, but `logic_check` is `UNIQUE (user_id, commitment_id)` and
+    giving it history needs a migration, which re-arms the frozen-sidecar rebuild on a
+    checkout the scheduler runs. The history goes to `claim_event` instead — which is what
+    the change ledger is for, and it records the old verdict and the new one, so nothing
+    is lost that the audit trail needs.
+    """
+    from backglass import claim_events
+
+    previous = conn.execute(
+        "SELECT verdict FROM logic_check WHERE user_id = ? AND commitment_id = ?",
+        (USER_ID, j.commitment_id),
+    ).fetchone()
     conn.execute(
         "INSERT INTO logic_check (user_id, commitment_id, verdict, confidence, fact_id,"
         " quote, reason, status, created_at, decided_at)"
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        " ON CONFLICT(user_id, commitment_id) DO NOTHING",
+        " ON CONFLICT(user_id, commitment_id) DO UPDATE SET"
+        "   verdict = excluded.verdict, confidence = excluded.confidence,"
+        "   fact_id = excluded.fact_id, quote = excluded.quote, reason = excluded.reason,"
+        "   status = excluded.status, decided_at = excluded.decided_at",
         (
             USER_ID, j.commitment_id, j.verdict, j.confidence, j.cites_fact, j.quote,
             j.reason, status, now_iso(), now_iso() if status != "pending" else None,
         ),
     )
+    if previous is not None:
+        claim_events.record(
+            conn,
+            subject_table="commitment",
+            subject_id=j.commitment_id,
+            cause="relevance_rejudged",
+            field="logic_check.verdict",
+            old_value=str(previous["verdict"]),
+            new_value=j.verdict,
+        )
 
 
 #: The question's options, matched EXACTLY by the answer hook, like the stale ones.
@@ -316,8 +468,27 @@ def run(
         # business guessing from the obligations alone.
         return report
 
+    # Rendered once for the whole pass, not once per batch: it is the same ledger for all
+    # of them, and a block that differed between batches would defeat the caching the
+    # static/dynamic split exists for. Best-effort — the judge worked without it at
+    # version 1, and a doc that cannot render must not cost the pass its verdicts.
+    situation = ""
+    try:
+        from backglass import situation as situation_mod
+        from backglass.plan import timezones
+
+        situation = situation_mod.render(
+            conn, settings, timezones.local_now(settings).date(), include_facts=False
+        )
+    except Exception as exc:  # noqa: BLE001 — rule 5
+        report.errors.append(f"situation: {type(exc).__name__}: {exc}")
+
     for start in range(0, len(pending), BATCH):
-        work = Work(facts=facts, commitments=pending[start : start + BATCH])
+        work = Work(
+            facts=facts,
+            commitments=pending[start : start + BATCH],
+            situation=situation,
+        )
         try:
             static, user = render(work, prompt=prompt)
             result = client.complete(

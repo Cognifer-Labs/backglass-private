@@ -9,6 +9,9 @@ tauri-build = { version = "2", features = [] }
 
 [dependencies]
 tauri = { version = "2", features = [] }
+# Window size and position across launches — the one macOS behaviour the shell was
+# missing that a plugin owns rather than the builder.
+tauri-plugin-window-state = "2"
 
 [profile.release]
 strip = true

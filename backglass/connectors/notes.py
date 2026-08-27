@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from backglass import vault
 from backglass.connectors.base import Cursor, Health, SourceItem, content_hash
 from backglass.connectors.boundary import Boundary
 
@@ -50,6 +51,9 @@ class NotesConnector:
     cursor: Cursor = None
     excluded: int = 0
     excluded_by_rule: dict[str, int] = field(default_factory=dict)
+    #: Notes skipped because Backglass wrote them. Counted apart from `excluded`, which
+    #: means a boundary exclusion and is what the Sources panel reports under that name.
+    generated: int = 0
 
     @property
     def name(self) -> str:
@@ -79,6 +83,7 @@ class NotesConnector:
         """
         self.excluded = 0
         self.excluded_by_rule = {}
+        self.generated = 0
         if not self.vault_path.is_dir():
             raise FileNotFoundError(f"vault not found at {self.vault_path}")
 
@@ -117,6 +122,21 @@ class NotesConnector:
         except OSError:
             return None
 
+        body, meta = _strip_frontmatter(text)
+
+        # Backglass's own output, read back. `vault.py` writes the ledger into a vault as
+        # markdown, and the owner is expected to point this connector at that same folder
+        # so their own notes flow back in. Without this line the next sync ingests every
+        # generated note as an immutable-forever `source_item` and extracts facts out of
+        # facts — the record feeding on itself, one round per half hour.
+        #
+        # The marker is a frontmatter key rather than a skipped directory because a
+        # directory rule dies the first time a note is dragged somewhere else, and
+        # Obsidian is a tool for dragging notes somewhere else.
+        if meta.get(vault.MARK_KEY) == vault.MARK_VALUE:
+            self.generated += 1
+            return None
+
         # D1. Before persistence. A note that pastes in a client thread is client
         # correspondence, and the addresses in it are what the denylist matches on.
         verdict = self.boundary.check(_EMAIL.findall(text))
@@ -126,7 +146,6 @@ class NotesConnector:
             self.excluded_by_rule[rule] = self.excluded_by_rule.get(rule, 0) + 1
             return None
 
-        body, meta = _strip_frontmatter(text)
         if not body.strip():
             return None
 

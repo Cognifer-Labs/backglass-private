@@ -87,7 +87,9 @@
           {% endfor %}
         </div>
         {% for c in wtl.cols %}
-          <div class="wcol{% if c.view.day == today %} now{% endif %}" style="height:{{ wtl.height }}px">
+          <div class="wcol{% if c.view.day == today %} now{% endif %}" style="height:{{ wtl.height }}px"
+               {% if c.view.day == today %}data-now-tz="{{ c.view.tz }}" data-now-day="{{ c.view.day.isoformat() }}"
+               data-now-start="{{ wtl.start_min }}" data-now-end="{{ wtl.end_min }}" data-now-px="0.5"{% endif %}>
             {% for h in wtl.hours %}<i style="top:{{ loop.index0 * wtl.hour_px }}px"></i>{% endfor %}
             {% for e in c.entries %}
               {# Textless by design: a 9px ellipsized title is not information. The
@@ -100,8 +102,11 @@
                  aria-label="{{ e.start_label }}–{{ e.end_label }} {{ e.title }}"
                  title="{{ e.start_label }}–{{ e.end_label }} {{ e.title }}"></a>
             {% endfor %}
-            {% if c.now_top is not none %}
-              <div class="wnow" style="top:{{ c.now_top }}px"></div>
+            {% if c.view.day == today %}
+              {# Same contract as the day canvas: always drawn on today's column, hidden
+                 while the clock sits outside the grid's window, moved by `now.js`. #}
+              <div class="wnow" style="top:{{ c.now_top or 0 }}px"
+                   {% if c.now_top is none %}hidden{% endif %}></div>
             {% endif %}
           </div>
         {% endfor %}
@@ -112,3 +117,6 @@
   </div>
 </section>
 {% endblock %}
+
+{# The Now line is the one mark on this page that is wrong the moment it is drawn. #}
+{% block scripts %}<script src="/static/now.js" defer></script>{% endblock %}

@@ -100,6 +100,37 @@ def messages() -> list[dict[str, Any]]:
     return [gmail_message(spec) for spec in SPECS]
 
 
+_TRIAGE_SCHEMA = {"type": "object", "properties": {"keep": {}, "reason": {}}}
+
+
+def _hosted() -> Any:
+    """The class every hosted configuration resolves to — `openai_compatible` and
+    `deepinfra` are the same backend at a different base_url."""
+    from backglass.extract.client import DeepInfraBackend
+
+    return DeepInfraBackend(api_key="k", base_url="https://openrouter.ai/api/v1")
+
+
+def _json_response(payload: dict[str, Any]) -> Any:
+    """A urlopen double returning one JSON body through the context-manager protocol."""
+    import json as _json
+
+    class _Response:
+        def read(self) -> bytes:
+            return _json.dumps(payload).encode()
+
+        def __enter__(self) -> Any:
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            return None
+
+    def opener(*args: Any, **kwargs: Any) -> Any:
+        return _Response()
+
+    return opener
+
+
 class _LimitedOnce(FakeModel):
     """Refuses the named tier until `open_at` refusals, then behaves like FakeModel.
 
@@ -914,3 +945,107 @@ def test_status_reads_a_pre_0016_run_without_dying(
     # NULL and absent both mean the same thing: before 0016, degraded could only be the
     # cap, so the label is the cap's — the same sentence a migrated NULL row renders.
     assert "DEGRADED (spend_cap)" in result.output
+
+
+class TestTheHostedBackendCanNameALimitToo:
+    """`RateLimited` was raised in `ClaudeCLIBackend` and nowhere else.
+
+    Every hosted configuration — `openai_compatible`, `deepinfra` — runs through
+    `DeepInfraBackend`, where an HTTP 429 became an ordinary `ModelError`. Three
+    consequences, all of them observed in the 2026-08-24 audit against OpenRouter's free
+    tier: a rate-limited *batch* was indistinguishable from a failed one and escalated its
+    twelve items into twelve more refused calls; `_LimitClaim` never saw a claimant, so the
+    run kept calling a provider that had already answered `X-RateLimit-Remaining: 0`; and
+    `degrade_reason` stayed empty, so the owner was shown a list of errors rather than
+    "today's quota is spent, the items are still pending".
+    """
+
+    @staticmethod
+    def _urlopen(monkeypatch: pytest.MonkeyPatch, raiser: Any) -> None:
+        monkeypatch.setattr(
+            "backglass.extract.client.urllib.request.urlopen", raiser
+        )
+
+    def test_http_429_is_a_limit_not_a_generic_failure(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import io
+        import urllib.error
+
+        body = (
+            b'{"error":{"message":"Rate limit exceeded: free-models-per-day. '
+            b'Add 10 credits to unlock 1000 free model requests per day","code":429}}'
+        )
+
+        def boom(*args: Any, **kwargs: Any) -> Any:
+            raise urllib.error.HTTPError(
+                "u", 429, "Too Many Requests", {}, io.BytesIO(body)  # type: ignore[arg-type]
+            )
+
+        self._urlopen(monkeypatch, boom)
+        with pytest.raises(RateLimited) as caught:
+            _hosted().complete(
+                system="s", user="u", schema=_TRIAGE_SCHEMA, model="m", budget_usd=0.1
+            )
+        assert "free-models-per-day" in str(caught.value), "the provider's own words"
+
+    def test_a_429_shaped_error_envelope_at_http_200_is_a_limit(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """OpenRouter answers 200 with an error object when an upstream refuses rather
+        than the gateway. Read as a limit here, or it lands in "no usable tool call" —
+        the generic failure that escalates and re-fails every item."""
+        self._urlopen(
+            monkeypatch,
+            _json_response(
+                {"error": {"message": "temporarily rate-limited upstream", "code": 429}}
+            ),
+        )
+        with pytest.raises(RateLimited):
+            _hosted().complete(
+                system="s", user="u", schema=_TRIAGE_SCHEMA, model="m", budget_usd=0.1
+            )
+
+    def test_another_status_is_still_an_ordinary_model_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The other half of the distinction. A 400 must not stop the wave: it is
+        deterministic, and holding the queue for it is the permanent stall `_LimitClaim`
+        exists to refuse."""
+        import io
+        import urllib.error
+
+        def boom(*args: Any, **kwargs: Any) -> Any:
+            raise urllib.error.HTTPError(
+                "u", 400, "Bad Request", {},  # type: ignore[arg-type]
+                io.BytesIO(b'{"error":{"message":"models array must have 3 items or fewer"}}'),
+            )
+
+        self._urlopen(monkeypatch, boom)
+        with pytest.raises(ModelError) as caught:
+            _hosted().complete(
+                system="s", user="u", schema=_TRIAGE_SCHEMA, model="m", budget_usd=0.1
+            )
+        assert not isinstance(caught.value, RateLimited)
+        assert "3 items or fewer" in str(caught.value), "the body, not just the code"
+
+    def test_the_openrouter_phrase_this_file_quotes_is_matched(self) -> None:
+        """`DeepInfraBackend.fallbacks` documents the free tier answering
+        `429 … temporarily rate-limited upstream`, and the marker list spelled it
+        `rate limited` — so the one provider message this codebase quotes verbatim was
+        the one the matcher could not see."""
+        from backglass.extract.client import _looks_rate_limited
+
+        assert _looks_rate_limited("temporarily rate-limited upstream")
+
+    def test_a_traceback_naming_a_limit_handler_is_not_a_limit(self) -> None:
+        """Why the fix is a marker and not a hyphen-folding pass over the whole string.
+
+        Folding would match `rate-limit-handler.js:12`, which is the `cli.js:1:429517`
+        mistake in this module's own comment wearing different punctuation — and a false
+        limit stops the wave while spending no attempt, the shape that stalls a queue
+        forever."""
+        from backglass.extract.client import _looks_rate_limited
+
+        assert not _looks_rate_limited("TypeError at rate-limit-handler.js:12")
+        assert not _looks_rate_limited("cli.js:1:429517")

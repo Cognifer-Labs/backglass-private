@@ -8,6 +8,11 @@ source except Gmail — which is to say, for the entire ledger as it stands toda
 Read-only, deliberately. Everything on this page is either immutable (docs/03) or owned
 by another surface's write path, and a page whose job is "show me what this claim rests
 on" should not be able to change what it rests on.
+
+The one POST here does not break that. `/source/{id}/reply` drafts an answer to the
+thread and writes nothing at all — it is a read that happens to need a form, the same
+shape `/people/{id}/reachout` already uses. The draft leaves as text and a `mailto:`
+link; sending is the owner's hand on their own mail client, never this app's.
 """
 
 from __future__ import annotations
@@ -17,12 +22,13 @@ from collections.abc import Callable
 from datetime import date
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
 
 from backglass.config import Settings
 from backglass.db import query
+from backglass.draft import reply as reply_mod
 from backglass.ledger import USER_ID
 from backglass.web.params import RowId
 
@@ -70,8 +76,55 @@ def build_router(
                 "derived": derived,
                 "facts": facts,
                 "external_url": _external_url(item),
+                "repliable": str(item["source"] or "") in reply_mod.MAIL_SOURCES,
                 "settings": settings,
             },
+        )
+
+    @router.post("/source/{source_item_id}/reply", response_class=HTMLResponse)
+    def reply_draft(
+        source_item_id: RowId,
+        request: Request,
+        say: str = Form(""),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        """Draft an answer to this thread. A read: nothing here writes a row.
+
+        The model call is the slow part and the owner is watching a spinner, so failure
+        renders inside the fragment rather than as a status code the HTMX swap would
+        drop on the floor. Same choice, same reason, as the reachout form on /people.
+        """
+        from backglass.extract import client as client_mod
+
+        try:
+            record = reply_mod.draft_reply(
+                conn,
+                settings,
+                source_item_id,
+                stance=say,
+                client=client_mod.build(settings),
+            )
+        except reply_mod.ReplyError as exc:
+            # A missing stance is the owner mis-filling a form, not a server fault.
+            return templates.TemplateResponse(
+                request, "_reply.html", {"draft": None, "error": str(exc)}
+            )
+        except Exception as exc:  # noqa: BLE001
+            # Rule 5 at the page level: a model outage degrades to a sentence the owner
+            # can act on, and the rest of the page stays exactly as true as it was.
+            return templates.TemplateResponse(
+                request,
+                "_reply.html",
+                {
+                    "draft": None,
+                    "error": (
+                        f"The model call failed ({type(exc).__name__}). Nothing was"
+                        " written, so retrying is safe."
+                    ),
+                },
+            )
+        return templates.TemplateResponse(
+            request, "_reply.html", {"draft": record, "error": None}
         )
 
     return router

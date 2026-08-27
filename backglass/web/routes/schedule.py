@@ -12,21 +12,22 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from dataclasses import field as dataclass_field
 from datetime import date, datetime, timedelta
 from typing import Annotated, Any
 from zoneinfo import ZoneInfo
 
 from annotated_types import Ge, Le
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from backglass.config import Settings
 from backglass.db import query
 from backglass.ledger import USER_ID
-from backglass.plan import capacity, timezones
+from backglass.plan import capacity, planner, priority, timezones
+from backglass.web import actions
 
 
 @dataclass(frozen=True)
@@ -114,6 +115,16 @@ class Entry:
     lanes: int = 1
     outcome: str = ""
     travel: bool = False
+    #: Carried through from `RawEntry` so the canvas can act on what it draws, and
+    #: `None` where there is genuinely nothing to act on. A routine is configuration
+    #: with no row behind it and gets no buttons rather than a button that lies.
+    block_id: int | None = None
+    source_item_id: int | None = None
+    pinned: bool = False
+
+    @property
+    def actionable(self) -> bool:
+        return self.block_id is not None or self.source_item_id is not None
 
     @property
     def slim(self) -> bool:
@@ -137,6 +148,17 @@ class Timeline:
     height: int
     entries: list[Entry]
     now_top: int | None
+    #: The window the canvas draws, in minutes of the day. Carried rather than derived
+    #: from `hours[0] * 60`: `_window` is not hour-aligned, and `now.js` moves the Now
+    #: line by re-doing `_now_top`'s arithmetic in the browser — off by the same amount
+    #: the ruler is, or off by nothing.
+    start_min: int = 0
+    end_min: int = 24 * 60
+    #: Whether this is the day the Now line belongs on. `now_top` is None both when the
+    #: day is not today and when the clock is outside the drawn window, and the browser
+    #: has to tell those apart: the second one starts moving at 7:30am, the first never
+    #: does.
+    is_today: bool = False
 
 
 def _minutes(hhmm: str) -> int | None:
@@ -160,8 +182,36 @@ def _clock(minute_of_day: int) -> str:
     return timezones.clock12(minute_of_day)
 
 
-#: (start_minute, duration, title, kind, outcome, travel)
-RawEntry = tuple[int, int, str, str, str, bool]
+@dataclass(frozen=True)
+class RawEntry:
+    """One thing on the day, in the minute coordinates this page works in.
+
+    A six-tuple until 2026-08-27, and it had to stop being one the moment the entries
+    started carrying identity. Five call sites unpack it, `_clusters` and `_window`
+    index into it, and the two new fields are both `int | None` sitting next to each
+    other — the exact shape that makes a positional slip type-check and draw the wrong
+    button on the wrong block.
+    """
+
+    start: int
+    minutes: int
+    title: str
+    kind: str
+    outcome: str = ""
+    travel: bool = False
+    #: The `plan_block` row, when a planner wrote one. What Done/Roll/Pin act on.
+    block_id: int | None = None
+    #: Whether that block is already held against the replanner. Carried so the button
+    #: can be a toggle rather than a one-way trip — the same Pin/Unpin the Today panel
+    #: has always drawn.
+    pinned: bool = False
+    #: The `source_item` this was read out of, when a calendar reader supplied it.
+    #: What "not happening" retracts, and what /source/{id} shows the evidence for.
+    source_item_id: int | None = None
+
+    @property
+    def end(self) -> int:
+        return self.start + self.minutes
 
 
 def _collapse(raw: list[RawEntry]) -> list[RawEntry]:
@@ -193,22 +243,29 @@ def _collapse(raw: list[RawEntry]) -> list[RawEntry]:
     that only the loser held — and since `_raw_entries` appends the calendar copies first,
     a winner-takes-all merge always loses the outcome, so a block marked done or rolled
     would silently render as if it had never been touched.
+
+    The two ids merge under that same rule, and they are the reason it matters most.
+    Only the plan copy knows its `block_id`; only the calendar copy knows the
+    `source_item_id` behind it. One event, two doors — Done/Roll/Pin act on the plan
+    row, "not happening" retracts the calendar row — and a merge that kept one copy
+    whole would take away whichever door the loser held. Before 2026-08-27 this function
+    dropped both, because there was nothing to drop: the entries had no identity at all,
+    and correcting a wrong class time meant writing a script.
     """
     kept: dict[tuple[int, int, str], RawEntry] = {}
     for entry in raw:
-        identity = (entry[0], entry[1], entry[2].casefold())
+        identity = (entry.start, entry.minutes, entry.title.casefold())
         seen = kept.get(identity)
         if seen is None:
             kept[identity] = entry
             continue
-        start, dur, title, kind, outcome, travel = seen
-        kept[identity] = (
-            start,
-            dur,
-            title,
-            kind,
-            outcome or entry[4],
-            travel or entry[5],
+        kept[identity] = replace(
+            seen,
+            outcome=seen.outcome or entry.outcome,
+            travel=seen.travel or entry.travel,
+            block_id=seen.block_id or entry.block_id,
+            pinned=seen.pinned or entry.pinned,
+            source_item_id=seen.source_item_id or entry.source_item_id,
         )
     return list(kept.values())
 
@@ -237,17 +294,24 @@ def _raw_entries(view: DayView) -> list[RawEntry]:
         if e.allday:
             continue  # a banner, not an hour — see `allday` above
         raw.append(
-            (
-                e.starts_at.hour * 60 + e.starts_at.minute,
-                max(e.minutes, 1),
-                e.title or "Busy",
-                e.kind,
-                "",
-                e.travel,
+            RawEntry(
+                start=e.starts_at.hour * 60 + e.starts_at.minute,
+                minutes=max(e.minutes, 1),
+                title=e.title or "Busy",
+                kind=e.kind,
+                travel=e.travel,
+                source_item_id=e.source_item_id,
             )
         )
     for b in view.blocks:
         if str(b["kind"]) == "allday":
+            continue
+        if str(b["outcome"]) == "dropped":
+            # "Not this slot" — `actions.set_block_outcome`'s own words. A block the
+            # owner has taken off the day must stop holding one, or `gaps` reports free
+            # time that is not free and the canvas keeps asserting a class that was
+            # cancelled. Done and rolled still draw: those happened, and the day is
+            # also a record of itself.
             continue
         start = _minutes(str(b["starts_at"])[11:16])
         end = _minutes(str(b["ends_at"])[11:16])
@@ -260,11 +324,18 @@ def _raw_entries(view: DayView) -> list[RawEntry]:
             # row it could not read.
             continue
         raw.append(
-            (start, max(end - start, 1), str(b["title"]), str(b["kind"]),
-             str(b["outcome"]), False)
+            RawEntry(
+                start=start,
+                minutes=max(end - start, 1),
+                title=str(b["title"]),
+                kind=str(b["kind"]),
+                outcome=str(b["outcome"]),
+                block_id=int(b["id"]),
+                pinned=bool(b["pinned"]),
+            )
         )
     raw = _collapse(raw)
-    raw.sort(key=lambda r: (r[0], -r[1]))
+    raw.sort(key=lambda r: (r.start, -r.minutes))
     return raw
 
 
@@ -272,8 +343,8 @@ def _window(raws: list[list[RawEntry]]) -> tuple[int, int]:
     """Hour-snapped span covering the default working window plus anything
     scheduled outside it — across every day given, so week columns share a ruler."""
     flat = [r for raw in raws for r in raw]
-    start_min = min([WINDOW_START_H * 60, *(r[0] for r in flat)])
-    end_min = max([WINDOW_END_H * 60, *(r[0] + r[1] for r in flat)])
+    start_min = min([WINDOW_START_H * 60, *(r.start for r in flat)])
+    end_min = max([WINDOW_END_H * 60, *(r.end for r in flat)])
     return (start_min // 60) * 60, ((end_min + 59) // 60) * 60
 
 
@@ -291,11 +362,11 @@ def _clusters(raw: list[RawEntry]) -> list[list[RawEntry]]:
     out: list[list[RawEntry]] = []
     reach: int | None = None
     for entry in raw:
-        if reach is None or entry[0] >= reach:
+        if reach is None or entry.start >= reach:
             out.append([])
-            reach = entry[0] + entry[1]
+            reach = entry.end
         else:
-            reach = max(reach, entry[0] + entry[1])
+            reach = max(reach, entry.end)
         out[-1].append(entry)
     return out
 
@@ -322,27 +393,30 @@ def _place(raw: list[RawEntry], start_min: int, *, px: float, min_height: int) -
         lane_ends: list[int] = []
         placed: list[tuple[int, RawEntry]] = []
         for entry in cluster:
-            start, dur = entry[0], entry[1]
             lane = next(
-                (i for i, end in enumerate(lane_ends) if start >= end), len(lane_ends)
+                (i for i, end in enumerate(lane_ends) if entry.start >= end),
+                len(lane_ends),
             )
             if lane == len(lane_ends):
                 lane_ends.append(0)
-            lane_ends[lane] = start + dur
+            lane_ends[lane] = entry.end
             placed.append((lane, entry))
-        for lane, (start, dur, title, kind, outcome, travel) in placed:
+        for lane, entry in placed:
             entries.append(
                 Entry(
-                    title=title,
-                    kind=kind,
-                    start_label=_clock(start),
-                    end_label=_clock(start + dur),
-                    top=round((start - start_min) * px),
-                    height=max(round(dur * px), min_height),
+                    title=entry.title,
+                    kind=entry.kind,
+                    start_label=_clock(entry.start),
+                    end_label=_clock(entry.end),
+                    top=round((entry.start - start_min) * px),
+                    height=max(round(entry.minutes * px), min_height),
                     lane=lane,
                     lanes=len(lane_ends),
-                    outcome=outcome,
-                    travel=travel,
+                    outcome=entry.outcome,
+                    travel=entry.travel,
+                    block_id=entry.block_id,
+                    source_item_id=entry.source_item_id,
+                    pinned=entry.pinned,
                 )
             )
     return entries
@@ -370,6 +444,9 @@ def timeline(view: DayView, *, today: date) -> Timeline:
         height=(end_min - start_min) * PX_PER_MIN,
         entries=_place(raw, start_min, px=PX_PER_MIN, min_height=14),
         now_top=_now_top(view, today, start_min, end_min, PX_PER_MIN),
+        start_min=start_min,
+        end_min=end_min,
+        is_today=view.day == today,
     )
 
 
@@ -423,12 +500,12 @@ def now_next(view: DayView, *, today: date) -> NowNext | None:
         return None
     now_min = _now_minute(view)
     raw = _raw_entries(view)
-    for start, dur, title, _kind, _outcome, _travel in raw:
-        if start <= now_min < start + dur:
-            return NowNext("NOW", title, f"until {_clock(start + dur)}")
-    for start, _dur, title, _kind, _outcome, _travel in raw:
-        if start > now_min:
-            return NowNext("NEXT", title, _clock(start))
+    for entry in raw:
+        if entry.start <= now_min < entry.end:
+            return NowNext("NOW", entry.title, f"until {_clock(entry.end)}")
+    for entry in raw:
+        if entry.start > now_min:
+            return NowNext("NEXT", entry.title, _clock(entry.start))
     return None
 
 
@@ -444,10 +521,10 @@ def gaps(view: DayView) -> list[Gap]:
     start_min, end_min = _window([raw])
     out: list[Gap] = []
     cursor = start_min
-    for start, dur, _title, _kind, _outcome, _travel in raw:
-        if start - cursor >= MIN_GAP_MINUTES:
-            out.append(Gap(_clock(cursor), _clock(start), start - cursor))
-        cursor = max(cursor, start + dur)
+    for entry in raw:
+        if entry.start - cursor >= MIN_GAP_MINUTES:
+            out.append(Gap(_clock(cursor), _clock(entry.start), entry.start - cursor))
+        cursor = max(cursor, entry.end)
     if end_min - cursor >= MIN_GAP_MINUTES:
         out.append(Gap(_clock(cursor), _clock(end_min), end_min - cursor))
     return out
@@ -514,6 +591,10 @@ class WeekTimeline:
     height: int
     hour_px: int
     cols: list[WeekCol]
+    #: The drawn window, for the same reason `Timeline` carries it — `now.js` moves this
+    #: grid's Now line too, at half a pixel a minute instead of one.
+    start_min: int = 0
+    end_min: int = 24 * 60
 
     @property
     def planned_minutes(self) -> int:
@@ -554,7 +635,125 @@ def week_timeline(views: list[DayView], *, today: date) -> WeekTimeline:
         height=round((end_min - start_min) * WEEK_PX),
         hour_px=round(60 * WEEK_PX),
         cols=cols,
+        start_min=start_min,
+        end_min=end_min,
     )
+
+
+def _act(fn: Callable[..., Any], *args: Any) -> None:
+    """`app.py::_run`, for the routes that live here.
+
+    Not imported from there: `app.py` imports this module to build the router, so
+    reaching back for it would close the cycle. It is four lines, and the alternative is
+    a shared module holding one function.
+    """
+    try:
+        fn(*args)
+    except actions.ActionError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+def _describe(
+    conn: sqlite3.Connection, day: date, source_item_id: int
+) -> dict[str, Any] | None:
+    """What a calendar event was, in the words the undo strip needs.
+
+    Read before the retraction, because afterwards every reader on this page filters the
+    row out by design and the strip would have nothing to name.
+    """
+    row = conn.execute(
+        "SELECT title, occurred_at FROM source_item WHERE id = ? AND user_id = ?",
+        (source_item_id, USER_ID),
+    ).fetchone()
+    if row is None:
+        return None
+    minute = _minutes(str(row["occurred_at"])[11:16])
+    return {
+        "source_item_id": source_item_id,
+        "title": str(row["title"] or "Busy"),
+        "when": _clock(minute) if minute is not None else day.isoformat(),
+    }
+
+
+@dataclass(frozen=True)
+class RunwayRow:
+    """One obligation on the runway, in the words the page prints.
+
+    Flattened here rather than in the template because two of these fields are
+    judgements — whether a thing is late, and whether it fits at all — and a judgement
+    made inside a Jinja expression is one nobody can test.
+    """
+
+    due: str
+    what: str
+    #: "Mon 31 · 40m" per sitting, already ordered.
+    spread: list[str]
+    minutes: int
+    overdue: bool
+    #: The work does not finish before it is owed, at the capacity of the horizon. The
+    #: whole reason this panel is worth opening.
+    unreachable: bool = False
+
+    @property
+    def days(self) -> int:
+        return len(self.spread)
+
+
+def _runway_rows(
+    pool: list[Any], horizon: Any, *, today_: date | None = None
+) -> list[RunwayRow]:
+    """The runway as rows, deadline first, unreachable work at the top.
+
+    Unreachable first because it is the only part that asks for a decision. Everything
+    below it is the plan working; the top of the list is the plan telling you it cannot.
+    """
+    by_id = {c.commitment_id: c for c in pool}
+    start = today_ or horizon.start
+    unreachable_ids = {c.commitment_id for c in horizon.unreachable}
+    rows: list[RunwayRow] = []
+
+    def _due_key(item: Any) -> str:
+        return str(item.due_at or "9999")[:10]
+
+    def _row(item: Any, sittings: list[Any], unreachable: bool) -> RunwayRow:
+        due = str(item.due_at)[:10] if item.due_at else ""
+        return RunwayRow(
+            due=due,
+            what=item.what,
+            spread=[f"{s.day.strftime('%a %d')} · {s.minutes}m" for s in sittings],
+            minutes=item.remaining,
+            overdue=bool(due and due < start.isoformat()),
+            unreachable=unreachable,
+        )
+
+    for item in sorted(horizon.unreachable, key=_due_key):
+        rows.append(_row(item, horizon.sittings.get(item.commitment_id, []), True))
+    allocated = sorted(
+        (cid for cid in horizon.sittings if cid not in unreachable_ids),
+        key=lambda cid: (_due_key(by_id[cid]), cid),
+    )
+    rows.extend(_row(by_id[cid], horizon.sittings[cid], False) for cid in allocated)
+    return rows
+
+
+def _beyond(horizon: Any) -> dict[str, Any] | None:
+    """The work the fortnight never reached, as one sentence's worth of facts.
+
+    A count and a total rather than a hundred rows: the panel is already 137 lines of
+    obligations that *do* have days, and appending every October assignment with an
+    em-dash where its days go would bury the part that is advice. What the owner needs
+    from this is that the list is a window, not the board — and how much of the board is
+    outside it. `None` when everything fitted, so the sentence disappears with the fact.
+    """
+    if not horizon.beyond:
+        return None
+    minutes = sum(u.minutes for u in horizon.beyond)
+    return {
+        "count": len(horizon.beyond),
+        "hours": minutes // 60,
+        # EDF order, so the first one out is the earliest deadline the fortnight missed.
+        "earliest": str(horizon.beyond[0].item.due_at)[:10],
+    }
 
 
 def build_router(
@@ -594,10 +793,49 @@ def build_router(
                 "gaps": gaps(view),
                 "allday": allday(view),
                 "notes": day_notes(view, settings),
+                # The conflict priority list, stated on the page that shows the day it
+                # governs. Owner's ruling 2026-08-24: a rule nobody can read is a rule
+                # nobody can disagree with, and this one had been distributed across four
+                # files and written down nowhere.
+                "priority_tiers": priority.TIERS,
                 "prev": (day - timedelta(days=1)).isoformat(),
                 "next": (day + timedelta(days=1)).isoformat(),
                 "week_start": week_of(day).isoformat(),
                 "settings": settings,
+            },
+        )
+
+    @router.get("/schedule/runway", response_class=HTMLResponse)
+    def runway_view(
+        request: Request,
+        date_: DayParam | None = Query(None, alias="date"),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        """The fortnight behind the day, as a fragment the fold loads on first open.
+
+        Its own route rather than part of the page, because `runway.allocate` computes
+        fourteen days of capacity and measured 0.58s on the owner's ledger — a real cost
+        on a page opened every morning, and one nobody should pay to look at today. The
+        fold is closed by default and asks for this once (`hx-trigger="toggle once"`), so
+        the day page stays as fast as it was and the runway costs only the mornings
+        somebody wants it.
+        """
+        from backglass.goals import health
+        from backglass.plan import runway as runway_mod
+
+        day = date_ or today()
+        pool = planner.candidates(
+            conn, settings, day, health.at_risk_goal_ids(conn, settings, day)
+        )
+        horizon = runway_mod.allocate(conn, settings, pool, day)
+        return templates.TemplateResponse(
+            request,
+            "_runway.html",
+            {
+                "rows": _runway_rows(pool, horizon),
+                "horizon_days": runway_mod.DEFAULT_HORIZON_DAYS,
+                "unreadable": horizon.unreadable,
+                "beyond": _beyond(horizon),
             },
         )
 
@@ -621,6 +859,125 @@ def build_router(
                 "settings": settings,
             },
         )
+
+    # ── acting on what the canvas draws ──────────────────────────────────
+    #
+    # Owner's ask, 2026-08-27: "everything in schedule should be clickable and
+    # interactable" — said in the same breath as "chem lab is no longer 6 to 7:50
+    # Thursday, why hasn't backglass backend updated to show that". The two are one
+    # request. The lab moved on the 23rd, the ledger knew within hours, and the day page
+    # drew the old hour for four more days because the only door to a wrong calendar row
+    # was a Python script.
+    #
+    # These re-render the timeline rather than redirecting, so acting on a block does not
+    # throw away the scroll position on a canvas that is often taller than the window.
+    # They are scoped under /schedule/{on_date}/ rather than reusing the flat /blocks/…
+    # routes for one reason: those return the Today panel, and a fragment swap has to
+    # answer with the fragment that was asked for.
+
+    def _timeline_fragment(
+        request: Request,
+        conn: sqlite3.Connection,
+        day: date,
+        undo: dict[str, Any] | None = None,
+    ) -> Any:
+        view = day_view(conn, settings, day)
+        return templates.TemplateResponse(
+            request,
+            "_timeline.html",
+            {"view": view, "tl": timeline(view, today=today()), "undo": undo},
+        )
+
+    def _mirror_block(
+        conn: sqlite3.Connection, day: date, source_item_id: int
+    ) -> int | None:
+        """The `plan_block` the planner projected from this calendar event, if any.
+
+        `plan/planner` persists a `kind='fixed'` block for every event in `cap.fixed`, so
+        retracting the calendar row leaves the planner's copy standing on the day — which
+        reads, correctly, as the button having done nothing. The complaint this page is
+        answering is a wrong class time surviving a correction, so a half-applied
+        correction is the one outcome worth spending code to prevent.
+
+        Identity is `_collapse`'s, asked rather than re-derived: the merge that decides
+        two copies are one event is the only place that judgement should live, and a
+        `plan_block` carries no `source_item_id` to join on. Read before the retraction,
+        while the calendar copy is still on the canvas to be merged with.
+        """
+        view = day_view(conn, settings, day)
+        for entry in _raw_entries(view):
+            if entry.source_item_id == source_item_id:
+                return entry.block_id
+        return None
+
+    @router.post("/schedule/{on_date}/blocks/{block_id}/outcome/{outcome}",
+                 response_class=HTMLResponse)
+    def block_outcome(
+        on_date: DayParam,
+        block_id: int,
+        outcome: str,
+        request: Request,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        _act(actions.set_block_outcome, conn, block_id, outcome)
+        return _timeline_fragment(request, conn, on_date)
+
+    @router.post("/schedule/{on_date}/blocks/{block_id}/pin/{pinned}",
+                 response_class=HTMLResponse)
+    def block_pin(
+        on_date: DayParam,
+        block_id: int,
+        pinned: int,
+        request: Request,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        _act(actions.pin_block, conn, block_id, bool(pinned))
+        return _timeline_fragment(request, conn, on_date)
+
+    @router.post("/schedule/{on_date}/source/{source_item_id}/retract",
+                 response_class=HTMLResponse)
+    def retract_event(
+        on_date: DayParam,
+        source_item_id: int,
+        request: Request,
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        """Take a calendar event off the day. The door `retraction.py` cannot open.
+
+        That module only ever infers a retraction from a window a connector re-read and
+        certified complete — the safety property it is built around. The rows behind the
+        owner's CHM 113 lab are a one-shot registrar import that no connector re-reads,
+        so no certified read will ever cover them and the owner's own eyes are the only
+        evidence there will be.
+
+        The event is described back before it is removed, because it is about to vanish
+        from the canvas and the undo cannot live on a block that is no longer drawn.
+        """
+        described = _describe(conn, on_date, source_item_id)
+        mirror = _mirror_block(conn, on_date, source_item_id)
+        _act(actions.retract_source_item, conn, source_item_id)
+        if mirror is not None:
+            _act(actions.set_block_outcome, conn, mirror, "dropped")
+            if described is not None:
+                described["block_id"] = mirror
+        return _timeline_fragment(request, conn, on_date, undo=described)
+
+    @router.post("/schedule/{on_date}/source/{source_item_id}/restore",
+                 response_class=HTMLResponse)
+    def restore_event(
+        on_date: DayParam,
+        source_item_id: int,
+        request: Request,
+        block: int | None = Query(None),
+        conn: sqlite3.Connection = Depends(get_conn),
+    ) -> Any:
+        """Undo, both halves. The retraction put the calendar row back out of reach and
+        dropped the plan block mirroring it; leaving the block dropped would undo half
+        the action and leave the day quietly short of a class."""
+        _act(actions.restore_source_item, conn, source_item_id)
+        if block is not None:
+            _act(actions.set_block_outcome, conn, block, "pending")
+        return _timeline_fragment(request, conn, on_date)
 
     @router.post("/schedule/{on_date}/accept")
     def accept_plan(

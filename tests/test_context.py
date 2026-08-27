@@ -61,6 +61,98 @@ def _commitment(
     return int(cur.lastrowid)
 
 
+class TestWhatHasAlreadyBeenSettled:
+    """The tier added 2026-08-23, for the failure the other four cannot see.
+
+    The ledger knew the owner had declined an application and no model call was told, so
+    the next mail about it read as a fresh obligation.
+    """
+
+    def test_a_standing_decision_is_stated(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        from backglass import decisions
+
+        decisions.record(
+            conn,
+            settings,
+            title="BioBridge",
+            choice="dropped it for the MLSBE summer program",
+        )
+
+        block = context.assemble(conn, settings, day=TODAY)
+
+        assert "WHAT THE OWNER HAS ALREADY DECIDED" in block
+        assert "BioBridge" in block
+        assert "MLSBE" in block
+
+    def test_an_identity_answer_does_not_crowd_out_a_real_decision(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """Answering "are these two the same person" is a decision, and it is not this.
+
+        It has already been applied — the merge happened — and there are enough of them to
+        fill the section's whole budget. On the real ledger they took seven of eight slots.
+        """
+        from backglass import decisions
+
+        for n in range(3):
+            decisions.record(
+                conn,
+                settings,
+                title=f"Are alias {n} and alias {n + 1} the same person?",
+                choice="Same person",
+                reasoning="answered in the questions surface · duplicate_entity",
+            )
+        decisions.record(conn, settings, title="BioBridge", choice="dropped it")
+
+        block = context.assemble(conn, settings, day=TODAY)
+
+        assert "BioBridge" in block
+        assert "the same person" not in block
+
+    def test_no_decisions_means_no_section(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        remember(conn, settings, "housing", "dorm", "Barrett", source="manual")
+
+        assert "ALREADY DECIDED" not in context.assemble(conn, settings, day=TODAY)
+
+
+class TestTheSemester:
+    def test_the_course_codes_the_ledger_knows_are_named(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        for title in ("CHM 113 Lecture", "CHM 113 (Lab)", "BIO 181 Lecture"):
+            conn.execute(
+                "INSERT INTO source_item (user_id, source, external_id, fetched_at,"
+                " occurred_at, title, body_text, content_hash, triage_verdict)"
+                " VALUES (1, 'calendar:asu', ?, ?, ?, ?, 'B', ?, 'keep')",
+                (f"cal-{title}", "2026-08-10T00:00:00Z", "2026-08-10T00:00:00Z",
+                 title, f"h-cal-{title}"),
+            )
+
+        block = context.assemble(conn, settings, day=TODAY)
+
+        assert "THE OWNER'S CURRENT CLASSES" in block
+        # One line per course, not per meeting, and sorted — the ordering `courses.load`
+        # uses tracks the clock and would give a different block every run.
+        assert block.count("- BIO 181") == 1
+        assert block.index("- BIO 181") < block.index("- CHM 113")
+
+    def test_an_org_shell_with_no_course_code_is_not_a_class(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        conn.execute(
+            "INSERT INTO source_item (user_id, source, external_id, fetched_at,"
+            " occurred_at, title, body_text, content_hash, triage_verdict)"
+            " VALUES (1, 'calendar:asu', 'shell', ?, ?, 'TRN-ASUReady-UG', 'B', 'h', 'keep')",
+            ("2026-08-10T00:00:00Z", "2026-08-10T00:00:00Z"),
+        )
+
+        assert "CURRENT CLASSES" not in context.assemble(conn, settings, day=TODAY)
+
+
 class TestAFreshInstall:
     def test_an_empty_ledger_assembles_to_nothing(
         self, conn: sqlite3.Connection, settings: Settings
@@ -346,3 +438,64 @@ class TestTheWiring:
         assert "Never\nextract from it" in static or "Never extract from it" in static
         assert "{{owner_context}}" in dynamic
         assert "{{owner_context}}" not in static
+
+
+class TestTheSituationNamesTheNearestEdgeOfNow:
+    """Every model call in the pipeline reads this block as "the owner's current
+    situation". Until 2026-08-24 it ordered by due date ascending, which sounds right and
+    is exactly backwards: the overdue set only grows at its old end, so the five named
+    rows were the five most-lapsed on the board, permanently. Measured on the live ledger
+    that morning — 37 things due inside the week, and the block named five obligations
+    from March and April and none of them (pipeline-audit-2026-08-21 §4a).
+    """
+
+    def test_what_is_due_soon_is_named_before_what_has_lapsed(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        _commitment(conn, "an ancient thing", due="2026-03-23")
+        _commitment(conn, "due tomorrow", due="2026-08-26")
+
+        block = context._situation(conn, date(2026, 8, 25))
+
+        assert block.index("due tomorrow") < block.index("an ancient thing")
+
+    def test_among_lapsed_rows_the_most_recent_wins(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """A thing that lapsed yesterday is live. A thing that lapsed in March is either
+        dead or already in the staleness queue being asked about, and either way it is not
+        what the next message is about."""
+        for index in range(context.LINE_LIMIT):
+            _commitment(conn, f"ancient {index}", due=f"2026-03-{index + 10:02d}")
+        _commitment(conn, "lapsed yesterday", due="2026-08-24")
+
+        block = context._situation(conn, date(2026, 8, 25))
+
+        assert "lapsed yesterday" in block
+        assert "ancient 0" not in block
+
+    def test_the_counts_still_cover_everything_the_lines_do_not(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """The reordering must not hide anything: it changes which five are *named*, and
+        the summary above them is still over the whole board."""
+        for index in range(context.LINE_LIMIT + 3):
+            _commitment(conn, f"ancient {index}", due=f"2026-03-{index + 10:02d}")
+
+        block = context._situation(conn, date(2026, 8, 25))
+
+        assert f"{context.LINE_LIMIT + 3} open commitments" in block
+        assert f"{context.LINE_LIMIT + 3} overdue" in block
+
+    def test_an_evening_row_belongs_to_the_day_it_was_written_in(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        """The `substr(due_at, 1, 10)` rule, asserted through the new ORDER BY: `date()`
+        would walk an evening Phoenix row into the next day and file it under "due soon"
+        when it is due today (lessons, 2026-08-01)."""
+        _commitment(conn, "this evening", due="2026-08-25T19:00:00-07:00")
+
+        block = context._situation(conn, date(2026, 8, 25))
+
+        assert "(due 2026-08-25)" in block
+        assert "OVERDUE" not in block

@@ -602,3 +602,115 @@ CREATE TABLE logic_check (
 );
 
 CREATE INDEX idx_logic_check_pending ON logic_check(user_id, status) WHERE status = 'pending';
+
+CREATE TABLE source_item_retraction (
+  source_item_id INTEGER PRIMARY KEY REFERENCES source_item(id),
+  user_id        INTEGER NOT NULL DEFAULT 1,
+  retracted_at   TEXT    NOT NULL,
+  reason         TEXT    NOT NULL
+);
+
+CREATE INDEX idx_retraction_user ON source_item_retraction(user_id);
+
+CREATE TABLE assignment (
+  id               INTEGER PRIMARY KEY,
+  user_id          INTEGER NOT NULL DEFAULT 1,
+  source           TEXT    NOT NULL,              -- canvas:ics
+  external_id      TEXT    NOT NULL,              -- assignment:7833000, the item's own id
+  source_item_id   INTEGER REFERENCES source_item(id),
+  course           TEXT    NOT NULL DEFAULT '',
+  title            TEXT    NOT NULL,
+  due_at           TEXT,
+  url              TEXT    NOT NULL DEFAULT '',
+  description      TEXT    NOT NULL DEFAULT '',
+  -- What "changed" means for this row. Not the fetch time: a feed re-read that returns
+  -- the same document must write nothing (rule 3), and a description edit must re-open
+  -- the effort question that was answered from the old text.
+  description_hash TEXT    NOT NULL,
+  effort_minutes   INTEGER,
+  effort_basis     TEXT,                          -- stated_video|stated_words|…|type:<k>
+  effort_quote     TEXT,                          -- the words the number was read from
+  sessions         INTEGER NOT NULL DEFAULT 1,
+  analyzed_hash    TEXT,                          -- the description_hash it was read from
+  first_seen_at    TEXT    NOT NULL,
+  -- Last *changed*, not last seen. A feed re-read that returns the same document must
+  -- write nothing (rule 3), and a column bumped on every fetch would make every sync a
+  -- write for all 159 rows — so the honest name is the one that matches the behaviour.
+  -- "Did the feed still list it today" is `retraction`'s question and it has its own
+  -- table; this one answers "when did this assignment last move".
+  last_changed_at  TEXT    NOT NULL,
+  UNIQUE (user_id, source, external_id)
+);
+
+CREATE INDEX idx_assignment_due ON assignment(user_id, due_at);
+
+CREATE INDEX idx_assignment_item ON assignment(source_item_id);
+
+CREATE TABLE assignment_material (
+  id            INTEGER PRIMARY KEY,
+  user_id       INTEGER NOT NULL DEFAULT 1,
+  assignment_id INTEGER NOT NULL REFERENCES assignment(id) ON DELETE CASCADE,
+  kind          TEXT    NOT NULL,                 -- reading|software|link|document|other
+  name          TEXT    NOT NULL,
+  detail        TEXT    NOT NULL DEFAULT '',
+  quote         TEXT    NOT NULL DEFAULT '',
+  basis         TEXT    NOT NULL DEFAULT 'deterministic',  -- deterministic|model
+  created_at    TEXT    NOT NULL,
+  UNIQUE (user_id, assignment_id, kind, name)
+);
+
+CREATE INDEX idx_assignment_material ON assignment_material(user_id, assignment_id);
+
+CREATE TABLE claim_event (
+  id            INTEGER PRIMARY KEY,
+  user_id       INTEGER NOT NULL DEFAULT 1,
+  at            TEXT    NOT NULL,
+  subject_table TEXT    NOT NULL,   -- 'commitment' | 'fact' | 'open_question' | ...
+  subject_id    INTEGER NOT NULL,
+  field         TEXT,               -- the column that changed, or NULL for a whole-row event
+  old_value     TEXT,
+  new_value     TEXT,
+  cause         TEXT    NOT NULL    -- free text: 'fact_superseded', 'logic:reported-done', ...
+);
+
+CREATE INDEX idx_claim_event_subject ON claim_event(user_id, subject_table, subject_id, id);
+
+CREATE INDEX idx_claim_event_recent ON claim_event(user_id, at);
+
+CREATE TABLE claim_dependency (
+  id            INTEGER PRIMARY KEY,
+  user_id       INTEGER NOT NULL DEFAULT 1,
+  subject_table TEXT    NOT NULL,
+  subject_id    INTEGER NOT NULL,
+  dep_key       TEXT    NOT NULL,
+  kind          TEXT    NOT NULL,             -- 'fact' | 'none'
+  fact_id       INTEGER REFERENCES fact(id),
+  quote         TEXT,
+  reason        TEXT    NOT NULL,
+  status        TEXT    NOT NULL DEFAULT 'active',  -- active|superseded
+  superseded_by INTEGER REFERENCES claim_event(id),
+  created_at    TEXT    NOT NULL,
+  UNIQUE (user_id, subject_table, subject_id, dep_key)
+);
+
+CREATE INDEX idx_claim_dependency_fact
+  ON claim_dependency(user_id, fact_id) WHERE status = 'active';
+
+CREATE TABLE situation_doc (
+  id         INTEGER PRIMARY KEY,
+  user_id    INTEGER NOT NULL DEFAULT 1,
+  body       TEXT    NOT NULL,
+  body_hash  TEXT    NOT NULL,   -- sha256 of body; the gate that makes a write mean something
+  created_at TEXT    NOT NULL
+);
+
+CREATE INDEX idx_situation_doc_recent ON situation_doc(user_id, id DESC);
+
+CREATE TABLE engagement_distinct (
+  id         INTEGER PRIMARY KEY,
+  user_id    INTEGER NOT NULL DEFAULT 1,
+  low_id     INTEGER NOT NULL REFERENCES engagement(id),
+  high_id    INTEGER NOT NULL REFERENCES engagement(id),
+  decided_at TEXT    NOT NULL,
+  UNIQUE (user_id, low_id, high_id)
+);

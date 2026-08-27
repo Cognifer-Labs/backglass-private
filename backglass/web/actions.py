@@ -20,6 +20,7 @@ import sqlite3
 from dataclasses import dataclass
 from typing import Any
 
+from backglass import claim_events
 from backglass.db import now_iso
 from backglass.ledger import USER_ID
 from backglass.plan import timezones
@@ -94,6 +95,10 @@ def resolve(conn: sqlite3.Connection, commitment_id: int, note: str | None = Non
         "WHERE id = ? AND status = 'open'",
         (now_iso(), note, commitment_id),
     )
+    claim_events.record(
+        conn, subject_table="commitment", subject_id=commitment_id, cause="resolved",
+        field="status", old_value="open", new_value="done",
+    )
     return Result(ok=True, detail="done")
 
 
@@ -108,6 +113,10 @@ def drop(conn: sqlite3.Connection, commitment_id: int, note: str | None = None) 
         "UPDATE commitment SET status = 'dropped', resolved_at = ?, resolution_note = ? "
         "WHERE id = ? AND status = 'open'",
         (now_iso(), note, commitment_id),
+    )
+    claim_events.record(
+        conn, subject_table="commitment", subject_id=commitment_id, cause="dropped",
+        field="status", old_value="open", new_value="dropped",
     )
     return Result(ok=True, detail="dropped")
 
@@ -207,6 +216,102 @@ def different(conn: sqlite3.Connection, a_id: int, b_id: int) -> Result:
             raise ActionError(f"no commitment {cid}")
     cur = conn.execute(
         "INSERT INTO commitment_distinct (user_id, low_id, high_id, decided_at)"
+        " VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+        (USER_ID, low, high, now_iso()),
+    )
+    if cur.rowcount == 0:
+        raise ActionError("already marked as different")
+    return Result(ok=True, detail="kept apart")
+
+
+def same_plan(conn: sqlite3.Connection, a_id: int, b_id: int) -> Result:
+    """Two look-alike plans are one plan: keep the older, fold the newer into it.
+
+    `same_thing`'s shape for engagements, and the older row wins for the same reason —
+    it is the row the plan was first sighted on, and every later sighting should have
+    landed there. The loser is `superseded` rather than dropped: it was a real sighting,
+    it just was not first.
+
+    What it will **not** do is repaint the winner's time. A commitment merge takes the
+    earlier of the two due dates, because a deadline is a fact about the world and the
+    safer one is the true one. A plan's hour is a decision somebody made, and the two
+    rows exist precisely because nothing in the ledger said which of the two hours
+    replaced the other — that is `_same_row`'s whole argument for not merging these
+    automatically. Picking one here would be the silent repaint that argument refuses;
+    the owner keeps the row they kept, and the other is folded with its evidence.
+
+    One transaction: a half-merged pair (loser superseded, evidence stranded) is worse
+    than either whole.
+    """
+    if a_id == b_id:
+        raise ActionError("that is one plan, not a pair")
+    winner_id, loser_id = sorted((a_id, b_id))
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        rows = {
+            int(r["id"]): r
+            for r in conn.execute(
+                "SELECT id, status FROM engagement WHERE user_id = ? AND id IN (?, ?)",
+                (USER_ID, winner_id, loser_id),
+            )
+        }
+        for eid in (winner_id, loser_id):
+            row = rows.get(eid)
+            if row is None:
+                raise ActionError(f"no plan {eid}")
+            if str(row["status"]) not in ("proposed", "confirmed"):
+                raise ActionError(f"plan {eid} is already {row['status']}")
+        conn.execute(
+            "UPDATE engagement SET status = 'superseded', superseded_by = ?,"
+            " resolved_at = ? WHERE id = ?",
+            (winner_id, now_iso(), loser_id),
+        )
+        conn.execute(
+            "INSERT INTO engagement_evidence"
+            " (user_id, engagement_id, source_item_id, quote, kind, seen_at)"
+            " SELECT user_id, ?, source_item_id, quote, 'restated', seen_at"
+            " FROM engagement_evidence WHERE user_id = ? AND engagement_id = ?"
+            " ON CONFLICT DO NOTHING",
+            (winner_id, USER_ID, loser_id),
+        )
+        # The guest list too: the message that created the loser may be the only one that
+        # named somebody, and losing them would make the merge cost information.
+        conn.execute(
+            "INSERT INTO engagement_person (user_id, engagement_id, entity_id)"
+            " SELECT user_id, ?, entity_id FROM engagement_person"
+            " WHERE user_id = ? AND engagement_id = ?"
+            " ON CONFLICT DO NOTHING",
+            (winner_id, USER_ID, loser_id),
+        )
+        conn.execute("COMMIT")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    claim_events.record(
+        conn, subject_table="engagement", subject_id=loser_id, cause="merged_into_plan",
+        field="status", old_value="open", new_value="superseded",
+    )
+    return Result(ok=True, detail="merged")
+
+
+def different_plans(conn: sqlite3.Connection, a_id: int, b_id: int) -> Result:
+    """The owner says two look-alike plans are genuinely two plans.
+
+    Remembered in `engagement_distinct`, pair normalized low<high, so the pair is never
+    offered again — an unremembered "no" re-surfaces every morning forever, and a scrub
+    board that keeps showing rows the owner has already cleared is a board they stop
+    opening.
+    """
+    if a_id == b_id:
+        raise ActionError("that is one plan, not a pair")
+    low, high = sorted((a_id, b_id))
+    for eid in (low, high):
+        if conn.execute(
+            "SELECT 1 FROM engagement WHERE user_id = ? AND id = ?", (USER_ID, eid)
+        ).fetchone() is None:
+            raise ActionError(f"no plan {eid}")
+    cur = conn.execute(
+        "INSERT INTO engagement_distinct (user_id, low_id, high_id, decided_at)"
         " VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
         (USER_ID, low, high, now_iso()),
     )
@@ -458,15 +563,46 @@ def set_block_outcome(conn: sqlite3.Connection, block_id: int, outcome: str) -> 
         (outcome, 1 if outcome == "rolled" else 0, block_id),
     )
     if outcome == "done" and row["commitment_id"] is not None:
-        # Already closed elsewhere (the board's own resolve, a stale answer, the recheck
-        # pass) is the ordinary case, not an error: the block's outcome still stands.
-        with contextlib.suppress(ActionError):
-            resolve(
-                conn,
-                int(row["commitment_id"]),
-                note=f"marked done on the day plan (block {block_id})",
-            )
+        # …but only when the sittings add up. `planner.Candidate.sitting` caps a block at
+        # `max_block_minutes`, so a 344-minute CIS 236 milestone arrives as four blocks
+        # across four days; closing the obligation on the first of them would delete
+        # three days of work with one click, and the row would read `done` while most of
+        # the deliverable was unwritten. Single-session work — which is nearly all of it
+        # — still resolves on the click exactly as it did, because one sitting is the
+        # whole estimate.
+        if _work_is_finished(conn, int(row["commitment_id"])):
+            # Already closed elsewhere (the board's own resolve, a stale answer, the
+            # recheck pass) is the ordinary case, not an error: the outcome still stands.
+            with contextlib.suppress(ActionError):
+                resolve(
+                    conn,
+                    int(row["commitment_id"]),
+                    note=f"marked done on the day plan (block {block_id})",
+                )
+        else:
+            return Result(ok=True, detail="progress recorded")
     return Result(ok=True, detail=outcome)
+
+
+def _work_is_finished(conn: sqlite3.Connection, commitment_id: int) -> bool:
+    """Have the blocks marked done covered the estimate?
+
+    An obligation with no estimate resolves on the first done block, which is the old
+    behaviour and the right default: without a number there is nothing to be part-way
+    through.
+    """
+    row = conn.execute(
+        "SELECT c.estimated_minutes AS est, COALESCE(("
+        "  SELECT SUM((julianday(b.ends_at) - julianday(b.starts_at)) * 1440) "
+        "  FROM plan_block b WHERE b.commitment_id = c.id AND b.outcome = 'done'"
+        "), 0) AS done FROM commitment c WHERE c.id = ?",
+        (commitment_id,),
+    ).fetchone()
+    if row is None or row["est"] is None:
+        return True
+    # A minute of slack: a block is placed in whole minutes and the sum comes back from
+    # julianday arithmetic, so an exact-fit final sitting can land a hair under.
+    return float(row["done"]) + 1 >= float(row["est"])
 
 
 def pin_block(conn: sqlite3.Connection, block_id: int, pinned: bool = True) -> Result:
@@ -702,3 +838,80 @@ def quick_add(
         # Unreachable while the resolver above holds; here so that if it ever stops
         # holding, the owner gets the sentence rather than a 500.
         raise ActionError(str(exc)) from exc
+
+
+# ── 8. correct a calendar event the world has moved on from ───────────────
+
+
+#: What the owner's own click writes into `source_item_retraction.reason`, distinguished
+#: from a certified-read retraction on purpose. `retraction.py` only ever infers a
+#: retraction from a window a connector re-read in full and certified — that is the
+#: safety property the whole module is built around, and this action does not have it.
+#: It has something the machinery cannot get: the owner looked at the day and said the
+#: event is not happening. Both are true retractions; only one of them is evidence about
+#: what upstream currently holds, and the reason string has to say which.
+OWNER_RETRACTION_PREFIX = "Owner marked this not happening"
+
+
+def retract_source_item(
+    conn: sqlite3.Connection, source_item_id: int, note: str = ""
+) -> Result:
+    """The door that was missing on 2026-08-27.
+
+    The owner's CHM 113 lab moved from Thursday evening to Thursday morning on the 23rd.
+    The ledger knew within hours — two `fact` rows, read off MyASU — and the Schedule
+    page went on drawing a 6:00–7:50 pm block for four more days, because the planner
+    reads calendar rows and the only way to correct one was a Python script.
+
+    `retraction.py` could not help. It infers retractions only from a window a connector
+    re-read and certified complete, and the rows behind that lab are a one-shot registrar
+    import fetched 2026-07-31 that no connector re-reads — permanently uncorrectable by
+    machinery, however long anyone waited. An owner who can see the wrong block is the
+    only evidence that will ever exist for those rows.
+
+    Additive and reversible in the same way every retraction is: `source_item` is never
+    touched, the row stays true and readable forever, and an item retracted by mistake is
+    restored by deleting one row from `source_item_retraction`. What changes is what the
+    day renders and what the planner subtracts — not what the owner can go and look at.
+    """
+    row = conn.execute(
+        "SELECT id FROM source_item WHERE id = ? AND user_id = ?",
+        (source_item_id, USER_ID),
+    ).fetchone()
+    if row is None:
+        raise ActionError(f"no source item {source_item_id}")
+
+    reason = OWNER_RETRACTION_PREFIX
+    if note.strip():
+        reason = f"{reason}: {note.strip()}"
+
+    # `INSERT OR IGNORE` rather than an existence check, so two clicks on a slow
+    # connection are one retraction and not an error the owner has to read.
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO source_item_retraction "
+        "(source_item_id, user_id, retracted_at, reason) VALUES (?, ?, ?, ?)",
+        (source_item_id, USER_ID, now_iso(), reason),
+    )
+    if not cur.rowcount:
+        return Result(ok=True, detail="already retracted")
+    return Result(ok=True, detail="retracted")
+
+
+def restore_source_item(conn: sqlite3.Connection, source_item_id: int) -> Result:
+    """Undo, and the reason the retract button can be a single click.
+
+    Only an owner retraction is undone here. A certified-read retraction is a connector's
+    statement that the item is gone from upstream, and deleting it would put the row back
+    on the canvas until the next sync silently retracted it again — an undo that undoes
+    itself is worse than no button.
+    """
+    cur = conn.execute(
+        "DELETE FROM source_item_retraction "
+        "WHERE source_item_id = ? AND user_id = ? AND reason LIKE ?",
+        (source_item_id, USER_ID, f"{OWNER_RETRACTION_PREFIX}%"),
+    )
+    if not cur.rowcount:
+        raise ActionError(
+            f"source item {source_item_id} has no owner retraction to undo"
+        )
+    return Result(ok=True, detail="restored")

@@ -14,13 +14,13 @@
        sentence and the only chip here is the gold overflow warning. #}
     <div class="planacts" id="panel-plan-actions">
       {% if plan and plan['status'] == 'proposed' %}
-        <form method="post" action="/schedule/{{ view.day.isoformat() }}/accept" style="display:inline">
+        <form method="post" action="/schedule/{{ view.day.isoformat() }}/accept">
           <button class="btn ok" type="submit">Accept plan</button>
         </form>
       {% elif plan and plan['status'] == 'accepted' %}
         <span class="b2">plan accepted — replanning only knocks</span>
       {% endif %}
-      <form method="post" action="/schedule/{{ view.day.isoformat() }}/replan" style="display:inline">
+      <form method="post" action="/schedule/{{ view.day.isoformat() }}/replan">
         {# Present on every state: a day with no plan gets one, a stale day gets a
            fresh one. The owner's click may replace even an accepted plan. #}
         <button class="btn" type="submit">{{ 'Replan' if plan else 'Plan this day' }}</button>
@@ -94,48 +94,50 @@
         <p class="note">No plan for this day yet. The day planner runs at 5:45am, or run
           <span class="kbd">backglass plan --date {{ view.day.isoformat() }}</span>.</p>
       {% endif %}
-      <div class="tl" style="height:{{ tl.height }}px">
-        {% for h in tl.hours %}
-          <div class="hr" style="top:{{ loop.index0 * 60 }}px">
-            <span class="hlbl">{{ h|h12 }}</span>
-          </div>
-        {% endfor %}
-
-        {% for e in tl.entries %}
-          {# --lane/--lanes are the column and the count; the stylesheet does the
-             arithmetic so a cluster of five draws five columns rather than two
-             stacked on each other. #}
-          <div class="ev k-{{ e.kind }}{% if e.tiny %} tiny{% elif e.slim %} slim{% endif %}"
-               style="top:{{ e.top }}px;height:{{ e.height }}px;--lane:{{ e.lane }};--lanes:{{ e.lanes }}"
-               {% if e.tiny or e.slim or e.lanes > 1 %}title="{{ e.start_label }}–{{ e.end_label }} {{ e.title }}"
-               aria-label="{{ e.start_label }}–{{ e.end_label }} {{ e.title }}"{% endif %}>
-            {% if e.tiny %}
-              {# Below 32px the title has nowhere to go but under the type floor, so it
-                 is deleted from the canvas rather than shrunk: stripe plus start time. #}
-              <span class="et">{{ e.start_label }}</span>
-            {% elif e.kind == 'protected' %}
-              <span class="et">{{ e.start_label }}–{{ e.end_label }}</span>
-              <span class="en cond">{{ e.title }}</span>
-              {% if not e.slim %}{{ m.chip('protected') }}{% endif %}
-            {% else %}
-              <span class="et">{{ e.start_label }}–{{ e.end_label }}</span>
-              <span class="en">{{ e.title }}</span>
-              {% if not e.slim %}
-                <span class="ek">{{ e.kind }}{% if e.travel %} · travel{% endif %}
-                  {%- if e.outcome and e.outcome != 'pending' %} · {{ e.outcome }}{% endif %}</span>
-              {% endif %}
-            {% endif %}
-          </div>
-        {% endfor %}
-
-        {% if tl.now_top is not none %}
-          {# The strongest mark available is maximum contrast, not a hue — the same
-             reasoning that makes "due today" solid black. #}
-          <div class="now" style="top:{{ tl.now_top }}px"><span>Now</span></div>
-        {% endif %}
-      </div>
-      {{ m.kind_legend() }}
+      {% include "_timeline.html" %}
     {% endif %}
+
+    {# The fortnight the day was chosen out of. Closed, and it costs nothing until it is
+       opened: `hx-trigger="toggle once"` fetches the allocation on the first open and
+       never again, so the day page stays as fast as it was. #}
+    <details class="panel" id="panel-runway" style="margin-top:var(--sp-4)"
+             hx-get="/schedule/runway?date={{ view.day.isoformat() }}"
+             hx-trigger="toggle once"
+             hx-target="#runway-body" hx-swap="outerHTML">
+      {{ m.foldbanner('Runway', 'the next 14 days') }}
+      {# The fragment renders this wrapper too, and the swap replaces it whole rather
+         than its children — an element that is newly inserted is the only thing
+         `@starting-style` can animate, so an innerHTML swap here would snap in beside
+         every other fragment on the page that fades. #}
+      <div class="inner" id="runway-body">
+        <p class="b2">Which day each obligation is actually getting, and what will not
+          finish before it is due. Open to work it out.</p>
+      </div>
+    </details>
+
+    {# The list the day was built by. Closed by default — it is a reference, not the
+       day — and it states how each tier actually wins, because three of the seven are
+       enforced by the shape of the day rather than by any ranking. #}
+    <details class="panel" id="panel-priority" style="margin-top:var(--sp-4)">
+      {{ m.foldbanner('Priority when things conflict', priority_tiers|length ~ ' tiers') }}
+      <div class="inner">
+        {% for tier in priority_tiers %}
+          <div class="row">
+            <span class="time">{{ tier.rank }}</span>
+            <div class="grow">
+              <p class="b1">{{ tier.name }}</p>
+              <p class="b2">{{ tier.enforced_by }}</p>
+            </div>
+          </div>
+        {% endfor %}
+        <p class="b2" style="margin-top:var(--sp-3)">Restate it with
+          <span class="kbd">backglass memory set preferences planner.priority "…"</span>.
+          Nothing here is moved for you — the plan names the collision and you decide.</p>
+      </div>
+    </details>
   </div>
 </section>
 {% endblock %}
+
+{# The Now line is the one mark on this page that is wrong the moment it is drawn. #}
+{% block scripts %}<script src="/static/now.js" defer></script>{% endblock %}

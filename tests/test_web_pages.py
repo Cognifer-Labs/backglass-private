@@ -10,6 +10,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backglass.config import Settings
+from backglass.db import now_iso
 from backglass.web.app import create_app
 from tests.conftest import panel_slice
 
@@ -48,6 +49,43 @@ class TestShell:
             assert page.status_code == 200, path
             for label in ("Dashboard", "Schedule", "Goals", "People", "Roadmaps"):
                 assert label in page.text, (path, label)
+
+    def test_the_classes_tab_is_in_the_nav(self, client: TestClient) -> None:
+        page = client.get("/")
+        assert 'href="/classes"' in page.text
+
+    def test_every_page_with_a_route_is_reachable_from_the_nav(
+        self, client: TestClient
+    ) -> None:
+        """/ask and /scrub had routers, templates and tests, and nothing linked to
+        either. Semantic search — 1,630 documents indexed — could only be reached by
+        typing the URL, and /scrub only appeared as a dashboard tile above an alert
+        floor, so the page was invisible on exactly the days it was working."""
+        page = client.get("/").text
+        for href in ("/ask", "/scrub", "/activity"):
+            assert f'href="{href}"' in page, href
+
+    def test_the_digit_keys_and_the_nav_cannot_disagree(
+        self, client: TestClient
+    ) -> None:
+        """The bug this guards against actually happened. base.html said "page switching
+        mirrors the sidebar order" while holding two hand-written copies of the list;
+        /classes was added to the nav on 2026-08-21 and never to the keys, so every key
+        from 3 on pointed one row above its label for four days.
+
+        The fix was to emit both from one list. This asserts that they are still the same
+        list, in the same order — which is the only thing that keeps the comment true.
+        """
+        body = client.get("/").text
+        nav = body[body.index('<nav class="snav"') : body.index("</nav>")]
+        nav_hrefs = re.findall(r'href="([^"]+)"', nav)
+
+        emitted = re.search(r"const order = \[(.*?)\];", body, re.S)
+        assert emitted is not None, "the key map is no longer generated from the nav list"
+        js_hrefs = re.findall(r'"([^"]+)"', emitted.group(1))
+
+        assert js_hrefs == nav_hrefs
+        assert nav_hrefs[0] == "/"
 
     def test_dashboard_content_survived_the_base_refactor(self, client: TestClient) -> None:
         page = client.get("/")
@@ -1580,6 +1618,77 @@ class TestReviewQueueHoldsBothRecords:
         assert row["status"] == "declined"
 
 
+class TestAcceptingTheDayPlan:
+    """The control that existed and was never used.
+
+    `plan/replan.py`'s boundary says an accepted plan may only be knocked, never
+    replaced, and the accept route's own docstring says "this needs a button: the
+    boundary is meaningless if accepting requires a terminal". The button was on
+    /schedule; the plan is read on the dashboard. On 2026-08-25, `accepted_at` was NULL
+    on all 88 day plans in the owner's ledger — which is what an affordance one page away
+    from the attention looks like.
+    """
+
+    def _proposed_plan(self, conn: sqlite3.Connection, settings: Settings) -> str:
+        from datetime import datetime, timedelta
+
+        from tests.conftest import todays_plan
+
+        plan_id = todays_plan(conn, settings)
+        conn.execute(
+            "UPDATE day_plan SET status = 'proposed', planned_minutes = 60,"
+            " overflow_count = 0 WHERE id = ?",
+            (plan_id,),
+        )
+        # A block, because the Today panel reads its meta off the first row and an empty
+        # plan renders the empty state instead — where the control does not belong.
+        day = date.today()
+        start = datetime.combine(day, datetime.min.time()) + timedelta(hours=9)
+        conn.execute(
+            "INSERT INTO plan_block (user_id, day_plan_id, starts_at, ends_at, kind,"
+            " title) VALUES (1, ?, ?, ?, 'work', 'Write the lab report')",
+            (plan_id, start.isoformat(), (start + timedelta(hours=1)).isoformat()),
+        )
+        conn.commit()
+        return day.isoformat()
+
+    def test_the_dashboard_offers_the_control_while_the_plan_is_proposed(
+        self, client: TestClient, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        day = self._proposed_plan(conn, settings)
+        today = panel_slice(client.get("/").text, "panel-today")
+        assert f'action="/schedule/{day}/accept"' in today
+        assert "Accept plan" in today
+
+    def test_accepting_from_the_dashboard_writes_the_same_row_the_schedule_page_does(
+        self, client: TestClient, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """Same POST, same boundary — the dashboard adds a place to click, not a second
+        way to accept."""
+        day = self._proposed_plan(conn, settings)
+
+        response = client.post(f"/schedule/{day}/accept", follow_redirects=False)
+        assert response.status_code == 303
+
+        row = conn.execute(
+            "SELECT status, accepted_at FROM day_plan WHERE user_id = 1"
+            " AND local_date = ? AND status != 'superseded'",
+            (day,),
+        ).fetchone()
+        assert row["status"] == "accepted"
+        assert row["accepted_at"] is not None
+
+    def test_an_accepted_plan_states_the_boundary_instead_of_the_button(
+        self, client: TestClient, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        day = self._proposed_plan(conn, settings)
+        client.post(f"/schedule/{day}/accept", follow_redirects=False)
+
+        today = panel_slice(client.get("/").text, "panel-today")
+        assert "plan accepted" in today
+        assert "Accept plan" not in today
+
+
 class TestRecentRunErrors:
     """`run.errors_json` is where the pipeline records what it could not do.
 
@@ -1944,6 +2053,59 @@ class TestAllDayReachesEveryReader:
         assert "12:00am" not in panel
         assert "All day" in panel
 
+    def test_a_block_names_what_has_to_be_open_before_it_starts(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        """Goal 4: the materials half of "time needed and materials needed". Recording
+        them and leaving them in a table the owner never opens is not the feature — the
+        point is reading "needs Respondus LockDown Browser" the evening before, not the
+        moment the exam refuses to start."""
+        day = date.today().isoformat()
+        conn.execute(
+            "INSERT INTO source_item (user_id, source, external_id, fetched_at, "
+            " occurred_at, author, title, body_text, raw_json, content_hash) "
+            "VALUES (1, 'canvas:ics', 'assignment:1', ?, ?, 'PSY101', 't', 'b', '{}', 'h')",
+            (now_iso(), day),
+        )
+        item_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO commitment (user_id, direction, what, due_at, confidence, "
+            " status, source_item_id, created_at) "
+            "VALUES (1, 'i_owe', 'Take PSY101 Exam 4', ?, 0.9, 'open', ?, ?)",
+            (day, item_id, now_iso()),
+        )
+        commitment_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO assignment (user_id, source, external_id, source_item_id, course, "
+            " title, due_at, description_hash, first_seen_at, last_changed_at) "
+            "VALUES (1, 'canvas:ics', 'assignment:1', ?, 'PSY101', 'Exam 4', ?, 'h', ?, ?)",
+            (item_id, day, now_iso(), now_iso()),
+        )
+        assignment_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        materials = (("software", "Respondus LockDown Browser"), ("reading", "Ch. 13–15"))
+        for kind, name in materials:
+            conn.execute(
+                "INSERT INTO assignment_material (user_id, assignment_id, kind, name, "
+                " created_at) VALUES (1, ?, ?, ?, ?)",
+                (assignment_id, kind, name, now_iso()),
+            )
+        conn.execute(
+            "INSERT INTO day_plan (user_id, local_date, tz, capacity_minutes, generated_at)"
+            " VALUES (1, ?, 'America/Phoenix', 480, ?)",
+            (day, now_iso()),
+        )
+        plan_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+        conn.execute(
+            "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, title, "
+            " commitment_id) VALUES (?, ?, ?, 'work', 'Take PSY101 Exam 4', ?)",
+            (plan_id, f"{day}T09:00:00-07:00", f"{day}T10:30:00-07:00", commitment_id),
+        )
+        conn.commit()
+
+        panel = panel_slice(client.get("/").text, "panel-today")
+
+        assert "needs Ch. 13–15 · Respondus LockDown Browser" in panel
+
     def test_the_week_grid_shows_a_programme_it_cannot_draw_an_hour_for(
         self, client: TestClient, conn: sqlite3.Connection
     ) -> None:
@@ -1972,3 +2134,40 @@ class TestAllDayReachesEveryReader:
 
         assert col.busy is True
         assert WeekCol(view=view, entries=[], now_top=None, cap=None).busy is False
+
+
+class TestClassesPage:
+    """The semester as a page: one card per course, and an empty state that says what
+    would fill it rather than rendering a blank panel."""
+
+    def test_an_empty_ledger_says_what_would_fill_the_page(
+        self, client: TestClient
+    ) -> None:
+        page = client.get("/classes")
+        assert page.status_code == 200
+        panel = panel_slice(page.text, "panel-classes")
+        assert "No classes in the ledger" in panel
+        assert "backglass doctor" in panel
+
+    def test_a_course_card_carries_its_meeting_room_and_instructor(
+        self, client: TestClient, conn: sqlite3.Connection
+    ) -> None:
+        from tests.test_courses import _lecture_week
+
+        _lecture_week(conn)
+        page = client.get("/classes")
+        panel = panel_slice(page.text, "panel-course-chm113-meetings")
+        assert "Mon/Wed/Fri 12:20 pm–1:10 pm" in panel
+        assert "Tempe LSA 191" in panel
+        assert "Wei Wang" in panel
+        # The occurrence count is what makes the folded pattern checkable.
+        assert "3 calendar rows" in panel
+
+    def test_the_page_says_why_all_day_dates_are_missing(
+        self, client: TestClient
+    ) -> None:
+        """28 dates were written to the calendar and only the timed ones can reach the
+        ledger. The page states that rather than leaving the owner to count."""
+        panel = panel_slice(client.get("/classes").text, "panel-semester")
+        assert "all-day" in panel.lower()
+        assert "docs/07" in panel

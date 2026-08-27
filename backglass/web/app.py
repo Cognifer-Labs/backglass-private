@@ -22,8 +22,9 @@ from fastapi import Depends, FastAPI, Form, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.concurrency import run_in_threadpool
 
-from backglass import catchup
+from backglass import catchup, repair
 from backglass.config import REPO_ROOT, Settings, get_settings
 from backglass.db import connect, migrate
 from backglass.plan import timezones
@@ -96,32 +97,52 @@ def create_app(
             and not request.url.path.startswith(("/static", "/design", "/b/"))
         )
         if wants_shell:
-            conn = connect(resolved.db_path)
-            try:
-                request.state.sb = panels.sidebar(conn, resolved, today())
-                # The app-open net. The launchd morning jobs cannot be trusted to have
-                # fired — on 2026-08-17 they had been 12h30 late for weeks, because the
-                # agent that evaluates calendar intervals holds the timezone the machine
-                # booted in — so the owner opening the app is a trigger in its own right.
-                # This is the one place that already knows a full page is being served on
-                # the owner's behalf, and it already has a connection open.
-                #
-                # `hole_exists` is two indexed reads; the filling happens on a thread, so
-                # the page does not wait for a planner and a planner that fails does not
-                # reach the page. An app left open across midnight is covered here rather
-                # than at startup, which is why the check is per-load and not once.
-                if on_open is not None:
-                    try:
-                        if catchup.hole_exists(conn, resolved):
-                            on_open()
-                    except Exception:  # noqa: BLE001 - rule 5: the page is not the net's
-                        # A catch-up that cannot even be started is a missing plan, which
-                        # the sidebar already says out loud. It is not a 500 on the page
-                        # the owner opened to find out what today looks like.
-                        pass
-            finally:
-                conn.close()
+            # On a worker thread, not on the event loop. Everything below is blocking:
+            # SQLite reads plus the Python that turns them into panels, in an `async def`
+            # that Starlette runs on the loop itself. Whatever it costs, every other
+            # request in flight pays too — the stylesheet, the font, an HTMX write from
+            # the page already open — because none of them can be served while it runs.
+            # That is the difference between one slow page and an application that
+            # stutters. Insurance more than a fix: the thing that made this cost three
+            # seconds is gone (see `dedup.suspects`), and this is what stops the next
+            # slow panel from serialising the whole server behind it.
+            await run_in_threadpool(_shell_state, request)
         return await call_next(request)
+
+    def _shell_state(request: Request) -> None:
+        conn = connect(resolved.db_path)
+        try:
+            request.state.sb = panels.sidebar(conn, resolved, today())
+            # The app-open net. The launchd morning jobs cannot be trusted to have
+            # fired — on 2026-08-17 they had been 12h30 late for weeks, because the
+            # agent that evaluates calendar intervals holds the timezone the machine
+            # booted in — so the owner opening the app is a trigger in its own right.
+            # This is the one place that already knows a full page is being served on
+            # the owner's behalf, and it already has a connection open.
+            #
+            # `hole_exists` is two indexed reads; the filling happens on a thread, so
+            # the page does not wait for a planner and a planner that fails does not
+            # reach the page. An app left open across midnight is covered here rather
+            # than at startup, which is why the check is per-load and not once.
+            if on_open is not None:
+                try:
+                    # Two triggers, both cheap indexed reads. A hole is the original
+                    # one: the plan or brief a slept-through 05:45 never produced. The
+                    # second is broader and is why this now runs the whole repair loop
+                    # rather than catch-up alone — a loop that has not run in 45 minutes
+                    # means the scheduled sync is late or dead, and the owner opening the
+                    # app is the only other thing that knows to do something about it.
+                    if catchup.hole_exists(conn, resolved) or repair.is_overdue(
+                        conn, resolved
+                    ):
+                        on_open()
+                except Exception:  # noqa: BLE001 - rule 5: the page is not the net's
+                    # A catch-up that cannot even be started is a missing plan, which
+                    # the sidebar already says out loud. It is not a 500 on the page
+                    # the owner opened to find out what today looks like.
+                    pass
+        finally:
+            conn.close()
 
     # ── request guards ────────────────────────────────────────────────────
     # Registered after sidebar_state on purpose: Starlette runs the last-registered
@@ -132,15 +153,18 @@ def create_app(
 
     # ── per-page routers (Phase 6) ────────────────────────────────────────
 
+    from backglass.web.routes import activity as activity_routes
     from backglass.web.routes import ask as ask_routes
     from backglass.web.routes import brief as brief_routes
     from backglass.web.routes import chats as chats_routes
+    from backglass.web.routes import classes as classes_routes
     from backglass.web.routes import decisions as decisions_routes
     from backglass.web.routes import goals as goals_routes
     from backglass.web.routes import memory as memory_routes
     from backglass.web.routes import people as people_routes
     from backglass.web.routes import roadmaps as roadmap_routes
     from backglass.web.routes import schedule as schedule_routes
+    from backglass.web.routes import scrub as scrub_routes
     from backglass.web.routes import source as source_routes
 
     app.include_router(schedule_routes.build_router(templates, resolved, get_conn, today))
@@ -153,6 +177,9 @@ def create_app(
     app.include_router(chats_routes.build_router(templates, resolved, get_conn, today))
     app.include_router(brief_routes.build_router(templates, resolved, get_conn, today))
     app.include_router(ask_routes.build_router(templates, resolved, get_conn, today))
+    app.include_router(scrub_routes.build_router(templates, resolved, get_conn, today))
+    app.include_router(classes_routes.build_router(templates, resolved, get_conn, today))
+    app.include_router(activity_routes.build_router(templates, resolved, get_conn, today))
 
     # ── read ──────────────────────────────────────────────────────────────
 
@@ -450,6 +477,38 @@ def create_app(
     return app
 
 
+def _warm(settings: Settings) -> None:
+    """Pay the duplicate pass once, on a thread, before the owner asks for a page.
+
+    `dedup.suspects` memoises its wording scores across calls, so the cost is a first
+    load rather than every load — but a first load is still the load the owner opens the
+    app with, and the desktop shell starts this process precisely because they just did.
+    Three seconds of it landing on the window they are waiting for is the same stutter
+    wearing a smaller number.
+
+    A daemon thread, so it can never hold the process open, and silent on failure for
+    rule 5's reason: this warms a cache. Nothing here is a fact the page needs, and a
+    dashboard that refuses to start because a pre-computation raised would be a worse
+    outcome than the three seconds it exists to save.
+    """
+    import threading
+
+    def run() -> None:
+        try:
+            from backglass.brief.daily import today_in
+            from backglass.web import panels
+
+            conn = connect(settings.db_path)
+            try:
+                panels.board_panel(conn, settings, today_in(settings.default_tz))
+            finally:
+                conn.close()
+        except Exception:  # noqa: BLE001 — rule 5: a cold cache is not a failed start
+            pass
+
+    threading.Thread(target=run, name="backglass-warm", daemon=True).start()
+
+
 def serve(
     settings: Settings | None = None, *, host: str = "127.0.0.1", port: int = 8765
 ) -> None:
@@ -476,6 +535,7 @@ def serve(
     # (desktop/src-tauri/src/main.rs), and kills it when the window closes. So the first
     # open of the day lands here, before any request — the middleware's per-load check
     # then covers the app that stays open into tomorrow.
-    catchup.spawn_on_open(resolved)
-    app = create_app(resolved, on_open=lambda: catchup.spawn_on_open(resolved))
+    repair.spawn_on_open(resolved)
+    _warm(resolved)
+    app = create_app(resolved, on_open=lambda: repair.spawn_on_open(resolved))
     uvicorn.run(app, host=host, port=port, log_level="warning")

@@ -65,6 +65,34 @@
   </div>
 </section>
 
+{% if repliable %}
+<section class="sec" id="panel-reply">
+  {# The sibling of the Reach out panel on /people. That one writes to someone the
+     ledger has nothing on, from a template, offline. This answers a real thread, which
+     cannot be templated because the content is whatever the other person wrote — so it
+     costs a model call, and says so.
+
+     Only on mail. A calendar block or a Canvas item is not a thread anyone replies to,
+     and a Draft button that produces an error is worse than no button. #}
+  {{ m.banner('Reply to this', 'drafts, never sends') }}
+  <div class="inner">
+    <form class="reachform" hx-post="/source/{{ item['id'] }}/reply"
+          hx-target="#reply-draft" hx-swap="outerHTML"
+          hx-disabled-elt="find button">
+      <input class="what" name="say" required
+             placeholder="What this reply should do, in your words — 'yes, and I'll call him this week'">
+      <button class="btn ok" type="submit">Draft</button>
+    </form>
+    <p class="b2">
+      Reads the whole thread and your own sent mail for voice, then writes one reply and
+      names every message it used. Nothing is written and nothing is sent — the draft is
+      text and a mail link, and you press send yourself.
+    </p>
+    <div id="reply-draft"></div>
+  </div>
+</section>
+{% endif %}
+
 <section class="sec" id="source-body">
   {{ m.banner('Raw text', item['body_length'] ~ ' chars' if item['body_length'] else 'empty') }}
   <div class="inner">

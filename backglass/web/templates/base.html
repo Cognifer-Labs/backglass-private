@@ -25,17 +25,32 @@
   <aside class="side">
     <h1 class="cond brand">Backglass</h1>
     {% set sb = request.state.sb %}
+    {#- The one list of pages. The nav below and the digit-key map at the bottom of this
+        file are both generated from it, because they used to be written out twice and
+        drifted: /classes was added to the nav on 2026-08-21 and never to the keys, which
+        left every key from 3 on pointing one row above its label for four days. A second
+        hand-maintained copy of this list is the defect, not the missing entry.
+        Fields: href, label, active-key, badge count, starts-a-group. -#}
+    {% set pages = [
+      ('/',          'Dashboard', 'dashboard', sb.counts.open       if sb else none, false),
+      ('/schedule',  'Schedule',  'schedule',  none,                                 false),
+      ('/classes',   'Classes',   'classes',   none,                                 false),
+      ('/goals',     'Goals',     'goals',     none,                                 false),
+      ('/people',    'People',    'people',    sb.counts.follow_ups if sb else none, false),
+      ('/roadmaps',  'Roadmaps',  'roadmaps',  sb.counts.roadmaps   if sb else none, false),
+      ('/memory',    'Memory',    'memory',    none,                                 false),
+      ('/chats',     'Chats',     'chats',     sb.counts.new_chats  if sb else none, false),
+      ('/brief',     'Brief',     'brief',     none,                                 false),
+      ('/decisions', 'Decisions', 'decisions', none,                                 false),
+      ('/activity',  'Activity',  'activity',  none,                                 true),
+      ('/ask',       'Ask',       'ask',       none,                                 false),
+      ('/scrub',     'Scrub',     'scrub',     sb.counts.disposable if sb else none, false)
+    ] %}
     <nav class="snav" aria-label="Pages">
-      {% for href, label, key, count in [('/', 'Dashboard', 'dashboard', sb.counts.open if sb else none),
-                                         ('/schedule', 'Schedule', 'schedule', none),
-                                         ('/goals', 'Goals', 'goals', none),
-                                         ('/people', 'People', 'people', sb.counts.follow_ups if sb else none),
-                                         ('/roadmaps', 'Roadmaps', 'roadmaps', sb.counts.roadmaps if sb else none),
-                                         ('/memory', 'Memory', 'memory', none),
-                                         ('/chats', 'Chats', 'chats', sb.counts.new_chats if sb else none),
-                                         ('/brief', 'Brief', 'brief', none),
-                                         ('/decisions', 'Decisions', 'decisions', none)] %}
-        <a href="{{ href }}"{% if active == key %} class="on" aria-current="page"{% endif %}>
+      {% for href, label, key, count, group in pages %}
+        <a href="{{ href }}"{% if group %} class="grp{% if active == key %} on{% endif %}"
+           {%- elif active == key %} class="on"{% endif %}
+           {%- if active == key %} aria-current="page"{% endif %}>
           <span>{{ label }}</span>
           {%- if count %} <span class="ct">{{ count }}</span>{% endif %}
         </a>
@@ -97,9 +112,22 @@ function toggleTheme() {
   localStorage.setItem('bg-theme', next);
 }
 (function () {
-  // Page switching mirrors the sidebar order. Same contract as the dashboard keys:
+  // Page switching mirrors the sidebar order, and now it cannot stop mirroring it: this
+  // array is emitted from the same `pages` list the nav above is drawn from, in the same
+  // order, so a page added to one is added to both. Same contract as the dashboard keys:
   // learn once, use daily; skipped while typing.
-  const pages = { '1': '/', '2': '/schedule', '3': '/goals', '4': '/people', '5': '/roadmaps', '6': '/memory', '7': '/chats', '8': '/brief', '9': '/decisions' };
+  //
+  // Ten digits, thirteen pages. The three past the tenth are reachable from the nav and
+  // have no key rather than being given a letter, because letters are the dashboard's
+  // (j/k/x/d/s/r, docs/06) and a global letter would fire there too.
+  const order = [
+  {%- for href, label, key, count, group in pages %}
+    {{ href | tojson }}{{ "," if not loop.last }}
+  {%- endfor %}
+  ];
+  const digits = '1234567890';
+  const pages = {};
+  order.slice(0, digits.length).forEach((href, i) => { pages[digits[i]] = href; });
   document.addEventListener('keydown', (event) => {
     if (event.metaKey || event.ctrlKey || event.altKey) return;
     const tag = (event.target.tagName || '').toLowerCase();
@@ -113,6 +141,11 @@ function toggleTheme() {
 {# Drop's confirmation. Must load wherever a write can happen, which is every page,
    for the same reason the failed-write strip does. #}
 <script src="/static/confirm.js"></script>
+{# The stagger and the FLIP; everything else that moves is in dashboard.css §Motion.
+   Deferred, and it imports nothing: it is `Element.animate` and the motion tokens, so
+   there is no engine to load first. A browser that cannot run it gets the application
+   it had yesterday, with the stylesheet's motion and none of this. #}
+<script src="/static/motion.js" defer></script>
 {% block scripts %}{% endblock %}
 </body>
 </html>

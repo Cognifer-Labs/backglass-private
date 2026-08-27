@@ -64,10 +64,19 @@ class TestTheParse:
         # And an empty preference ranks everything equal.
         assert prefs.rank("anything") == 0
 
-    def test_load_reads_the_fact_and_absence_is_inert(
+    def test_absence_loads_the_stated_default_and_a_fact_overrides_it(
         self, conn: sqlite3.Connection, settings: Settings
     ) -> None:
-        assert preferences.load(conn).lanes == ()
+        """Changed 2026-08-24. Absence used to be *inert*, which sounded careful and meant
+        the priority mechanism had never once changed an outcome: the fact was never
+        written, so every commitment ranked identically inside its date band. The owner's
+        ruled list (`plan/priority.py`) is the default now; the fact still overrides it."""
+        from backglass.plan import priority
+
+        default = preferences.load(conn).lanes
+        assert default == priority.lanes().lanes
+        assert default, "the default is a list, not an empty one"
+
         remember(conn, settings, "preferences", "planner.priority", "school: bio > social")
         assert [lane.name for lane in preferences.load(conn).lanes] == ["school", "social"]
 

@@ -17,7 +17,6 @@ from typing import Annotated, Any
 
 import typer
 
-from backglass import catchup
 from backglass.brief import model
 from backglass.config import Settings, get_settings
 from backglass.connectors import credentials
@@ -29,7 +28,7 @@ from backglass.extract import client as model_client
 from backglass.extract import prompts
 from backglass.goals import activities as activities_mod
 from backglass.ledger import USER_ID
-from backglass.sync import EXTRACT_PROMPT, SyncLocked, run_lock, sync
+from backglass.sync import EXTRACT_PROMPT, SyncLocked, sync
 
 app = typer.Typer(
     add_completion=False,
@@ -425,73 +424,57 @@ def sync_command(
         raise typer.Exit(0) from None
     _print_report(report, dry_run=dry_run)
     if not dry_run:
-        # The net under the morning jobs. This is the only scheduled job that runs on
-        # wake, so on a laptop that sleeps through 05:45 it is the thing that notices
-        # the plan and the brief were never produced. It fills a hole and never
-        # replaces anything — see backglass/catchup.py.
-        #
-        # Under the lock, because the app-open trigger takes it too: the sync releases the
-        # lock before this line, and an app opened in that window would otherwise propose
-        # the same day a second time. Whichever side gets the lock fills the hole; the
-        # other finds nothing missing, or skips.
-        try:
-            with run_lock(settings):
-                for produced in catchup.run(conn, settings):
-                    typer.echo(
-                        f"caught up {produced.surface} for {produced.day}: {produced.detail}"
-                    )
-        except SyncLocked:
-            pass
-        # The mirror of the net: catchup fills the plan that is missing, replan
-        # refreshes the plan that exists when the day has changed under it. Proposed
-        # plans are regenerated; accepted plans only get a knock. Best-effort (rule 5).
-        try:
-            from backglass.plan import replan as replan_mod
+        # The repair loop. Seven steps that used to live here as ninety lines of
+        # `try: … except Exception: pass` — which meant they ran from this command and
+        # nowhere else, and that a step broken for a week was invisible. `repair` owns
+        # the order and returns what failed; the failures join this run's own errors, so
+        # they reach `run.errors_json` and the Sources panel like every other rule-5
+        # failure, and the exit code reflects them.
+        from backglass import repair
 
-            replanned = replan_mod.run(conn, settings)
-            if replanned is not None:
-                typer.echo(f"plan {replanned.action} for {replanned.day}: {replanned.detail}")
-        except Exception:  # noqa: BLE001 — rule 5
-            pass
-        # Before asking anything, throw out what the record already contradicts: an
-        # obligation whose own text says it happened, a question about a day that ended.
-        # Ahead of detection on purpose — a question mooted here is one the owner never
-        # has to read, and a commitment resolved here is one nothing re-asks about.
-        try:
-            from backglass import logic as logic_mod
-            from backglass.plan import timezones as tz_mod
-
-            disposed = logic_mod.run(conn, settings, tz_mod.local_now(settings).date())
-            if disposed.applied:
-                typer.echo(
-                    f"logic check disposed of {disposed.applied} item(s): "
-                    + ", ".join(f"{rule} ×{n}" for rule, n in disposed.by_rule().items())
-                )
-        except Exception:  # noqa: BLE001 — rule 5
-            pass
-        # Auto-recognition runs where the data arrives, not only when the owner opens
-        # /ask: a sync that ingested the evidence is the moment a conflict, a stale
-        # commitment or a contradiction becomes detectable. Best-effort (rule 5) — a
-        # detector down must not take the sync's exit code with it.
-        try:
-            from backglass import questions as questions_mod
-            from backglass.plan import timezones as tz_mod
-
-            asked = questions_mod.refresh(conn, settings, tz_mod.local_now(settings).date())
-            if asked:
-                typer.echo(f"{asked} new question(s) for you — answer at /ask")
-        except Exception:  # noqa: BLE001 — rule 5: degrade, never block
-            pass
-        # And say what the day demands, inside the owner's notify window. Same
-        # best-effort stance; the notification ledger is the record either way.
-        try:
-            from backglass import notify as notify_mod
-
-            for note in notify_mod.run(conn, settings):
-                typer.echo(f"notified: {note.title} ({note.delivered})")
-        except Exception:  # noqa: BLE001 — rule 5
-            pass
+        conn_report = repair.run(conn, settings)
+        conn.commit()
+        for line in conn_report.lines:
+            typer.echo(line)
+        for error in conn_report.errors:
+            typer.echo(f"  {error}", err=True)
+        if conn_report.errors:
+            report.errors.extend(conn_report.errors)
+            _record_repair_errors(conn, report, conn_report.errors)
     raise typer.Exit(report.exit_code)
+
+
+def _record_repair_errors(
+    conn: Any, report: Any, errors: list[str]
+) -> None:
+    """Append the repair loop's failures to the run row `sync` already wrote.
+
+    The row is written inside `sync()`, before the loop runs, so a failure here has no
+    row of its own to land in — and it must land somewhere, because rule 5's clause is
+    "surface it in the Sources panel", and the panel reads `run.errors_json`. Without
+    this the loop's errors would print to a terminal nobody is watching at 06:00 and
+    exist nowhere else.
+
+    Best-effort by construction: a failure to record a failure must not take the sync's
+    exit code with it, which is already non-zero by the time this is called.
+    """
+    import json
+
+    try:
+        row = conn.execute(
+            "SELECT id, errors_json FROM run WHERE user_id = ? ORDER BY id DESC LIMIT 1",
+            (USER_ID,),
+        ).fetchone()
+        if row is None:
+            return
+        existing = json.loads(row["errors_json"]) if row["errors_json"] else []
+        conn.execute(
+            "UPDATE run SET errors_json = ? WHERE id = ?",
+            (json.dumps([*existing, *errors]), int(row["id"])),
+        )
+        conn.commit()
+    except Exception:  # noqa: BLE001 — rule 5, and the run already reports failure
+        pass
 
 
 @app.command("contacts")
@@ -920,6 +903,10 @@ def plan(
         bool,
         typer.Option("--all", help="List every item that did not fit, not just what is due"),
     ] = False,
+    show_runway: Annotated[
+        bool,
+        typer.Option("--runway", help="Which day each obligation is getting, for a fortnight"),
+    ] = False,
 ) -> None:
     """Propose a day. docs/04 §1.
 
@@ -996,6 +983,63 @@ def plan(
             "the plan is planned AROUND them until you do"
         )
     _echo_overflow(proposal, all_overflow)
+    if show_runway:
+        _echo_runway(conn, settings, day)
+
+
+def _echo_runway(conn: Any, settings: Any, day: Any) -> None:
+    """The fortnight the day was chosen out of.
+
+    Behind a flag rather than printed every morning, because the plan is a statement about
+    today and a fourteen-day table under it would be the longest thing on the screen. The
+    forward-looking sentence the owner needs daily — what will not finish before it is due
+    — is already in the notes; this is for the morning they want to know *why* today looks
+    like this, or which Tuesday an essay is actually getting.
+
+    One line per obligation, deadline order, so it reads as a runway rather than a dump.
+    """
+    from backglass.goals import health
+    from backglass.plan import planner, runway
+
+    pool = planner.candidates(conn, settings, day, health.at_risk_goal_ids(conn, settings, day))
+    horizon = runway.allocate(conn, settings, pool, day)
+    by_id = {c.commitment_id: c for c in pool}
+
+    typer.echo(f"\n  runway — the next {runway.DEFAULT_HORIZON_DAYS} days")
+    rows = sorted(
+        horizon.sittings.items(),
+        key=lambda kv: (str(by_id[kv[0]].due_at or "9999"), kv[0]),
+    )
+    for cid, sittings in rows:
+        item = by_id[cid]
+        spread = " ".join(f"{s.day.strftime('%a %d')}·{s.minutes}m" for s in sittings)
+        due = str(item.due_at)[:10] if item.due_at else "—"
+        typer.echo(f"    due {due:<10} {item.what[:44]:<44} {spread}")
+    if not rows:
+        typer.echo("    nothing to allocate — no open obligation carries an estimate.")
+    if horizon.beyond:
+        # Counted, not listed. The same shape `_echo_overflow` settled on: a hundred
+        # restatements of "due in November" is a wall nobody reads, and printing nothing
+        # at all was how two thirds of the board became invisible. Three names, because
+        # a number with no example is not checkable.
+        minutes = sum(u.minutes for u in horizon.beyond)
+        names = ", ".join(
+            f"{str(u.item.due_at)[:10]} {u.item.what[:38]}" for u in horizon.beyond[:3]
+        )
+        typer.echo(
+            f"\n    + {minutes // 60}h {minutes % 60}m across {len(horizon.beyond)} "
+            f"obligation(s) has no day in the next {runway.DEFAULT_HORIZON_DAYS} — due "
+            f"after they end, and they have no minutes left: {names}…"
+        )
+    for item in horizon.unreachable:
+        # Repeated from the notes on purpose: the note is capped at three names, and the
+        # whole reason to open the runway is to see the ones the sentence had to elide.
+        due = str(item.due_at)[:10] if item.due_at else "—"
+        typer.echo(
+            f"    due {due:<10} {item.what[:44]:<44} does not fit before it is due "
+            f"({item.remaining}m)",
+            err=True,
+        )
 
 
 def _echo_overflow(proposal: Any, all_overflow: bool = False) -> None:
@@ -1024,6 +1068,10 @@ def _echo_overflow(proposal: Any, all_overflow: bool = False) -> None:
         (planner.PRIORITY_OVERDUE, "overdue"),
         (planner.PRIORITY_DUE_TODAY, "due today"),
         (planner.PRIORITY_AT_RISK_GOAL, "for a goal at risk"),
+        # Added with the band itself (2026-08-27). A band missing from this tuple is not
+        # a missing label — `summary` is built by counting each one, so its items would
+        # vanish from a line whose whole job is that the total still adds up in view.
+        (planner.PRIORITY_ALLOCATED_TODAY, "the fortnight wanted today"),
         (planner.PRIORITY_DUE_THIS_WEEK, "due this week"),
         (planner.PRIORITY_REST, "no date"),
     )
@@ -1327,14 +1375,23 @@ def _all_connectors(conn: sqlite3.Connection, settings: Settings) -> list[Connec
 
         built.append(GithubConnector(token=settings.github_token, boundary=boundary))
 
-    if settings.slack_token and settings.slack_channels:
+    if settings.slack_token:
         from backglass.connectors.slack import SlackConnector
+
+        # The token is the whole gate now. An empty allowlist no longer disables the
+        # connector, for the reason the Instagram block below gives: a run with nothing
+        # chosen is the run that discovers the conversations to choose from, and gating
+        # discovery on the allowlist is the 2026-08-03 blank-page cycle.
+        chats_mod.seed_from_env(conn, "slack", settings.slack_channels)
 
         built.append(
             SlackConnector(
                 token=settings.slack_token,
-                channel_ids=tuple(settings.slack_channels),
                 boundary=boundary,
+                allowlist=chats_mod.allowlist_for(conn, "slack", settings.slack_channels),
+                channel_ids=tuple(settings.slack_channels),
+                thread_window_days=settings.slack_thread_window_days,
+                rate_limit_budget_seconds=settings.slack_rate_limit_budget_seconds,
             )
         )
 
@@ -1469,6 +1526,19 @@ def _print_report(report: Any, *, dry_run: bool) -> None:
     )
     if getattr(report, "contacts_linked", 0):
         typer.echo(f"  contacts linked {report.contacts_linked} identifier(s) to people")
+    if getattr(report, "retracted", 0):
+        # Said out loud, because it changes the day's capacity. The owner's schedule
+        # changed on 2026-08-10 and five dropped classes went on being planned around for
+        # ten days with nothing anywhere reporting it; a retraction that only ever shows
+        # up as an absence would repeat exactly that.
+        # "your calendar changed" was true when calendars were the only source that could
+        # certify a complete read. Canvas can as of 2026-08-24, and the first live
+        # retraction through it reported a deleted assignment as a calendar change — a
+        # sentence that sends the owner to look in the wrong place.
+        typer.echo(
+            f"  retracted {report.retracted} item(s) their source no longer has — "
+            "an upstream store dropped them"
+        )
     typer.echo(f"  writes {report.writes}, spend {report.spend_cents}c")
     # startswith, because the reason carries which stage stopped ('rate_limit:triage').
     if (report.degrade_reason or "").startswith("rate_limit"):
@@ -1488,6 +1558,24 @@ def _print_report(report: Any, *, dry_run: bool) -> None:
             "below were not read, not judged. Re-authenticate the model backend "
             "(claude_cli: run `claude` once interactively to refresh the session).",
             err=True,
+        )
+    if getattr(report, "fallback_calls", 0):
+        typer.echo(
+            f"  fallback answered {report.fallback_calls} call(s) the primary refused"
+            f"{' — ' + report.fallback_reason if report.fallback_reason else ''}"
+        )
+    for what, count in sorted((getattr(report, "deferred_work", None) or {}).items()):
+        typer.echo(f"  deferred {count} {what} to the next run (per-run budget)")
+    changed = getattr(report, "upstream_changes", None) or []
+    if changed:
+        # One line, not one per record, and on stdout rather than stderr: a due date that
+        # moved is news, not a failure. The immutable item keeps its original text; the
+        # new value reaches the ledger through that source's mirror, and `logic` moves the
+        # commitment from there.
+        sources = sorted({source for source, _ in changed})
+        typer.echo(
+            f"  {len(changed)} upstream record(s) changed on {', '.join(sources)}"
+            " — the mirror carries the new values"
         )
     for rule, count in sorted(report.excluded_by_rule.items()):
         typer.echo(f"  boundary excluded {count} by rule {rule}")
@@ -2069,6 +2157,207 @@ def logic_command(
     for error in report.errors:
         typer.echo(f"  {error}", err=True)
     raise typer.Exit(1 if report.errors else 0)
+
+
+@app.command("situation")
+def situation_command(
+    refresh: Annotated[
+        bool,
+        typer.Option("--refresh", help="Store this rendering if it differs from the last"),
+    ] = False,
+    show_versions: Annotated[
+        bool, typer.Option("--versions", help="The document's history instead of its body")
+    ] = False,
+    limit: Annotated[int, typer.Option("--limit", help="With --versions: how many")] = 20,
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable")] = False,
+) -> None:
+    """The evolving state doc: who the owner is, what changed, what is open.
+
+    A rendering over the ledger, never a second store — `fact` remains the claims layer
+    and this is its report, with every line addressable (`[fact N]`) so a dependency or a
+    drop can cite one. Printing it writes nothing; `--refresh` stores a version, and only
+    when the body actually differs from the last one, so `--versions` is a list of what
+    moved rather than a log of how often this ran.
+
+    Named `situation` and not `state` because `backglass state` already means installation
+    ground truth.
+    """
+    import json as _json
+
+    from backglass import situation as situation_mod
+    from backglass.plan import timezones as tz_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    day = tz_mod.local_now(settings).date()
+
+    if show_versions:
+        history = situation_mod.versions(conn, limit=limit)
+        if as_json:
+            typer.echo(_json.dumps([
+                {
+                    "version_id": v.version_id,
+                    "created_at": v.created_at,
+                    "body_hash": v.body_hash,
+                    "lines": len(v.body.splitlines()),
+                }
+                for v in history
+            ], indent=2))
+            return
+        if not history:
+            typer.echo("no versions stored yet — run `backglass situation --refresh`")
+            return
+        for i, newer in enumerate(history):
+            older = history[i + 1] if i + 1 < len(history) else None
+            typer.echo(f"  v{newer.version_id}  {newer.created_at}  {newer.body_hash[:12]}")
+            for line in situation_mod.changes(older, newer):
+                typer.echo(f"      {line}")
+        return
+
+    if refresh:
+        version, moved = situation_mod.refresh(conn, settings, day)
+        conn.commit()
+        if as_json:
+            typer.echo(_json.dumps({
+                "version_id": version.version_id if version else None,
+                "created_at": version.created_at if version else None,
+                "changed": moved,
+                "body": version.body if version else situation_mod.render(conn, settings, day),
+            }, indent=2))
+            return
+        if version is None:
+            typer.echo("unchanged since the last version — nothing written")
+            return
+        typer.echo(f"v{version.version_id} stored")
+        for line in moved:
+            typer.echo(f"  {line}")
+        return
+
+    body = situation_mod.render(conn, settings, day)
+    if as_json:
+        stored = situation_mod.latest(conn)
+        typer.echo(_json.dumps({
+            "day": day.isoformat(),
+            "body": body,
+            "stored_version_id": stored.version_id if stored else None,
+            "matches_stored": bool(stored and stored.body == body),
+        }, indent=2))
+        return
+    typer.echo(body if body else "(empty — the ledger records no facts and nothing open)")
+
+
+@app.command("coursework")
+def coursework_command(
+    refresh: Annotated[
+        bool,
+        typer.Option("--refresh", help="Re-read the Canvas feed before printing"),
+    ] = False,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="With --refresh: print, write nothing")
+    ] = False,
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable")] = False,
+) -> None:
+    """How long each assignment takes, and what you need open to do it.
+
+    The estimate comes from the assignment itself wherever the assignment says: a runtime
+    in the title, a word count, a chapter range. `basis` is which of those it read, and
+    `type:` means nothing was stated and the `coursework_defaults` table answered instead.
+    Materials are what the text names — a browser an exam will not run without, the
+    chapters it covers, the guide it links to.
+
+    `--refresh` re-reads the feed without ingesting it, which is how a due date that moved
+    upstream shows up between syncs. `sync` does the same work on its own schedule.
+    """
+    import json as _json
+
+    from backglass import coursework as coursework_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+
+    if refresh:
+        connectors = [
+            c for c in _all_connectors(conn, settings) if c.name.startswith("canvas")
+        ]
+        if not connectors:
+            typer.echo("no Canvas source is configured", err=True)
+            raise typer.Exit(1)
+        for connector in connectors:
+            # The items are discarded on purpose: recording them is `sync`'s job and its
+            # ledger is the only thing allowed to decide what a new source item means.
+            # This read is here for the assignments the fetch parses along the way.
+            for _ in connector.fetch(None):
+                pass
+            report = coursework_mod.upsert(
+                conn,
+                settings,
+                connector.name,
+                list(getattr(connector, "assignments", [])),
+                dry_run=dry_run,
+            )
+            for note in report.notes:
+                typer.echo(f"  {note}")
+            typer.echo(
+                f"{connector.name}: {report.inserted} new, {report.updated} changed, "
+                f"{report.unchanged} unchanged; materials +{report.materials_added} "
+                f"-{report.materials_removed}"
+            )
+        if not dry_run:
+            applied, notes = coursework_mod.apply_estimates(conn)
+            for note in notes:
+                typer.echo(f"  {note}")
+            typer.echo(f"{applied} commitment estimate(s) updated")
+            conn.commit()
+        else:
+            typer.echo("  nothing written")
+
+    rows = coursework_mod.rows(conn)
+    if as_json:
+        typer.echo(
+            _json.dumps(
+                [
+                    {
+                        "id": r.id,
+                        "course": r.course,
+                        "title": r.title,
+                        "due_at": r.due_at,
+                        "minutes": r.effort_minutes,
+                        "basis": r.effort_basis,
+                        "quote": r.effort_quote,
+                        "sessions": r.sessions,
+                        "url": r.url,
+                        "materials": [
+                            {"kind": m.kind, "name": m.name, "detail": m.detail,
+                             "quote": m.quote, "basis": m.basis}
+                            for m in r.materials
+                        ],
+                    }
+                    for r in rows
+                ],
+                indent=2,
+            )
+        )
+        raise typer.Exit(0)
+
+    if not rows:
+        typer.echo("no assignments recorded — run `backglass coursework --refresh`")
+        raise typer.Exit(0)
+    for row in rows:
+        due = (row.due_at or "")[:10] or "no date"
+        sessions = f" ×{row.sessions}" if row.sessions > 1 else ""
+        typer.echo(
+            f"  {due}  {str(row.effort_minutes or '—'):>4}m{sessions:<4} "
+            f"{row.course:<12} {row.title[:52]}  [{row.effort_basis or '—'}]"
+        )
+        if row.materials:
+            typer.echo(
+                "          needs: "
+                + ", ".join(f"{m.name} ({m.kind})" for m in row.materials)
+            )
+    typer.echo(f"{len(rows)} assignment(s)")
+    raise typer.Exit(0)
 
 
 @app.command("relevance")
@@ -3399,6 +3688,83 @@ def reachout(
         typer.echo(f"  · {line}")
 
 
+@app.command()
+def reply(
+    source_item: Annotated[
+        int, typer.Argument(help="The source_item id of the message you are answering")
+    ],
+    say: Annotated[
+        str | None,
+        typer.Option(
+            "--say",
+            "-s",
+            help="What this reply should do, in your words: 'yes, and I'll call John this week'",
+        ),
+    ] = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable")] = False,
+) -> None:
+    """Draft a reply to an email thread, in your voice, citing every message it read.
+
+    The sibling of `backglass reachout`. That one writes to someone the ledger has
+    nothing on, from a template, with no model call. This one answers a real thread,
+    which cannot be templated because the content is whatever the other person wrote.
+
+    `--say` is the whole draft, the way `--note` is for reachout: the model supplies
+    sentences, you supply the intent. Without it you get a polite email that decides
+    nothing.
+
+    Nothing is written and nothing is sent. Find the id on the Source page, or with
+    `backglass search`.
+    """
+    from backglass.draft import reply as reply_mod
+    from backglass.extract import client as client_mod
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+
+    try:
+        record = reply_mod.draft_reply(
+            conn,
+            settings,
+            source_item,
+            stance=say or "",
+            client=client_mod.build(settings),
+            day=_today(settings),
+        )
+    except reply_mod.ReplyError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=2) from exc
+
+    if as_json:
+        typer.echo(reply_mod.to_json(record))
+        return
+
+    typer.echo(record.as_text())
+
+    if record.answered:
+        typer.echo("\n── what it answered ──")
+        for line in record.answered:
+            typer.echo(f"  · {line}")
+    if record.unstated:
+        typer.echo("\n── what it could not say ──")
+        for line in record.unstated:
+            typer.secho(f"  · {line}", fg=typer.colors.YELLOW)
+    if record.findings:
+        typer.echo("\n── read this before sending ──")
+        for finding in record.findings:
+            typer.secho(f"  · {finding.line()}", fg=typer.colors.YELLOW)
+    if not record.sendable():
+        typer.secho(
+            "\nThis draft still has an unfilled placeholder in it. Do not send it as is.",
+            fg=typer.colors.RED,
+        )
+
+    typer.echo("\n── where each part came from ──")
+    for line in record.evidence:
+        typer.echo(f"  · {line}")
+
+
 # ── Phase A2: setup ───────────────────────────────────────────────────────
 
 
@@ -4437,3 +4803,66 @@ def search_index(
         f"{stats['indexed']} of {stats['indexable']} {stats['kind']}s indexed "
         f"({stats['model']}); {stats['pending']} pending"
     )
+
+
+#: The mirror of the notes connector: that reads a vault into the ledger, this writes the
+#: ledger into a vault. See backglass/vault.py for why generated files carry a marker.
+vault_app = typer.Typer(
+    help="Write the ledger out as an Obsidian vault. Owner's ask, 2026-08-23.",
+)
+app.add_typer(vault_app, name="vault")
+
+
+@vault_app.command("export")
+def vault_export(
+    path: Annotated[
+        Path | None,
+        typer.Option("--path", help="Vault root. Defaults to VAULT_EXPORT_PATH in .env"),
+    ] = None,
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Say what would change, write nothing")
+    ] = False,
+) -> None:
+    """Render the ledger as markdown notes. Unchanged notes are left alone.
+
+    Runs on the tail of every sync as well, so this command is for the first export and
+    for reading the diff by hand — not something the owner has to remember.
+    """
+    from backglass import vault as vault_mod
+    from backglass.plan import timezones as tz_mod
+
+    settings = get_settings()
+    root = path or settings.vault_export_path
+    if root is None:
+        typer.echo(
+            "no vault configured — pass --path, or set VAULT_EXPORT_PATH in .env", err=True
+        )
+        raise typer.Exit(2)
+
+    conn = _open(settings)
+    migrate(conn)
+    report = vault_mod.export(
+        conn,
+        settings,
+        root=Path(root).expanduser(),
+        now=tz_mod.local_now(settings),
+        dry_run=dry_run,
+    )
+    typer.echo(report.line() + (" (dry run)" if dry_run else ""))
+    for written in report.written:
+        typer.echo(f"  {'would write' if dry_run else 'wrote'} {written}")
+    for gone in report.removed:
+        # Named individually: a deletion is the one thing here that destroys something,
+        # and a count alone gives the owner nothing to object to.
+        typer.echo(f"  {'would remove' if dry_run else 'removed'} {gone}")
+    for failure in report.failed:
+        # Named, not swallowed: a vault half-written is worse than one not written, and
+        # the sync that calls this reports the same line.
+        typer.echo(f"  failed {failure}", err=True)
+    if report.failed:
+        raise typer.Exit(1)
+    if not dry_run and report.written:
+        typer.echo(
+            "open it once in Obsidian: Open folder as vault → "
+            f"{Path(root).expanduser()}"
+        )

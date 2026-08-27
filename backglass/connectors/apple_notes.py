@@ -27,18 +27,39 @@ _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 
 #: Emits one JSON array of {id, name, body, modified, created, folder}. `plaintext`
 #: spares an HTML-stripping pass and is what the extraction model should read anyway.
-_SCRIPT = """
+#:
+#: **The watermark is applied here, in the script, and that is the whole performance
+#: story.** Every property read over this bridge is its own Apple Event, so a note costs
+#: six of them and the owner's 65 notes cost ~390 — which measured 2:02 on an idle machine
+#: and over five minutes during a sync, so `apple-notes` timed out on every scheduled run
+#: and collected nothing between 2026-07-05 and 2026-08-21. Almost all of that was waste:
+#: the connector read every note's full body and then discarded all but the ones modified
+#: since the watermark, which on a normal day is none of them.
+#:
+#: Reading `modificationDate` first and skipping costs one Apple Event per note instead of
+#: six, so the steady-state run is ~65 round trips rather than ~390. The Python-side filter
+#: in `fetch` stays as it was: it is cheap, and it keeps the connector correct if this
+#: interpolation is ever wrong.
+#:
+#: `{since_js}` is JSON-encoded by the caller — the same discipline as `reminders` and as
+#: `apple_calendar`'s calendar name — so a watermark can never terminate the string.
+_SCRIPT_TEMPLATE = """
 ObjC.import('stdlib');
 const app = Application('Notes');
+const since = {since_js};
 const out = [];
 const notes = app.notes();
 for (let i = 0; i < notes.length; i++) {
   const n = notes[i];
+  // One Apple Event. Everything below is five more, and is paid only for a note that
+  // actually changed.
+  const modified = n.modificationDate().toISOString();
+  if (since && modified <= since) continue;
   out.push({
     id: n.id(),
     name: n.name(),
     body: n.plaintext(),
-    modified: n.modificationDate().toISOString(),
+    modified: modified,
     created: n.creationDate().toISOString(),
     folder: (() => { try { return n.container().name(); } catch (e) { return ''; } })(),
   });
@@ -47,12 +68,34 @@ JSON.stringify(out);
 """
 
 
-def run_osascript(script: str) -> str:
+#: Seconds to wait on one Apple Events script. Measured, like `apple_calendar`'s: the
+#: script above takes **2 minutes 2 seconds** to read the owner's 65 notes on an idle
+#: machine, so at the previous value of 120 it failed by two seconds at rest and by more
+#: whenever anything else was running — which is every scheduled sync, because the sync is
+#: the thing running. `apple-notes` had therefore collected nothing since 2026-07-05 and
+#: `reminders`, which shares this runner, nothing since 2026-08-14. Both reported the
+#: failure honestly the whole time; nobody read `backglass doctor`.
+#:
+#: The cost is in the round trips, not the data: one note costs six Apple Events — `id`,
+#: `name`, `plaintext`, two dates and the folder — so 65 notes is ~390 of them.
+#:
+#: Raising this number was the *first* fix and it was the wrong one, which is worth
+#: recording rather than quietly overwriting. Notes still timed out at 300 seconds during a
+#: sync, because the script was reading all 65 bodies and then discarding every note older
+#: than the watermark — on a normal day, all of them. Applying the watermark inside the
+#: script instead (see `_SCRIPT_TEMPLATE`) took the steady-state read from 2:02 to **0.9
+#: seconds warm, 22 seconds cold**. This timeout is now headroom for `upstream_count`,
+#: which deliberately reads everything, and for a first run against a large store — not a
+#: number the common path is expected to approach.
+OSASCRIPT_TIMEOUT_SECONDS = 300
+
+
+def run_osascript(script: str, timeout: int = OSASCRIPT_TIMEOUT_SECONDS) -> str:
     done = subprocess.run(
         ["osascript", "-l", "JavaScript", "-e", script],
         capture_output=True,
         text=True,
-        timeout=120,
+        timeout=timeout,
     )
     if done.returncode != 0:
         raise RuntimeError(done.stderr.strip() or "osascript failed")
@@ -103,7 +146,10 @@ class AppleNotesConnector:
         total, not what is new.
         """
         try:
-            notes = json.loads(self.runner(_SCRIPT) or "[]")
+            # No watermark: the whole point is the total the store holds, so this pays the
+            # full ~6-Apple-Events-per-note cost that `fetch` now avoids. It runs only in
+            # `doctor`, which is where the live probes already live.
+            notes = json.loads(self.runner(self._script(None)) or "[]")
         except Exception:  # noqa: BLE001 — unknown is a real answer; see the protocol
             return None
         return sum(
@@ -112,8 +158,13 @@ class AppleNotesConnector:
             if self.boundary.check(_EMAIL.findall(str(note.get("body") or ""))).allowed
         )
 
+    def _script(self, since: Cursor) -> str:
+        """The reader, with the watermark baked in. JSON-encoded, so a stored cursor can
+        never terminate the string and change the script."""
+        return _SCRIPT_TEMPLATE.replace("{since_js}", json.dumps(str(since or "")))
+
     def fetch(self, since: Cursor) -> Iterator[SourceItem]:
-        notes = json.loads(self.runner(_SCRIPT) or "[]")
+        notes = json.loads(self.runner(self._script(since)) or "[]")
         watermark = since or ""
         newest = watermark
         # Sorted so the watermark only ever moves forward past yielded items.

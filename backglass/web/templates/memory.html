@@ -15,6 +15,73 @@
         <span class="kbd">backglass memory set &lt;subject&gt; &lt;key&gt; &lt;value&gt;</span>.</p>
     {% endif %}
 
+    {# The vault, as it stands on disk. One line, not a panel: the per-lane links further
+       down have always been optimistic — they point into a folder whose last export the
+       page never stated, so a link into notes written three weeks ago looked identical to
+       one written this morning. `vault.status` is a directory walk and one file read, not
+       `state`'s per-note marker count; that number is the safety check and stays in
+       `backglass state`. #}
+    {% if vault_state.root %}
+      <p class="b2 vaultline" id="panel-vault-state">
+        Vault:
+        {%- if vault_state.notes is none %} <b>{{ vault_state.root }}</b> does not exist —
+          run <span class="kbd">backglass vault export</span>.
+        {%- else %} {{ vault_state.notes }} note{{ 's' if vault_state.notes != 1 }} in
+          <b>{{ vault_state.root.name }}</b>,
+          {%- if vault_state.exported_at %} exported {{ vault_state.exported_at[:16]|replace('T', ' ') }}
+          {%- else %} export time unknown — <span class="kbd">STATE.md</span> carries no
+            <span class="kbd">generated_at</span>
+          {%- endif %}.
+          {%- if vault_state.also_ingested %} This vault is also an ingest source; the
+            <span class="kbd">backglass: generated</span> marker is what stops the ledger
+            reading its own output.
+          {%- endif %}
+        {%- endif %}
+      </p>
+    {% endif %}
+
+    {# The state doc: these same facts as a document, plus what changed, what the week
+       holds and what the board rests on. A rendering — the fact rows below are the store,
+       and this panel writes nothing when the page is opened (see routes/memory.py). #}
+    {% if situation.body %}
+      {# Closed by default, decided after reading it on the live ledger: the WHO section
+         is 66 facts, and every one of them is already on this page below as an editable
+         row — open, the panel put 39 KB of duplicate above the thing the page is for.
+         The banner still states what it holds when closed (design-system §, the same rule
+         the goals-page week fold follows), and a closed <details> is not laid out at all,
+         so the page keeps the weight the 2026-08-21 pass bought it. The CLI prints the
+         document in full: `backglass situation`. #}
+      <details class="panel" id="panel-situation" style="margin:var(--sp-4) 0">
+        {{ m.foldbanner('Situation', situation.versions|length ~ ' versions') }}
+        <div class="inner">
+          <pre class="sitdoc">{{ situation.body }}</pre>
+          {% if situation.unstored %}
+            <p class="b2">Not stored yet — the next sync records this reading, or run
+              <span class="kbd">backglass situation --refresh</span>.</p>
+          {% endif %}
+          {% if situation.versions %}
+            <p class="lane">how it has changed</p>
+            {% for v in situation.versions %}
+              <div class="row">
+                <span class="time">v{{ v.version.version_id }}</span>
+                <div class="grow">
+                  <p class="b2">{{ v.version.created_at[:10] }} ·
+                    {{ v.changes|length }} line(s) changed</p>
+                  {% if v.changes %}
+                    <pre class="sitdiff">{{ v.changes | join('\n') }}</pre>
+                  {% endif %}
+                </div>
+              </div>
+            {% endfor %}
+          {% endif %}
+        </div>
+      </details>
+    {% endif %}
+
+    {# `id="panel-facts"` is the boundary tests slice on (tests/conftest.py::panel_slice):
+       the state doc above quotes retracted values on purpose, so "is this fact still in
+       the knowledge base" has to be asked of the listing, not of the whole document. #}
+    <div id="panel-facts">
     {% if pending %}
       <p class="lane">proposed by extraction — not yet part of memory</p>
       {% for f in pending %}
@@ -40,7 +107,9 @@
     {% endif %}
 
     {% for subject, rows in subjects.items() %}
-      <p class="lane">{{ subject }}</p>
+      <p class="lane">{{ subject }}{% if vault_name and subject in vault_files %}
+        <a class="b2" href="obsidian://open?vault={{ vault_name | urlencode }}&amp;file={{ vault_files[subject] | urlencode }}"
+           title="Open this lane in Obsidian">in the vault</a>{% endif %}</p>
       {% for f in rows %}
         <div class="row">
           <span class="time">{{ f.key }}</span>
@@ -59,6 +128,7 @@
         </div>
       {% endfor %}
     {% endfor %}
+    </div>
 
     <div class="addform">
       <p class="lbl">Remember something</p>

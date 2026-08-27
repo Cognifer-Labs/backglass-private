@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 from backglass import facts
 from backglass.config import Settings
 from backglass.web.app import create_app
+from tests.conftest import panel_slice
 
 
 @pytest.fixture
@@ -130,12 +131,39 @@ class TestMemoryPage:
         fid = conn.execute("SELECT id FROM fact WHERE status='active'").fetchone()["id"]
         forgotten = client.post(f"/memory/{fid}/forget")
         assert forgotten.status_code == 200
-        assert "Willow Hall 502" not in forgotten.text
+        # Of the listing, not of the page: the state doc's "what changed" section names
+        # the retracted value on purpose — that is what makes a retraction legible rather
+        # than a row that vanished — so a page-wide assertion here would be testing that
+        # the doc does not work.
+        assert "Willow Hall 502" not in panel_slice(forgotten.text, "panel-facts")
         assert client.post("/memory/99999/forget").status_code == 404
 
     def test_nav_carries_memory_on_every_page(self, client: TestClient) -> None:
         for path in ("/", "/goals", "/memory"):
             assert "Memory" in client.get(path).text, path
+
+    def test_a_lane_reaches_its_vault_note_when_a_vault_is_configured(
+        self, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        """The page and the vault are two views of one row set; stepping between them is
+        the point of exporting at all. Writes happen here, backlinks happen there."""
+        facts.remember(conn, settings, "housing", "dorm", "Willow Hall 502", source="manual")
+        conn.commit()
+        sett = settings.model_copy(update={"vault_export_path": "/tmp/Backglass Vault"})
+        configured = TestClient(create_app(sett), base_url="http://127.0.0.1:8765")
+
+        body = configured.get("/memory").text
+
+        assert "obsidian://open?vault=Backglass%20Vault" in body
+        assert "file=Facts/housing" in body
+
+    def test_no_vault_means_no_link_to_a_note_that_was_never_written(
+        self, client: TestClient, conn: sqlite3.Connection, settings: Settings
+    ) -> None:
+        facts.remember(conn, settings, "housing", "dorm", "Willow Hall 502", source="manual")
+        conn.commit()
+
+        assert "obsidian://" not in client.get("/memory").text
 
     def test_blank_fact_is_422(self, client: TestClient) -> None:
         response = client.post(

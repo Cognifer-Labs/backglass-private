@@ -378,3 +378,249 @@ class TestThePromptCarriesWhatTheGuardsCheck:
         assert f"[{cid}]" in user and "AES@utdallas.edu" in user
         assert "University of Texas at Dallas" in user  # the source text, for the quote
         assert "cites_fact" in static  # the rule that makes the citation mandatory
+
+
+# ══ v3, 2026-08-24: what each obligation rests on ═════════════════════════
+
+
+class TestDependenciesAreRecorded:
+    """The gap this closes is `logic_check`'s own constraint: judged once per commitment,
+    ever. A keep issued when the facts said one thing was never revisited when they said
+    another — "the checker has no way to notice the situation moved", which is the owner's
+    complaint restated in schema. Dependencies are the index that answers "which
+    obligations did this fact hold up?", and nothing else in the ledger can.
+    """
+
+    def test_a_keep_records_what_it_rests_on(
+        self, conn: sqlite3.Connection, sett: Settings, prompt
+    ) -> None:  # type: ignore[no-untyped-def]
+        from backglass import claim_events
+
+        fact_id = a_fact(conn, "identity", "enrolment", "ASU Tempe")
+        cid = an_obligation(conn, "submit the ASU housing form")
+        work = relevance_mod.Work(
+            facts=relevance_mod.facts_for(conn),
+            commitments=relevance_mod.candidates(conn),
+        )
+        judged, _ = relevance_mod.parse(
+            {"verdicts": [{
+                "commitment_id": cid, "verdict": "keep", "confidence": 0.9,
+                "depends_on": [fact_id], "reason": "live while enrolled at ASU",
+            }]},
+            work,
+        )
+        relevance_mod.apply(conn, sett, work, judged)
+
+        deps = claim_events.active_dependencies(conn, "commitment", cid)
+        assert [d.fact_id for d in deps] == [fact_id]
+        assert deps[0].kind == "fact"
+
+    def test_an_obligation_resting_on_nothing_records_that_too(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """`none` is first-class. An obligation judged to rest on no fact is a different
+        thing from one nobody has judged — `claim_events` requires an empty result to read
+        as *unknown*, and writing this row is what moves it to *confirmed independent*."""
+        from backglass import claim_events
+
+        a_fact(conn, "identity", "enrolment", "ASU Tempe")
+        cid = an_obligation(conn, "bring the bedsheet to wash")
+        work = relevance_mod.Work(
+            facts=relevance_mod.facts_for(conn),
+            commitments=relevance_mod.candidates(conn),
+        )
+        judged, _ = relevance_mod.parse(
+            {"verdicts": [{
+                "commitment_id": cid, "verdict": "keep", "confidence": 0.8,
+                "depends_on": [], "reason": "household, rests on nothing recorded",
+            }]},
+            work,
+        )
+        relevance_mod.apply(conn, sett, work, judged)
+
+        deps = claim_events.active_dependencies(conn, "commitment", cid)
+        assert [d.kind for d in deps] == ["none"]
+
+    def test_an_id_the_pass_never_sent_is_dropped_from_the_dependencies(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """The 2026-08-12 guard, applied to the new field: the tables overlap in range, so
+        an invented id would otherwise become a dependency pointing at an unrelated row —
+        and a wrong dependency is what later decides an obligation is dead.
+
+        Filtered rather than voiding the verdict, unlike a bad `cites_fact`: a citation
+        justifies closing something and must be right or absent; a dependency is a note
+        about what to re-check, and a narrower index is not a wrong answer.
+        """
+        from backglass import claim_events
+
+        real = a_fact(conn, "identity", "enrolment", "ASU Tempe")
+        cid = an_obligation(conn, "submit the ASU housing form")
+        work = relevance_mod.Work(
+            facts=relevance_mod.facts_for(conn),
+            commitments=relevance_mod.candidates(conn),
+        )
+        judged, discarded = relevance_mod.parse(
+            {"verdicts": [{
+                "commitment_id": cid, "verdict": "keep", "confidence": 0.9,
+                "depends_on": [real, 99999], "reason": "keep",
+            }]},
+            work,
+        )
+        assert discarded == 0, "the verdict itself still stands"
+        relevance_mod.apply(conn, sett, work, judged)
+
+        deps = claim_events.active_dependencies(conn, "commitment", cid)
+        assert [d.fact_id for d in deps] == [real]
+
+
+class TestABrokenDependencyReopensTheVerdict:
+    def _judged_keep(self, conn: sqlite3.Connection, sett: Settings) -> tuple[int, int]:
+        fact_id = a_fact(conn, "identity", "enrolment", "UT Dallas")
+        cid = an_obligation(conn, "accept the UT Dallas award")
+        work = relevance_mod.Work(
+            facts=relevance_mod.facts_for(conn),
+            commitments=relevance_mod.candidates(conn),
+        )
+        judged, _ = relevance_mod.parse(
+            {"verdicts": [{
+                "commitment_id": cid, "verdict": "keep", "confidence": 0.9,
+                "depends_on": [fact_id], "reason": "live while enrolled there",
+            }]},
+            work,
+        )
+        relevance_mod.apply(conn, sett, work, judged)
+        return fact_id, cid
+
+    def test_a_verdict_from_before_v3_is_sent_once_to_record_what_it_rests_on(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """Otherwise the index is live and permanently empty. Every open obligation on the
+        owner's ledger was judged in one pass on 2026-08-19, before the question existed;
+        none would ever be re-queued, so none would ever record a dependency, so nothing
+        could ever be invalidated."""
+        a_fact(conn, "identity", "enrolment", "ASU Tempe")
+        cid = an_obligation(conn, "an obligation judged before v3")
+        conn.execute(
+            "INSERT INTO logic_check (user_id, commitment_id, verdict, confidence,"
+            " status, created_at, decided_at) VALUES (?, ?, 'keep', 0.9, 'kept', ?, ?)",
+            (USER_ID, cid, "2026-08-19T00:00:00Z", "2026-08-19T00:00:00Z"),
+        )
+
+        assert cid in {c["id"] for c in relevance_mod.candidates(conn)}
+
+    def test_and_it_is_sent_exactly_once(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """The backfill has to terminate. A v3 judgment always writes a dependency row —
+        a fact, or `none` — so the clause is false for that commitment forever after."""
+        a_fact(conn, "identity", "enrolment", "ASU Tempe")
+        cid = an_obligation(conn, "an obligation judged before v3")
+        conn.execute(
+            "INSERT INTO logic_check (user_id, commitment_id, verdict, confidence,"
+            " status, created_at, decided_at) VALUES (?, ?, 'keep', 0.9, 'kept', ?, ?)",
+            (USER_ID, cid, "2026-08-19T00:00:00Z", "2026-08-19T00:00:00Z"),
+        )
+        work = relevance_mod.Work(
+            facts=relevance_mod.facts_for(conn),
+            commitments=relevance_mod.candidates(conn),
+        )
+        judged, _ = relevance_mod.parse(
+            {"verdicts": [{
+                "commitment_id": cid, "verdict": "keep", "confidence": 0.9,
+                "depends_on": [], "reason": "rests on nothing recorded",
+            }]},
+            work,
+        )
+        relevance_mod.apply(conn, sett, work, judged)
+
+        assert cid not in {c["id"] for c in relevance_mod.candidates(conn)}
+
+    def test_an_unchanged_ledger_re_judges_nothing(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """Rule 3, and the expensive failure mode: a re-queue predicate that stays true
+        would re-judge and re-pay for the same obligation every sync forever."""
+        _, cid = self._judged_keep(conn, sett)
+
+        assert cid not in {c["id"] for c in relevance_mod.candidates(conn)}
+
+    def test_superseding_the_fact_puts_it_back_in_the_queue(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """The whole point. `facts.remember` breaks the dependency and writes the event;
+        this is the pass noticing."""
+        from backglass import facts
+
+        _, cid = self._judged_keep(conn, sett)
+        facts.remember(conn, sett, "identity", "enrolment", "ASU Tempe")
+
+        assert cid in {c["id"] for c in relevance_mod.candidates(conn)}
+
+    def test_a_re_judgment_replaces_the_verdict_and_leaves_the_queue(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """And it must actually settle: a re-judgment that did not overwrite the old row
+        would leave its old `decided_at` in place and re-queue on the very next sync."""
+        from backglass import facts
+
+        _, cid = self._judged_keep(conn, sett)
+        facts.remember(conn, sett, "identity", "enrolment", "ASU Tempe")
+
+        work = relevance_mod.Work(
+            facts=relevance_mod.facts_for(conn),
+            commitments=relevance_mod.candidates(conn),
+        )
+        judged, _ = relevance_mod.parse(
+            {"verdicts": [{
+                "commitment_id": cid, "verdict": "keep", "confidence": 0.7,
+                "depends_on": [], "reason": "still theirs to do",
+            }]},
+            work,
+        )
+        relevance_mod.apply(conn, sett, work, judged)
+
+        assert cid not in {c["id"] for c in relevance_mod.candidates(conn)}
+        rows = conn.execute(
+            "SELECT verdict, confidence, reason FROM logic_check WHERE commitment_id = ?",
+            (cid,),
+        ).fetchall()
+        assert len(rows) == 1, "the verdict is replaced, not duplicated"
+        # And it is the NEW verdict. `DO NOTHING` would leave the old row sitting there
+        # looking settled while saying something the pass no longer believes.
+        assert rows[0]["confidence"] == 0.7
+        assert rows[0]["reason"] == "still theirs to do"
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM claim_event WHERE cause = 'relevance_rejudged'"
+        ).fetchone()["n"] == 1, "and the change is in the ledger that records changes"
+
+    def test_a_question_waiting_on_the_owner_is_never_re_opened(
+        self, conn: sqlite3.Connection, sett: Settings
+    ) -> None:
+        """A `pending` verdict is a question already in front of the owner. Asking the
+        model again spends money on a decision waiting on a person, and risks
+        contradicting the card they are looking at."""
+        from backglass import facts
+
+        fact_id = a_fact(conn, "identity", "enrolment", "UT Dallas")
+        cid = an_obligation(conn, "accept the UT Dallas award")
+        work = relevance_mod.Work(
+            facts=relevance_mod.facts_for(conn),
+            commitments=relevance_mod.candidates(conn),
+        )
+        judged, _ = relevance_mod.parse(
+            {"verdicts": [{
+                "commitment_id": cid, "verdict": "nonsense", "confidence": 0.5,
+                "cites_fact": fact_id, "quote": "Academic Excellence Scholarship",
+                "depends_on": [fact_id], "reason": "looks overtaken",
+            }]},
+            work,
+        )
+        relevance_mod.apply(conn, sett, work, judged)
+        assert conn.execute(
+            "SELECT status FROM logic_check WHERE commitment_id = ?", (cid,)
+        ).fetchone()["status"] == "pending", "precondition: it asked rather than dropped"
+
+        facts.remember(conn, sett, "identity", "enrolment", "ASU Tempe")
+
+        assert cid not in {c["id"] for c in relevance_mod.candidates(conn)}

@@ -638,38 +638,85 @@ class TestTheAccessibilityTree:
 
 
 class TestTheKeyboardLegendMatchesTheKeyboard:
-    """A legend is a claim about the program, and this one had drifted: base.html
-    binds 1-8 to the eight sidebar destinations, the dashboard advertised 1-6, and
-    the two keys that reach Chats and Brief were undiscoverable.
+    """A legend is a claim about the program, and this one had drifted twice.
 
-    Derived from the bindings rather than restated. A test that hard-codes "1-8"
-    teaches the next author to edit the assertion instead of reading it — the same
-    shape as the migration-version lists tasks/lessons.md already regrets.
+    First it was the legend: base.html bound 1-8 and the dashboard advertised 1-6, so the
+    two keys reaching Chats and Brief were undiscoverable. Then it was the bindings
+    themselves — the map was a second hand-written copy of the sidebar list, /classes was
+    added to one and not the other, and every key from 3 on pointed one row above its
+    label.
+
+    The second fix generates the map from the nav list, so this test now reads the
+    generator rather than a literal table. Still derived from the bindings and not
+    restated: a test that hard-codes "1-9" teaches the next author to edit the assertion
+    instead of reading it — the same shape as the migration-version lists
+    tasks/lessons.md already regrets.
     """
 
     TEMPLATES = Path(__file__).resolve().parents[1] / "backglass" / "web" / "templates"
 
     def _bound_keys(self) -> list[str]:
+        """The digits base.html actually binds: the digit alphabet, truncated to the
+        number of pages in the nav list it is zipped against."""
         base = (self.TEMPLATES / "base.html").read_text()
-        table = re.search(r"const pages = \{(.+?)\}", base, re.S)
-        assert table, "base.html no longer declares a `pages` map"
-        return re.findall(r"'(\d)':", table.group(1))
+        digits = re.search(r"const digits = '(\d+)'", base)
+        assert digits, "base.html no longer declares the digit alphabet"
+        # The list itself, not the JS the loop emits: this reads template source, where
+        # the array is still a Jinja loop and the hrefs live in the `set pages` block it
+        # iterates. That the emitted array matches the rendered nav is asserted against a
+        # real response in tests/test_web_pages.py::TestShell.
+        emitted = re.search(r"const order = \[(.*?)\];", base, re.S)
+        assert emitted, "base.html no longer emits the page order from the nav list"
+        assert "for href" in emitted.group(1), (
+            "the key map is no longer generated from the nav list — it is a second "
+            "hand-written copy again, which is the bug this guards"
+        )
+        declared = re.search(r"\{% set pages = \[(.*?)\] %\}", base, re.S)
+        assert declared, "base.html no longer declares the one page list"
+        pages = re.findall(r"\('(/[^']*)'", declared.group(1))
+        assert pages, "the page list is empty"
+        return list(digits.group(1))[: len(pages)]
+
+    def _advertised(self) -> set[str]:
+        """Digits the dashboard legend claims, expanding any `1`–`9` range it draws."""
+        legend = (self.TEMPLATES / "dashboard.html").read_text()
+        kbd = r'<span class="kbd">(\d)</span>'
+        shown = set(re.findall(kbd, legend))
+        for low, high in re.findall(f"{kbd}\u2013{kbd}", legend):
+            shown |= {str(d) for d in range(int(low), int(high) + 1)}
+        return shown
 
     def test_every_bound_page_key_is_advertised(self) -> None:
         keys = self._bound_keys()
         assert keys, "no page keys found"
-        legend = (self.TEMPLATES / "dashboard.html").read_text()
-        span = f'<span class="kbd">{keys[0]}</span>-<span class="kbd">{keys[-1]}</span>'
-        span = span.replace("-", "\u2013")
-        assert span in legend, (
-            f"the legend does not cover {keys[0]}-{keys[-1]}; the bindings did not "
-            "change, the sentence describing them did"
+        missing = [k for k in keys if k not in self._advertised()]
+        assert not missing, (
+            f"the legend does not cover {missing}; the bindings did not change, the "
+            "sentence describing them did"
         )
 
-    def test_the_keys_are_contiguous(self) -> None:
-        """A range in the legend only tells the truth if the map has no holes."""
-        keys = [int(k) for k in self._bound_keys()]
-        assert keys == list(range(keys[0], keys[0] + len(keys))), keys
+    def test_the_legend_claims_no_key_that_is_not_bound(self) -> None:
+        """The other direction. An advertised key that does nothing is worse than an
+        unadvertised one that works — the owner presses it and the program ignores them.
+
+        Only the page digits are compared: the dashboard's own letter keys (j/k/x/d/s/r)
+        are bound in dashboard.html and are not in this map.
+        """
+        keys = set(self._bound_keys())
+        assert self._advertised() <= keys, self._advertised() - keys
+
+    def test_the_bound_keys_cover_the_pages_they_can(self) -> None:
+        """Ten digits, thirteen pages. The tail is reachable from the nav and from the
+        desktop shell's Go menu (⌘0/⌘K/⌘J), never from a bare letter — letters belong to
+        the dashboard. What must hold is that the digits are spent, not that they reach
+        everything.
+        """
+        base = (self.TEMPLATES / "base.html").read_text()
+        digits = re.search(r"const digits = '(\d+)'", base)
+        assert digits
+        assert len(self._bound_keys()) == len(digits.group(1)), (
+            "a digit is going unused while pages sit past the end of the map"
+        )
 
 
 class TestNothingIsWiderThanThePhone:

@@ -42,6 +42,17 @@ Unresolved: which app. This changes the connector meaningfully.
 **Recommendation: Obsidian.** Roughly a tenth the work of the alternatives. If the owner
 has not committed to a notes app yet, this decision is effectively free.
 
+**Both directions, one folder (2026-08-23).** `backglass/vault.py` writes the ledger out
+as markdown — facts by subject, open commitments with their evidence, the semester, the
+people, and a `STATE.md` that is `backglass state` written down. `VAULT_EXPORT_PATH` is
+where it writes; `OBSIDIAN_VAULT_PATH` is where this connector reads. Setting both to the
+same folder is the intended arrangement, and it is also the one way the ledger could feed
+on itself: a generated note read back in becomes an immutable `source_item`, and the next
+extraction reads facts out of facts. So every generated file carries `backglass: generated`
+in its frontmatter and this connector drops it before the boundary check, counting it as
+`generated` rather than `excluded` — those two numbers mean different things. What is left
+is `Inbox/`, which is the owner's, and which ingests like any other note.
+
 ## Instagram
 
 Friend plans live in DMs. There is no official API for a personal account's inbox (the
@@ -138,6 +149,48 @@ reading as an open obligation until closed by hand. `CANVAS_TOKEN` therefore win
 it is set, and `_all_connectors` builds the two on an `elif` — running both would ingest
 every assignment twice under two source names.
 
+**Why it has no watermark, corrected 2026-08-20.** It shipped with one, on the due date,
+and that cost the owner a semester of coursework. A due date is not monotonic with
+publication: the feed is a single document that gains assignments due *before* the
+furthest date already stored. The read on 2026-08-11 parked the cursor at 2026-09-04; the
+read on 08-17 saw one course publish "Excused Absence Requests" due 2027-03-07 and parked
+there; every read after emitted nothing, because no real coursework is due after March.
+157 assignments upstream, 6 in the ledger, `status = ok` throughout. `canvas.py` is not
+affected — it watermarks on Canvas's `updated_at`, which does move forward.
+
+So `fetch` ignores `since` and emits every assignment the feed publishes. The whole
+document is downloaded either way, and an unchanged assignment costs zero writes because
+`ledger.upsert_source_item` short-circuits on `content_hash` before any model runs. The
+cursor now records the instant of the read — the one monotonic fact available — and
+nothing reads it back as a bound. `doctor`'s `canvas:ics fully ingested` check, which
+compares `upstream_count()` against the ledger, is what named this and is the check to
+read first if the feed ever looks quiet again.
+
+### What the feed does not carry, and the 2026-08-21 archive read
+
+The ICS feed is a list of dated obligations. It is not the course: it has no syllabus, no
+course schedule, no page, no file, and no room or instructor. Everything a student
+actually reads lives behind the Canvas UI, and on this installation there is no token to
+reach it with.
+
+So on 2026-08-21 the eight Fall-C shells were read **by hand, once**, through the
+already-logged-in Safari session — Canvas's own API called from a canvas.asu.edu tab, GET
+only, no scraping and no borrowed token, the same boundary the paragraphs above draw. The
+result is a folder of documents (`~/Documents/ASU Fall 2026`), not a connector. It is
+recorded here because it is a source of ledger evidence and this file is the place a
+source is audited, and because the next person will otherwise try the paths that do not
+work: the Files API is 403 on seven of the eight shells (the Files tab is disabled per
+course), `/pages` is 404, `content_exports` returns a 22-byte empty zip for exactly those
+shells, `public_url` is 404 for a student, and `/login/session_token` is 401 without a
+token. What works is per-file `GET /api/v1/courses/:id/files/:id` in the live session.
+`tasks/lessons.md` 2026-08-21 carries the full account, including why the browser will not
+simply download the files for you.
+
+**A repeat is a hand operation, deliberately.** Automating it would mean holding a
+session, which is the thing this project declined to do when the token was refused. What
+keeps the archive current instead is that a syllabus changes about once a semester, and
+the schedule that matters is already in the ledger through the feed.
+
 ## Local and later-phase sources
 
 The sections above are the network sources the first phases were built around. These
@@ -156,6 +209,7 @@ audits.
 | `apple-contacts` | `APPLE_CONTACTS=1` | none — reference data, re-read each run | yes — a card is a name and an address | same Automation prompt as Notes |
 | `files` | `INBOX_FOLDER_PATH` | mtime watermark | yes | unsupported file types are counted and reported, never silently skipped |
 | `github` | `GITHUB_TOKEN` | two watermarks in one string: search time + notifications `Last-Modified` | yes | 401 on a revoked token; the search quota is per-minute, so requests stay serialized |
+| `slack:<label>` | `SLACK_TOKEN` | a JSON map: one `ts` per channel, one per tracked thread, plus a `floor` for the legacy single watermark | yes — a pasted client thread is client correspondence in Slack too | `{"ok": false, "error": …}` at HTTP 200, so the envelope is checked on every call; `ratelimited` stops the run cleanly and keeps every channel that finished |
 | `anki` | `ANKI_DB_PATH` | revlog row range | none — tallies carry no addresses and no card text | Anki holding the write lock past the busy timeout degrades the source for one cycle |
 | `avorio` | `AVORIO_DB_PATH` | `MAX(reviews.reviewed_at)` | none, same reason | schema drift; `health()` verifies every required table and column, not just the file |
 
@@ -170,6 +224,46 @@ the same rule 5 wrapper as every connector. What it buys is the Conversations pa
 consent prompt used to ask whether to read `+14802411748`, which is not a question
 anybody can answer.
 
+### The drop folder in practice, live since 2026-08-21
+
+`INBOX_FOLDER_PATH` had never been set. It now points at `~/Documents/ASU Fall 2026`, the
+Canvas archive described under Canvas above, and the first real drop folder taught three
+things worth writing down:
+
+- **Derived text belongs outside the drop root.** The connector reads `.txt`, so a
+  plain-text extraction sitting beside its own PDF is the same syllabus ingested twice,
+  triaged twice and extracted twice. The extractions live in a sibling folder,
+  `ASU Fall 2026 — extracted text`, and the archive's own README says why so nobody
+  helpfully moves them back.
+- **`MAX_BYTES` went 512 KB → 4 MB.** Seven of the archive's documents were over the old
+  ceiling and every one of them was a document — a 784 KB lab syllabus, a 2.8 MB
+  recitation activity, a 2.3 MB textbook chapter. They are large because they are typeset
+  and full of figures, not because they are dumps; the comment above the constant carries
+  the same reasoning. `MAX_CHARS` is what bounds extraction cost, so the only thing this
+  number ever protected was memory.
+- **Triage does the curation.** Run 521 ingested 29 files, kept 4 — both CHM 113 lecture
+  documents, the recitation activity, the HON 171 syllabus — and dropped 25 readings,
+  worksheets and transcripts. Extraction wrote 12 commitments from those 4, including two
+  HON 171 paper deadlines that existed in no other source. Unsupported types (.docx,
+  .xlsx, images, .svg) are counted and reported rather than silently skipped, which is
+  the rule the whole table above is built on.
+
+### Two things a calendar write does not put in the ledger
+
+Recorded here because both were learned by writing 28 syllabus-derived dates to a new
+Apple Calendar and then finding 13 of them in the ledger:
+
+- **All-day events never ingest.** `apple_calendar._to_item` returns `None` for them by
+  design — an all-day row is not capacity — so a drop deadline, a no-class day or an
+  all-day reminder can live on the owner's calendar and be invisible to every Backglass
+  surface. Nothing fails; the row simply is not there.
+- **The window is 21 days ahead, 7 behind.** A timed exam in November is not in the ledger
+  in August. It arrives when it comes inside the window.
+
+The durable record of a dated obligation is therefore the commitment extraction made from
+the document, not the calendar event — which is the ledger-primary rule in CLAUDE.md,
+arrived at from the other direction.
+
 Two rules those local stores exist to teach:
 
 - **Open a live SQLite store `mode=ro` with a busy timeout, never `immutable=1`.** All
@@ -179,6 +273,42 @@ Two rules those local stores exist to teach:
   batch item to the exact immutable row range it summarizes. A high-watermark id
   (`reviews:<day>:<max-id>`) re-emits the same id with different content after a rescan,
   which the 0002 immutability trigger turns into a failed-looking sync.
+
+## Stream or snapshot: what a source promises about its own records
+
+Declared in `connectors/base.py` as `SNAPSHOT_SOURCES`, and it is the answer to a question
+that had been settled per-incident rather than once (pipeline-redesign §4, divergence 3).
+
+A **stream** source hands back records that are written once: a mail, a message. If one
+changes after we stored it, either our extractor changed or something upstream is lying,
+and both deserve an error.
+
+A **snapshot** source hands back the current state of a live record: a Canvas assignment,
+a calendar event, a reminder, a note. Those move, and that is the source working normally.
+
+`source_item` is immutable either way — nothing in this distinction changes that, and the
+stored item keeps the words it was first read with. What changes is the *report*. Until
+2026-08-24 a changed Canvas due date produced `content changed for an immutable
+source_item`, an error, on every sync forever, because nothing ever resolves the condition
+that raises it. Seven of them per run, and the practical effect of an error that is always
+present is that the Sources panel stops being read. It is one line now:
+
+```
+7 upstream record(s) changed on canvas:ics — the mirror carries the new values
+```
+
+**The new value is not lost, and that is what makes the downgrade honest.** Each snapshot
+source keeps a mirror beside the immutable item — for Canvas it is the `assignment` table,
+refreshed on every feed read — and `logic._upstream_due_dates_moved` compares the mirror
+against the commitment and moves the deadline. The error was never what carried the
+information; it just made noise where the mirror was already doing the work.
+
+Membership is evidence rather than intuition: every source in the set has been observed
+changing, and the absences are claims of their own (`files` is out, because a re-saved
+document in the drop folder is a real change to evidence the owner may be relying on, and
+until something mirrors it the error is the only notice). A second feed inherits its
+family's semantics — `calendar:work` is a calendar — so a new source cannot silently fall
+back to stream, which is the fallback that produced the noise in the first place.
 
 ## Choosing what is read
 
@@ -193,12 +323,26 @@ every conversation the owner has already declined, and a prompt that repeats its
 people stop reading.
 
 Connectors report what they saw and never write it — the same seam `excluded_by_rule` uses.
-`sync` records the sightings, which is also why a connector with nothing monitored is
-*unhealthy but not inert*: it still discovers conversations, or the page would have nothing
-to offer and there would be no way to start.
+`sync` records the sightings, which is why a connector with nothing monitored is never
+*inert*: it still discovers conversations, or the page would have nothing to offer and
+there would be no way to start.
 
-`IMESSAGE_CHATS` / `INSTAGRAM_CHATS` still work and are seeded into the table as `monitor`
-on the first run. A click beats a stale setting: re-seeding never overrules an `ignore`.
+The two sources differ on what "nothing monitored" means for health, and both are
+deliberate. **iMessage reports unhealthy**, because its gate is a hand-typed list of names
+and an empty one is more likely a misconfiguration than a decision. **Slack reports
+healthy**, because its gate is the page: an empty allowlist there is a question waiting to
+be answered, not a fault, and the only thing that can actually be *mis*configured is the
+token. Instagram sits with Slack for the same reason.
+
+`IMESSAGE_CHATS` / `INSTAGRAM_CHATS` / `SLACK_CHANNELS` still work and are seeded into the
+table as `monitor` on the first run. A click beats a stale setting: re-seeding never
+overrules an `ignore`.
+
+Three sources share this gate and each keys its rows differently, which is deliberate:
+iMessage by display name or handle, Instagram by thread title, **Slack by conversation ID**
+(`C…`, `D…`, `G…`) with the readable `#founders` / `@Dana Ruiz` shown beside it. A Slack
+channel can be renamed and a Slack DM has no name at all, so keying on the name would
+silently un-monitor a conversation the owner had already said yes to.
 
 ## iMessage reads named conversations only
 
@@ -296,8 +440,65 @@ the /chats page — the connector is allowlist-only by design, because a DM arch
 the least filtered thing the owner owns, and nothing is read until it is chosen.
 A live lane exists (`INSTAGRAM_SESSION_FILE`) and is experimental.
 
-**Slack.** A user token in `SLACK_TOKEN` plus the channel ids in `SLACK_CHANNELS`. Named
-channels only; there is no inbox discovery, for the same reason Instagram is allowlisted.
+**Slack.** A user token in `SLACK_TOKEN`. That is the whole gate — **which** conversations
+get read is decided on /chats, not in `.env`.
+
+This reverses the original rule, which was "named channels only; there is no inbox
+discovery". The instinct was right and the mechanism was wrong: Slack does not show a
+channel ID anywhere a person can see, so "list the IDs you want" was an instruction the
+owner could not follow, and the connector that had never been switched on is the evidence.
+What replaces it is the contract iMessage and Instagram already have — enumerate, then ask.
+
+Every sync calls `users.conversations` and records each conversation the owner is a member
+of as a sighting under the shared source `slack` (§Monitored conversations). Enumeration
+reads metadata only: an ID, a name, a kind, a member count. **No message is fetched for a
+conversation until it is set to `monitor` on /chats**, and saying yes rewinds the cursor so
+the decision reaches backwards into what was already said there. `SLACK_CHANNELS` still
+works and is now only a shortcut: whatever is in it is seeded as already-decided.
+
+Discovery is deliberately not gated on the allowlist. The 2026-08-03 lesson is exactly this
+cycle — a page whose input comes from the thing the page disables stays blank forever.
+
+Three details worth knowing before reading the connector:
+
+- **The cursor is a map, not a watermark.** One `ts` per channel and one per tracked thread.
+  The single workspace-wide watermark it replaced only advanced after a fully clean pass
+  over every channel and every thread fan-out, and a rate-limit stop reset it — under
+  Slack's ~1 request/minute tier for new non-Marketplace apps that pass never completes, so
+  the position pinned at the start and every run re-read from zero. A bare `ts` from the old
+  shape is read as a floor under every channel.
+- **Late thread replies are found.** `conversations.history` returns parents only, and a
+  reply landing today does not move its parent's `ts`, so a reply on an older thread used to
+  be unreachable. Tracked threads are re-polled from their own watermark, bounded by
+  `SLACK_THREAD_WINDOW_DAYS` and by a per-run re-poll budget whose remainder is reported
+  rather than silently dropped.
+- **Names are displayed, never hashed.** `title` and `author` carry `#founders` and
+  `Dana Ruiz`, because `#C0ABCDEF` is not provenance a person can check. The `content_hash`
+  is computed over the raw channel and user IDs instead — a display name can drift, and a
+  hash that drifts rewrites a row the immutability trigger has frozen.
+
+**Expect the sync after a decision to be slow.** Saying yes on /chats calls
+`chats.rewind`, which NULLs the whole cursor — every monitored channel, not just the new
+one — so the next run re-reads all of them from the beginning. That is correct and it is
+the point: a decision made today has to reach the plan already made in that conversation.
+It costs nothing in writes, because `content_hash` makes an already-stored message a no-op,
+and it costs real time in *requests* at Slack's rate tier. A long first sync after a
+decision is the feature working, not a failure.
+
+**Setting up the token.** Slack has no "give me a personal token" button; the supported
+route is a single-workspace app the owner owns.
+
+1. api.slack.com/apps → **Create New App** → **From scratch**, pick the workspace.
+2. **OAuth & Permissions** → **User Token Scopes** (the *user* column, not the bot one):
+   `channels:history`, `groups:history`, `im:history`, `mpim:history`, `channels:read`,
+   `groups:read`, `im:read`, `mpim:read`, `users:read`.
+3. **Install to Workspace**, then copy the **User OAuth Token** — it begins `xoxp-`.
+4. `SLACK_TOKEN=xoxp-…` in `.env`, `uv run backglass doctor` to confirm `auth.test` passes,
+   then one sync, then open /chats and choose.
+
+A bot token (`xoxb-`) also authenticates, and is the wrong instrument here: a bot sees only
+channels it has been invited to and no DMs at all, which is most of what a personal ledger
+is for.
 
 ### Platforms with no connector, and why
 

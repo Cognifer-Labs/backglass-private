@@ -6,6 +6,23 @@
       <p class="empty">No plan for today. The day planner runs at 5:45am.</p>
     {% else %}
       {% set meta = d.today_panel.meta %}
+      {# Accepting the plan, where the plan is read.
+         `plan/replan.py`'s boundary says an accepted plan may only be knocked, never
+         replaced — and the route's own docstring says "this needs a button: the boundary
+         is meaningless if accepting requires a terminal". The button existed, on
+         /schedule. The plan is read here. On 2026-08-25, 0 of 88 day plans had ever been
+         accepted, which is what an affordance one page from the attention looks like.
+         Same POST as the schedule page, same boundary, one form. #}
+      <div class="planacts" id="panel-today-accept">
+        {% if meta.plan_status == 'proposed' %}
+          <form method="post" action="/schedule/{{ d.today.isoformat() }}/accept">
+            <button class="btn ok" type="submit">Accept plan</button>
+          </form>
+          <span class="b2">until accepted, replanning may replace it</span>
+        {% elif meta.plan_status == 'accepted' %}
+          <span class="b2">plan accepted — replanning only knocks</span>
+        {% endif %}
+      </div>
       {# docs/05 §3 and docs/06: one capacity sentence, not a dashboard of gauges. #}
       <p class="cap">
         {{ (meta.capacity_minutes // 60) }}h {{ '%02d'|format(meta.capacity_minutes % 60) }}m available,
@@ -45,10 +62,13 @@
             <p class="b1"><span class="cond">{{ b['title'] }}</span></p>
             {{ m.chip('protected') }}
           </div>
-        {% elif b['kind'] == 'routine' %}
+        {% elif b['kind'] in ('routine', 'study') %}
           {# Routines get no verbs, hovered or not: "Roll" on breakfast is a question
-             nobody asked. Life holds its place; only work carries actions. #}
-          <div class="row sched k-routine">
+             nobody asked. Life holds its place; only work carries actions. A study
+             block is here for the same reason and not by analogy: it is time the plan
+             set aside, not an obligation anybody made, so there is nothing to tick and
+             nothing to roll — and `rollover.open_blocks` agrees, leaving its kind out. #}
+          <div class="row sched k-{{ b['kind'] }}">
             <span class="time">{{ b['starts_at']|t12 }}–{{ b['ends_at']|t12 }}</span>
             <p class="b1"><span>{{ b['title'] }}</span></p>
           </div>
@@ -64,7 +84,8 @@
             <span class="time">{{ b['starts_at']|t12 }}–{{ b['ends_at']|t12 }}</span>
             <p class="b1"><span>{{ b['title'] }}</span>
               {%- if b['pinned'] %} <span class="kbd">pinned</span>{% endif %}
-              {%- if b['rollover_count'] %} <span class="b2i">rolled {{ b['rollover_count'] }}x</span>{% endif %}</p>
+              {%- if b['rollover_count'] %} <span class="b2i">rolled {{ b['rollover_count'] }}x</span>{% endif %}
+              {%- if b['needs'] %}<br><span class="b2i">needs {{ b['needs'] }}</span>{% endif %}</p>
             <div class="acts">
               <button class="btn ok" hx-post="/blocks/{{ b['id'] }}/outcome/done"
                       hx-target="#panel-today" hx-swap="outerHTML">Done</button>

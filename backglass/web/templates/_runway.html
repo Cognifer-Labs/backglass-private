@@ -1,0 +1,50 @@
+{% import "_macros.html" as m %}
+<div class="inner" id="runway-body">
+{# The fortnight behind the day. Loaded on first open, never with the page — the
+   allocation walks fourteen days of capacity and costs about half a second, which is a
+   real price on a page opened every morning and one nobody should pay to look at today.
+
+   Unreachable work sits at the top because it is the only part of this list that asks
+   for a decision. Everything under it is the planner working. #}
+{% if unreadable %}
+  <p class="b2">{{ unreadable|length }} day(s) of the fortnight could not be read —
+    what follows is optimistic by whatever they hold.</p>
+{% endif %}
+
+{% if not rows %}
+  <p class="b2">Nothing to allocate. No open obligation carries both an estimate and a date.</p>
+{% else %}
+  {% for r in rows %}
+    <div class="row rway{% if r.unreachable %} miss{% endif %}">
+      <span class="time">{{ r.due or '—' }}</span>
+      <div class="grow">
+        <p class="b1">{{ r.what }}</p>
+        {% if r.unreachable %}
+          <p class="b2">{{ r.minutes }}m left, and the next {{ horizon_days }} days have
+            nowhere to put it before it is due — start it early, cut its scope, or move the date.</p>
+        {% else %}
+          <p class="b2">{{ r.minutes }}m over {{ r.days }} sitting{{ '' if r.days == 1 else 's' }} ·
+            {{ r.spread|join(' · ') }}</p>
+        {% endif %}
+      </div>
+      {% if r.unreachable %}
+        {{ m.chip('wont_fit') }}
+      {% elif r.overdue %}
+        {# Late, but the fortnight has room for it. A different fact from "cannot fit",
+           and the owner acts on it differently — this one only needs doing. #}
+        <span class="lbl">late</span>
+      {% endif %}
+    </div>
+  {% endfor %}
+{% endif %}
+
+{% if beyond %}
+  {# The window, named. Everything above has a day; this is how much does not, and it is
+     the difference between "the planner has 137 things" and "the planner has 267 and
+     showed you the half the fortnight could hold". Counted rather than listed — the
+     rows would treble the panel and every one of them would say the same thing. #}
+  <p class="b2">+ {{ beyond.hours }}h across {{ beyond.count }} obligation(s) has no day
+    in the next {{ horizon_days }} — due after they end, and they have no minutes left.
+    Earliest {{ beyond.earliest }}. Nothing is late; the fortnight ends first.</p>
+{% endif %}
+</div>

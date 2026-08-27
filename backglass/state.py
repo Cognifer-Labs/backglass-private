@@ -32,6 +32,7 @@ import shutil
 import sqlite3
 import subprocess
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -366,6 +367,33 @@ def _knowledge_base(conn: sqlite3.Connection, settings: Settings, state: State) 
     state.add("knowledge_base", "owner_context_chars",
               Claim(len(context), "len(facts.owner_context(conn)) — what triage now carries"))
 
+    # The state doc (0033). Two claims, and the second is the one worth reading: a stored
+    # version that no longer matches what renders now means the ledger moved and no sync
+    # has written the new reading yet — the same shape as `deployed.matches_source`, and
+    # for the same reason. It is compared by body, not by a timestamp.
+    from backglass import situation as situation_mod
+    from backglass.plan import timezones as tz_mod
+
+    try:
+        stored = situation_mod.versions(conn, limit=1)
+        newest = stored[0] if stored else None
+        state.add("knowledge_base", "situation_versions",
+                  Claim(conn.execute("SELECT COUNT(*) AS n FROM situation_doc"
+                                     " WHERE user_id = ?", (USER_ID,)).fetchone()["n"],
+                        "rows in situation_doc — one per reading that actually differed"))
+        body = situation_mod.render(conn, settings, tz_mod.local_now(settings).date())
+        state.add("knowledge_base", "situation_current",
+                  Claim(bool(newest) and newest.body == body,
+                        "situation.render(...) == the newest stored body; false means the"
+                        " ledger moved since the last sync wrote a version"))
+    except Exception as exc:  # noqa: BLE001 — a probe that cannot run says so
+        reason = f"{type(exc).__name__}: {exc}"
+        state.add("knowledge_base", "situation_versions",
+                  Claim(None, "rows in situation_doc", unknown=reason))
+        state.add("knowledge_base", "situation_current",
+                  Claim(None, "situation.render(...) == the newest stored body",
+                        unknown=reason))
+
 
 def _open_questions(conn: sqlite3.Connection, state: State) -> None:
     """What the system knows it does not know.
@@ -423,6 +451,99 @@ def _retrieval(conn: sqlite3.Connection, settings: Settings, state: State) -> No
     state.add(
         "retrieval", "pending",
         Claim(stats["pending"], "indexable minus indexed — documents a search cannot reach"),
+    )
+
+
+def _vault(conn: sqlite3.Connection, settings: Settings, state: State) -> None:
+    """Whether the Obsidian vault on disk still says what the ledger says.
+
+    Deliberately not a re-render. `vault.render` calls this module for `STATE.md`, so a
+    probe that rendered the vault to compare it would recurse — and the question here is
+    the cheap one anyway: was the vault written since the ledger last changed. A note
+    body that drifted without the ledger changing is not a state this can reach, because
+    nothing but the export writes those files.
+
+    The generated count is the safety number. Every file the export writes carries the
+    marker `connectors/notes.py` skips on, so `marked` below and `notes` being equal is
+    the statement that no unmarked file is sitting in the vault waiting to be ingested as
+    though the owner had written it.
+    """
+    configured = settings.vault_export_path
+    if configured is None:
+        state.add(
+            "vault", "root",
+            Claim(None, "settings.vault_export_path",
+                  unknown="VAULT_EXPORT_PATH is not set — nothing is exported"),
+        )
+        return
+
+    root = Path(configured).expanduser()
+    state.add("vault", "root", Claim(str(root), "settings.vault_export_path"))
+    if not root.is_dir():
+        state.add(
+            "vault", "notes",
+            Claim(None, "*.md under the vault root",
+                  unknown=f"{root} does not exist — run `backglass vault export`"),
+        )
+        return
+
+    from backglass import vault as vault_mod
+
+    marker = f"{vault_mod.MARK_KEY}: {vault_mod.MARK_VALUE}"
+    files = sorted(path for path in root.rglob("*.md") if ".obsidian" not in path.parts)
+    marked = 0
+    for path in files:
+        try:
+            head = path.read_text(encoding="utf-8", errors="replace")[:200]
+        except OSError:
+            continue
+        if marker in head:
+            marked += 1
+    state.add("vault", "notes", Claim(len(files), "*.md under the vault root"))
+    state.add(
+        "vault", "generated",
+        Claim(marked, f"notes carrying `{marker}` — the ones the notes connector skips"),
+    )
+
+    # The ingest side. Both paths at one folder is the intended arrangement and also the
+    # only way the ledger could read its own output, so it is stated rather than implied.
+    ingest = settings.obsidian_vault_path
+    state.add(
+        "vault", "also_ingested",
+        Claim(
+            ingest is not None and Path(ingest).expanduser() == root,
+            "OBSIDIAN_VAULT_PATH == VAULT_EXPORT_PATH",
+        ),
+    )
+
+    stamp = root / "STATE.md"
+    if not stamp.exists():
+        state.add(
+            "vault", "exported_at",
+            Claim(None, "STATE.md frontmatter",
+                  unknown="STATE.md is missing — the vault has never been exported"),
+        )
+        return
+    exported = None
+    for line in stamp.read_text(encoding="utf-8", errors="replace").splitlines()[:12]:
+        if line.startswith("generated_at:"):
+            exported = line.split(":", 1)[1].strip()
+            break
+    if exported is None:
+        state.add(
+            "vault", "exported_at",
+            Claim(None, "STATE.md frontmatter",
+                  unknown="STATE.md carries no generated_at — written by something else"),
+        )
+        return
+    state.add("vault", "exported_at", Claim(exported, "STATE.md frontmatter `generated_at`"))
+
+    row = conn.execute(
+        "SELECT MAX(started_at) AS latest FROM run WHERE user_id = ?", (USER_ID,)
+    ).fetchone()
+    state.add(
+        "vault", "last_run",
+        Claim(row["latest"] if row else None, "MAX(started_at) FROM run"),
     )
 
 
@@ -565,6 +686,7 @@ def collect(conn: sqlite3.Connection, settings: Settings) -> State:
         ("knowledge_base", lambda: _knowledge_base(conn, settings, state)),
         ("open_questions", lambda: _open_questions(conn, state)),
         ("retrieval", lambda: _retrieval(conn, settings, state)),
+        ("vault", lambda: _vault(conn, settings, state)),
         ("schedule", lambda: _schedule(state)),
     ]
     for name, probe in probes:
@@ -631,6 +753,24 @@ class Verdict:
         if not self.ok and self.remedy:
             text += f"\n       fix: {self.remedy}"
         return text
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    """An ISO timestamp from a claim, as an aware datetime — or None, never a guess.
+
+    The two timestamps this compares come from different clocks: `run.started_at` is UTC
+    and `STATE.md`'s stamp is the owner's local zone. Both carry an offset, so comparing
+    them is legitimate; a naive one would silently compare wall-clock readings seven hours
+    apart, which is exactly the timezone bug rule 4 exists for. So a value without an
+    offset is treated as unreadable rather than assumed to be local.
+    """
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
 
 
 def _value(state: State, section: str, name: str) -> Any:
@@ -732,8 +872,8 @@ def verdicts(state: State, conn: sqlite3.Connection, settings: Settings) -> list
         remedy="restore the prompt file, or re-extract the rows citing it",
     ))
 
-    for field, label in (("untriaged", "triaged"), ("kept_not_extracted", "extracted")):
-        count = _value(state, "ledger", field)
+    for claim_name, label in (("untriaged", "triaged"), ("kept_not_extracted", "extracted")):
+        count = _value(state, "ledger", claim_name)
         if isinstance(count, int):
             out.append(Verdict(
                 f"every kept item is {label}",
@@ -755,6 +895,22 @@ def verdicts(state: State, conn: sqlite3.Connection, settings: Settings) -> list
     out.append(Verdict("config agrees with the knowledge base", ok=not drift,
                        detail="; ".join(str(d) for d in drift[:2]),
                        remedy="`backglass memory` — the drift line names the field"))
+
+    # The vault is a report over the ledger, so a vault older than the last run is a
+    # report of a ledger that has since moved. Graded only when both timestamps are
+    # readable; an unconfigured vault produced no claims and gets no verdict, the same
+    # way a machine with no installed app gets no deployment verdict.
+    exported = _parse_iso(_value(state, "vault", "exported_at"))
+    ran = _parse_iso(_value(state, "vault", "last_run"))
+    if exported is not None and ran is not None:
+        behind = ran > exported
+        out.append(Verdict(
+            "the vault is newer than the last sync",
+            ok=not behind,
+            detail=(f"exported {exported:%d %b %H:%M}, last run {ran:%d %b %H:%M}"
+                    if behind else f"exported {exported:%d %b %H:%M}"),
+            remedy="`backglass vault export` — or the sync's export tail failed",
+        ))
 
     out.extend(_morning_verdicts(conn, settings))
     return out

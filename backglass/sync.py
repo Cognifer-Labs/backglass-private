@@ -28,12 +28,14 @@ from typing import Any
 from backglass import chats as chats_mod
 from backglass import contacts as contacts_mod
 from backglass import context as context_mod
+from backglass import coursework, retraction
 from backglass import facts as facts_mod
 from backglass.config import Settings
 from backglass.connectors import base, credentials
 from backglass.connectors.base import Connector
 from backglass.connectors.contacts import ContactsSource
 from backglass.db import now_iso, query
+from backglass.extract import client as client_mod
 from backglass.extract import commitments as tier2
 from backglass.extract import engagements as engagement_tier2
 from backglass.extract import noise as noise_mod
@@ -73,6 +75,40 @@ class SyncReport:
     #: Identifiers the address book attached to people this run, so a conversation the
     #: page could only call `+14802411748` now has a name on it.
     contacts_linked: int = 0
+    #: Work a connector deliberately bounded and did not do — Slack's per-run thread
+    #: re-poll budget is the first. Reported because a silent cap reads as "covered
+    #: everything": a run that skipped 200 threads and a run with none to skip look
+    #: identical otherwise, and only one of them means the next run has a backlog.
+    deferred_work: dict[str, int] = field(default_factory=dict)
+    #: Calls the free provider refused and the fallback answered, and why the first one
+    #: crossed over. Zero is the healthy state; a number climbing every run means the
+    #: primary has stopped working and the subscription is quietly paying for it.
+    fallback_calls: int = 0
+    fallback_reason: str = ""
+    #: Assignments whose typed record was written or moved this run (migration 0031),
+    #: and the commitments whose estimate that changed. Reported because the second
+    #: number is the planner's input: a day packed against `type_default:30` for an exam
+    #: is a day built on a figure nobody chose.
+    assignments_recorded: int = 0
+    assignment_estimates: int = 0
+    #: Dated assignments that had no commitment and were promoted to one. Normally zero.
+    #: Anything else means the extractor read a Canvas assignment and said nothing about
+    #: it, which is the failure this counter exists to make visible — it was 22 the day
+    #: it was written, and none of them were on the owner's board.
+    assignment_promotions: int = 0
+    #: Readings a syllabus schedules that no Canvas assignment lists. 22 the day it was
+    #: written, all of them HON 171 — the course whose entire workload is reading.
+    syllabus_readings: int = 0
+    assignment_writes: int = 0
+    #: Due dates that moved upstream, rendered. Five CIS 236 assignments had already
+    #: moved when this was built and nothing in the system could say so, because the
+    #: re-read produced an immutable-item conflict and a conflict propagates nothing.
+    coursework_notes: list[str] = field(default_factory=list)
+    #: Ledger rows a windowed connector's complete re-read no longer returns — a class
+    #: that stopped meeting, a meeting that was cancelled. Reported because it changes
+    #: the day's capacity, and a silent change to the plan is the thing the owner cannot
+    #: check.
+    retracted: int = 0
     #: Chat commitments the conversation itself settled (migration 0025). `applied` closed
     #: outright; `pending` is waiting on the review fragment because the verdict landed
     #: under the confidence threshold — a wrong close is silent, so it asks first.
@@ -122,6 +158,9 @@ class SyncReport:
     model_auth_failed: bool = False
     failed_sources: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    #: Upstream records that changed on a source where that is expected. Reported, never
+    #: an error — see `Ledger.upsert_source_item`.
+    upstream_changes: list[tuple[str, str]] = field(default_factory=list)
     date_notes: list[str] = field(default_factory=list)
 
     @property
@@ -351,7 +390,41 @@ def _sync(
 
         review_writes = reviews_mod.sync_checkpoints(conn, settings)
 
-    report.writes = ledger.writes + review_writes + noise_writes + contacts_writes
+    # The assignment estimate lands here, after extraction: it writes to commitments,
+    # and the ones this run just created are exactly the ones whose numbers are wrong.
+    # Deterministic, so it costs nothing on the cap and runs whether or not the model did.
+    if not dry_run:
+        # Before the estimates, because it creates rows they then price. An assignment
+        # the extractor said nothing about is not a judgement call the model gets to make
+        # twice a day — Canvas states the deliverable, the course and the deadline, and
+        # on 2026-08-27 twenty-two pieces of graded work were missing from the board
+        # because a model read them and emitted nothing at all.
+        promoted, _ = coursework.promote_orphans(conn, settings)
+        report.assignment_promotions = promoted
+        report.assignment_writes += promoted
+        # The work a syllabus schedules and Canvas never lists. HON 171 is a reading
+        # seminar with a text due before every meeting; its Canvas side is a 150-word
+        # discussion post whose description says "the assigned reading" and never names
+        # one. Deterministic like the promotion above, and for the same reason: the model
+        # already read this document and returned four rows out of thirty.
+        from backglass import syllabus as syllabus_mod
+        from backglass.plan import timezones
+
+        readings_written, notes = syllabus_mod.promote_from_ledger(
+            conn, settings, on_or_after=timezones.local_now(settings).date()
+        )
+        report.syllabus_readings = readings_written
+        report.assignment_writes += readings_written
+        if readings_written:
+            report.coursework_notes.extend(notes[:12])
+        applied_estimates, _ = coursework.apply_estimates(conn)
+        report.assignment_estimates = applied_estimates
+        report.assignment_writes += applied_estimates
+
+    report.writes = (
+        ledger.writes + review_writes + noise_writes + contacts_writes
+        + report.assignment_writes
+    )
     report.spend_cents = round(cap.this_run_usd * 100)
     # The cap wins the label when both hold: it is the one that persists past this run.
     if cap.reached:
@@ -375,11 +448,21 @@ def _sync(
             f"model rate limit reached during {stage or 'the run'}; the remaining items "
             "are still pending (not parked) and the next scheduled sync retries them"
         )
+    # How much of this run the fallback provider carried. A chain that silently answers
+    # every call is a chain nobody knows they depend on — and here the secondary is the
+    # owner's Claude subscription, so "the free tier has been dead for a week" and
+    # "everything is fine" look identical without this line.
+    report.fallback_calls, report.fallback_reason = client_mod.fallback_stats(client)
+
     report.commitments_inserted = ledger.stats.commitments_inserted
     report.commitments_deduped = ledger.stats.commitments_deduped
     report.commitments_superseded = ledger.stats.commitments_superseded
     for conflict in ledger.stats.source_item_conflicts:
         report.errors.append(f"content changed for an immutable source_item: {conflict}")
+    # Not an error, and not silence either. A snapshot source's records are supposed to
+    # move; what the run owes the owner is the count and where to look, not seven
+    # identical failures it can do nothing about and that will be back in half an hour.
+    report.upstream_changes = list(ledger.stats.upstream_changes)
 
     if not dry_run:
         _record_run(conn, report, started_at)
@@ -460,6 +543,12 @@ def _ingest(
                 # and gating recovery on a cursor would leave exactly those sources
                 # red forever.
                 credentials.mark_ok(conn, connector.name)
+                # Only after the loop above completed. A windowed connector that just
+                # re-read its whole span can say which of its ledger rows the store no
+                # longer has — the owner's dropped classes went on eating capacity for
+                # ten days because nothing could. Connectors that cannot certify a
+                # complete read return None and this does nothing.
+                report.retracted += len(retraction.reconcile(conn, connector))
         except Exception as exc:  # noqa: BLE001 - rule 5: degrade, never block
             # Redacted before it is persisted. This detail lands in credential.last_error
             # AND in run.errors_json — a table outside `credential`, which docs/08 says
@@ -475,11 +564,39 @@ def _ingest(
         report.excluded += getattr(connector, "excluded", 0)
         for rule, count in (getattr(connector, "excluded_by_rule", None) or {}).items():
             report.excluded_by_rule[rule] = report.excluded_by_rule.get(rule, 0) + count
+        # The same attribute seam, for work a connector bounded rather than excluded. A
+        # cap that nothing reads is a cap nobody knows about, which is the failure the
+        # "no silent caps" rule names.
+        deferred = int(getattr(connector, "threads_deferred", 0) or 0)
+        if deferred:
+            report.deferred_work[f"{connector.name}: threads"] = deferred
+        # A connector that partly failed is not a connector that succeeded. `calendar:apple`
+        # loses one calendar at a time by design (rule 5), and for weeks that loss was
+        # reported as a boundary exclusion — so the owner's main calendar timing out on
+        # every scheduled run looked like a privacy rule working correctly. Surfaced here
+        # as an error, which is also what makes the run exit non-zero.
+        for failure in getattr(connector, "failed_calendars", None) or []:
+            report.errors.append(f"{connector.name}: {base.safe_error(Exception(failure))}")
 
         # What the connector saw, whether or not it was allowed to read it. Written here
         # rather than by the connector, on the same seam as the counters above: a
         # connector emits SourceItems and nothing else. A conversation nobody has named
         # lands undecided, which is what puts it on the prompt instead of dropping it.
+        # Coursework, the same attribute seam. `canvas_ics` parses the whole VEVENT and
+        # can only carry one sentence of it into an immutable `source_item` — the
+        # description, the URL and the current due date arrive here instead, and become
+        # the typed record the planner reads a real estimate off (migration 0031).
+        parsed = getattr(connector, "assignments", None)
+        if parsed:
+            course_report = coursework.upsert(
+                conn, ledger.settings, connector.name, list(parsed), dry_run=dry_run
+            )
+            report.assignments_recorded += course_report.inserted + course_report.updated
+            report.assignment_writes += course_report.writes
+            # A due date that moved upstream is not a note to file away: it is the reason
+            # the plan is wrong. Surfaced on the run rather than left in the table.
+            report.coursework_notes.extend(course_report.notes)
+
         sightings = getattr(connector, "seen_chats", None)
         if sightings and not dry_run:
             seen = chats_mod.record(
@@ -907,13 +1024,22 @@ def _extract_pass(
             # Third record type from the same read (v10): durable facts, through the
             # poison gate in facts.apply_extracted. Same transaction for the same
             # reason as the two above — one response is one read of one message.
-            facts_mod.apply_extracted(
-                conn,
-                settings,
-                extraction.facts,
-                source_item_id=item_id,
-                body_text=str(item.get("body_text") or ""),
-            )
+            #
+            # Gated on ledger.dry_run explicitly: unlike the two calls above,
+            # apply_extracted writes through a raw `conn` rather than through `ledger`,
+            # so it carries none of Ledger's own dry-run self-gating on every INSERT/
+            # UPDATE. Pre-existing gap, found while wiring claim_events into remember():
+            # `backglass sync --dry-run` was writing real fact (and now claim_event) rows
+            # the whole time, which is CLAUDE.md rule 3 in the same shape as the
+            # 2026-08-01 cursor-truncation lesson — the promise was "write nothing".
+            if not ledger.dry_run:
+                facts_mod.apply_extracted(
+                    conn,
+                    settings,
+                    extraction.facts,
+                    source_item_id=item_id,
+                    body_text=str(item.get("body_text") or ""),
+                )
             ledger.record_extraction_version(item_id, prompt.stamp)
         except Exception as exc:  # noqa: BLE001 - rule 5: degrade, never block
             # Rolled back, so the item is unstamped and untouched — the same parked state

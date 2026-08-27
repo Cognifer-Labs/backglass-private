@@ -143,14 +143,16 @@ class TestOneRealMonday:
         # Work never exceeds capacity.
         assert proposal.planned_minutes <= proposal.capacity.capacity_minutes
 
-        # P10: the rollover tops the selection order — which means it is the item
-        # handed the protected deep-work block, not necessarily the 08:00 slot.
+        # §1.5 rule 2 outranks P10, corrected 2026-08-24: the overdue housing reply takes
+        # the protected block, not the rollover that is due on the 26th. P10 orders what
+        # rule 2 leaves tied — it is not a licence for anything that once rolled to lead
+        # the day forever, which is what it meant while it was the first sort key.
         work = [b for b in blocks if b["kind"] in ("work", "protected")]
-        rollover_block = next(b for b in work if b["commitment_id"] == ids["rollover"])
-        assert rollover_block["kind"] == "protected"
-        # Overdue is placed; the someday-huge item is not.
+        protected = next(b for b in work if b["kind"] == "protected")
+        assert protected["commitment_id"] == ids["overdue"]
+        # And the rollover is still planned, above the things it is tied with.
         placed = {b["commitment_id"] for b in work}
-        assert ids["overdue"] in placed and ids["due_today"] in placed
+        assert {ids["overdue"], ids["due_today"], ids["rollover"]} <= placed
 
         # P4: the ten-minute email rides the small batch, never a block of its own.
         small = [b for b in blocks if b["kind"] == "small"]

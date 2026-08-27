@@ -26,6 +26,7 @@ from typing import Any
 import pytest
 
 from backglass.config import Settings
+from backglass.extract import client
 from backglass.extract.client import (
     AuthCircuit,
     ClaudeCLIBackend,
@@ -35,7 +36,6 @@ from backglass.extract.client import (
     ModelResult,
     build,
 )
-from backglass.extract import client
 from backglass.sync import _in_parallel, sync
 from tests.conftest import FakeGmailService, gmail_message, make_connector
 
@@ -559,3 +559,153 @@ class TestBringYourOwnEndpoint:
             model_backend="openai_compatible",
         )
         assert client.spend_is_imputed(settings) is False
+
+class TestWhatAFreeEndpointReportsItCharged:
+    """The cap is enforced, not monitored (rule 7) — so what a call cost has to arrive.
+
+    OpenRouter reports cost only when the request asks for usage accounting, and it
+    spells the field `cost`; DeepInfra returns `estimated_cost` unprompted and rejects
+    unknown top-level fields. Getting either wrong records $0 for every call, which does
+    not look like a bug — it looks like a free tier working.
+    """
+
+    @staticmethod
+    def _envelope(usage: dict[str, Any]) -> bytes:
+        import json
+
+        return json.dumps(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "tool_calls": [
+                                {"function": {"name": "emit", "arguments": "{}"}}
+                            ]
+                        }
+                    }
+                ],
+                "usage": usage,
+            }
+        ).encode()
+
+    def _run(self, backend: Any, usage: dict[str, Any]) -> Any:
+        import contextlib
+        import io
+
+        import backglass.extract.client as client_mod
+
+        captured: dict[str, Any] = {}
+
+        @contextlib.contextmanager
+        def fake_urlopen(request: Any, timeout: int = 0) -> Any:
+            import json as _json
+
+            captured["body"] = _json.loads(request.data)
+            yield io.BytesIO(self._envelope(usage))
+
+        original = client_mod.urllib.request.urlopen
+        client_mod.urllib.request.urlopen = fake_urlopen  # type: ignore[assignment]
+        try:
+            result = backend.complete(
+                system="s", user="u", schema=TRIAGE_SCHEMA, model="m", budget_usd=0.1
+            )
+        finally:
+            client_mod.urllib.request.urlopen = original  # type: ignore[assignment]
+        return result, captured["body"]
+
+    def test_openrouter_is_asked_for_usage_and_its_cost_is_read(self) -> None:
+        backend = DeepInfraBackend(api_key="k", base_url="https://openrouter.ai/api/v1")
+        result, body = self._run(backend, {"cost": 0.0042})
+
+        assert body["usage"] == {"include": True}
+        assert result.cost_usd == pytest.approx(0.0042)
+
+    def test_deepinfra_is_not_sent_a_field_it_would_reject(self) -> None:
+        backend = DeepInfraBackend(api_key="k")
+        result, body = self._run(backend, {"estimated_cost": 0.5})
+
+        assert "usage" not in body
+        assert result.cost_usd == pytest.approx(0.5)
+
+    def test_a_free_endpoint_reporting_nothing_costs_nothing(self) -> None:
+        """0.0 is the provider saying it charged nothing, not a missing measurement."""
+        backend = DeepInfraBackend(api_key="k", base_url="https://openrouter.ai/api/v1")
+        result, _ = self._run(backend, {"prompt_tokens": 900, "completion_tokens": 120})
+
+        assert result.cost_usd == 0.0
+
+
+class TestWhenTheFirstFreeModelWillNotServe:
+    """Free tiers are queues. Measured 2026-08-21: five of sixteen free models answered
+    `429 … temporarily rate-limited upstream` inside the same minute six others served,
+    so one hardcoded free model is a source that works until it does not."""
+
+    def _body(self, backend: Any) -> dict[str, Any]:
+        import contextlib
+        import io
+        import json as _json
+
+        import backglass.extract.client as client_mod
+
+        captured: dict[str, Any] = {}
+        envelope = _json.dumps(
+            {
+                "choices": [
+                    {"message": {"tool_calls": [{"function": {"arguments": "{}"}}]}}
+                ],
+                "usage": {},
+            }
+        ).encode()
+
+        @contextlib.contextmanager
+        def fake_urlopen(request: Any, timeout: int = 0) -> Any:
+            captured["body"] = _json.loads(request.data)
+            yield io.BytesIO(envelope)
+
+        original = client_mod.urllib.request.urlopen
+        client_mod.urllib.request.urlopen = fake_urlopen  # type: ignore[assignment]
+        try:
+            backend.complete(
+                system="s", user="u", schema=TRIAGE_SCHEMA, model="first:free",
+                budget_usd=0.1,
+            )
+        finally:
+            client_mod.urllib.request.urlopen = original  # type: ignore[assignment]
+        return captured["body"]
+
+    def test_the_order_is_sent_whole_with_the_primary_at_its_head(self) -> None:
+        backend = DeepInfraBackend(
+            api_key="k",
+            base_url="https://openrouter.ai/api/v1",
+            fallbacks=("second:free", "third:free"),
+        )
+
+        body = self._body(backend)
+
+        assert body["models"] == ["first:free", "second:free", "third:free"]
+        assert body["model"] == "first:free"
+
+    def test_deepinfra_is_not_sent_a_models_array_it_would_reject(self) -> None:
+        backend = DeepInfraBackend(api_key="k", fallbacks=("second", "third"))
+
+        assert "models" not in self._body(backend)
+
+    def test_the_array_is_capped_at_what_the_provider_will_accept(self) -> None:
+        """OpenRouter answers a longer list with "'models' array must have 3 items or
+        fewer" — HTTP 400, on every call, so the pipeline stops. Enforced here rather
+        than trusted to whoever edits MODEL_FALLBACKS."""
+        backend = DeepInfraBackend(
+            api_key="k",
+            base_url="https://openrouter.ai/api/v1",
+            fallbacks=("b:free", "c:free", "d:free", "e:free"),
+        )
+
+        models = self._body(backend)["models"]
+
+        assert len(models) == 3
+        assert models == ["first:free", "b:free", "c:free"]
+
+    def test_no_fallbacks_configured_sends_no_array(self) -> None:
+        backend = DeepInfraBackend(api_key="k", base_url="https://openrouter.ai/api/v1")
+
+        assert "models" not in self._body(backend)

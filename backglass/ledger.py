@@ -80,7 +80,18 @@ def _sharpens(new: str | None, current: str | None, *, aimed: bool = False) -> b
 class LedgerStats:
     source_items_inserted: int = 0
     source_items_unchanged: int = 0
+    #: A stored item whose upstream content changed, on a source where that should not
+    #: happen. An error: either the extractor changed or something upstream is lying.
     source_item_conflicts: list[str] = field(default_factory=list)
+    #: The same event on a source whose records are *expected* to move — a Canvas due date,
+    #: an edited note, a rescheduled class. Counted rather than errored: the immutable item
+    #: is still skipped, and the new value reaches the ledger through that source's mirror.
+    #:
+    #: `(source, external_id)` rather than one joined string, because an external_id
+    #: carries colons of its own: `canvas:ics` + `assignment:7833000` split back apart on
+    #: the last separator gives the source as "canvas:ics:assignment", which is a label
+    #: that does not exist.
+    upstream_changes: list[tuple[str, str]] = field(default_factory=list)
     entities_created: int = 0
     commitments_inserted: int = 0
     commitments_deduped: int = 0
@@ -113,11 +124,19 @@ class Ledger:
         """Insert if new. Returns (id, written).
 
         A matching content_hash short-circuits before any model is invoked, which is the
-        whole cost model. A *differing* hash for an already-stored external_id is not an
+        whole cost model. A *differing* hash for an already-stored external_id is never an
         update: source_item is immutable (docs/03, enforced by a trigger in migration
-        0002). Gmail message bodies do not change, so this means either the quote-stripper
-        changed or something upstream is lying. Either way it is recorded and skipped,
-        not silently applied.
+        0002). It is recorded and skipped, never silently applied.
+
+        What it is recorded *as* depends on the source, since 2026-08-24. A mail body that
+        changes means the quote-stripper changed or something upstream is lying, and that
+        is an error. A Canvas assignment that changes means a deadline moved, which is the
+        single most ordinary thing that source does — and reporting it as an error meant
+        seven identical failures in every sync forever, because the condition that raises
+        them is never resolved by anything. `connectors.base.is_snapshot` is the
+        declaration that separates the two, and the new value still reaches the ledger:
+        through the `assignment` mirror for Canvas, and through `logic`'s
+        upstream-due-moved rule from there.
         """
         existing = self.conn.execute(
             "SELECT id, content_hash FROM source_item "
@@ -127,7 +146,14 @@ class Ledger:
 
         if existing is not None:
             if existing["content_hash"] != item.content_hash:
-                self.stats.source_item_conflicts.append(f"{item.source}:{item.external_id}")
+                from backglass.connectors.base import is_snapshot
+
+                if is_snapshot(item.source):
+                    self.stats.upstream_changes.append((item.source, item.external_id))
+                else:
+                    self.stats.source_item_conflicts.append(
+                        f"{item.source}:{item.external_id}"
+                    )
             self.stats.source_items_unchanged += 1
             return int(existing["id"]), False
 

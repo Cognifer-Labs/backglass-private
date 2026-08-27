@@ -1,0 +1,120 @@
+{% import "_macros.html" as m %}
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Backglass — {{ 'Clear the board' if total else 'Board is clear' }}</title>
+<script>
+  document.documentElement.setAttribute(
+    'data-theme', localStorage.getItem('bg-theme') || 'light');
+</script>
+<link rel="stylesheet" href="/design/tokens.css">
+<link rel="stylesheet" href="/static/dashboard.css">
+<script src="/static/htmx.min.js" defer></script>
+</head>
+{# Same no-shell decision as /ask, for the opposite reason. Ask removes the navigation so
+   one question cannot be avoided; this removes it so a long pass is not interrupted. #}
+<body class="askbody">
+<main class="scrubwrap">
+
+  {% if not total and not plan_pairs %}
+    <div class="askdone">
+      <p class="lbl">Nothing to clear</p>
+      <h1 class="cond askq">Every open commitment still looks live.</h1>
+      <p class="b2">Nothing is long overdue, nothing has gone quiet, no obligation
+        duplicates one you already closed, and no two plans look like the same plan.
+        Detectors run on each sync.</p>
+      <a class="btn" href="/">Back to the dashboard</a>
+    </div>
+  {% else %}
+    <header class="scrubhead">
+      <p class="lbl">{{ total }} commitment{{ '' if total == 1 else 's' }} worth a decision</p>
+      <h1 class="cond askq">Clear the board.</h1>
+      {# The honesty this page runs on. Backglass could not justify closing any of these
+         itself — that is precisely why they are here — and saying so is what stops the
+         owner reading the list as an accusation. #}
+      <p class="b2">Backglass has no evidence either way on any of these, so it has gone
+        on planning them. One pass down the list and they stop competing for your day.
+        <strong>Keep</strong> puts a row back for {{ keep_days }} days.</p>
+      <p class="b2"><a class="quiet" href="/">Back to the dashboard</a></p>
+    </header>
+
+    {% for group in groups %}
+      <section class="panel scrubgroup" id="panel-scrub-{{ group.key }}">
+        <div class="inner">
+          <p class="lbl">{{ group.title }} · {{ group.rows|length }}</p>
+          <p class="b2 scrubblurb">{{ group.blurb }}</p>
+
+          {% for row in group.rows %}
+            <div class="row card scrubrow" id="scrub-row-{{ row.id }}">
+              <p class="b1 hang"><span>{{ row.what }}</span></p>
+              <p class="b2">
+                {{ row.reason }}
+                {%- if row.source %} · {{ row.source }}{% endif -%}
+              </p>
+              {# Each button swaps only its own row's action strip, so a pass down a
+                 list of eighty-seven never re-renders the page or loses the scroll. #}
+              <div class="acts" id="scrub-acts-{{ row.id }}">
+                <button class="btn ok" hx-post="/scrub/{{ row.id }}/done"
+                        hx-target="#scrub-acts-{{ row.id }}" hx-swap="innerHTML">Done</button>
+                <button class="btn defer" hx-post="/scrub/{{ row.id }}/keep"
+                        hx-target="#scrub-acts-{{ row.id }}" hx-swap="innerHTML">Keep</button>
+                {# docs/06 allows a confirmation on drop and only on drop. Not used here:
+                   the page's entire premise is a fast pass over rows the owner already
+                   believes are dead, and eighty-seven dialogs is how a scrub gets
+                   abandoned halfway. The action is tombstoned and reversible. #}
+                <button class="btn danger" hx-post="/scrub/{{ row.id }}/drop"
+                        hx-target="#scrub-acts-{{ row.id }}" hx-swap="innerHTML">Drop</button>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </section>
+    {% endfor %}
+
+    {% if plan_pairs %}
+      {# Plans, not commitments, so a different row and different buttons. The matcher
+         that files these deliberately refuses to merge two sightings whose wording
+         differs — a wrong merge silently replaces a plan the owner agreed to, while a
+         duplicate is visible and dismissable. This is where it becomes dismissable. #}
+      <section class="panel scrubgroup" id="panel-scrub-plans">
+        <div class="inner">
+          <p class="lbl">Two plans, one day · {{ plan_pairs|length }}</p>
+          <p class="b2 scrubblurb">These sit on the same day and read alike, but the
+            wording differs enough that Backglass would not merge them on its own —
+            merging the wrong pair would quietly delete something you agreed to.
+            {%- if plan_total > plan_pairs|length %}
+              Showing the {{ plan_pairs|length }} most alike of {{ plan_total }}.
+            {%- endif %}</p>
+
+          {% for pair in plan_pairs %}
+            <div class="row card scrubrow" id="scrub-pair-{{ pair.a_id }}-{{ pair.b_id }}">
+              <p class="b1 hang"><span>{{ pair.a_what }}</span></p>
+              <p class="b1 hang"><span>{{ pair.b_what }}</span></p>
+              <p class="b2">
+                {{ pair.day }}
+                {%- if pair.a_when %} · {{ pair.a_when }}{% endif -%}
+                {%- if pair.b_when and pair.b_when != pair.a_when %} and {{ pair.b_when }}{% endif -%}
+                {%- if not pair.a_when and not pair.b_when %} · no hour on either{% endif %}
+              </p>
+              <div class="acts" id="scrub-pair-acts-{{ pair.a_id }}-{{ pair.b_id }}">
+                <button class="btn ok"
+                        hx-post="/scrub/plans/{{ pair.a_id }}/{{ pair.b_id }}/same"
+                        hx-target="#scrub-pair-acts-{{ pair.a_id }}-{{ pair.b_id }}"
+                        hx-swap="innerHTML">Same plan</button>
+                <button class="btn defer"
+                        hx-post="/scrub/plans/{{ pair.a_id }}/{{ pair.b_id }}/apart"
+                        hx-target="#scrub-pair-acts-{{ pair.a_id }}-{{ pair.b_id }}"
+                        hx-swap="innerHTML">Both real</button>
+              </div>
+            </div>
+          {% endfor %}
+        </div>
+      </section>
+    {% endif %}
+  {% endif %}
+
+</main>
+</body>
+</html>

@@ -196,6 +196,43 @@ a row because the case that matters is the one where nothing gets to clean up �
 sleep, a `kill -9` — and the kernel drops a `flock` however the process dies. A dry
 run is exempt: it writes nothing, so it is safe at any time.
 
+## The repair loop
+
+The five stages above put records in. A second pass takes them out again when the record
+stops being true, and it is the half that makes the ledger survivable: without it every
+obligation ever extracted stays open forever and the board becomes a graveyard nobody
+reads.
+
+`backglass/repair.py` owns it as an ordered chain, and the order buys something at each
+position:
+
+| | step | what it does |
+|---|---|---|
+| 1 | `catchup` | fills a hole — the plan or brief a slept-through 05:45 never produced |
+| 2 | `replan` | refreshes a plan the day moved under; proposed only, never accepted |
+| 3 | `logic` | throws out what the record already contradicts, **before** anything asks |
+| 4 | `questions` | asks what is left, having been spared the mooted ones |
+| 5 | `notify` | says what the day demands, inside the owner's window |
+| 6 | `situation` | renders the state doc, after the repairs have had their say |
+| 7 | `vault` | writes the ledger out as markdown — last, because it reports on the rest |
+
+**Two entry points, since 2026-08-24.** The scheduled sync runs it at the end of every
+pass; opening the dashboard runs it too, when there is a hole to fill or the loop has not
+run in `OVERDUE_MINUTES` (45). The second exists because launchd cannot be trusted to have
+fired — on 2026-08-17 the morning jobs had been 12h30 late for weeks, since the agent that
+evaluates calendar intervals holds the timezone the machine booted in. It runs on a daemon
+thread under the sync lock, so the page never waits for it and two passes can never
+overlap.
+
+**A step that fails is reported, not passed over.** Rule 5's unit here is the step: one
+repair raising must not cost the other six, but the failure joins the sync's own errors, so
+it reaches `run.errors_json` and the Sources panel. This chain previously lived inline in
+the sync command with seven bare `except Exception: pass` blocks — a checker that had been
+raising for a week was indistinguishable from a ledger with nothing to repair.
+
+No `run` row is written for a repair pass. Four readers take the newest row with no `kind`
+filter, so a non-sync row would immediately be reported as the last sync.
+
 ## Failure policy
 
 - A failing source degrades and does not block the others.

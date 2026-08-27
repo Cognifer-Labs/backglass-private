@@ -75,7 +75,14 @@ def load(conn: sqlite3.Connection) -> Preferences:
         (PRIORITY_KEY,),
     ).fetchone()
     if row is None:
-        return Preferences()
+        # The stated default, not an empty set. This function returned `Preferences()`
+        # from August until 2026-08-24 because the fact it reads had never been written,
+        # so every commitment ranked identically inside its date band and ties fell
+        # through to age — a priority mechanism that had never once changed an outcome.
+        # `plan/priority.py` holds the owner's ruled order; a fact still overrides it.
+        from backglass.plan import priority
+
+        return priority.lanes()
     return parse(str(row["value"]))
 
 

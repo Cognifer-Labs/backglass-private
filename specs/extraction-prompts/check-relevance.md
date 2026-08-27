@@ -1,6 +1,6 @@
 ---
 id: check-relevance
-version: 1
+version: 3
 model: careful
 output: strict JSON
 ---
@@ -44,9 +44,57 @@ Above the drop threshold the obligation is dropped, tombstoned, with the citatio
 `keep` is a row the owner sees and can dismiss in a click. A wrong `nonsense` is a
 disappearance, and four entries in tasks/lessons.md are about paying for one of those.
 
-Both placeholders sit at the very end of the block below, which is a cost decision rather
-than a formatting one: `Prompt.split` caches everything before the first placeholder, and
-the rules are identical on every call while the facts and the batch are not.
+All three placeholders sit at the very end of the block below, which is a cost decision
+rather than a formatting one: `Prompt.split` caches everything before the first
+placeholder, and the rules are identical on every call while the facts, the situation and
+the batch are not.
+
+## Version 2: the situation, not only the facts (2026-08-24)
+
+Version 1 handed the judge a list of atomic facts and nothing else. That is enough to see
+that a UT Dallas deposit contradicts an ASU enrolment, and it is not enough to see what
+*recently* changed — which is the event that moots things — or what the week actually
+holds. `backglass/situation.py` renders the state doc; this pass carries it minus its
+facts section, because the facts already appear above under the header a citation is
+validated against, and two copies of the same claims would leave the model choosing which
+list to cite from.
+
+Nothing about the citation rule moves. A `nonsense` verdict still names a fact id from the
+list under "What the ledger records about the user", and the code still intersects that id
+with the active set before anything is dropped. The situation block is context for the
+judgement, never a source of ids: no line in it may be cited, because a line rendered from
+the board is not a claim with provenance.
+
+The bump costs nothing in re-judgment: `logic_check` is keyed on `commitment_id` alone
+with no prompt version in it, so already-judged obligations stay judged and only rows that
+were never sent are sent. That is deliberate — a version bump here must never re-open two
+hundred settled verdicts and re-pay for them.
+
+## Version 3: what each obligation rests on (2026-08-24)
+
+Versions 1 and 2 asked one question — has a recorded fact made this moot? — and the answer
+was stored once per commitment, forever. That is the owner's complaint restated in schema:
+*"the checker has no way to notice the situation moved."* A `keep` issued while the ledger
+said one thing was never revisited when it said another.
+
+So every verdict now also answers **what it rests on**: the fact ids that would have to
+stay true for a `keep` to remain a keep. Not the citation — that is `cites_fact`, and it
+still only appears on a `nonsense` — but the dependency, which is the thing that lets the
+system come back later. When one of those facts is superseded or retracted, its dependents
+are looked up and re-judged, and nothing else is.
+
+Two properties this must have, and the prompt says both below:
+
+- **`depends_on` is required on every verdict, keeps included.** A dependency recorded only
+  at drop time is useless: the row is already closed. The whole value is in the keeps.
+- **An empty list is a real answer.** "Zip it up once done" rests on no recorded fact about
+  the user, and forcing a citation onto it would invent exactly the evidence the citation
+  rule exists to prevent. Say `[]` and mean it.
+
+The ids are intersected with the facts actually sent, like every other id crossing this
+boundary. A bad id in `depends_on` is dropped rather than voiding the verdict — a citation
+justifies closing something and must be right or absent, while a dependency is a note about
+what to re-check, and a narrower index is not a wrong answer.
 
 ## Prompt
 
@@ -94,8 +142,25 @@ Rules:
 
 confidence is your certainty in the verdict, 0.0 to 1.0.
 
-What the ledger records about the user:
+8. EVERY verdict must also give `depends_on`: the ids of the facts this obligation's
+   standing rests on — the ones that, if they changed, would make you want to look at
+   this obligation again. A `keep` that rests on "the user is enrolled at ASU" says
+   so; if enrolment changes, that keep gets re-examined and nothing else does.
+
+   Give `[]` when the obligation rests on no recorded fact. That is a real answer and
+   the right one for personal and household obligations: "bring the bedsheet to wash"
+   depends on nothing in the list. Do not reach for a loosely related fact to fill it.
+
+   `depends_on` is not a citation. `cites_fact` justifies retiring something and belongs
+   only to `nonsense`; `depends_on` is what to re-check later and belongs to every verdict.
+
+What the ledger records about the user (cite these ids, and only these):
 {{facts}}
+
+The user's situation right now — what recently changed, what is open this week, and
+what other obligations already rest on. Context for your judgement; it carries no ids
+you may cite:
+{{situation}}
 
 Open obligations to judge:
 {{commitments}}

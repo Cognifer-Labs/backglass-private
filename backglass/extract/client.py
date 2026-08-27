@@ -17,6 +17,7 @@ use.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import subprocess
@@ -334,6 +335,14 @@ _TRANSIENT_LIMIT_MARKERS = (
     "rate limit",
     "rate_limit_error",
     "rate limited",
+    # The hyphenated spelling, added 2026-08-24. `DeepInfraBackend.fallbacks` quotes
+    # OpenRouter's free tier answering `429 … temporarily rate-limited upstream`, and no
+    # marker matched it — the one provider message this file documents verbatim was the
+    # one the matcher could not see. Deliberately the past participle rather than a
+    # hyphen-folding pass over the whole string: folding would also match a traceback
+    # frame like `rate-limit-handler.js:12`, which is the `cli.js:1:429517` mistake in
+    # the comment above wearing different punctuation.
+    "rate-limited",
     "session limit",
     "weekly limit",
     "temporarily limiting requests",
@@ -381,6 +390,13 @@ def _rate_limited_envelope(envelope: dict[str, Any]) -> bool:
 # ────────────────────────────────────────────────────────────── DeepInfra
 
 
+#: OpenRouter rejects a longer `models` array outright — "'models' array must have 3
+#: items or fewer", HTTP 400, every call. Enforced here rather than trusted to whoever
+#: edits MODEL_FALLBACKS, because the failure is total and the message never reached the
+#: logs before the body started being read.
+MAX_ROUTED_MODELS = 3
+
+
 @dataclass
 class DeepInfraBackend:
     """The product path. OpenAI-compatible chat completions with a forced tool call.
@@ -396,6 +412,16 @@ class DeepInfraBackend:
     tool_name: str = "emit"
     #: Billed per call. The monthly cap is real money and stays hard.
     spend_is_imputed: bool = False
+    #: Models to try when the first one will not serve, in order. OpenRouter routes the
+    #: request itself when the body carries a `models` array, so this is the provider's
+    #: own mechanism rather than a retry loop here.
+    #:
+    #: Not a refinement. Measured on 2026-08-21, five of sixteen free models were
+    #: `429 … temporarily rate-limited upstream` *within the same minute* that six others
+    #: answered — including `z-ai/glm-5.2:free`, the one picked on paper an hour earlier.
+    #: A free tier is a queue, so a single hardcoded free model is a source that works
+    #: until it does not, and rule 5 would turn each of those minutes into a degraded run.
+    fallbacks: tuple[str, ...] = ()
 
     def complete(
         self, *, system: str, user: str, schema: dict[str, Any], model: str, budget_usd: float
@@ -419,6 +445,25 @@ class DeepInfraBackend:
                     }
                 ],
                 "tool_choice": {"type": "function", "function": {"name": self.tool_name}},
+                # Provider-side failover, OpenRouter only — DeepInfra has no such field
+                # and rejects unknown ones. Listed first-to-last; the primary repeats at
+                # the head so the array is the whole preference order in one place.
+                **(
+                    {"models": [model, *self.fallbacks][:MAX_ROUTED_MODELS]}
+                    if self.fallbacks and "openrouter" in self.base_url
+                    else {}
+                ),
+                # OpenRouter reports what a call cost only when asked; DeepInfra returns
+                # `estimated_cost` unprompted and rejects unknown top-level fields, so
+                # this is sent to the one provider that needs it rather than to both.
+                #
+                # It is not bookkeeping. Without it every OpenRouter call records $0,
+                # `run.spend_cents` never moves, and the monthly cap — which CLAUDE.md
+                # rule 7 says is enforced rather than monitored — silently guards nothing
+                # the moment a paid model is used by accident. A free model priced at
+                # zero is then a measurement, the way `pricing.py` already distinguishes
+                # a measured zero from an invented one.
+                **({"usage": {"include": True}} if "openrouter" in self.base_url else {}),
             }
         ).encode()
 
@@ -438,9 +483,48 @@ class DeepInfraBackend:
                 raise ModelAuthError(
                     f"authentication failed: deepinfra returned HTTP {exc.code}"
                 ) from exc
-            raise ModelError(f"deepinfra returned HTTP {exc.code}") from exc
+            # The body, not just the code. A bare "HTTP 400" is what this said while the
+            # actual message was "'models' array must have 3 items or fewer" — a
+            # one-line fix behind an unreadable error, on a path where every call fails
+            # identically. Truncated because a provider error can carry the echoed
+            # request, and `safe_error` is not reaching this string.
+            detail = ""
+            with contextlib.suppress(Exception):  # a body we cannot read is not new news
+                detail = exc.read().decode("utf-8", "replace")[:300]
+            if exc.code == 429:
+                # `RateLimited` was raised nowhere but `ClaudeCLIBackend`, so on the
+                # backend every hosted configuration actually uses, a shut window arrived
+                # as an ordinary `ModelError`. Three things followed, all visible in the
+                # 2026-08-24 audit: a rate-limited *batch* looked like a failed batch and
+                # escalated its twelve items into twelve more refused calls; `_LimitClaim`
+                # never saw a claimant, so the run kept walking into a wall that had
+                # already said `X-RateLimit-Remaining: 0`; and `degrade_reason` stayed
+                # empty, so the CLI reported a pile of errors instead of "today's quota is
+                # gone". The status code is the signal here, not a phrase — at this layer
+                # 429 comes from the transport and cannot be a substring of a log line,
+                # which is the ambiguity `_looks_rate_limited` exists to avoid.
+                raise RateLimited(
+                    f"model rate limit: HTTP 429{': ' + detail if detail else ''}"
+                ) from exc
+            raise ModelError(
+                f"deepinfra returned HTTP {exc.code}{': ' + detail if detail else ''}"
+            ) from exc
         except (urllib.error.URLError, TimeoutError, ValueError) as exc:
             raise ModelError(f"deepinfra call failed: {type(exc).__name__}") from exc
+
+        # Some OpenAI-compatible providers answer 200 with an error object instead of a
+        # status — OpenRouter does it when an upstream refuses rather than the gateway.
+        # Read as a limit here or it falls through to "no usable tool call", which is the
+        # generic failure that escalates and re-fails.
+        error = envelope.get("error")
+        if isinstance(error, dict):
+            code = error.get("code")
+            message = str(error.get("message") or "")
+            if str(code) == "429" or _looks_rate_limited(message):
+                raise RateLimited(f"model rate limit: {message[:300]}")
+            if _is_auth_failure(message):
+                raise ModelAuthError(f"authentication failed: {message[:300]}")
+            raise ModelError(f"provider returned an error: {message[:300]}")
 
         try:
             call = envelope["choices"][0]["message"]["tool_calls"][0]
@@ -449,9 +533,14 @@ class DeepInfraBackend:
             raise ModelError("deepinfra response contained no usable tool call") from exc
         if not isinstance(data, dict):
             raise ModelError("tool arguments were not an object")
-        return ModelResult(
-            data=data, cost_usd=float(envelope.get("usage", {}).get("estimated_cost", 0.0))
-        )
+        # `estimated_cost` is DeepInfra's spelling, `cost` is OpenRouter's. Neither is
+        # guaranteed present, and 0.0 is the honest default for a free endpoint — the
+        # provider is telling us it charged nothing.
+        usage = envelope.get("usage") or {}
+        cost = usage.get("estimated_cost")
+        if cost is None:
+            cost = usage.get("cost", 0.0)
+        return ModelResult(data=data, cost_usd=float(cost or 0.0))
 
 
 # ────────────────────────────────────────────────────────────── Anthropic API
@@ -669,6 +758,68 @@ def anthropic_api_key(settings: Settings) -> str:
     return settings.model_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
 
 
+def _build_one(
+    settings: Settings, backend: str, *, base_url: str, api_key: str
+) -> ModelClient:
+    """One backend by name, with its endpoint and key passed in rather than read.
+
+    Split out of `build` so the secondary in a `Failover` is constructed by exactly the
+    same code as a primary — a fallback that is a different code path is a fallback whose
+    first real exercise is an outage.
+    """
+    if backend == "deepinfra":
+        if not api_key:
+            raise ModelError("deepinfra backend selected but no API key is set")
+        return DeepInfraBackend(
+            api_key=api_key, base_url=base_url or settings.deepinfra_base_url
+        )
+    if backend == "openai_compatible":
+        return DeepInfraBackend(
+            api_key=api_key or "not-needed",
+            base_url=base_url or settings.deepinfra_base_url,
+        )
+    if backend == "anthropic":
+        if not api_key:
+            raise ModelError("anthropic backend selected but no API key is set")
+        return AnthropicAPIBackend(api_key=api_key, base_url=base_url)
+    return ClaudeCLIBackend(executable=_find_claude())
+
+
+def _build_secondary(settings: Settings) -> ModelClient | None:
+    """The fallback backend, or None when the chain is switched off.
+
+    Rule 5 in the one place it is easy to forget: a *misconfigured* fallback must not take
+    the run down with it. The primary is what the pipeline runs on, and a secondary that
+    cannot be constructed — no CLI on PATH, no key for the API — leaves the primary
+    exactly as good as it was before the chain existed.
+    """
+    if not settings.model_fallback_backend:
+        return None
+    import os
+
+    # Deliberately NOT falling back to `model_api_key`. That key belongs to the primary,
+    # and the whole point of a secondary is that it is a different provider — handing
+    # OpenRouter's key to Anthropic buys a 401 on every call of the outage the chain was
+    # built to cover, and it would look like the fallback being broken rather than
+    # misconfigured. `ANTHROPIC_API_KEY` is read because it is that provider's own
+    # conventional name, which `anthropic_api_key` already honours for the primary.
+    key = settings.model_fallback_api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+    try:
+        return _build_one(
+            settings,
+            settings.model_fallback_backend,
+            base_url=settings.model_fallback_base_url,
+            api_key=key,
+        )
+    except Exception as exc:  # noqa: BLE001 — rule 5
+        print(
+            f"model fallback ({settings.model_fallback_backend}) unavailable: {exc}; "
+            "running on the primary alone",
+            file=sys.stderr,
+        )
+        return None
+
+
 def build(settings: Settings) -> ModelClient:
     primary: ModelClient
     if settings.model_backend == "deepinfra":
@@ -685,6 +836,7 @@ def build(settings: Settings) -> ModelClient:
         primary = DeepInfraBackend(
             api_key=settings.model_api_key or "not-needed",
             base_url=settings.model_base_url or settings.deepinfra_base_url,
+            fallbacks=tuple(settings.model_fallbacks),
         )
     elif settings.model_backend == "anthropic":
         key = anthropic_api_key(settings)
@@ -695,6 +847,24 @@ def build(settings: Settings) -> ModelClient:
         primary = AnthropicAPIBackend(api_key=key, base_url=settings.anthropic_base_url)
     else:
         primary = ClaudeCLIBackend(executable=_find_claude())
+
+    # Inside `AuthCircuit`, deliberately. The circuit's job is "this run's credentials are
+    # no good, stop spending subprocesses on it", and that verdict belongs to the chain as
+    # a whole: a dead OpenRouter key is not a reason to stop when the secondary is a
+    # working CLI session. Wrapping the other way round would trip on the primary's 401
+    # and never reach the backend that would have answered.
+    secondary = _build_secondary(settings)
+    if secondary is not None:
+        primary = Failover(
+            primary=primary,
+            secondary=secondary,
+            remap={
+                settings.model_triage: settings.model_fallback_triage,
+                settings.model_extract: settings.model_fallback_extract,
+            },
+            default_model=settings.model_fallback_extract,
+        )
+
     if settings.apple_triage:
         return AuthCircuit(
             TriageRouter(
@@ -930,3 +1100,114 @@ class AuthCircuit:
                 if self._tripped is None:
                     self._tripped = exc
             raise
+
+
+# ────────────────────────────────────────────────────────── provider failover
+
+
+@dataclass
+class Failover:
+    """Ask the free provider; when it will not serve, ask the one that will.
+
+    The owner's instruction on 2026-08-24 was "use whatever is free, then fall back on
+    Anthropic models". That is a *provider* chain, and until now the only failover in this
+    file was a *model* chain: `DeepInfraBackend.fallbacks` hands OpenRouter a `models`
+    array, which is one gateway trying several models. It cannot help when the gateway
+    itself is the thing refusing — and on a free tier the gateway is exactly what refuses.
+    OpenRouter's free tier is 50 requests a day against an arrival rate measured at 50–276
+    items a day (2026-08-11 → 08-24), so the primary running out is the normal case, not
+    the exception.
+
+    **Model names do not survive the crossing.** `MODEL_TRIAGE` is
+    `nvidia/nemotron-nano-9b-v2:free` and means nothing to the Claude CLI, so the chosen
+    model is remapped per-backend. Keyed off the settings that produced it rather than off
+    the schema: `sync` passes `settings.model_triage` for both the per-item and the batched
+    triage pass, and `TriageRouter`'s schema test — `"keep" in properties` — is blind to
+    the batch shape, whose properties are `{"items": …}`. An unmapped name resolves to the
+    extraction model, because the calls that are neither triage nor extraction (the roadmap
+    interview, relevance, recheck) all want the more capable one.
+
+    **Cost does not survive it either, and that half is load-bearing.** A `claude_cli`
+    secondary reports `total_cost_usd` — an API-equivalent *price* for a call nobody was
+    billed for. Summing that into the monthly cap is precisely the failure of 2026-08-03,
+    where nine consecutive syncs degraded to triage-only over $20.06 of money that did not
+    exist. So a result from an imputed secondary is returned with its cost zeroed: the cap
+    keeps counting real money only, and the price is not smuggled back in through the
+    fallback path. `spend_is_imputed` still mirrors the primary, because the primary is
+    where billing can actually happen.
+
+    Every failure of the primary crosses over — a shut window, dead credentials, a model
+    that would not emit a usable tool call. All three mean "the free provider did not
+    answer", which is the whole condition the owner named. The secondary's own failures
+    propagate untouched: there is nowhere further to go, and swallowing them would turn a
+    real outage into silence.
+    """
+
+    primary: ModelClient
+    secondary: ModelClient
+    #: `{primary model name: secondary model name}`.
+    remap: dict[str, str] = field(default_factory=dict)
+    #: What an unmapped name becomes on the secondary.
+    default_model: str = ""
+    #: Mirrors the primary — see the class docstring.
+    spend_is_imputed: bool = False
+    #: Whether the *secondary*'s reported cost is a price rather than a charge.
+    secondary_is_imputed: bool = False
+    #: Observability, read by the run report. A chain that is silently carrying every
+    #: call is a chain nobody knows they are relying on.
+    used_secondary: int = 0
+    first_reason: str = ""
+    _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def __post_init__(self) -> None:
+        self.spend_is_imputed = bool(getattr(self.primary, "spend_is_imputed", False))
+        self.secondary_is_imputed = bool(getattr(self.secondary, "spend_is_imputed", False))
+
+    def complete(
+        self, *, system: str, user: str, schema: dict[str, Any], model: str, budget_usd: float
+    ) -> ModelResult:
+        try:
+            return self.primary.complete(
+                system=system, user=user, schema=schema, model=model, budget_usd=budget_usd
+            )
+        except ModelError as exc:
+            reason = f"{type(exc).__name__}: {exc}"
+
+        with self._lock:
+            self.used_secondary += 1
+            if not self.first_reason:
+                self.first_reason = reason[:200]
+
+        result = self.secondary.complete(
+            system=system,
+            user=user,
+            schema=schema,
+            model=self.remap.get(model) or self.default_model or model,
+            budget_usd=budget_usd,
+        )
+        if self.secondary_is_imputed and result.cost_usd:
+            # A price, not a charge. See the class docstring, and tasks/lessons.md
+            # 2026-08-03 for what happens when the two are added together.
+            return ModelResult(data=result.data, cost_usd=0.0)
+        return result
+
+
+def fallback_stats(client: Any) -> tuple[int, str]:
+    """How many calls the fallback carried this run, and why the first one crossed over.
+
+    Walks the wrapper stack rather than reaching for one attribute. `build` nests
+    differently depending on configuration — `AuthCircuit(Failover(…))` normally, and
+    `AuthCircuit(TriageRouter(primary=Failover(…)))` when `APPLE_TRIAGE=1` — so a reader
+    that knew only about `.inner` would report zero forever on the second shape while
+    looking perfectly correct on the first. That is the guard-on-one-of-two-doors mistake
+    tasks/lessons.md names four times, and the honest zero it produces is worse than an
+    error: it says "the free tier is fine" on exactly the runs it is not.
+    """
+    seen: set[int] = set()
+    node = client
+    while node is not None and id(node) not in seen:
+        seen.add(id(node))
+        if isinstance(node, Failover):
+            return node.used_secondary, node.first_reason
+        node = getattr(node, "inner", None) or getattr(node, "primary", None)
+    return 0, ""

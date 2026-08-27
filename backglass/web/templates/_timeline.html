@@ -1,0 +1,112 @@
+{% import "_macros.html" as m %}
+{# The day canvas, and the only surface on it that can be acted on.
+
+   Split out of schedule.html on 2026-08-27 so an action swaps the canvas instead of
+   reloading the page — the same reason _today.html is a fragment. The panel id is the
+   hx-target; it has to sit on the outermost element here, because every action swaps
+   this fragment outerHTML and a target inside it would be replaced mid-swap. #}
+<div id="panel-timeline">
+  {% if undo %}
+    {# A retracted event vanishes from the canvas, so the undo cannot live on the block
+       it undoes. It says what went and offers the way back, once, above the ruler. #}
+    <p class="tlundo">
+      <span class="lbl">Removed</span>
+      <span class="grow">{{ undo.title }} · {{ undo.when }} — no longer on this day.</span>
+      <button class="btn" type="button"
+              hx-post="/schedule/{{ view.day.isoformat() }}/source/{{ undo.source_item_id }}/restore{% if undo.block_id %}?block={{ undo.block_id }}{% endif %}"
+              hx-target="#panel-timeline" hx-swap="outerHTML">Undo</button>
+    </p>
+  {% endif %}
+
+  {# The four numbers `now.js` needs to redo `_now_top`'s arithmetic in the browser, so
+     the Now line keeps moving on a page nobody reloaded. `data-now-day` is what makes
+     it stop at midnight rather than sliding into tomorrow's canvas. #}
+  <div class="tl" style="height:{{ tl.height }}px"
+       {% if tl.is_today %}data-now-tz="{{ view.tz }}" data-now-day="{{ view.day.isoformat() }}"
+       data-now-start="{{ tl.start_min }}" data-now-end="{{ tl.end_min }}" data-now-px="1"{% endif %}>
+    {% for h in tl.hours %}
+      <div class="hr" style="top:{{ loop.index0 * 60 }}px">
+        <span class="hlbl">{{ h|h12 }}</span>
+      </div>
+    {% endfor %}
+
+    {% for e in tl.entries %}
+      {# --lane/--lanes are the column and the count; the stylesheet does the
+         arithmetic so a cluster of five draws five columns rather than two
+         stacked on each other. #}
+      <div class="ev k-{{ e.kind }}{% if e.tiny %} tiny{% elif e.slim %} slim{% endif %}{% if e.actionable %} act{% endif %}"
+           style="top:{{ e.top }}px;height:{{ e.height }}px;--lane:{{ e.lane }};--lanes:{{ e.lanes }}"
+           {% if e.tiny or e.slim or e.lanes > 1 %}title="{{ e.start_label }}–{{ e.end_label }} {{ e.title }}"
+           aria-label="{{ e.start_label }}–{{ e.end_label }} {{ e.title }}"{% endif %}>
+        {% if e.tiny %}
+          {# Below 32px the title has nowhere to go but under the type floor, so it
+             is deleted from the canvas rather than shrunk: stripe plus start time. #}
+          <span class="et">{{ e.start_label }}</span>
+        {% elif e.kind == 'protected' %}
+          <span class="et">{{ e.start_label }}–{{ e.end_label }}</span>
+          <span class="en cond">{{ e.title }}</span>
+          {% if not e.slim %}{{ m.chip('protected') }}{% endif %}
+        {% else %}
+          <span class="et">{{ e.start_label }}–{{ e.end_label }}</span>
+          <span class="en">{{ e.title }}</span>
+          {% if not e.slim %}
+            <span class="ek">{{ e.kind }}{% if e.travel %} · travel{% endif %}
+              {%- if e.outcome and e.outcome != 'pending' %} · {{ e.outcome }}{% endif %}</span>
+          {% endif %}
+        {% endif %}
+
+        {% if e.actionable %}
+          {# Actions ride inside the block and are revealed on hover or keyboard focus.
+             `display:none` would take them out of the tab order, which is why the
+             stylesheet hides them with opacity and :focus-within instead — the same
+             rule _today.html follows. A tiny block has no room for them at all, so the
+             overlay covers the block and the buttons sit above it: a 20px block is
+             still reachable, which is the whole point of "everything clickable". #}
+          <div class="evacts">
+            {% if e.block_id %}
+              <button class="btn ok" type="button"
+                      hx-post="/schedule/{{ view.day.isoformat() }}/blocks/{{ e.block_id }}/outcome/done"
+                      hx-target="#panel-timeline" hx-swap="outerHTML"
+                      title="Mark done">Done</button>
+              <button class="btn defer" type="button"
+                      hx-post="/schedule/{{ view.day.isoformat() }}/blocks/{{ e.block_id }}/outcome/rolled"
+                      hx-target="#panel-timeline" hx-swap="outerHTML"
+                      title="Roll to another day">Roll</button>
+              <button class="btn pin{% if e.pinned %} on{% endif %}" type="button"
+                      hx-post="/schedule/{{ view.day.isoformat() }}/blocks/{{ e.block_id }}/pin/{{ 0 if e.pinned else 1 }}"
+                      hx-target="#panel-timeline" hx-swap="outerHTML"
+                      title="Hold this slot against the replanner">{{ 'Unpin' if e.pinned else 'Pin' }}</button>
+            {% endif %}
+            {% if e.source_item_id %}
+              {# Rule 1: the evidence is one click away from anything drawn from it. #}
+              <a class="btn" href="/source/{{ e.source_item_id }}"
+                 title="What this was read from">Source</a>
+              {# `hx-confirm` is the declaration that this is destructive; confirm.js
+                 turns it into arm-then-send on the button itself, because the desktop
+                 webview implements no confirm panel. Two presses, no dialog. #}
+              <button class="btn danger" type="button"
+                      hx-post="/schedule/{{ view.day.isoformat() }}/source/{{ e.source_item_id }}/retract"
+                      hx-target="#panel-timeline" hx-swap="outerHTML"
+                      hx-confirm="Take {{ e.title }} off this day? The item is kept and this is reversible."
+                      title="Take it off the day. Reversible — the item itself is kept.">Not happening</button>
+            {% endif %}
+          </div>
+        {% endif %}
+      </div>
+    {% endfor %}
+
+    {% if tl.is_today %}
+      {# The strongest mark available is maximum contrast, not a hue — the same
+         reasoning that makes "due today" solid black.
+
+         Drawn on every view of today, hidden when the clock is outside the window the
+         canvas covers, because `now.js` only moves this element — it never creates one.
+         A day whose ruler starts at 7:30 has an hour of the morning where the line has
+         nowhere to be, and the browser has to be able to reveal it at 7:30 without
+         asking the server for a canvas it already has. #}
+      <div class="now" style="top:{{ tl.now_top or 0 }}px"
+           {% if tl.now_top is none %}hidden{% endif %}><span>Now</span></div>
+    {% endif %}
+  </div>
+  {{ m.kind_legend() }}
+</div>

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 import sqlite3
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -61,6 +61,7 @@ def add_commitment(
     goal_id: int | None = None,
     rollovers: int = 0,
     occurred: str | None = None,
+    estimate_source: str = "manual",
 ) -> int:
     ledger = Ledger(conn, sett)
     conn.execute(
@@ -75,13 +76,14 @@ def add_commitment(
         "INSERT INTO commitment (user_id, direction, counterparty_entity_id, what, due_at, "
         " estimated_minutes, estimate_source, confidence, status, source_item_id, "
         " created_at, goal_id, rollover_count) "
-        "VALUES (?, 'i_owe', ?, ?, ?, ?, 'manual', 0.9, 'open', ?, ?, ?, ?)",
+        "VALUES (?, 'i_owe', ?, ?, ?, ?, ?, 0.9, 'open', ?, ?, ?, ?)",
         (
             USER_ID,
             ledger.resolve_entity("Dana <dana@example.gov>"),
             what,
             due.isoformat() if due else None,
             minutes,
+            estimate_source,
             source_id,
             now_iso(),
             goal_id,
@@ -271,15 +273,342 @@ def test_an_uncompleted_item_leads_tomorrows_plan(conn, sett: Settings) -> None:
     planner.persist(conn, sett, planner.propose(conn, sett, THURSDAY, events=[]))
     rollover.close_day(conn, sett, THURSDAY, done_block_ids=set())
 
-    # Arrives overnight, and is due sooner — so it outranks on every tier except the one
-    # that matters here. P10 puts rollover above newly selected work regardless.
+    # Arrives overnight and is due today, so it is a band above the rollover, which has no
+    # due date at all. Corrected 2026-08-24: P10 orders what §1.5 rule 2 leaves tied, and
+    # is not a licence for a dateless item to lead the day because it once rolled.
+    add_commitment(conn, sett, "brand new work", minutes=60, n=2, due=FRIDAY)
+
+    tomorrow = planner.propose(conn, sett, FRIDAY, events=[])
+    work = [b for b in tomorrow.blocks if b["kind"] in ("protected", "work")]
+    assert work
+    assert "brand new work" in str(work[0]["title"]), (
+        "§1.5 rule 2: what is due today leads what merely rolled"
+    )
+    titles = [str(b["title"]) for b in work]
+    assert any("yesterday's work" in t for t in titles), "and the rollover is still planned"
+
+
+# ══ 2026-08-24: the day was empty and the ledger was full ═════════════════
+# Capacity is a sum, placement needs contiguity, and homework needs a claim.
+
+
+class TestSelectionFitsTheDayItHas:
+    """The defect these encode was measured, not imagined: on the owner's live
+    2026-08-26 plan, 175 of 183 candidates overflowed and the day shipped one block,
+    because `select` spent 215 fragmented minutes as though they were one run."""
+
+    def test_an_indivisible_item_bigger_than_every_hole_is_overflow_not_a_spent_budget(
+        self, conn, sett: Settings  # type: ignore[no-untyped-def]
+    ) -> None:
+        """The expensive half of the bug. The old code compared the sitting against the
+        *sum*, took it, spent the minutes, and only found out at placement time — by
+        which point the budget was gone and the work that would have fit was already
+        overflow."""
+        zone = ZoneInfo(sett.default_tz)
+
+        def at(h: int, m: int) -> datetime:
+            return datetime.combine(THURSDAY, time(h, m), tzinfo=zone)
+
+        events = [
+            FixedEvent(title="class", starts_at=at(*a), ends_at=at(*b))
+            for a, b in (((10, 0), (11, 15)), ((12, 0), (13, 15)), ((14, 0), (15, 15)))
+        ]
+        big = add_commitment(conn, sett, "one long indivisible thing", minutes=200, n=1)
+        small = add_commitment(conn, sett, "a real forty minutes", minutes=40, n=2)
+
+        proposal = planner.propose(conn, sett, THURSDAY, events=events)
+
+        placed = {b["commitment_id"] for b in proposal.blocks}
+        assert small in placed, "the work that fits is planned"
+        assert big in {c.commitment_id for c in proposal.overflow}
+        assert big not in placed
+
+    def test_divisible_work_lands_in_pieces_that_each_fit(
+        self, conn, sett: Settings  # type: ignore[no-untyped-def]
+    ) -> None:
+        """A 344-minute milestone is planned across sittings (`Candidate.sitting`), and a
+        sitting is now placed in pieces that each fit a real gap. Before splitting existed
+        this was clamped to the largest hole instead — correct, and it threw away every
+        other gap in the day."""
+        zone = ZoneInfo(sett.default_tz)
+
+        def at(h: int, m: int) -> datetime:
+            return datetime.combine(THURSDAY, time(h, m), tzinfo=zone)
+
+        # Nothing longer than 45 minutes is free anywhere in the window.
+        events = [
+            FixedEvent(title="class", starts_at=at(*a), ends_at=at(*b))
+            for a, b in (
+                ((9, 45), (11, 0)), ((11, 45), (13, 0)),
+                ((13, 45), (15, 0)), ((15, 45), (17, 0)), ((17, 30), (18, 0)),
+            )
+        ]
+        cid = add_commitment(
+            conn, sett, "T - Final Analysis", minutes=344, n=1,
+            due=THURSDAY, estimate_source="analyzed",
+        )
+
+        proposal = planner.propose(conn, sett, THURSDAY, events=events)
+
+        mine = [b for b in proposal.blocks if b["commitment_id"] == cid]
+        assert mine, "it is planned rather than dropped for want of one long run"
+        assert all(int(b["minutes"]) <= 45 for b in mine), "every piece fits a real gap"
+        assert all("of 344m left" in str(b["title"]) for b in mine), "each says it is part"
+
+
+class TestTheDayAddsUp:
+    """Owner, 2026-08-24: "find a way to fit it into the day"."""
+
+    def test_the_protected_block_is_charged_to_the_budget(
+        self, conn, sett: Settings  # type: ignore[no-untyped-def]
+    ) -> None:
+        """P1, which was quietly false. The protected slot is a fixed 90 minutes whatever
+        the work inside it needs, and nobody charged the difference: on the owner's live
+        2026-08-24 a 45-minute obligation sat in it and the plan claimed 248 minutes
+        against a capacity of 205. Everything sized from "capacity left" then started
+        from a negative number, which is why the Coding block silently did not exist."""
+        # Saturated on purpose: the overrun is (protected_block_minutes - the head item's
+        # own minutes), and it only shows once the budget is actually spent. Thirty-minute
+        # items against a 90-minute protected slot is the shape the owner's real day had.
+        for index in range(20):
+            add_commitment(
+                conn, sett, f"errand {index}", minutes=30, n=index + 1, due=THURSDAY,
+            )
+
+        proposal = planner.propose(conn, sett, THURSDAY, events=[])
+
+        protected = [b for b in proposal.blocks if b["kind"] == "protected"]
+        assert protected and int(protected[0]["minutes"]) > 30, "precondition: it overruns"
+        assert proposal.planned_minutes <= proposal.capacity.capacity_minutes
+
+    def test_a_small_task_takes_a_small_gap_and_leaves_the_long_run_alone(
+        self, conn, sett: Settings  # type: ignore[no-untyped-def]
+    ) -> None:
+        """Best-fit. First-fit spends whatever run comes first on whatever task is
+        ordered first, and a fragmented day has exactly one hole big enough for the
+        60-minute thing."""
+        zone = ZoneInfo(sett.default_tz)
+
+        def at_(h: int, m: int) -> datetime:
+            return datetime.combine(THURSDAY, time(h, m), tzinfo=zone)
+
+        # Measured, not assumed: this leaves 09:00-10:00 (60m) and 11:30-12:00 (30m),
+        # in that order — the long run FIRST, which is what makes first-fit and best-fit
+        # disagree. Capacity is 89, enough for both items, so only placement decides.
+        events = [
+            FixedEvent(title="class", starts_at=at_(*a), ends_at=at_(*b))
+            for a, b in (((10, 0), (11, 20)), ((12, 0), (18, 0)))
+        ]
+        # The 25-minute task is older, so it is ordered first and first-fit hands it the
+        # hour — after which the hour of work has nowhere to go.
+        add_commitment(conn, sett, "quick admin", minutes=25, n=1, due=THURSDAY,
+                       occurred="2026-06-01T09:00:00-07:00")
+        long_one = add_commitment(conn, sett, "the sixty minute thing", minutes=60, n=2,
+                                  due=THURSDAY)
+
+        # No protected block and no standing blocks: each would claim a slot before
+        # placement runs, making this a test about those rules instead of this one.
+        proposal = planner.propose(
+            conn,
+            sett.model_copy(update={
+                "protected_block_minutes": 0, "daily_reserve_minutes": 1,
+                "coding_block_minutes": 0, "study_block_minutes": 0,
+            }),
+            THURSDAY, events=events,
+        )
+
+        placed = {b["commitment_id"] for b in proposal.blocks}
+        assert long_one in placed, "the only hour-long hole was left for the hour of work"
+
+    def test_a_standing_block_splits_across_gaps_rather_than_shrinking(
+        self, conn, sett: Settings  # type: ignore[no-untyped-def]
+    ) -> None:
+        """The owner's ask, literally: ninety minutes of coding on a day whose longest
+        hole is forty-five should be two sittings, not forty-five minutes and a shrug."""
+        zone = ZoneInfo(sett.default_tz)
+
+        def at_(h: int, m: int) -> datetime:
+            return datetime.combine(THURSDAY, time(h, m), tzinfo=zone)
+
+        events = [
+            FixedEvent(title="class", starts_at=at_(*a), ends_at=at_(*b))
+            for a, b in (
+                ((9, 45), (11, 0)), ((11, 45), (13, 0)),
+                ((13, 45), (15, 0)), ((15, 45), (17, 0)), ((17, 30), (18, 0)),
+            )
+        ]
+
+        proposal = planner.propose(
+            conn,
+            sett.model_copy(update={
+                "protected_block_minutes": 0, "daily_reserve_minutes": 1,
+                "study_block_minutes": 0,
+            }),
+            THURSDAY, events=events,
+        )
+
+        coding = [b for b in proposal.blocks if b["kind"] == "coding"]
+        assert len(coding) == 2, "two sittings, not one shrunken one"
+        assert sum(int(b["minutes"]) for b in coding) > 45
+        assert all(int(b["minutes"]) >= sett.min_block_minutes for b in coding)
+        assert {str(b["title"]) for b in coding} == {"Coding (1 of 2)", "Coding (2 of 2)"}
+
+    def test_divisible_work_may_take_the_day_in_pieces_but_a_single_thing_may_not(
+        self, conn, sett: Settings  # type: ignore[no-untyped-def]
+    ) -> None:
+        """The discriminator is evidence, not size — the same one `Candidate.sitting`
+        uses. A milestone measured in pages is done across sittings by construction;
+        "Move-in: Willow Hall 502" is three hours of one thing and cutting it into
+        fragments would be a plan that cannot happen."""
+        zone = ZoneInfo(sett.default_tz)
+
+        def at_(h: int, m: int) -> datetime:
+            return datetime.combine(THURSDAY, time(h, m), tzinfo=zone)
+
+        events = [
+            FixedEvent(title="class", starts_at=at_(*a), ends_at=at_(*b))
+            for a, b in (((9, 40), (11, 0)), ((11, 40), (13, 0)), ((13, 40), (18, 0)))
+        ]
+        move = add_commitment(conn, sett, "Move-in: Willow Hall 502", minutes=90, n=1,
+                              due=THURSDAY)
+
+        proposal = planner.propose(
+            conn, sett.model_copy(update={"protected_block_minutes": 0}),
+            THURSDAY, events=events,
+        )
+
+        assert move in {c.commitment_id for c in proposal.overflow}
+        assert move not in {b["commitment_id"] for b in proposal.blocks}
+
+    def test_a_divisible_assignment_takes_the_day_in_pieces(
+        self, conn, sett: Settings  # type: ignore[no-untyped-def]
+    ) -> None:
+        """The positive half of the same rule, and the one the owner asked for: an
+        assignment measured off its own text may be spread across the gaps a class day
+        leaves rather than waiting for a run the day does not have."""
+        zone = ZoneInfo(sett.default_tz)
+
+        def at_(h: int, m: int) -> datetime:
+            return datetime.combine(THURSDAY, time(h, m), tzinfo=zone)
+
+        events = [
+            FixedEvent(title="class", starts_at=at_(*a), ends_at=at_(*b))
+            for a, b in (((10, 0), (11, 20)), ((12, 0), (18, 0)))
+        ]
+        cid = add_commitment(
+            conn, sett, "T - Final Analysis", minutes=85, n=1, due=THURSDAY,
+            estimate_source="analyzed",
+        )
+
+        proposal = planner.propose(
+            conn,
+            sett.model_copy(update={
+                "protected_block_minutes": 0, "daily_reserve_minutes": 1,
+                "coding_block_minutes": 0, "study_block_minutes": 0,
+            }),
+            THURSDAY, events=events,
+        )
+
+        mine = [b for b in proposal.blocks if b["commitment_id"] == cid]
+        assert len(mine) == 2, "60 minutes in one gap and 25 in the other"
+        assert sum(int(b["minutes"]) for b in mine) == 85
+        assert all("of 2)" in str(b["title"]) for b in mine), "each says it is a part"
+
+
+class TestHomeworkGetsFirstClaim:
+    """Owner's ruling, 2026-08-24: "more home work time". A reservation, not a target."""
+
+    # A deliberately scarce day: 09:00-12:00, no standing blocks competing for the
+    # remainder. Scarcity is the whole point — with capacity to spare a reservation
+    # changes nothing and every test of it passes for the wrong reason.
+    SCARCE = {"working_window": "09:00-12:00", "study_block_minutes": 0,
+              "coding_block_minutes": 0, "protected_block_minutes": 0}
+
+    def test_coursework_is_planned_ahead_of_other_work_that_would_have_eaten_the_day(
+        self, conn, sett: Settings  # type: ignore[no-untyped-def]
+    ) -> None:
+        """Without the reservation the older errands take the scarce day in age order and
+        the assignments overflow — which is what the owner's live board was doing."""
+        scarce = sett.model_copy(update=self.SCARCE)
+        # Older, so `order`'s age tiebreak puts them first inside the same band.
+        for index in range(3):
+            add_commitment(
+                conn, scarce, f"errand {index}", minutes=60, n=index + 1, due=THURSDAY,
+                occurred="2026-06-01T09:00:00-07:00",
+            )
+        homework = [
+            add_commitment(
+                conn, scarce, f"PSY101 assignment {index}", minutes=45, n=10 + index,
+                due=THURSDAY, estimate_source="analyzed",
+                occurred="2026-07-20T09:00:00-07:00",
+            )
+            for index in range(2)
+        ]
+
+        proposal = planner.propose(conn, scarce, THURSDAY, events=[])
+
+        placed = {b["commitment_id"] for b in proposal.blocks}
+        assert set(homework) <= placed, "coursework has first claim on the day"
+
+    def test_the_reservation_lapses_when_there_is_no_coursework_to_want_it(
+        self, conn, sett: Settings  # type: ignore[no-untyped-def]
+    ) -> None:
+        """Otherwise a day with nothing due is held artificially empty — two hours fenced
+        off against homework that does not exist, and the errands overflow beside it."""
+        scarce = sett.model_copy(update=self.SCARCE)
+        # Two hours of errands against a three-hour day. Fenced off, the second one has
+        # nowhere to go — which is the failure this asserts against.
+        ids = [
+            add_commitment(
+                conn, scarce, f"errand {index}", minutes=60, n=index + 1, due=THURSDAY,
+            )
+            for index in range(2)
+        ]
+
+        proposal = planner.propose(conn, scarce, THURSDAY, events=[])
+
+        placed = {b["commitment_id"] for b in proposal.blocks}
+        assert set(ids) <= placed, "the whole scarce day is spent, none of it fenced off"
+
+    def test_it_never_reserves_more_than_the_coursework_actually_wants(
+        self, conn, sett: Settings  # type: ignore[no-untyped-def]
+    ) -> None:
+        """One twenty-five-minute quiz must not fence off two hours. The reservation caps
+        at demand, so the errands behind it still get the rest of the scarce day."""
+        scarce = sett.model_copy(update=self.SCARCE)
+        quiz = add_commitment(
+            conn, scarce, "a short quiz", minutes=25, n=1, due=THURSDAY,
+            estimate_source="analyzed",
+        )
+        # The day holds 135 minutes. The quiz wants 25 of them, so a reservation that
+        # ignored demand would fence off 120 and leave this errand 15.
+        errand = add_commitment(
+            conn, scarce, "errand", minutes=60, n=2, due=THURSDAY,
+            occurred="2026-06-01T09:00:00-07:00",
+        )
+
+        proposal = planner.propose(conn, scarce, THURSDAY, events=[])
+
+        placed = {b["commitment_id"] for b in proposal.blocks}
+        assert quiz in placed
+        assert errand in placed, "the other 110 minutes are still the day's to spend"
+
+
+def test_a_rollover_leads_the_work_it_is_tied_with(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """P10, in the band where it applies — the half of the rule that survived the
+    2026-08-24 correction, and the half a reader would otherwise assume was deleted."""
+    add_commitment(conn, sett, "yesterday's work", minutes=60, n=1, due=FRIDAY)
+    planner.persist(conn, sett, planner.propose(conn, sett, THURSDAY, events=[]))
+    rollover.close_day(conn, sett, THURSDAY, done_block_ids=set())
+
+    # Same band as the rollover: both due Friday, neither blocked on anyone.
     add_commitment(conn, sett, "brand new work", minutes=60, n=2, due=FRIDAY)
 
     tomorrow = planner.propose(conn, sett, FRIDAY, events=[])
     work = [b for b in tomorrow.blocks if b["kind"] in ("protected", "work")]
     assert work
     assert "yesterday's work" in str(work[0]["title"]), (
-        "P10: rollover items appear above newly selected work"
+        "P10: among equals, what rolled goes first"
     )
 
 
@@ -1137,7 +1466,12 @@ def test_the_weekend_window_makes_sunday_plannable(conn, weekends: Settings) -> 
 
     assert proposal.capacity.capacity_minutes > 0
     placed = [b for b in proposal.blocks if b["kind"] in ("work", "protected")]
-    assert [b["title"] for b in placed] == ["Move-in: Willow Hall 502, 8:00am"]
+    # The protected slot is a fixed 90 minutes and this is three hours of one thing, so
+    # the block says which part of it the day is giving — goal 4 increment C. The plan
+    # always did truncate here; what changed is that it now admits to it.
+    assert [b["title"] for b in placed] == [
+        "Move-in: Willow Hall 502, 8:00am (90m of 180m left)"
+    ]
     assert proposal.overflow == []
 
 
@@ -1817,3 +2151,144 @@ class TestAnHourTwoThingsCoverIsOneHour:
         )
         assert cap.travel_minutes == 60
         assert cap.fixed_minutes == 30
+
+
+# ── goal 4 increment C: honest estimates need a sitting, not a wall ───────────
+#
+# `coursework` now reads real numbers off the assignment — four exams at two hours, five
+# CIS 236 milestones between 138 and 344 minutes. Handed to the planner whole, every one
+# of those is unschedulable: `select` drops anything larger than the capacity left and
+# `place` needs a contiguous slot that long. Honest estimates without a clamp make the
+# biggest work vanish from every plan, which is strictly worse than the flat thirty
+# minutes they replaced. These hold that line, and the one behind it: a sitting is not
+# the obligation, so finishing one must not close it.
+
+
+def _a_day_with_the_protected_slot_already_taken(conn, sett: Settings) -> int:  # type: ignore[no-untyped-def]
+    """Something due today ahead of the big thing, so the protected block is spoken for.
+
+    Load-bearing: the protected slot is a fixed 90 minutes and takes the first real piece
+    of work, so with the milestone at the head of the queue it would be truncated there
+    and the clamp would never run. A test that passes with the clamp removed is not a
+    test of the clamp — mutation-checked by replacing `sitting()` with `remaining`.
+    """
+    add_commitment(conn, sett, "reply to Dana", minutes=60, due=THURSDAY, n=1)
+    commitment_id = add_commitment(
+        conn, sett, "T - Final Analysis, RFP, and Presentation", minutes=344, n=2
+    )
+    # What makes it divisible: `coursework` read 344 minutes off the assignment's own
+    # page limit. A number a person typed onto a move-in would not be.
+    conn.execute(
+        "UPDATE commitment SET estimate_source = 'analyzed' WHERE id = ?", (commitment_id,)
+    )
+    return commitment_id
+
+
+def test_work_larger_than_a_sitting_is_still_scheduled(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    commitment_id = _a_day_with_the_protected_slot_already_taken(conn, sett)
+
+    proposal = planner.propose(conn, sett, THURSDAY, events=[])
+
+    mine = [b for b in proposal.blocks if b["commitment_id"] == commitment_id]
+    assert mine, "a 344-minute deliverable must not fall off the plan entirely"
+    assert mine[0]["minutes"] == sett.max_block_minutes
+    assert [c.commitment_id for c in proposal.overflow] == []
+
+
+def test_a_clamped_block_says_it_is_only_part_of_the_work(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """A block reading "T - Final Analysis" for 90 minutes of a 344-minute deliverable
+    would be a quiet lie about what finishing it means, and the owner marks these done by
+    reading them."""
+    commitment_id = _a_day_with_the_protected_slot_already_taken(conn, sett)
+
+    proposal = planner.propose(conn, sett, THURSDAY, events=[])
+
+    title = next(
+        b["title"] for b in proposal.blocks if b["commitment_id"] == commitment_id
+    )
+    assert "90m of 344m left" in title
+
+
+def test_work_that_fits_is_not_split(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """Not every long obligation is divisible — "Move-in: Willow Hall 502" is three hours
+    of one thing. The split is what happens instead of the item disappearing, never
+    instead of it being planned properly."""
+    add_commitment(conn, sett, "reply to Dana", minutes=60, due=THURSDAY, n=1)
+    commitment_id = add_commitment(conn, sett, "Move-in: Willow Hall 502", minutes=180, n=2)
+
+    proposal = planner.propose(conn, sett, THURSDAY, events=[])
+
+    mine = [b for b in proposal.blocks if b["commitment_id"] == commitment_id]
+    assert [b["minutes"] for b in mine] == [180]
+    assert mine[0]["title"] == "Move-in: Willow Hall 502"
+
+
+def test_a_sitting_that_is_done_shrinks_what_is_left(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """Otherwise a multi-session assignment keeps its whole estimate every morning and is
+    scheduled forever."""
+    commitment_id = add_commitment(conn, sett, "T - Final Analysis", minutes=344)
+    conn.execute(
+        "INSERT INTO day_plan (user_id, local_date, tz, capacity_minutes, generated_at) "
+        "VALUES (?, '2026-07-29', ?, 480, ?)",
+        (USER_ID, PHOENIX, now_iso()),
+    )
+    plan_id = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    conn.execute(
+        "INSERT INTO plan_block (day_plan_id, starts_at, ends_at, kind, commitment_id, "
+        " title, outcome) VALUES (?, ?, ?, 'work', ?, 'T - Final Analysis', 'done')",
+        (plan_id, at(MONDAY, "09:00").isoformat(), at(MONDAY, "10:30").isoformat(),
+         commitment_id),
+    )
+
+    pool = planner.candidates(conn, sett, THURSDAY, set())
+    item = next(c for c in pool if c.commitment_id == commitment_id)
+    assert item.done_minutes == 90
+    assert item.remaining == 254
+
+
+def test_one_sitting_done_does_not_close_multi_session_work(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """Increment 7 made a done block resolve the commitment behind it, which is right for
+    the single-sitting work that is nearly all of the ledger. With a clamp it would delete
+    three days of a CIS 236 milestone on the first click."""
+    from backglass.web import actions
+
+    commitment_id = add_commitment(conn, sett, "T - Final Analysis", minutes=344)
+    proposal = planner.propose(conn, sett, THURSDAY, events=[])
+    plan_id = planner.persist(conn, sett, proposal)
+    block_id = int(
+        conn.execute(
+            "SELECT id FROM plan_block WHERE day_plan_id = ? "
+            "AND commitment_id IS NOT NULL", (plan_id,)
+        ).fetchone()["id"]
+    )
+
+    result = actions.set_block_outcome(conn, block_id, "done")
+
+    assert result.detail == "progress recorded"
+    status = conn.execute(
+        "SELECT status FROM commitment WHERE id = ?", (commitment_id,)
+    ).fetchone()["status"]
+    assert status == "open"
+
+
+def test_the_last_sitting_does_close_it(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """And single-sitting work still resolves on the click exactly as it did, because one
+    sitting is the whole estimate."""
+    from backglass.web import actions
+
+    commitment_id = add_commitment(conn, sett, "reply to Dana", minutes=45)
+    proposal = planner.propose(conn, sett, THURSDAY, events=[])
+    plan_id = planner.persist(conn, sett, proposal)
+    block_id = int(
+        conn.execute(
+            "SELECT id FROM plan_block WHERE day_plan_id = ? "
+            "AND commitment_id IS NOT NULL", (plan_id,)
+        ).fetchone()["id"]
+    )
+
+    actions.set_block_outcome(conn, block_id, "done")
+
+    status = conn.execute(
+        "SELECT status FROM commitment WHERE id = ?", (commitment_id,)
+    ).fetchone()["status"]
+    assert status == "done"

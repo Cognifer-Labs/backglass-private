@@ -11,6 +11,7 @@ twice (`web/routes/schedule._collapse`).
 
 from __future__ import annotations
 
+import itertools
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -261,14 +262,25 @@ DAY = date(2026, 8, 20)
 TZ = "America/Phoenix"
 
 
-def _block(starts_at: str, ends_at: str, title: str, kind: str) -> dict[str, Any]:
-    """One `dashboard_today.sql` row, cut down to the columns the timeline reads."""
+_BLOCK_IDS = itertools.count(1)
+
+
+def _block(
+    starts_at: str, ends_at: str, title: str, kind: str, block_id: int | None = None
+) -> dict[str, Any]:
+    """One `dashboard_today.sql` row, cut down to the columns the timeline reads.
+
+    `id` is one of them since 2026-08-27: the timeline carries it through so the canvas
+    can act on what it draws. Auto-numbered unless a test cares which id it gets.
+    """
     return {
+        "id": next(_BLOCK_IDS) if block_id is None else block_id,
         "starts_at": starts_at,
         "ends_at": ends_at,
         "title": title,
         "kind": kind,
         "outcome": "",
+        "pinned": 0,
     }
 
 
@@ -469,13 +481,59 @@ def test_dedup_keeps_the_outcome_only_the_plan_block_records() -> None:
     plan block — the only reader that knows an event was done or rolled — is always the
     loser on identity. Collapsing to either copy whole drops a fact the other held.
     """
-    from backglass.web.routes.schedule import _collapse
+    from backglass.web.routes.schedule import RawEntry, _collapse
 
-    calendar_copy = (540, 60, "CHM 113 (Lab)", "fixed", "", True)
-    plan_block = (540, 60, "CHM 113 (Lab)", "fixed", "done", False)
+    calendar_copy = RawEntry(540, 60, "CHM 113 (Lab)", "fixed", travel=True)
+    plan_block = RawEntry(540, 60, "CHM 113 (Lab)", "fixed", outcome="done")
 
     collapsed = _collapse([calendar_copy, plan_block])
 
     assert len(collapsed) == 1
-    assert collapsed[0][4] == "done", "the outcome survived the collapse"
-    assert collapsed[0][5] is True, "and travel is still OR-ed, not overruled"
+    assert collapsed[0].outcome == "done", "the outcome survived the collapse"
+    assert collapsed[0].travel is True, "and travel is still OR-ed, not overruled"
+
+
+def test_dedup_keeps_both_doors_onto_one_event() -> None:
+    """Owner's ask 2026-08-27: everything on the schedule is actionable.
+
+    One event, two ids, and each reader holds only its own — the plan copy knows the
+    `plan_block` that Done/Roll/Pin act on, the calendar copy knows the `source_item`
+    that "not happening" retracts and /source renders. A merge that kept either copy
+    whole would take away one of the two doors, which is exactly the failure that made
+    a wrong CHM 113 lab time correctable only by writing a script.
+    """
+    from backglass.web.routes.schedule import RawEntry, _collapse
+
+    calendar_copy = RawEntry(1080, 110, "CHM 113 (Lab)", "fixed", source_item_id=114)
+    plan_block = RawEntry(1080, 110, "CHM 113 (Lab)", "fixed", block_id=1118)
+
+    collapsed = _collapse([calendar_copy, plan_block])
+
+    assert len(collapsed) == 1
+    assert collapsed[0].source_item_id == 114
+    assert collapsed[0].block_id == 1118
+
+
+def test_a_routine_gets_no_id_it_cannot_honour() -> None:
+    """A routine is configuration — breakfast at 7:30 is a setting, not a row.
+
+    It reaches the canvas through `capacity.routine_events`, which has no `source_item`
+    behind it, so the entry must carry no source id. The page reads `actionable` to
+    decide whether to draw buttons, and a button posting to a row that does not exist
+    is worse than no button: it answers 422 and teaches the owner not to trust the rest.
+    """
+    view = _view(
+        fixed=[
+            capacity.FixedEvent(
+                starts_at=capacity._aware("2026-08-20T07:30:00-07:00", TZ),
+                ends_at=capacity._aware("2026-08-20T08:00:00-07:00", TZ),
+                title="Breakfast",
+                kind="routine",
+            )
+        ],
+        blocks=[],
+    )
+    entry = next(e for e in schedule_page.timeline(view, today=DAY).entries)
+    assert entry.source_item_id is None
+    assert entry.block_id is None
+    assert entry.actionable is False

@@ -38,10 +38,23 @@ Scopes requested (read-only, nothing else — docs/08): `gmail.readonly`,
 - [ ] `cp .env.example .env` (or edit the existing one) and set at minimum:
       `OWNER_NAME`, `OWNER_EMAILS`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
       `BRIEF_TO`, `BRIEF_FROM`, `RESEND_API_KEY`.
-- [ ] Optional sources as wanted: `GITHUB_TOKEN`, `SLACK_TOKEN`+`SLACK_CHANNELS`,
+- [ ] Optional sources as wanted: `GITHUB_TOKEN`, `SLACK_TOKEN`,
       `IMESSAGE_DB_PATH`, `INBOX_FOLDER_PATH`, `OBSIDIAN_VAULT_PATH`,
       `APPLE_NOTES=1`, `APPLE_REMINDERS=1`, `CANVAS_BASE_URL`+`CANVAS_TOKEN`.
+- [ ] Slack needs one thing from you that no command can do — a token. Slack has no
+      "personal token" button, so the route is an app you own:
+      api.slack.com/apps → **Create New App** → **From scratch** → pick the workspace →
+      **OAuth & Permissions** → **User Token Scopes** (the *user* column, not the bot
+      one): `channels:history`, `groups:history`, `im:history`, `mpim:history`,
+      `channels:read`, `groups:read`, `im:read`, `mpim:read`, `users:read` →
+      **Install to Workspace** → copy the **User OAuth Token** (`xoxp-…`) into
+      `SLACK_TOKEN`. `SLACK_CHANNELS` is optional and only a shortcut — leave it empty
+      and choose conversations on /chats after the first sync.
 - [ ] Optional privacy screen: `APPLE_TRIAGE=1` (step 5 creates the shortcut).
+- [ ] If you set `INBOX_FOLDER_PATH`, keep anything *derived* from those files — text
+      extractions especially — in a sibling folder, not inside the drop root. The
+      connector reads `.txt`, so a text twin beside its PDF ingests the same document
+      twice and pays extraction for both (docs/07 §The drop folder in practice).
 
 ## 4. OAuth runs
 
@@ -72,6 +85,10 @@ Each opens a browser consent screen once; tokens land in the `credential` table.
       question: are these your actual open commitments?
 - [ ] `backglass commitments --review` — triage the review queue on the
       dashboard (`backglass dashboard`, or the app).
+- [ ] If `SLACK_TOKEN` is set: open **/chats**. Every Slack conversation you are a member
+      of is listed undecided — nothing from Slack has been read yet, by design. Choose
+      the handful that carry commitments; saying yes rewinds the cursor so their recent
+      history is read on the next sync, not only their future.
 
 ## 7. Record real cassettes
 

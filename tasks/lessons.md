@@ -967,3 +967,535 @@ deterministic given the id.
   `_never_the_real_ledger` now bounds the damage by forcing `DB_PATH` to a per-test file,
   with `tests/test_config.py` asserting that guard, but it cannot make an unpatched
   command see the fixture's rows.
+
+- 2026-08-20 | `canvas_ics` watermarked on the assignment's **due date**, and a due date is
+  not monotonic with publication. The first read parked the cursor at 2026-09-04, the
+  second saw a course publish "Excused Absence Requests" due 2027-03-07 and parked there,
+  and every read after emitted nothing — 157 assignments upstream, 6 in the ledger, an
+  entire semester of coursework absent from the brief and the planner. The credential row
+  read `ok` the whole time, because the fetch never raised. `doctor` had the answer
+  printed as a failing check (`canvas:ics fully ingested — store has 157, ledger has 6`)
+  and nobody had run it. | A cursor may only watermark a field that moves forward with
+  *arrival*, never one that describes the item (a due date, a meeting time, a priority).
+  When the upstream carries no such field — an ICS feed has no `updated_at` — do not
+  invent one: fetch the whole document and let `content_hash` short-circuit the writes,
+  which costs nothing because the download was whole either way. And when a source has an
+  `upstream_count`, `doctor` already answers "is this fully ingested" — run it before
+  reasoning about whether a quiet source is healthy.
+
+- 2026-08-20 | The owner said Backglass was "planning for things that are obviously done"
+  and that their schedule had changed without it noticing. Four separate causes, and not
+  one of them was visible from the symptom. The plan job fires at 05:45 *IST* — the
+  `day_plan.generated_at` column reads `00:15 UTC` every day, which is 17:15 in Phoenix —
+  so the morning plan was built each evening for a day that was over, with
+  `capacity_minutes: 0`. The class timetable changed on ~08-10 and the ledger kept both
+  versions, because `source_item` is immutable and no connector could say "this event is
+  gone upstream", so five dropped class slots went on consuming capacity. Move-in was 11
+  days overdue against a 14-day staleness gate that only asks anyway. And `canvas:ics` had
+  never collected past its first two runs. | Read the timestamp column before believing a
+  scheduled job ran on time — `generated_at` said 00:15 UTC for weeks and nobody converted
+  it. A windowed connector that re-reads its whole span is the only thing that can prove an
+  upstream deletion, so give it a way to say so (`retractable_window`) rather than letting
+  absence mean nothing; and make it certify the read was *complete*, because a timed-out
+  Apple Event returns an empty list that looks exactly like a cleared calendar. When a
+  question surface drips (`STALE_BATCH_LIMIT = 5`) against a backlog nobody is drawing
+  down, the arithmetic never converges — that needs a one-pass surface, not a smaller drip.
+
+- 2026-08-20 | `actions.snooze` counts from the commitment's *existing* due date, which is
+  right for the board and wrong for any bulk surface: "keep for 30 days" on the fishtank
+  due 2026-01-06 set it to 2026-02-05, still overdue, still on the scrub board the instant
+  the page reloaded. The first test passed anyway, because it only asserted the new due
+  date was later than the old one. | A test for "this action removes the row from the list"
+  must assert the row is gone from the list, not that some field moved in the right
+  direction. The weaker assertion is true for both the fix and the bug.
+
+- 2026-08-20 | The retraction path built that same day never fired once. It was correct and
+  it refused to act, because `apple_calendar` could not certify a complete read: the
+  owner's `dkesava2@asu.edu` calendar was timing out at the connector's 120-second
+  subprocess limit on every scheduled run. Measured afterwards, that query takes **80
+  seconds** on an idle machine and over **two minutes** during a sync — so it failed
+  whenever the machine was busy, which is precisely when the sync runs. The connector
+  degraded per rule 5, returned **two events for the whole day**, and the planner built
+  days around an almost-empty calendar. What kept it invisible: the failure path wrote
+  `excluded_by_rule["calendar:<name>"]`, so the sync line said `boundary excluded 1 by
+  rule calendar:dkesava2@asu.edu` — which reads as a privacy rule working, not as the main
+  calendar falling over. | A failure must never borrow the vocabulary of a deliberate
+  exclusion; `excluded_by_rule` means the boundary refused an item, and anything else
+  belongs in `errors` where it also makes the run exit non-zero. Set a subprocess timeout
+  from a measurement on a *loaded* machine, not an idle one, and write the measurement
+  into the constant. And when two timeouts guard the same call, name which one fired: the
+  subprocess limit is what produced `timed out after 120 seconds`, while macOS's separate
+  per-Apple-Event ceiling raises -1712 *inside* osascript — where a JXA `catch (e) {
+  continue; }` swallowed it and returned an empty calendar with exit code 0, so a calendar
+  that timed out became a calendar with no events and no failure recorded anywhere. That
+  one nearly caused the opposite disaster: with one calendar silently empty and another
+  returning 53 events, the reconciler certified the read and would have retracted 16 live
+  classes. Isolation that is already provided per-invocation must not be re-provided by a
+  catch that erases the error. And before optimising, measure: reading each property for the whole result set
+  in one call (`spec.uid()`, `spec.summary()`) re-evaluates the `whose` predicate per
+  property and was *slower* than the per-event shape it would have replaced.
+
+- 2026-08-20 | The retraction path — a mechanism that decides an event was deleted upstream
+  because a re-read did not return it — came within one clean run of retracting sixteen of
+  the owner's live classes. Two defects stacked: a JXA `catch (e) { continue; }` turned
+  macOS's -1712 Apple Event timeout into an empty calendar with exit code 0, and `seen_ids`
+  recorded what the connector *emitted* rather than what the store *returned*, so the
+  duplicate the connector deliberately suppresses (HON 171, PSY 101 and CIS 236 each sit
+  in two calendars) read as deleted. It was caught only because the would-delete list was
+  printed and read row by row instead of being trusted — three read-only runs against the
+  live ledger, zero writes, before anything was believed. | A mechanism that deletes on an
+  inference ships only after its would-delete list has been classified one row at a time
+  against the real store, and never on the strength of "the tests pass". The tests did
+  pass, all thirty-two of them, on both defects. Corollary: when a guard's whole job is to
+  detect absence, any code path that can turn a failure into an empty result is a bypass of
+  that guard — audit for swallowed errors first, before trusting it once.
+
+- 2026-08-21 | Three sources on this machine — `calendar:apple`, `apple-notes`, `reminders`
+  — were all failing on the same 120-second osascript timeout, and all three reported it
+  honestly the whole time. Notes had collected nothing since 2026-07-05 and reminders
+  nothing since 2026-08-14. Measured afterwards, the Notes script takes **2:02 on an idle
+  machine**: it failed by two seconds at rest and by more whenever anything else ran, which
+  is every scheduled sync, because the sync is the thing running. The cost is round trips
+  rather than data — one note is six Apple Events, so 65 notes is ~390 of them. | A
+  subprocess timeout for an Apple Events script must be set from a measurement taken while
+  the machine is *busy*, and the measurement written into the constant beside it. Where a
+  connector degrades per rule 5 rather than failing loudly, the degradation is only as good
+  as somebody reading it: `backglass doctor` had `credential apple-notes healthy — failed`
+  printed for six weeks. When a source goes quiet, run doctor before theorising — and when
+  one connector on a machine turns out to be timing out, check every sibling that shares
+  the same bridge, because the cause is the machine, not the connector.
+
+- 2026-08-21 | Migration 0031 was written but never committed, and it reached the owner's
+  live database anyway — the launchd sync job runs `backglass` **from this checkout**, not
+  from an installed copy, so uncommitted work in the working tree is live work. Run 499
+  (06:15Z) applied the migration and run 500 (06:46Z) recorded 158 assignments, 92
+  materials and 133 changed estimates, all without anyone asking. The database went to
+  schema 31; `/Applications/Backglass.app` ships migrations to 0030 and no `coursework.py`;
+  and `migrate()` refuses to start when `schema_version` names a migration that is not on
+  disk. So the desktop app died with `MigrationError: schema_version records migration(s)
+  31 that are not on disk` — proven by running the installed sidecar binary against a copy,
+  not inferred. | On a machine where a scheduler runs the repo, "uncommitted" is not a
+  staging area — writing a migration file *is* deploying it, on the scheduler's clock, and
+  the 30-minute sync means the window between writing and shipping is thirty minutes, not
+  a commit. Two consequences to act on rather than remember: build the sidecar in the same
+  session as the migration, not "before the commit"; and when a change is meant to be held
+  back, hold it in a worktree the scheduler does not run, because a `.sql` file sitting in
+  `backglass/db/migrations/` is already applied as far as the owner's app is concerned.
+
+- 2026-08-21 | Twenty-eight dates read out of the Fall 2026 syllabi were written to a new
+  Apple Calendar, and the write was reported as "Backglass will pick these up". Thirteen
+  will. `apple_calendar._to_item` returns None for any all-day event — docs/07's rule that
+  an all-day row is not capacity — so the drop deadline, the withdrawal deadline, the four
+  no-class spans and the nine VR-pod booking reminders are on the owner's calendar and can
+  never reach the ledger. Nothing failed: the connector is doing exactly what it says, and
+  the gap was found by reading `_to_item` before writing a page that reads its rows. |
+  A calendar write is not an ingest path until the connector's own filters have been read.
+  Before treating any external surface as "and then Backglass sees it", open the connector
+  and find what it drops — the filter that makes a source safe is the same filter that
+  makes half your data invisible.
+
+- 2026-08-21 | Getting a semester of Canvas resources onto disk took four dead ends, each
+  of which looked like the obvious path: the Files API is 403 on seven of eight ASU shells
+  (the Files tab is disabled per course), `content_exports` succeeds but returns a 22-byte
+  empty zip for exactly those shells, `/login/session_token` is 401 without an API token,
+  and Safari's session cookie is memory-only so it is not in `Cookies.binarycookies` for
+  curl to borrow. Safari also blocks a gesture-less `<a download>`, `window.open`, an
+  iframe src, and — being an https page — any fetch to `http://127.0.0.1`, which killed a
+  local receiver. What worked: per-file `GET /api/v1/courses/:id/files/:id` in the live
+  session, fetch the bytes in-page, base64 them, and let the harness's own "output too
+  large, saved to disk" behaviour be the channel. | When a browser session is the only
+  credential, the data channel is the tool result itself: a large return is written to a
+  file and costs no context, so fetch-in-page → base64 → decode in Bash beats every
+  download mechanism the browser will refuse. And check `content_exports` before assuming
+  a 403 on the Files API means the files are unreachable — but check the zip's *size*,
+  because an empty export is a success response.
+
+- 2026-08-21 | "The app stutters, add animations" was a server bug, and the animation
+  request would not have touched it. Every dashboard route took 3.2 s and `/` took 6.5 s;
+  `cProfile` put 97% of it in `dedup.suspects` — 50 135 difflib ratios and 24 090
+  pure-Python cosines — against 0.089 s of SQL. It ran on every full-page load because
+  the sidebar middleware built the commitments panel to read `len(board.rows)` off it,
+  and it ran on the event loop, in an `async def`, so every other request queued behind
+  it. Its own docstring said "double digits … measured in milliseconds"; n was 317. |
+  Profile before styling. When a UI is described as stuttering, time the server first —
+  a stopwatch on ten routes took two minutes and found the cause, and no amount of
+  animation work would have moved a 3.2-second number. And when a hot function's
+  docstring states its own complexity assumption, check whether the data still honours
+  it: that sentence is a measurement with an expiry date, and nothing fails when it
+  passes.
+
+- 2026-08-21 | The other half of the same stutter was invisible to server timing: `/`
+  shipped 1.37 MB of HTML with 3 464 htmx-bound controls, because two collapsed folds
+  rendered 799 duplicate pairs and 340 review rows in full. A `<details>` that is closed
+  still costs a full parse, layout and htmx binding pass before the page can be touched.
+  | Measure the payload as well as the clock. `curl -w '%{size_download}'` and a count of
+  `hx-post` attributes cost one command and named the second cause; a panel that is
+  folded away in the design is not folded away in the browser.
+
+- 2026-08-21 | The row-flash acknowledgement in `static/motion.js` was written, shipped
+  into a browser with a `console.log` in it, and deleted an hour later: `htmx:afterRequest`
+  fires after the swap, so the element that was clicked is already detached and the
+  handler returned early every single time. It would have read as working code forever. |
+  Instrument the new animation in a real browser before believing it runs. "No console
+  errors" only proves nothing threw; a probe that prints what fired is the difference
+  between verified and plausible — and it is how a handler that never executes gets
+  found instead of shipped.
+
+- 2026-08-21 | An A/B of a CSS change was served on two ports so the browser cache could
+  not confuse it — and the two ports gave opposite results. `content-visibility` looked
+  like it had blanked the Today panel; it had not. Panel folds persist in `localStorage`,
+  `localStorage` is keyed by origin, and one origin had that panel collapsed. The tell was
+  in the frame all along: `+` in the panel header on one, `−` on the other. | A new port
+  is a new origin, and a new origin is a new `localStorage`, a new theme choice and a new
+  set of saved folds. When a page keeps client state, A/B it on ONE origin by restarting
+  the same port — the HTTP-cache reason for using a fresh port is real, but a hard reload
+  solves that without also resetting every preference the page remembers. And read the
+  frame's own state indicators before concluding a change broke something.
+
+- 2026-08-21 | Shipped a 12 KB animation library, then found the browser already had it:
+  Motion's `mini` build is a wrapper over `Element.animate`, so vendoring it added a file,
+  a hash, a VENDOR.md entry and a `type="module"` to get an API that was there for free.
+  The WAAPI version is shorter and passes the easing token through as the string
+  tokens.css writes it, with no array conversion in between. | Before vendoring a
+  front-end library, find out what platform API it wraps. For animation it is the Web
+  Animations API; for fetch-and-swap it is `fetch`; for observers it is
+  `IntersectionObserver`. A wrapper is worth its bytes when it hides real complexity —
+  springs, interruption, layout projection — and not when the two calls you need are one
+  line each.
+
+- 2026-08-21 | Wrote a `sync --dry-run` regression test against a fresh in-memory
+  ledger and it passed even with the bug present: `model.calls` was empty, because
+  dry-run ingest never really inserts a `source_item` (`Ledger.upsert_source_item`
+  returns a pseudo id under `self.dry_run`), so `pending_extraction_unbatched` found
+  nothing and extraction never ran regardless of whether the downstream gate existed.
+  The actual bug — `facts.apply_extracted` writes through a raw `conn`, bypassing every
+  one of `Ledger`'s dry-run checks, so `sync --dry-run` had been writing real fact rows
+  the whole time — only showed up once the fixture seeded an already-`keep`-triaged,
+  unextracted `source_item` directly, the shape a real installation's ledger already
+  holds after any real sync. | Dry-run's protection in this codebase is structural at
+  the ingest layer, not a flag threaded through every downstream call — so a fresh
+  ledger cannot exercise a dry-run gap anywhere past ingest; it proves the short-circuit
+  works and nothing else. When testing dry-run behaviour for a stage past ingest (triage,
+  extraction), seed the precondition that stage reads directly, and prove the test
+  red before green — this one would have shipped vacuous otherwise, the same shape as
+  the 2026-08-02 "a fixture that sets up the broken precondition must be proven to have
+  set it up" lesson, one layer further downstream.
+
+- 2026-08-21 | Added a stagger to swapped-in rows without re-reading design-system.md §9,
+  which contains the sentence "No stagger anywhere" and the reason for it. Also minted a
+  sixth motion token to space it, in a system whose stated argument for having five is
+  that you pay per duration. Both reverted the same day. | Before adding to a design
+  system, read the section that owns the thing you are adding — all of it, including
+  "what does not move and why". This project writes its refusals down with their
+  reasoning precisely so they are not rediscovered, and §9 had already refused exits,
+  page cross-fades, selection animation, focus-ring fades, hover reveals, progress bars
+  and stagger. The refusal list is the most valuable part of the doc and the easiest part
+  to skip.
+
+- 2026-08-21 | The FLIP animation shipped, was "verified" by console probe, and had never
+  animated anything. `htmx:afterSwap` reports `event.detail.target` as the element it
+  REPLACED, and for an `outerHTML` swap that node is already detached:
+  `getBoundingClientRect` returned zeros, so the delta was each row's absolute offset
+  rather than its movement, and `el.animate` ran on a node that would never paint. The
+  probe printed `flip c1 507.6` and I read it as a delta. It was a top coordinate. |
+  A probe proves a code path executed, not that it did the right thing. Log the values a
+  wrong implementation could not produce: `el.isConnected` for "will this paint", and a
+  magnitude you can predict independently — one card height, not "some number of pixels".
+  `dy=109.0 live=true` is evidence; `flip c1 507.6` is a code path.
+
+- 2026-08-21 | WebKit fires `toggle` on a `<details open>` that is INSERTED into the
+  document, not only on one that opens — so every htmx swap looked like the owner had
+  just opened every panel. First fix was "ignore toggles for a moment after a swap"; the
+  echo arrived 2ms after one swap and 178ms after the next. | Do not discriminate DOM
+  events by elapsed time when you can discriminate them by state. Remembering each
+  element's last-known `open` in a WeakMap makes "did this actually change" a fact rather
+  than a race, and it stays correct on a slow machine, under a breakpoint, and in the
+  browser that does not fire the echo at all.
+
+- 2026-08-21 | Wrote a new test file with `cat > tests/test_routines.py` without
+  checking whether that name was taken, and silently destroyed 221 lines of existing,
+  committed tests. Nothing failed: the suite went green at 2364 where it had been 2374,
+  and only counting the tests — 20 added, total *down* 10 — showed thirty tests had
+  stopped existing. `git status` then said ` M` on a file I believed I had created. |
+  Never create a file with a redirect or Write without first proving the path is free
+  (`ls`/`test -e`, and `git ls-files` for the tracked case) — a truncating redirect is
+  a delete nobody reports. And after adding N tests, assert the total moved by N: a
+  suite that is green at the wrong size is the same failure shape as the 2026-07-30
+  idempotency lesson, where the number was right for the wrong reason.
+
+- 2026-08-24 | Paired each state-doc version with the one before it using
+  `zip(history, [*history[1:], None])`. On a one-version history that is fine; on an
+  **empty** one the second list is `[None]` against `[]`, so plain `zip` silently
+  produces nothing and the page would have rendered "no changes" for a document that had
+  simply never been stored — the state every installation is in until its first sync
+  after the migration. Ruff's `B905` forced `strict=True`, which turned the silence into
+  a `ValueError`, which the test that opens the page on a fresh ledger caught. | A pairing
+  built from a shifted copy of a list has two edge cases, not one, and the empty case is
+  the one that fails quietly — `zip` truncates by design. Index into the list
+  (`history[i + 1] if i + 1 < len(history) else None`) rather than zipping a shifted
+  copy, and write the fresh-ledger test: the first-run state is the state a personal tool
+  is in exactly once, in front of the owner, and it is the one nobody exercises twice.
+
+- 2026-08-24 | Ran ten mutations against the Slack connector, got "10 mutations, 10
+  caught", and nearly recorded that as coverage. Every mutation had produced exactly one
+  failure, which is the tell: `pyproject`'s `addopts = "-x"` stops the run at the first
+  red test, so each mutation was attributed to whichever test happened to sort first, not
+  to the test written for it. Re-running with `--maxfail=999` showed three mutations whose
+  intended test had never been reached at all. | A mutation pass has to see the WHOLE
+  failure set, so pass `--maxfail=999` (or `-p no:cacheprovider`-style overrides) to defeat
+  any project-level `-x` before believing a result. And the diagnostic is free: if every
+  mutation reports the same failure count, especially one, the harness is truncating —
+  check the runner's own flags before checking the tests. This is the 2026-08-02 lesson
+  ("count the mutations against the failures") surviving into a case where the count
+  matched and meant nothing.
+
+- 2026-08-24 | `config._csv` lowercases every comma-separated setting, and `SLACK_CHANNELS`
+  was in that list. Slack conversation IDs are case-sensitive API identifiers, so
+  `C0FOUNDERS` reached `conversations.history` as `c0founders`, which Slack answers
+  `channel_not_found`. It had been that way since the connector was written and no test
+  saw it, because the only other consumer is the allowlist and `chats.normalise` casefolds
+  both sides — the value looked correct in the table, in the settings object and in every
+  assertion, and was wrong only at the wire. Found by a smoke run through the real
+  registry, not by the suite. | A shared normaliser is a claim about what a field MEANS.
+  Before adding a setting to one, ask whether the value is a name (fold it) or an
+  identifier some other system will compare byte-for-byte (never fold it) — and when a
+  field is consumed by both a forgiving matcher and a strict API, the forgiving one will
+  hide the defect indefinitely. Corollary that actually found it: construct the object
+  through the production path once and print what the outbound call would carry. Every
+  test in the file compared the value against another copy of itself.
+
+## 2026-08-24 | AppleScript sent a blank email to a real contact
+
+`reply <msg> with opening window` followed by `set content of r to ...` silently
+loses the body. Mail's compose web view populates asynchronously and clobbers the
+property write, so the message goes out with a two-character body. It sent to Peter
+Stokes at Penn before anything checked. Adding `delay` before the write did not fix
+it either — that variant hung Mail until the shell timed out and the app died.
+
+Rule: build outgoing mail with `make new outgoing message with properties
+{subject:…, content:…, visible:false}` so the body exists at creation, then set
+sender and recipients on the created object. Never set `content` on a reply window.
+
+Rule that would have caught it regardless: gate the send on the artifact, not on the
+call returning true. Read `content` back, assert a plausible length, and only then
+`send`. `send` returned `true` for the empty message, and the Outbox drained, and the
+Sent copy existed — every liveness signal was green while the body was gone. Confirm
+outward-facing actions by reading back what actually left, and prefer a property the
+failure would change (length) over one it would not (existence).
+
+Cost: a second email to the same person apologising for the first.
+
+- 2026-08-24 | `RateLimited` was raised in `ClaudeCLIBackend` and nowhere else, so on
+  `DeepInfraBackend` — the class every hosted configuration actually resolves to — an HTTP
+  429 arrived as a generic `ModelError`. A rate-limited batch then looked like a failed
+  batch and escalated its twelve items into twelve more refused calls, `_LimitClaim` never
+  saw a claimant so the run kept walking into a wall that had already said
+  `X-RateLimit-Remaining: 0`, and `degrade_reason` stayed empty so the owner was shown a
+  wall of errors instead of "today's quota is spent". The 2026-08-03 entry in this file
+  ends "rate-limit half still open" — it had been open for three weeks. | An exception
+  type is a contract that every backend has to satisfy, not a feature of the one it was
+  written for. When adding a second implementation behind a Protocol, list the exceptions
+  the *callers* branch on and check each implementation can raise every one of them —
+  `grep` for the raise sites and count them against the backends. A sibling that can only
+  raise the generic case silently disables every handler downstream, and the handler goes
+  on looking correct because the class it was written against still works.
+
+- 2026-08-24 | Fixed a phrase matcher that missed OpenRouter's `rate-limited` by folding
+  every hyphen to a space, and wrote in the comment that this "cannot invent a false
+  positive the spaced form would not also produce". It can: `rate-limit-handler.js:12` in
+  a traceback becomes `rate limit handler` and matches, which is the `cli.js:1:429517`
+  stack-frame mistake the module's own comment already warns about. I noticed only because
+  I probed the new behaviour against adversarial strings after writing the claim. | When a
+  fix widens a matcher, the test is not "does it now catch the thing I wanted" — it is
+  "what else did I just catch". Write the adversarial inputs BEFORE the justification
+  comment, because the comment is where the overclaim lands and a confident sentence in a
+  diff is what stops the next reader checking. Narrow beats general here: adding the exact
+  literal (`rate-limited`) matched the one real message and nothing else.
+
+- 2026-08-24 | A test for "a misconfigured fallback must not take the run down" *skipped*
+  instead of passing, because the code fell back to `MODEL_API_KEY` and my fixture set it
+  — so the secondary was constructible after all. The skip was the only reason I looked,
+  and behind it was a real design defect: the fallback provider was inheriting the
+  primary's API key, which would hand an OpenRouter key to Anthropic and 401 on every call
+  of the exact outage the fallback exists to cover. | A skipped test is an unproven test
+  wearing a green tick, and a conditional skip written to dodge an environment difference
+  is where a defect hides best. When a test skips, treat it as red until the reason is
+  understood — and never let credentials cascade across providers: a key is scoped to the
+  service that issued it, so "or fall back to the other key" is always wrong, however
+  convenient the empty-string default looks.
+
+- 2026-08-24 | Wrote three tests for a homework *reservation* in the planner and all three
+  passed with the reservation deleted. The reason is specific and reusable: a reservation
+  only changes an outcome under contention, and the default test day had capacity to
+  spare, so every item fit either way. The same shape hid a duplicate-question floor —
+  the near-miss pair I invented never clustered at all, so the floor it was supposed to
+  exercise was never reached, and removing the floor kept the suite green. | A test for a
+  rule that only bites under scarcity has to create the scarcity, and the way to find out
+  whether it does is to delete the rule and watch. Both fixes were the same: pin a
+  deliberately small budget (a 135-minute day) and use a *measured* near-miss rather than
+  an imagined one — "send the housing form to Barrett" vs "send the housing deposit to
+  Barrett" scores 0.83, which is the number that made the threshold real. Mutation-test
+  every guard whose absence would still let the happy path pass.
+
+- 2026-08-24 | `MODEL_TRIAGE` had been pointing at `nvidia/nemotron-nano-9b-v2:free`, a
+  model that no longer exists — 404, gone from OpenRouter's catalogue. Nothing surfaced it
+  because the `models` array routes past a dead id silently, and the array is capped at 3,
+  so the corpse occupied a third of the routing slots and pushed a live model off the end
+  where it could never be reached. Found only by probing a single model on its own; every
+  production call had been masked by the very mechanism meant to add resilience. |
+  A fallback hides the failure it covers, and that is its cost, not a side effect. Anything
+  configured as a *name at a remote service* — a model id, a channel id, a bucket — needs a
+  liveness check that asks for it ALONE, because the resilient path is exactly the one that
+  cannot tell you it is carrying you. Cheap rule: when a config names N remote things and
+  the code sends them as a set, add a check that resolves each one individually.
+
+- 2026-08-24 | Believed, and the repo's own `.env` asserted, that two different free models
+  "spreads ~190 calls a day across two free queues instead of one". Probing all 14 free
+  tool-capable models returned `X-RateLimit-Limit: 50` on every one: the quota is
+  account-wide, so the two models share a single queue and the split buys nothing. The
+  original observation behind the setting was real but was about per-minute upstream
+  throttling — a different limit that happens to produce the same status code. | A 429 is
+  not one phenomenon. Before designing around a rate limit, find out what it is keyed to —
+  per-model, per-minute, per-account, per-day — because a mitigation aimed at the wrong key
+  looks reasonable, tests fine, and does nothing. The evidence is in the response headers
+  (`X-RateLimit-Limit`, `-Remaining`, `-Reset`), which cost one probe to read and which
+  nobody had read here for three days.
+
+- 2026-08-24 | Mutation-tested a merge action, restored the file with `cp` from a backup,
+  and the next run still behaved like the mutated code — id 1 superseded by id 2 when the
+  source plainly said the reverse. Read the source three times, `inspect.getsource` three
+  times, ran the raw UPDATE in isolation (correct), and only then found it: the mutation
+  swapped two names of **identical length** inside one tuple, so the file's byte size never
+  changed, and the restore landed in the same second as the mutation. Python's bytecode
+  cache keys on (mtime seconds, size), so the stale `.pyc` looked current and kept serving
+  the mutated function. | After restoring a file during mutation testing, clear
+  `__pycache__` — or verify the restore by *behaviour*, not by reading the file, because
+  reading the file is exactly what cannot see this. A same-size edit defeats the size half
+  of the cache key and a fast restore defeats the mtime half; the two together are silent.
+  Related to the 2026-08-21 FLIP lesson: a probe that reads the source proves what the
+  source says, not what the interpreter is running.
+
+- 2026-08-24 | A test I wrote that morning asserted a `deadline-moved` notification was
+  recorded. It passed all day and failed at 23:15, because `notify.record` reads the real
+  wall clock and the default `notify_window` is 08:00-22:00 — so the suite was reporting
+  the hour it was run at. | A test that touches any code reading `local_now()` must pin the
+  window it depends on (`settings.model_copy(update={"notify_window": "00:00-23:59"})`) or
+  inject the clock. The tell is a test that only ever ran during working hours: it is not
+  green, it is untested after dark.
+
+- 2026-08-25 | Wrote a plan calling "no Edit menu, so ⌘C is dead in the Tauri window" the
+  worst native defect in the product, from remembering how Tauri v1 behaved. The vendored
+  crate says otherwise: `tauri-2.11.5/src/app.rs:2244` installs `Menu::default` on macOS
+  whenever the builder sets no menu, `enable_macos_default_menu` defaults true, and
+  `menu/menu.rs:215` builds Edit with Cut/Copy/Paste/Select All. The clipboard had always
+  worked; the item was work with no output, and it was ranked first. | An API claim from
+  memory is a guess wearing a citation. Dependencies are vendored under
+  `~/.cargo/registry/src` and `site-packages` — read the version actually resolved before
+  writing a behaviour into a plan, and name the file and line when you do. The tell is a
+  sentence about a library with no `path:line` behind it. Related to the 2026-08-21 FLIP
+  lesson: a probe that reads the right thing is cheaper than a plan built on the wrong one.
+
+- 2026-08-25 | Owner said "improve spacing" on a page shipped an hour earlier. The page had
+  invented its own vertical scale — margins on the day heading, its own padding on the
+  filter chips — on top of `dashboard.css`'s tile rule, which the 2026-08-07 spacing pass
+  had already settled at 16px inside a tile, 12px between tiles, 4px between lines within
+  one. The two scales compounded: 40px between a day heading and the tiles it heads while
+  the tiles sat 12px apart, so the heading read as floating between two groups instead of
+  belonging to the one below it. | Before styling a new page, find the house scale and
+  measure against it — `grep` the stylesheet for the rule that already matches the element
+  you are about to style (here `:is(.row,.card,…)`, which had made `.row` a tile without
+  the new page's author noticing). A new page adds classes; it does not get to add a
+  second spacing system. The tell is writing a `margin` in px-scale steps without first
+  knowing what the element already inherits.
+
+- 2026-08-27 | Owner: "chem lab is no longer 6 to 750 thursday, why hasnt backglass
+  backend updated". The ledger had known for four days — facts 63 and 85, read off MyASU
+  on the 23rd — and the day page drew the old hour anyway, because the planner reads
+  `calendar:asu` rows and `retraction.py` can only retract from a window a connector
+  re-read and certified. `calendar:asu` is a one-shot import fetched 2026-07-31 that no
+  connector re-reads, so those 200 rows were permanently uncorrectable by machinery and
+  the only door was a Python script. | A fact written into the `fact` table does not
+  reach any surface that reads `source_item`. When a correction lands as a fact, ask
+  which table the surface actually reads before calling it fixed — and if the answer is a
+  source with no connector behind it, the correction needs a door in the UI, not a
+  one-off script. The tell is a source whose `fetched_at` is identical on every row.
+
+- 2026-08-27 | Hid a hover-revealed action row with `opacity:0;visibility:hidden`,
+  reasoning that opacity alone leaves an invisible button swallowing clicks. True, and
+  the fix was wrong: `visibility:hidden` removes the element from the tab order and the
+  accessibility tree exactly as `display:none` does — the failure dashboard.css already
+  documents two hundred lines above, at `.row.sched .acts`. `:focus-within` could then
+  never fire, so the buttons were unreachable by keyboard forever. | `opacity:0` for the
+  paint plus `pointer-events:none` for the hit target is the pair that hides a control
+  without hiding it from a keyboard. Before hiding anything interactive, grep the sheet
+  for how the same problem was already solved — the comment explaining it is usually
+  three lines long and already in the file.
+
+- 2026-08-27 | Drove the owner's own Safari through mcp-safari to click a destructive
+  "Not happening" button against the live ledger, while the owner was using that browser
+  — the active tab moved to My ASU mid-session, and the retraction row later vanished
+  because someone pressed the Undo still sitting on their screen. End state was correct
+  and the path already had unit tests, so nothing was lost; it easily could have been. |
+  Exercise a destructive action against a scratch database, never the live ledger, and
+  never through a browser the owner is currently using. A read-only screenshot is fine;
+  a click that writes is not.
+
+- 2026-08-27 | Wrote the fortnight allocator (`plan/runway.py`) against fixtures, and the
+  first run on the real ledger exposed two bugs no fixture had: overdue work got **zero**
+  minutes (the cutoff `day > deadline` is true for every day of a horizon that starts
+  after the deadline, so the five most urgent things on the board were allocated nothing
+  and then reported as impossible), and everything due past day 14 was reported as "does
+  not finish before it is due" when the horizon had simply stopped short of its deadline.
+  Both would have shipped green. | A horizon-walking algorithm has two edges — before the
+  start and after the end — and a fixture built around "a thing due next week" exercises
+  neither. Run any new planner against `data/backglass.db` and *read the output* before
+  writing the tests; the live ledger has the overdue, the undated and the far-future rows
+  that a hand-built case never thinks to include. Then write the test for what it found.
+
+- 2026-08-27 | The first live plan warned "does not finish before it is due" about a quiz
+  scheduled at 7:00am nine lines above the warning. Cause: two algorithms answering one
+  question — `runway.allocate` walks the fortnight in deadline order against a day's total
+  free minutes, `select` fills today in priority order with a homework reservation and the
+  protected block charged up front. They agree on nearly everything, and "nearly" is a
+  self-contradicting plan. | When a second, coarser model is added alongside the one that
+  actually writes the record, it may inform the writer but must never make a claim the
+  writer can contradict. Filter the advisory output through what was actually done
+  (`_covered_today`) and let the writer win every disagreement. Rule 1's cost applies to
+  a plan arguing with itself, not just to a wrong citation.
+
+- 2026-08-27 | Owner: "other assignments havent been schedul[ed]". 22 of 205 Canvas
+  assignments had a typed `assignment` row with a due date and an effort estimate and no
+  commitment behind them — all triaged `keep`, all run through `extract-commitments@10`,
+  and the model emitted nothing for any of them. Rule 2 sends a low-confidence extraction
+  to review; this said *nothing at all* — no row, no question, no count — so twenty-two
+  pieces of graded work were simply absent and no surface could show it. | When a source
+  states a deliverable, a deadline and an owner in structured fields, it is a commitment
+  by construction and must not be routed through a language model's judgement about prose.
+  Ask the model only where there is a judgement to make. And for anything derived, count
+  the input rows against the output rows — silence is the one failure mode neither the
+  ledger nor the owner can see.
+
+- 2026-08-27 | Owner: "if things dont fit remove relax time and mcat study time". The
+  literal reading — relieve whenever anything overflows — would have deleted Relax every
+  evening for the rest of the semester, because the board carries 255 hours against a day
+  of two or three free ones and *something* overflows every single day by construction.
+  The first build also cut the gym on a day that had already found the room without it,
+  and escalated on three duplicate welcome surveys that are unreachable at every level. |
+  A policy that spends something the owner values needs a trigger narrower than the words
+  ("deadline-pressed", not "did not fit"), an escalation that matches the owner's own
+  "or" rather than taking every register at once, and a rule that each level must pay for
+  itself — if the expensive plan places no more urgent work than the cheap one, keep the
+  cheap one. Take nothing you cannot show a gain for.
+
+- 2026-08-27 | Adding the HON 171 readings made a day crowded enough to expose two
+  placement bugs that had been costing hours every day and were invisible while the board
+  was under-filled: `select` charged the budget for a ten-item small batch that `place`
+  then failed to position whole, dumping all ten to overflow with their minutes still
+  spent (565m capacity, 375m placed, 30 due-today items unplaced); and the standing
+  Study/Coding blocks spent whatever `select` had not, so a 90-minute Coding block sat at
+  8:45pm while a reading due the next morning was in overflow. | Two-phase select-then-
+  place designs leak wherever phase 1 spends a budget phase 2 cannot honour — every such
+  seam needs the minutes handed back or the item split. And a synthetic block placed from
+  "what is left" is not free: it is competing with everything the budget refused, so it
+  needs an explicit rule about what outranks it.
+

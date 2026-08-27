@@ -205,6 +205,18 @@ class RelevanceVerdict(Strict):
     #: Verbatim, from the obligation's source item. Checked before the verdict is applied.
     quote: str | None = None
     reason: str | None = None
+    #: What this obligation's standing rests on: `fact.id`s that would have to stay true
+    #: for a `keep` to remain a keep. Required on EVERY verdict, including keeps — that is
+    #: the whole point of asking (v3, 2026-08-24). `logic_check` is judged once per
+    #: commitment, so a `keep` issued when the facts said one thing was never revisited
+    #: when the facts said another; the checker had no way to notice the situation moved.
+    #: These ids are the invalidation index that gives it one: fact superseded, look up
+    #: its dependents, re-judge only those.
+    #:
+    #: An empty list is a first-class answer and means "depends on no recorded fact" —
+    #: "zip it up once done" rests on nothing, and forcing a citation onto it would invent
+    #: exactly the evidence the citation rule exists to prevent.
+    depends_on: list[int] = Field(default_factory=list)
 
 
 class RelevanceResponse(Strict):

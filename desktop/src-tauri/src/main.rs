@@ -4,7 +4,22 @@
 // starts `uv run backglass dashboard` in the project directory unless the server
 // is already listening, and kills that child when the window closes. There is no
 // IPC and no frontend bundle — the dashboard stays server-rendered HTML, per
-// docs/10; this shell only gives it a dock icon and a window.
+// docs/10; this shell only gives it a dock icon, a window, and the two macOS
+// behaviours a window is expected to have.
+//
+// What is deliberately NOT here: a menu bar built from scratch. Tauri installs the
+// macOS default menu itself when none is set — `Menu::default` carries the app menu,
+// File, an Edit submenu with Undo/Redo/Cut/Copy/Paste/Select All, View and Window —
+// so the clipboard has always worked and "add a menu" would have been work with no
+// output. `Menu::default` is built here only so the Go submenu can be appended to it;
+// everything else in that menu is Tauri's, unchanged.
+//
+// The Go submenu exists because the web layer ran out of keys. base.html maps the ten
+// digits to the first ten sidebar entries and there are thirteen pages, so Activity,
+// Ask and Scrub had no shortcut and could not be given a letter — letters belong to the
+// dashboard (j/k/x/d/s/r, docs/06) and a global letter would fire there too. ⌘-digit is
+// free in the webview precisely because the page keys are bare digits, so the shell can
+// hand out the accelerators the page cannot.
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
@@ -14,7 +29,27 @@ use std::process::{Child, Command};
 use std::sync::Mutex;
 use std::time::Duration;
 
+use tauri::menu::{Menu, MenuItem, Submenu};
+use tauri::Manager;
+
 const ADDR: &str = "127.0.0.1:8765";
+
+// The window label. tauri.conf.json declares one window and names none, so it is the
+// Tauri default; the menu handler needs it to find the webview it should navigate.
+const MAIN_WINDOW: &str = "main";
+
+/// The pages the shell puts in the menu, as (menu id, label, accelerator, path).
+///
+/// The first two are the daily surfaces and would be reachable by a bare digit anyway;
+/// they are here because a Go menu that omits the two most-used destinations is a menu
+/// about leftovers. The last three are the ones the page keys cannot reach at all.
+const GO: &[(&str, &str, &str, &str)] = &[
+    ("go-dashboard", "Dashboard", "CmdOrCtrl+1", "/"),
+    ("go-schedule", "Schedule", "CmdOrCtrl+2", "/schedule"),
+    ("go-activity", "Activity", "CmdOrCtrl+0", "/activity"),
+    ("go-ask", "Ask", "CmdOrCtrl+K", "/ask"),
+    ("go-scrub", "Scrub", "CmdOrCtrl+J", "/scrub"),
+];
 
 fn server_running() -> bool {
     TcpStream::connect_timeout(&ADDR.parse().unwrap(), Duration::from_millis(300)).is_ok()
@@ -104,6 +139,39 @@ fn main() {
     }
 
     tauri::Builder::default()
+        // Window size and position across launches. The shell's own state, kept by the
+        // plugin in the app's config dir — nothing about it belongs in the ledger.
+        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .menu(|handle| {
+            // Tauri's default menu, plus one submenu. Building it here rather than
+            // letting the builder install it is the only way to append to it, and it is
+            // the same menu either way: `Menu::default` is what the builder would have
+            // called.
+            let menu = Menu::default(handle)?;
+            let items = GO
+                .iter()
+                .map(|(id, label, accel, _)| {
+                    MenuItem::with_id(handle, *id, *label, true, Some(*accel))
+                })
+                .collect::<tauri::Result<Vec<_>>>()?;
+            let refs: Vec<&dyn tauri::menu::IsMenuItem<_>> =
+                items.iter().map(|i| i as &dyn tauri::menu::IsMenuItem<_>).collect();
+            menu.append(&Submenu::with_items(handle, "Go", true, &refs)?)?;
+            Ok(menu)
+        })
+        .on_menu_event(|app, event| {
+            let Some(entry) = GO.iter().find(|(id, ..)| *id == event.id().0) else {
+                // Not ours — one of Tauri's own predefined items, which handle
+                // themselves. Doing nothing here is correct, not a missed case.
+                return;
+            };
+            if let Some(window) = app.get_webview_window(MAIN_WINDOW) {
+                // A navigation, not an IPC call: the dashboard is server-rendered and
+                // the shell has no frontend to talk to. `assign` rather than `replace`
+                // so the webview's own history still works.
+                let _ = window.eval(format!("window.location.assign({:?})", entry.3));
+            }
+        })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run(move |_app, event| {

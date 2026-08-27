@@ -1,0 +1,60 @@
+{# The drafted reply. Replaces itself on every submit, so the form above it stays put and
+   the owner can retype the stance and re-render without losing the page.
+
+   Built to the same shape as _reachout.html on purpose: the two drafting paths differ
+   completely underneath (templates versus a model call) and the owner should not have to
+   learn two surfaces for one job. Plain <pre>, provenance underneath in a <details>,
+   mailto beside it.
+
+   Three things appear here that a reachout draft has no need for, and each is a
+   consequence of a model having written the words: what it says it answered, what it
+   could not say, and what the sweep found and could not fix. #}
+<div id="reply-draft">
+  {% if draft %}
+    <p class="b2" style="margin-top:12px">
+      To: {{ draft.to_email or draft.to_name }} · Subject: {{ draft.subject }}
+    </p>
+    <pre class="b1 draftmail">{{ draft.body }}</pre>
+
+    {% if not draft.sendable() %}
+      {# The one hard stop. Everything else on this page is advice; an unfilled slot
+         reaching a recipient is a bug wearing an email's clothes. #}
+      <p class="conf">This draft still has an unfilled placeholder in it. Do not send it
+        as it stands.</p>
+    {% endif %}
+
+    {% if draft.mailto() %}
+      <p class="b2"><a class="lnk" href="{{ draft.mailto() }}">Open in your mail client</a></p>
+    {% else %}
+      <p class="b2">No address on the message being answered — copy the text above.</p>
+    {% endif %}
+
+    {% if draft.answered %}
+      {# Stated so the owner can count it against their message rather than trusting the
+         model's own account of itself. #}
+      <p class="b2">Answers: {{ draft.answered|join(' · ') }}</p>
+    {% endif %}
+
+    {% if draft.unstated %}
+      <p class="conf">Could not say: {{ draft.unstated|join(' · ') }}</p>
+    {% endif %}
+
+    {% if draft.findings %}
+      <details class="addform">
+        <summary class="lbl">{{ draft.findings|length }} to read before sending</summary>
+        {% for f in draft.findings %}
+          <p class="b2">· {{ f.text }} — {{ f.remedy }}</p>
+        {% endfor %}
+      </details>
+    {% endif %}
+
+    <details class="addform">
+      <summary class="lbl">Where each part came from</summary>
+      {% for line in draft.evidence %}
+        <p class="b2">· {{ line }}</p>
+      {% endfor %}
+    </details>
+  {% elif error %}
+    <p class="b2" style="margin-top:12px">{{ error }}</p>
+  {% endif %}
+</div>

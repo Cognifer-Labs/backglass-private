@@ -535,6 +535,21 @@ is looking at, and a 200ms ease-in feels slower than a 200ms ease-out.
 4. **The failed-write strip** slides eight pixels up from the bottom edge over 240ms.
 5. **The theme flip** cross-fades every surface at once over 160ms, via a class the
    toggle adds and removes.
+6. **A row that moved because another row left** travels to its new position over
+   160ms, on `--ease-in-out`. Added 2026-08-21, and it is the first thing in the
+   product to use that curve — the two-curve split was declared in advance and until
+   now everything in the system was entering, so `--ease-in-out` sat defined and
+   unspent. Resolve a commitment and every card below the gap jumps up; this is the
+   only mechanism here that is a script rather than a stylesheet, because it needs a
+   measurement before the swap and another after it, and CSS has no way to hold the
+   first one. Cards on screen only, matched by `data-commitment`, in
+   `static/motion.js`.
+7. **A panel opening** fades its contents up four pixels over 160ms, on `--ease-out`.
+   Added 2026-08-21. This is mechanism 1 reaching the one arrival it could not select:
+   `<details>` reveals content by flipping a boolean, and a revealed element is not a
+   newly inserted one, so `@starting-style` never sees it. The `<summary>` is excluded
+   because it never went anywhere. Opening only — a panel closing is a disappearance,
+   and nothing leaves.
 
 ### What does not move, and why
 
@@ -562,6 +577,15 @@ The omissions carry the design more than the inclusions do.
   space at all times and move the layout, which is a worse trade than a hard reveal.
 - **No stagger anywhere.** Panels arrive together. Staggering nine panels puts the last
   one a third of a second behind the first on a page opened all day long.
+
+  Tried anyway on 2026-08-21 and reverted the same day, noted here so the next author
+  knows the argument survived contact. The version built was narrower than the one this
+  rule refuses — rows inside a single swapped panel, capped at twelve, never on page
+  load — and it still failed on this section's own terms twice over. Twelve rows at the
+  24ms step it needed put the last one 288ms behind the first, on the Resolve and Done
+  writes the frequency table puts in the 90ms-or-nothing tier. And the step had to be
+  a sixth duration token, in a vocabulary whose stated argument for having five is that
+  you pay per duration. `test_the_script_does_not_stagger` now holds the line in code.
 
 ### Rules
 

@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = 'activity' %}
+
+{% block title %}Backglass — Activity{% endblock %}
+
+{# One ledger, three streams, newest first. No new component: this is the `.row` the
+   board and the awaiting panel already use — a time gutter, a headline, an evidence line
+   — because "what happened" is the same object here as it is there.
+
+   §8 rule 3 is met at row level rather than panel level, unlike _awaiting.html: a row
+   here can be any of three kinds, so the kind has to be legible per row and not from the
+   banner. The carrier is the label, never colour alone. #}
+
+{% block content %}
+<section class="sec" id="panel-activity">
+  {{ m.banner('Activity', feed.events|length ~ ' shown') }}
+  <div class="inner">
+
+    {# The filters. Plain links, not a control: the state is the URL, so a filtered feed
+       is a thing the owner can bookmark and reload. #}
+    <div class="afilter" id="panel-activity-filters">
+      <p class="lane">stream</p>
+      <a href="/activity?days={{ feed.days }}"
+         class="b2{% if not feed.stream %} on{% endif %}">everything</a>
+      {% for s in streams %}
+        <a href="/activity?days={{ feed.days }}&amp;stream={{ s }}"
+           class="b2{% if feed.stream == s %} on{% endif %}">{{ s }}{% if feed.totals.get(s) is not none %} <span class="ct">{{ feed.totals[s] }}</span>{% endif %}</a>
+      {% endfor %}
+      <p class="lane">window</p>
+      {% for w in windows %}
+        <a href="/activity?days={{ w }}{% if feed.stream %}&amp;stream={{ feed.stream }}{% endif %}"
+           class="b2{% if feed.days == w %} on{% endif %}">{{ w }}d</a>
+      {% endfor %}
+    </div>
+
+    {# The 94% that did not change. On the owner's ledger 345 of 421 claim events are
+       `relevance_rejudged` recording keep → keep — the re-judgement ran and agreed with
+       itself. They are counted here rather than listed, because burying 76 real changes
+       under them would make the page useless, and dropping them silently would misreport
+       how much work the pipeline did. #}
+    {% if feed.unchanged %}
+      <p class="b2 aquiet">{{ feed.unchanged }} re-judgement{{ 's' if feed.unchanged != 1 }}
+        in this window changed nothing and {{ 'are' if feed.unchanged != 1 else 'is' }} not listed.</p>
+    {% endif %}
+
+    {% if not feed.events %}
+      <p class="empty">Nothing recorded in the last {{ feed.days }} days.</p>
+    {% endif %}
+
+    {% set ns = namespace(day='') %}
+    {% for e in feed.events %}
+      {% if e.day != ns.day %}
+        {% set ns.day = e.day %}
+        <p class="lane aday">{{ e.day }}</p>
+      {% endif %}
+      <div class="row arow a-{{ e.stream }}">
+        <span class="time">{{ e.at[11:16] }} <span class="astream">{{ e.stream }}</span></span>
+        <div class="grow">
+          <p class="b1">{{ e.title }}</p>
+          <p class="b2">{{ e.detail }}</p>
+          <p class="b2 acause">
+            {{ e.cause }}
+            {%- if e.stream == 'notice' and e.new and e.new != 'osascript' %}
+              {# A banner that never reached the screen must not look identical to one
+                 that did. `delivered` is the record; the ledger answers "what did the
+                 system tell the owner and when", which Notification Center cannot. #}
+              · <span class="chip k-verm"><span aria-hidden="true">▲</span>{{ e.new }}</span>
+            {%- endif %}
+            {%- if e.href %} · <a href="{{ e.href }}">source</a>{% endif %}
+          </p>
+        </div>
+      </div>
+    {% endfor %}
+
+    {% if feed.truncated %}
+      <p class="b2 aquiet aend">More rows exist in this window than the page draws. Narrow the
+        window or pick one stream.</p>
+    {% endif %}
+
+    {# Times are UTC, stated rather than left to be discovered — the owner moves between
+       UTC-7 and UTC+5:30 and a bare "13:40" that silently means neither is a trap. #}
+    <p class="b2 aquiet aend">Times are UTC, as stored. Grouped by UTC day.</p>
+  </div>
+</section>
+{% endblock %}

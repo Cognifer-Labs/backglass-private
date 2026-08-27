@@ -167,3 +167,52 @@ def safe_error(exc: Exception, *, limit: int = 300) -> str:
     text = re.sub(r"(?i)\bBearer\s+[\w\-.~+/]+=*", "Bearer [redacted]", text)
     text = _BARE_SECRET.sub("[redacted]", text)
     return text[:limit]
+
+
+#: Sources whose upstream records legitimately change after they are first read.
+#:
+#: Declared once, here, because the alternative is what actually happened: source
+#: semantics were implicit, and mutation was discovered per-source through incident after
+#: incident (tasks/pipeline-redesign-2026-08-21.md §4, divergence 3). `source_item` is
+#: immutable and stays immutable — nothing in this set changes that. What it changes is
+#: how a differing `content_hash` is *reported*: for a stream source it means something is
+#: wrong, and for a snapshot source it means Tuesday.
+#:
+#: Membership is evidence, not intuition. Each entry has been observed changing:
+#:
+#: - `canvas:ics`      five CIS 236 assignments moved their due dates upstream in August;
+#:                     the `assignment` mirror is what carries the new value.
+#: - `calendar:apple`  an event is edited, moved, or cancelled by whoever owns it.
+#: - `calendar:asu`    a section swap changed a class hour mid-semester (2026-08).
+#: - `reminders`       a reminder is edited, and completing one emits a changed record.
+#: - `apple-notes`     a note is edited in place; that is what notes are for.
+#:
+#: Deliberately absent, and each absence is a claim:
+#:
+#: - `apple-mail`, `imessage`, `gmail:*` — a message body that changes after the fact is
+#:   either a bug in the extractor or something upstream lying, and both are worth an
+#:   error. (An edited iMessage exists; it is rare enough to be worth seeing.)
+#: - `files` — a re-saved document in the drop folder is a real change to evidence the
+#:   owner may be relying on. Until something mirrors it, the error is the only notice.
+#: - `manual` — the owner typed it.
+SNAPSHOT_SOURCES: frozenset[str] = frozenset({
+    "canvas:ics",
+    "calendar:apple",
+    "calendar:asu",
+    "reminders",
+    "apple-notes",
+})
+
+
+def is_snapshot(source: str) -> bool:
+    """Does this source hand back a live record that may have moved since last time?
+
+    Matched on the label before any `:` as well as the whole string, so a second Canvas
+    feed (`canvas:ics:2027`) or a third calendar inherits the semantics of its family
+    rather than silently falling back to stream — the fallback that produced the noise
+    this exists to retire.
+    """
+    if source in SNAPSHOT_SOURCES:
+        return True
+    head = source.split(":")[0]
+    return any(known == head or known.startswith(f"{head}:") for known in SNAPSHOT_SOURCES)
