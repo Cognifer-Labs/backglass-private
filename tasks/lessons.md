@@ -1499,3 +1499,15 @@ Cost: a second email to the same person apologising for the first.
   "what is left" is not free: it is competing with everything the budget refused, so it
   needs an explicit rule about what outranks it.
 
+- 2026-08-27 | Owner: "fit everything into schedule". The fortnight walk said 109
+  obligations and 95 hours could not be placed, and I nearly went looking for capacity to
+  find — pruning duplicates, retuning estimates, widening the window. The board was not
+  underwater at all: run the same allocator to the last deadline instead of to fourteen
+  days and all 263 obligations place, 199 hours, clearing on 26 September, with four items
+  left over. The alarming number was an artifact of where the walk stopped. | When a
+  measurement says a system is failing, check what the measurement's own bounds are before
+  believing it — a windowed analysis reports everything outside the window as a failure
+  unless it is built not to. And when a horizon is chosen for one reason (how far the
+  calendar is trustworthy), do not let a second question inherit it: two questions, two
+  horizons, each stated.
+
