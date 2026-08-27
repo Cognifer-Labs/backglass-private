@@ -191,6 +191,63 @@ session, which is the thing this project declined to do when the token was refus
 keeps the archive current instead is that a syllabus changes about once a semester, and
 the schedule that matters is already in the ledger through the feed.
 
+### Submission state — the enrichment import (2026-08-27)
+
+The feed's one real downgrade against the API is that it cannot say whether the work is
+already handed in, so finished coursework keeps reading as an open obligation. Measured on
+2026-08-27: **thirteen assignments Canvas had already graded were still open commitments,
+holding 434 minutes of planner capacity**, one of them on that morning's plan.
+
+`backglass coursework --enrich <file>` closes that gap without crossing the boundary
+above. It applies a document the owner exports from their own signed-in session; nothing
+in the program fetches anything, and there is no stored cookie. Same shape as the archive
+read: a hand operation, on purpose.
+
+What was checked before it was built, so nobody rebuilds the version that does nothing:
+the API's assignment *descriptions* add exactly zero. Across 205 matched assignments the
+API text was longer on none of them, identical on 164, and shorter on 41 — `canvas_ics`
+keeps the link URLs the API's HTML hides behind anchor text. Re-deriving every estimate
+from the API's text changed 0 of 205. The feed is not thin; it was never the problem.
+
+Run this in the console of a signed-in `canvas.asu.edu` tab. It writes a JSON file to
+Downloads; course ids come from `/api/v1/courses?enrollment_state=active&per_page=100`.
+
+```js
+(async () => {
+  const courses = [267984, 258316, 262701, 270564, 273229, 274090, 273672, 265744, 272678];
+  const out = [];
+  for (const cid of courses) {
+    for (let page = 1; page <= 5; page++) {
+      const r = await fetch(`/api/v1/courses/${cid}/assignments?per_page=100&page=${page}&include[]=submission`,
+        { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+      if (!r.ok) { out.push({ error: r.status, course: cid }); break; }
+      const j = JSON.parse((await r.text()).replace(/^while\(1\);/, ''));
+      for (const a of j) { const s = a.submission || {};
+        out.push({ canvas_id: a.id, course_id: cid, name: a.name, due_at: a.due_at,
+          points_possible: a.points_possible, submitted_at: s.submitted_at || null,
+          submission_workflow_state: s.workflow_state || null, graded_at: s.graded_at || null,
+          score: s.score === undefined ? null : s.score }); }
+      if (j.length < 100) break;
+    }
+  }
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(out)], { type: 'application/json' }));
+  a.download = 'backglass-canvas-assignments.json';
+  document.body.appendChild(a); a.click();
+})();
+```
+
+Then `backglass coursework --enrich ~/Downloads/backglass-canvas-assignments.json`, which
+records points and submission state and *names* the finished work it found. Adding
+`--close-submitted` also resolves those commitments, with the Canvas evidence in
+`resolution_note`; run it with `--dry-run` first and read the list.
+
+One rule inside it is worth knowing because it is not obvious. `workflow_state = graded`
+does **not** mean handed in: Canvas writes a graded zero for work that never arrived. A
+row counts as finished only with a `submitted_at`, an explicitly submitted state, or a
+mark above zero — the live export carried two graded zeros with no submission, one of them
+for an assignment still three days from its due date.
+
 ## Local and later-phase sources
 
 The sections above are the network sources the first phases were built around. These

@@ -267,6 +267,9 @@ FROZEN_CHECKSUMS = {
     "0034_engagement_distinct.sql": (
         "25550e730baf8ac4d749d2fca0397446dae25dbe60af26a2fb789f04cedb54d6"
     ),
+    "0035_assignment_submission.sql": (
+        "30b26fded1b84eda9e4c12e1d5c15e526cd71a780e1e3f2447324d28e86be829"
+    ),
 }
 
 

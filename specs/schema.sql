@@ -638,7 +638,7 @@ CREATE TABLE assignment (
   -- write for all 159 rows — so the honest name is the one that matches the behaviour.
   -- "Did the feed still list it today" is `retraction`'s question and it has its own
   -- table; this one answers "when did this assignment last move".
-  last_changed_at  TEXT    NOT NULL,
+  last_changed_at  TEXT    NOT NULL, points_possible  REAL, submitted_at     TEXT, submission_state TEXT, score            REAL, enriched_at      TEXT,
   UNIQUE (user_id, source, external_id)
 );
 

@@ -2257,6 +2257,45 @@ def situation_command(
     typer.echo(body if body else "(empty — the ledger records no facts and nothing open)")
 
 
+def _echo_enrich(
+    conn: Any, path: Any, *, close_submitted: bool, dry_run: bool
+) -> None:
+    """`--enrich`, printed the way a write to the board has to be printed.
+
+    Every closed row is named, never counted. The whole risk of this command is that it
+    resolves something the owner had not finished, and a summary line saying "13 closed"
+    is a number nobody can check against anything.
+    """
+    from backglass import canvas_enrich
+
+    records = canvas_enrich.load(Path(path))
+    report = canvas_enrich.apply(
+        conn, records, close_submitted=close_submitted, dry_run=dry_run
+    )
+    typer.echo(
+        f"\n  canvas enrichment — {len(records)} row(s) read from {Path(path).name}"
+    )
+    typer.echo(
+        f"    {report.matched} matched, {report.unmatched} not in the ledger "
+        f"(undated Canvas items the feed never carried), "
+        f"{report.updated} changed, {report.unchanged} already current"
+    )
+    for line in report.finished_still_open:
+        typer.echo(f"    finished upstream, still open here: {line}")
+    for commitment_id, line in report.closed.items():
+        verb = "would close" if dry_run else "closed"
+        typer.echo(f"    {verb} commitment {commitment_id}: {line}")
+    if report.finished_still_open and not close_submitted:
+        typer.echo(
+            f"    → {len(report.finished_still_open)} of these can be resolved with "
+            "--close-submitted"
+        )
+    if dry_run:
+        typer.echo("    nothing written")
+    else:
+        conn.commit()
+
+
 @app.command("coursework")
 def coursework_command(
     refresh: Annotated[
@@ -2264,7 +2303,21 @@ def coursework_command(
         typer.Option("--refresh", help="Re-read the Canvas feed before printing"),
     ] = False,
     dry_run: Annotated[
-        bool, typer.Option("--dry-run", help="With --refresh: print, write nothing")
+        bool, typer.Option("--dry-run", help="With --refresh/--enrich: print, write nothing")
+    ] = False,
+    enrich: Annotated[
+        Path | None,
+        typer.Option(
+            "--enrich",
+            help="Apply a Canvas browser export (points and submission state) — docs/07 §Canvas",
+        ),
+    ] = None,
+    close_submitted: Annotated[
+        bool,
+        typer.Option(
+            "--close-submitted",
+            help="With --enrich: resolve commitments Canvas has already taken in",
+        ),
     ] = False,
     as_json: Annotated[bool, typer.Option("--json", help="Machine-readable")] = False,
 ) -> None:
@@ -2278,6 +2331,13 @@ def coursework_command(
 
     `--refresh` re-reads the feed without ingesting it, which is how a due date that moved
     upstream shows up between syncs. `sync` does the same work on its own schedule.
+
+    `--enrich <file>` applies the one thing the ICS feed cannot carry: whether Canvas has
+    already taken the work in. The file is a document you export from your own signed-in
+    Canvas session — docs/07 §Canvas has the snippet — because ASU disables student tokens
+    and a sync job riding a browser cookie is exactly what `canvas_ics.py` refuses. Adding
+    `--close-submitted` also resolves the commitments behind finished work; run it once
+    with `--dry-run` first and read the list.
     """
     import json as _json
 
@@ -2322,6 +2382,9 @@ def coursework_command(
             conn.commit()
         else:
             typer.echo("  nothing written")
+
+    if enrich is not None:
+        _echo_enrich(conn, enrich, close_submitted=close_submitted, dry_run=dry_run)
 
     rows = coursework_mod.rows(conn)
     if as_json:
