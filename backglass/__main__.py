@@ -963,12 +963,7 @@ def plan(
             (now_iso(), plan_id),
         )
 
-    cap = proposal.capacity
-    typer.echo(
-        f"{day} ({cap.tz})  capacity {cap.capacity_minutes}m of {cap.window_minutes}m "
-        f"(fixed {cap.fixed_minutes}m, buffer {cap.buffer_minutes}m, "
-        f"travel {cap.travel_minutes}m, reserve {cap.reserve_minutes}m)"
-    )
+    typer.echo(_capacity_line(day, proposal.capacity, bool(proposal.blocks)))
     for block in proposal.blocks:
         mark = {
             "protected": " [protected]",
@@ -989,6 +984,50 @@ def plan(
     _echo_overflow(proposal, all_overflow)
     if show_runway:
         _echo_runway(conn, settings, day)
+
+
+def _capacity_line(day: Any, cap: Any, has_blocks: bool) -> str:
+    """The header above a printed day, and the one case where the breakdown lies.
+
+    `capacity.compute` clamps the working window to what is *left* of the day, so a run
+    after the window closes computes every component over an empty window. On 2026-08-27
+    that printed
+
+        2026-08-27 (America/Phoenix)  capacity 0m of 0m
+            (fixed 0m, buffer 0m, travel 0m, reserve 45m)
+          8:00am–9:50am  CHM 113 (Lab) [fixed]
+
+    — `fixed 0m` directly above 110 minutes of fixed lab. Neither half is wrong: the
+    header describes what remains and the list describes the whole day. Nothing said so,
+    and `reserve 45m` surviving the clamp while every other component zeroed is the tell
+    that the numbers had stopped describing the same thing.
+
+    So the breakdown, which is the half that means nothing once the window is shut, is
+    replaced by the reason. Computing the breakdown over the whole day while capacity
+    stays remaining-only is the fuller fix; it changes every header the owner has ever
+    read and is deferred rather than done quietly — tasks/display-audit-2026-08-27.md §C.
+
+    `has_blocks` is what separates "the day is over" from "this is not a working day",
+    which also reports a zero window and has nothing under it to contradict.
+    """
+    if cap.window_minutes == 0 and has_blocks:
+        return f"{day} ({cap.tz})  the working window has closed — the day below is done"
+    return (
+        f"{day} ({cap.tz})  capacity {cap.capacity_minutes}m of {cap.window_minutes}m "
+        f"(fixed {cap.fixed_minutes}m, buffer {cap.buffer_minutes}m, "
+        f"travel {cap.travel_minutes}m, reserve {cap.reserve_minutes}m)"
+    )
+
+
+def _ellipsis(text: str, width: int) -> str:
+    """Truncate, and say so. A cut with nothing marking it reads as the whole title.
+
+    The runway printed `Complete '1-1-3 - What is Analytics?' course` and stopped, which
+    is a plausible-looking name for an assignment actually called "…course module". Rule
+    1's register: a line that silently drops half a claim is a line that cannot be checked
+    against its source.
+    """
+    return text if len(text) <= width else text[: width - 1].rstrip() + "…"
 
 
 def _echo_runway(conn: Any, settings: Any, day: Any) -> None:
@@ -1014,10 +1053,25 @@ def _echo_runway(conn: Any, settings: Any, day: Any) -> None:
 
     clears = runway.clears_on(horizon)
     placed = sum(s.minutes for v in horizon.sittings.values() for s in v)
-    if clears:
+    # The same reconciliation `web/routes/schedule.py::_reconciled` does, and for the same
+    # reason: `len(horizon.sittings)` counts work the walk placed *partially* and says
+    # nothing about work it never placed, so "all with a day" was printed over the top of
+    # forty-four obligations the lines below call unplaceable. Both surfaces state the
+    # same three numbers or neither should be believed.
+    _sittings = set(horizon.sittings)
+    _wont = {c.commitment_id for c in horizon.unreachable}
+    finishes, partial = len(_sittings - _wont), len(_sittings & _wont)
+    if clears and _wont:
+        typer.echo(
+            f"\n  the board clears on {clears:%a %d %b} for {finishes} of "
+            f"{finishes + len(_wont)} obligations — {placed // 60}h with a day; "
+            f"{len(_wont)} do not finish before they are due"
+            + (f" ({partial} part-placed and still short)" if partial else "")
+        )
+    elif clears:
         typer.echo(
             f"\n  the board clears on {clears:%a %d %b} — "
-            f"{len(horizon.sittings)} obligations, {placed // 60}h, all with a day"
+            f"{finishes} obligations, {placed // 60}h, all with a day"
         )
     typer.echo("  runway")
     rows = sorted(
@@ -1028,7 +1082,7 @@ def _echo_runway(conn: Any, settings: Any, day: Any) -> None:
         item = by_id[cid]
         spread = " ".join(f"{s.day.strftime('%a %d')}·{s.minutes}m" for s in sittings)
         due = str(item.due_at)[:10] if item.due_at else "—"
-        typer.echo(f"    due {due:<10} {item.what[:44]:<44} {spread}")
+        typer.echo(f"    due {due:<10} {_ellipsis(item.what, 44):<44} {spread}")
     if not rows:
         typer.echo("    nothing to allocate — no open obligation carries an estimate.")
     if horizon.beyond:
@@ -1038,20 +1092,28 @@ def _echo_runway(conn: Any, settings: Any, day: Any) -> None:
         # a number with no example is not checkable.
         minutes = sum(u.minutes for u in horizon.beyond)
         names = ", ".join(
-            f"{str(u.item.due_at)[:10]} {u.item.what[:38]}" for u in horizon.beyond[:3]
+            f"{str(u.item.due_at)[:10]} {_ellipsis(u.item.what, 38)}"
+            for u in horizon.beyond[:3]
         )
+        # The horizon that was walked, not `DEFAULT_HORIZON_DAYS`. This line reads its
+        # length off `solvency`'s own answer for the same reason the web panel does — the
+        # constant is fourteen and the walk reaches the last deadline on the board. It
+        # never misreported on the owner's ledger only because `beyond` is empty over a
+        # horizon chosen so that nothing is beyond it; the wrong number was waiting for
+        # the first ledger where it is not.
+        walked = f"{(clears - day).days} days walked" if clears else "the horizon walked"
         typer.echo(
             f"\n    + {minutes // 60}h {minutes % 60}m across {len(horizon.beyond)} "
-            f"obligation(s) has no day in the next {runway.DEFAULT_HORIZON_DAYS} — due "
-            f"after they end, and they have no minutes left: {names}…"
+            f"obligation(s) has no day in the {walked} — due after it ends, "
+            f"and they have no minutes left: {names}…"
         )
     for item in horizon.unreachable:
         # Repeated from the notes on purpose: the note is capped at three names, and the
         # whole reason to open the runway is to see the ones the sentence had to elide.
         due = str(item.due_at)[:10] if item.due_at else "—"
         typer.echo(
-            f"    due {due:<10} {item.what[:44]:<44} does not fit before it is due "
-            f"({item.remaining}m)",
+            f"    due {due:<10} {_ellipsis(item.what, 44):<44} does not fit before it is "
+            f"due ({item.remaining}m)",
             err=True,
         )
 

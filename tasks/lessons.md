@@ -1511,3 +1511,25 @@ Cost: a second email to the same person apologising for the first.
   calendar is trustworthy), do not let a second question inherit it: two questions, two
   horizons, each stated.
 
+
+- 2026-08-27 | I ran `git stash push` in a worktree purely to read a mypy baseline off
+  HEAD, and it took every uncommitted file of a half-finished display fix with it — five
+  modified files and an untracked task doc. It came back cleanly because the entry was
+  tagged and applied by SHA, but CLAUDE.md's own rule says the stash stack is shared with
+  every other worktree and a concurrent session could have popped it. The information I
+  wanted was two pre-existing mypy errors. | To compare against a committed state, read
+  the committed state: `git show HEAD:path > /tmp/x` and run the tool on that, or use a
+  second worktree. Never stash to answer a read-only question — the cost of being wrong
+  is someone else's work, and there is always a non-destructive way to look.
+
+- 2026-08-27 | The runway panel opened with "241 obligations, every one of them with a
+  day" and then drew 44 rows chipped "Won't fit". Both numbers came from one `horizon`
+  object and neither knew about the other: the headline counted `len(sittings)`, which
+  includes work the walk placed *partially*, and said nothing about the 39 it never
+  placed. The board was 280. The same run told every one of those 44 rows that "the next
+  14 days" had no room, while the walk under it had covered 78 — `DEFAULT_HORIZON_DAYS`
+  was passed to the template after the computation had stopped using it. | A display
+  derives no numbers of its own: give it the reconciliation and let the template state
+  it, so "how many" and "how many are fine" cannot drift apart. And when a computation
+  stops using a constant, grep for the constant — the renderer is where the old horizon
+  goes to keep being true-looking.

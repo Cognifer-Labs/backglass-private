@@ -16,7 +16,7 @@ are marked.
 
 from __future__ import annotations
 
-from datetime import date, timedelta
+from datetime import date, time, timedelta
 
 import pytest
 
@@ -475,3 +475,87 @@ def test_the_walk_is_bounded_however_far_out_the_board_reaches(conn, sett) -> No
         (s.day for v in plan.sittings.values() for s in v), default=MONDAY
     )
     assert (latest - MONDAY).days <= runway.MAX_SOLVENCY_DAYS
+
+
+# ── what the printed runway claims (tasks/display-audit-2026-08-27.md) ─────
+
+
+def test_the_printed_headline_cannot_claim_more_than_it_placed(conn, sett, capsys) -> None:  # type: ignore[no-untyped-def]
+    """The audit's finding A, on the CLI side.
+
+    `len(horizon.sittings)` counts an obligation the walk placed *partially* and knows
+    nothing about one it never placed, so "all with a day" was printed above the lines
+    that say, one per obligation, that it does not fit. Both surfaces state the same
+    three reconciled numbers now, or neither is worth reading.
+    """
+    import re
+
+    from backglass.__main__ import _echo_runway
+
+    add_commitment(conn, sett, "fits fine", minutes=30,
+                   due=MONDAY + timedelta(days=5), n=1)
+    add_commitment(conn, sett, "cannot possibly fit", minutes=6_000,
+                   due=MONDAY + timedelta(days=2), n=2, estimate_source="analyzed")
+
+    _echo_runway(conn, sett, MONDAY)
+    printed = capsys.readouterr()
+
+    finishes, total = re.search(r"for (\d+) of (\d+) obligations", printed.out).groups()
+    wont = re.search(r"(\d+) do not finish before they are due", printed.out).group(1)
+    assert int(finishes) + int(wont) == int(total)
+    assert "all with a day" not in printed.out
+
+
+def test_a_board_that_fits_still_says_so_plainly(conn, sett, capsys) -> None:  # type: ignore[no-untyped-def]
+    """The reconciliation is not a permanent hedge — with nothing unreachable the
+    original sentence is true and is what prints."""
+    from backglass.__main__ import _echo_runway
+
+    add_commitment(conn, sett, "fits fine", minutes=30, due=MONDAY + timedelta(days=5))
+
+    _echo_runway(conn, sett, MONDAY)
+
+    assert "all with a day" in capsys.readouterr().out
+
+
+def test_a_closed_window_names_itself_instead_of_printing_zeroes(conn, sett) -> None:  # type: ignore[no-untyped-def]
+    """The audit's finding C.
+
+    `compute` clamps the window to what is left of the day, so a run after it closes
+    reported `capacity 0m of 0m (fixed 0m, …)` directly above 110 minutes of CHM 113 lab.
+    Neither number is wrong — the header describes what remains, the list describes the
+    whole day — and nothing said they were answering different questions.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from backglass.__main__ import _capacity_line
+    from backglass.plan import planner
+
+    add_commitment(conn, sett, "something", minutes=30, due=MONDAY)
+    shut = datetime.combine(MONDAY, time(23, 30), tzinfo=ZoneInfo(sett.default_tz))
+    proposal = planner.propose(conn, sett, MONDAY, now=shut)
+
+    assert proposal.capacity.window_minutes == 0, "the clamp is what this is about"
+    line = _capacity_line(MONDAY, proposal.capacity, bool(proposal.blocks))
+    if proposal.blocks:
+        assert "the working window has closed" in line
+        assert "fixed 0m" not in line
+    # A day with nothing under it has nothing to contradict, and keeps the breakdown.
+    assert "capacity 0m of 0m" in _capacity_line(MONDAY, proposal.capacity, False)
+
+
+def test_a_truncated_title_says_it_was_cut(conn, sett, capsys) -> None:  # type: ignore[no-untyped-def]
+    """`Complete '1-1-3 - What is Analytics?' course` is a plausible name for an
+    assignment actually called "…course module". A cut with nothing marking it reads as
+    the whole claim, which is rule 1's register one line down."""
+    from backglass.__main__ import _echo_runway
+
+    long_title = "Complete the extremely long assignment title that will not fit the column"
+    add_commitment(conn, sett, long_title, minutes=30, due=MONDAY + timedelta(days=5))
+
+    _echo_runway(conn, sett, MONDAY)
+    printed = capsys.readouterr().out
+
+    assert long_title not in printed
+    assert "…" in printed

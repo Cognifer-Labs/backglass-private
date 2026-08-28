@@ -124,6 +124,18 @@ class Entry:
 
     @property
     def actionable(self) -> bool:
+        """Whether the canvas offers Done / Roll / Pin on this block.
+
+        Travel is excluded, and it is the case the `block_id` test alone gets wrong. A
+        walk the planner inserted has a real `plan_block` row, so it qualified — and drew
+        the full action set on a fifteen-pixel sliver. But a walk is not an obligation:
+        it exists because two rooms are far apart, there is nothing to mark done, and
+        "roll to another day" would move a consequence of geometry onto a day whose
+        geometry is different. The comment on `block_id` above already states the rule
+        this was breaking — *a button that lies is worse than no button*.
+        """
+        if self.travel:
+            return False
         return self.block_id is not None or self.source_item_id is not None
 
     @property
@@ -736,6 +748,35 @@ def _runway_rows(
     return rows
 
 
+def _reconciled(horizon: Any) -> dict[str, int]:
+    """The board's own arithmetic, so the headline cannot claim more than it placed.
+
+    The bug this exists to make impossible, measured 2026-08-27: the panel opened with
+    *"241 obligations, every one of them with a day"* and then drew forty-four rows
+    chipped "Won't fit". Both halves came from the same `horizon` and neither knew about
+    the other — `items` was `len(sittings)`, which counts an obligation the walk placed
+    *partially*, and says nothing at all about the thirty-nine it could not place once.
+
+    So: three numbers that add up, derived in one place.
+
+      finishes  obligations with a day AND not on the unreachable list
+      partial   placed, but still short before the deadline — in both sets, and the five
+                the old sentence counted as finished
+      wont      cannot be finished before the deadline, whether or not any of it was
+                placed (`partial` is a subset of this)
+
+    `finishes + wont` is the whole board. The template states both; when `wont` is zero
+    the original sentence is true and is what renders.
+    """
+    sittings = set(horizon.sittings)
+    unreachable = {c.commitment_id for c in horizon.unreachable}
+    return {
+        "finishes": len(sittings - unreachable),
+        "partial": len(sittings & unreachable),
+        "wont": len(unreachable),
+    }
+
+
 def _beyond(horizon: Any) -> dict[str, Any] | None:
     """The work the fortnight never reached, as one sentence's worth of facts.
 
@@ -842,17 +883,24 @@ def build_router(
         # It is the correct reading rather than a disabled feature: over a horizon that
         # reaches every deadline, nothing is beyond it.
         horizon = runway_mod.solvency(conn, settings, pool, day)
+        clears_on = runway_mod.clears_on(horizon)
         return templates.TemplateResponse(
             request,
             "_runway.html",
             {
                 "rows": _runway_rows(pool, horizon),
-                "clears_on": runway_mod.clears_on(horizon),
+                "clears_on": clears_on,
                 "hours": round(
                     sum(s.minutes for v in horizon.sittings.values() for s in v) / 60
                 ),
-                "items": len(horizon.sittings),
-                "horizon_days": runway_mod.DEFAULT_HORIZON_DAYS,
+                **_reconciled(horizon),
+                # The horizon this walk actually covered, not the fortnight constant.
+                # `solvency` goes to the last deadline on the board — 78 days on the
+                # ledger this was found on — and passing DEFAULT_HORIZON_DAYS made every
+                # unreachable row say "the next 14 days have nowhere to put it". Wrong,
+                # and wrong in the direction that understates it: eleven weeks of
+                # capacity were walked and the work still did not fit.
+                "horizon_days": (clears_on - day).days if clears_on else None,
                 "unreadable": horizon.unreadable,
                 "beyond": _beyond(horizon),
             },

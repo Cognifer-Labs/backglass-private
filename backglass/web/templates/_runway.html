@@ -15,12 +15,37 @@
   {# The sentence the panel exists for. "216 did not fit" and "109 obligations have no
      day" are both true of a fortnight and neither answers the question the owner
      actually asked — whether the semester holds. This walks every deadline on the board
-     and says when the last of it lands. #}
-  <p class="b1">The board clears on {{ clears_on.strftime('%a %-d %b') }} —
-    {{ items }} obligations, {{ hours }}h, every one of them with a day.</p>
+     and says when the last of it lands.
+
+     It used to say "{{ '{{ items }}' }} obligations, every one of them with a day" over the top of
+     forty-four rows chipped "Won't fit" — `items` was `len(sittings)`, which counts work
+     the walk placed *partially* and knows nothing about work it never placed at all. The
+     numbers are reconciled in `_reconciled` now and the completeness claim only renders
+     when it is true. #}
+  {% if wont %}
+    <p class="b1">The board clears on {{ clears_on.strftime('%a %-d %b') }} for
+      {{ finishes }} of {{ finishes + wont }} obligations — {{ hours }}h with a day.
+      <strong>{{ wont }} do not finish before they are due</strong>{% if partial %},
+      {{ partial }} of them part-placed and still short{% endif %}.</p>
+  {% else %}
+    <p class="b1">The board clears on {{ clears_on.strftime('%a %-d %b') }} —
+      {{ finishes }} obligations, {{ hours }}h, every one of them with a day.</p>
+  {% endif %}
   <p class="b2">Capacity past the next fortnight is the class timetable and nothing else,
     so this is a floor rather than a promise: work that cannot fit even here genuinely
     cannot fit, while a clean run still loses days to things nobody has scheduled yet.</p>
+{% endif %}
+
+{% if wont %}
+  {# Said once, here, instead of on every row. It was rendered per row and identical on
+     all forty-four of them — 6.2KB of a 92KB page spent restating one piece of advice
+     between the facts that actually differ. And it named the wrong horizon: "the next 14
+     days" was the fortnight constant, while the walk under it reached every deadline on
+     the board. The true version is the stronger one. #}
+  <p class="b2">The {{ wont }} below have
+    {% if horizon_days %}all {{ horizon_days }} days to their deadline{% else %}every day
+    to their deadline{% endif %} and still do not finish — start one early, cut its scope,
+    or move the date.</p>
 {% endif %}
 
 {% if not rows %}
@@ -32,8 +57,9 @@
       <div class="grow">
         <p class="b1">{{ r.what }}</p>
         {% if r.unreachable %}
-          <p class="b2">{{ r.minutes }}m left, and the next {{ horizon_days }} days have
-            nowhere to put it before it is due — start it early, cut its scope, or move the date.</p>
+          {# Facts only. The advice is above the section, once. #}
+          <p class="b2">{{ r.minutes }}m left{% if r.spread %} ·
+            {{ r.spread|join(' · ') }} placed{% endif %}</p>
         {% else %}
           <p class="b2">{{ r.minutes }}m over {{ r.days }} sitting{{ '' if r.days == 1 else 's' }} ·
             {{ r.spread|join(' · ') }}</p>
@@ -56,7 +82,8 @@
      showed you the half the fortnight could hold". Counted rather than listed — the
      rows would treble the panel and every one of them would say the same thing. #}
   <p class="b2">+ {{ beyond.hours }}h across {{ beyond.count }} obligation(s) has no day
-    in the next {{ horizon_days }} — due after they end, and they have no minutes left.
-    Earliest {{ beyond.earliest }}. Nothing is late; the fortnight ends first.</p>
+    {% if horizon_days %}in the {{ horizon_days }} days walked{% else %}in the horizon
+    walked{% endif %} — due after it ends, and they have no minutes left.
+    Earliest {{ beyond.earliest }}. Nothing is late; the horizon ends first.</p>
 {% endif %}
 </div>

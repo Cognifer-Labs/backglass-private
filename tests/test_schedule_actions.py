@@ -17,6 +17,7 @@ row behind it, and an action that cannot be undone.
 
 from __future__ import annotations
 
+import re
 from datetime import date, timedelta
 
 import pytest
@@ -510,3 +511,108 @@ def test_a_day_that_is_not_today_has_no_clock_on_it(conn, client) -> None:  # ty
     panel = panel_slice(page.text, "panel-timeline")
     assert "data-now-tz=" not in panel
     assert 'class="now"' not in panel
+
+
+# ── the runway says what it counted (tasks/display-audit-2026-08-27.md) ────
+
+
+def test_the_headline_cannot_claim_more_than_the_board_holds(conn, client, settings) -> None:  # type: ignore[no-untyped-def]
+    """The audit's finding A, as a test.
+
+    The panel opened with *"241 obligations, every one of them with a day"* and then drew
+    forty-four rows chipped "Won't fit". `items` was `len(sittings)`, which counts an
+    obligation the walk placed *partially* and knows nothing at all about the thirty-nine
+    it never placed. Both halves came from one `horizon` and neither knew about the other.
+
+    The 2026-08-27 lesson, at the display layer: count the inputs against the outputs.
+    Here that means the headline's own numbers have to add up to the board.
+    """
+    from tests.test_planner import add_commitment
+
+    add_commitment(conn, settings, "fits fine", minutes=30, due=DAY + timedelta(days=5), n=1)
+    add_commitment(conn, settings, "cannot possibly fit", minutes=6_000,
+                   due=DAY + timedelta(days=2), n=2, estimate_source="analyzed")
+    conn.commit()
+
+    body = client.get(f"/schedule/runway?date={DAY.isoformat()}").text
+
+    finishes, total = re.search(r"for\s+(\d+) of (\d+) obligations", body).groups()
+    wont = re.search(r"(\d+) do not finish before they are due", body).group(1)
+    assert int(finishes) + int(wont) == int(total), (
+        "the headline's own arithmetic has to close"
+    )
+    assert int(wont) >= 1
+    # The completeness claim is gone precisely when it is false.
+    assert "every one of them with a day" not in body
+
+
+def test_a_board_that_does_fit_keeps_the_plain_sentence(conn, client, settings) -> None:  # type: ignore[no-untyped-def]
+    """The reconciliation is not a new permanent hedge. With nothing unreachable the
+    original claim is true, and it is what renders."""
+    from tests.test_planner import add_commitment
+
+    add_commitment(conn, settings, "fits fine", minutes=30, due=DAY + timedelta(days=5))
+    conn.commit()
+
+    body = client.get(f"/schedule/runway?date={DAY.isoformat()}").text
+
+    assert "every one of them with a day" in body
+    assert "do not finish before they are due" not in body
+
+
+def test_the_advice_is_stated_once_not_per_row(conn, client, settings) -> None:  # type: ignore[no-untyped-def]
+    """Finding B's second half. It was rendered on every unreachable row and identical on
+    all forty-four — 6.2KB of a 92KB page spent restating one sentence between the facts
+    that actually differ."""
+    from tests.test_planner import add_commitment
+
+    for n in range(1, 4):
+        add_commitment(conn, settings, f"cannot fit {n}", minutes=6_000,
+                       due=DAY + timedelta(days=2), n=n, estimate_source="analyzed")
+    conn.commit()
+
+    body = client.get(f"/schedule/runway?date={DAY.isoformat()}").text
+
+    assert body.count("cannot fit") >= 3, "the rows are there to be counted against"
+    assert body.count("move the date") == 1
+
+
+def test_the_row_advice_names_the_horizon_that_was_walked(conn, client, settings) -> None:  # type: ignore[no-untyped-def]
+    """Finding B. `horizon_days` was `DEFAULT_HORIZON_DAYS` — the fortnight constant —
+    while the route walks `solvency`, which goes to the last deadline on the board. Every
+    unreachable row said "the next 14 days have nowhere to put it" over a walk that
+    covered seventy-eight, and it was wrong in the direction that understates it."""
+    from backglass.plan import runway as runway_mod
+    from tests.test_planner import add_commitment
+
+    add_commitment(conn, settings, "cannot possibly fit", minutes=6_000,
+                   due=DAY + timedelta(days=40), estimate_source="analyzed")
+    conn.commit()
+
+    body = client.get(f"/schedule/runway?date={DAY.isoformat()}").text
+
+    walked = int(re.search(r"all (\d+) days to their deadline", body).group(1))
+    assert walked > runway_mod.DEFAULT_HORIZON_DAYS, (
+        "the sentence is reporting the constant, not the horizon the walk covered"
+    )
+    assert f"next {runway_mod.DEFAULT_HORIZON_DAYS} days" not in body
+
+
+def test_a_walk_offers_no_buttons(conn, client, settings) -> None:  # type: ignore[no-untyped-def]
+    """Finding D. A travel block has a real `plan_block` row, so `block_id is not None`
+    made it actionable and the canvas drew Done / Roll / Pin on a fifteen-pixel sliver.
+    A walk is not an obligation: it exists because two rooms are far apart, there is
+    nothing to mark done, and rolling it moves a consequence of geometry onto a day whose
+    geometry is different."""
+    from backglass.web.routes import schedule as schedule_mod
+
+    walk = schedule_mod.Entry(
+        title="Walk to Tempe WILOHAL 112", kind="fixed", start_label="10:15am",
+        end_label="10:30am", top=195, height=15, lane=0, block_id=1565, travel=True,
+    )
+    work = schedule_mod.Entry(
+        title="Write the essay", kind="work", start_label="1:00pm", end_label="2:00pm",
+        top=0, height=60, lane=0, block_id=1566,
+    )
+    assert not walk.actionable
+    assert work.actionable
