@@ -1169,6 +1169,18 @@ def shutdown(
     for row in report.flagged:
         typer.echo(f"  · rolled {row['rollover_count']}x: {row['what']}")
 
+    # Migration 0037's other half. An obligation riding a calendar event never becomes a
+    # candidate, so it never gets a block, so `close_day` above never sees it — right
+    # while the event is ahead and wrong the morning after. Asked, never inferred: the
+    # calendar knows a seat was reserved, not that anybody sat in it.
+    from backglass import booking
+
+    for attended in booking.past_events(conn, day):
+        typer.echo(
+            f"  · did you go? {attended.event_title} was {attended.happened_at[:16]} — "
+            f"still open: {attended.what}"
+        )
+
 
 def _today(settings: Settings):  # type: ignore[no-untyped-def]
     from backglass.brief.daily import today_in

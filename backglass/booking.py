@@ -95,7 +95,7 @@ import re
 import sqlite3
 import unicodedata
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from backglass.config import Settings
@@ -469,6 +469,55 @@ def operative_deadline(
 
     assert found is not None
     return Deadline(at=found[0].isoformat(), basis=f"meeting:{target}:calendar")
+
+
+@dataclass(frozen=True)
+class Attended:
+    """A commitment whose calendar event has been and gone, still open."""
+
+    commitment_id: int
+    what: str
+    event_title: str
+    happened_at: str
+
+
+def past_events(conn: sqlite3.Connection, day: date) -> list[Attended]:
+    """Linked obligations whose event finished on or before `day` and are still open.
+
+    The other half of migration 0037, and the reason the link is not a quiet deletion.
+    A commitment that rides a calendar event never becomes a candidate, so it never gets
+    a block, so `rollover.close_day` never sees it — which is right while the event is in
+    the future and wrong the morning after. Without this it would sit open forever, the
+    one obligation the evening pass could not ask about.
+
+    Asks; does not close. Attending is a thing that happens in a room, and the calendar
+    knows the appointment was made, not that anybody went (`canvas_enrich` makes the same
+    distinction about a Canvas score, for the same reason).
+    """
+    rows = conn.execute(
+        "SELECT c.id, c.what, s.title, s.raw_json FROM commitment c"
+        " JOIN source_item s ON s.id = c.scheduled_source_item_id"
+        " WHERE c.user_id = ? AND c.status = 'open'"
+        "   AND c.scheduled_source_item_id IS NOT NULL",
+        (USER_ID,),
+    ).fetchall()
+    out: list[Attended] = []
+    for row in rows:
+        try:
+            ends = str(json.loads(row["raw_json"] or "{}").get("ends_at") or "")
+        except ValueError:
+            continue
+        if not ends or date.fromisoformat(ends[:10]) > day:
+            continue
+        out.append(
+            Attended(
+                commitment_id=int(row["id"]),
+                what=str(row["what"]),
+                event_title=str(row["title"] or ""),
+                happened_at=ends,
+            )
+        )
+    return sorted(out, key=lambda a: a.happened_at)
 
 
 def scan(conn: sqlite3.Connection, settings: Settings) -> Report:

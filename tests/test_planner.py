@@ -2423,3 +2423,98 @@ def test_a_commitment_with_no_assignment_is_unchanged(conn, sett: Settings) -> N
     pool = planner.candidates(conn, sett, THURSDAY, set())
     assert [c.commitment_id for c in pool] == [cid]
     assert pool[0].closes_at is None
+
+
+# ══ work that is already on the calendar (migration 0037) ═════════════════
+
+
+def _calendar_event(conn, title: str, starts: str, ends: str) -> int:  # type: ignore[no-untyped-def]
+    conn.execute(
+        "INSERT INTO source_item (user_id, source, external_id, fetched_at, occurred_at,"
+        " title, body_text, content_hash, triage_verdict, raw_json)"
+        " VALUES (?, 'calendar:apple', ?, ?, ?, ?, '', ?, 'keep', ?)",
+        (USER_ID, f"ev:{starts}", now_iso(), starts, title, f"hev{starts}",
+         f'{{"starts_at": "{starts}", "ends_at": "{ends}"}}'),
+    )
+    return int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+
+
+def _link(conn, commitment_id: int, event_id: int) -> None:  # type: ignore[no-untyped-def]
+    conn.execute(
+        "UPDATE commitment SET scheduled_source_item_id = ? WHERE id = ?",
+        (event_id, commitment_id),
+    )
+
+
+def test_a_commitment_on_the_calendar_is_not_budgeted_again(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """Commitment 588, as a test.
+
+    Ninety minutes open and due Sep 3, whose work is a pod session booked for Sep 2 at
+    6pm and already a fixed event. `capacity` subtracts the event; `select` then spent
+    ninety more minutes on the same thing, so the day was charged three hours for ninety
+    minutes of VR.
+    """
+    cid = add_commitment(conn, sett, "the pod session", n=1, due=THURSDAY)
+    _link(conn, cid, _calendar_event(
+        conn, "DSL VR Pod", "2026-07-30T18:00:00-07:00", "2026-07-30T19:00:00-07:00"
+    ))
+
+    on_calendar: set[int] = set()
+    pool = planner.candidates(conn, sett, THURSDAY, set(), on_calendar=on_calendar)
+    assert [c.commitment_id for c in pool] == []
+    assert on_calendar == {cid}
+
+
+def test_the_day_loses_exactly_the_linked_minutes(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """The claim the migration makes, measured rather than asserted in prose."""
+    linked = add_commitment(conn, sett, "the pod session", n=1, due=THURSDAY, minutes=90)
+    add_commitment(conn, sett, "ordinary work", n=2, due=THURSDAY, minutes=45)
+
+    before = sum(c.minutes for c in planner.candidates(conn, sett, THURSDAY, set()))
+    _link(conn, linked, _calendar_event(
+        conn, "DSL VR Pod", "2026-07-30T18:00:00-07:00", "2026-07-30T19:00:00-07:00"
+    ))
+    after = sum(c.minutes for c in planner.candidates(conn, sett, THURSDAY, set()))
+
+    assert before - after == 90
+
+
+def test_an_unlinked_commitment_is_untouched_by_0037(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """NULL for every existing row, so the migration alone changes no behaviour."""
+    cid = add_commitment(conn, sett, "ordinary work", n=1, due=THURSDAY)
+    on_calendar: set[int] = set()
+    pool = planner.candidates(conn, sett, THURSDAY, set(), on_calendar=on_calendar)
+    assert [c.commitment_id for c in pool] == [cid]
+    assert on_calendar == set()
+
+
+def test_the_evening_pass_asks_about_an_event_that_has_been(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """A linked commitment never gets a block, so `close_day` never sees it.
+
+    Right while the event is ahead; wrong the morning after, when it would otherwise sit
+    open forever as the one obligation nothing could ask about.
+    """
+    from backglass import booking
+
+    cid = add_commitment(conn, sett, "the pod session", n=1, due=THURSDAY)
+    _link(conn, cid, _calendar_event(
+        conn, "DSL VR Pod", "2026-07-30T18:00:00-07:00", "2026-07-30T19:00:00-07:00"
+    ))
+
+    assert booking.past_events(conn, THURSDAY - timedelta(days=1)) == []
+    asked = booking.past_events(conn, THURSDAY)
+    assert [a.commitment_id for a in asked] == [cid]
+    assert asked[0].event_title == "DSL VR Pod"
+
+
+def test_attendance_is_asked_never_inferred(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """The calendar knows a seat was reserved, not that anybody sat in it."""
+    from backglass import booking
+
+    cid = add_commitment(conn, sett, "the pod session", n=1, due=THURSDAY)
+    _link(conn, cid, _calendar_event(
+        conn, "DSL VR Pod", "2026-07-30T18:00:00-07:00", "2026-07-30T19:00:00-07:00"
+    ))
+    booking.past_events(conn, THURSDAY)
+    status = conn.execute("SELECT status FROM commitment WHERE id = ?", (cid,)).fetchone()
+    assert status["status"] == "open"

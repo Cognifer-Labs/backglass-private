@@ -179,6 +179,7 @@ def candidates(
     stale: set[int] | None = None,
     allocated_today: set[int] | None = None,
     not_yet: set[int] | None = None,
+    on_calendar: set[int] | None = None,
 ) -> list[Candidate]:
     """Open commitments the planner may schedule, with derived priority.
 
@@ -203,10 +204,16 @@ def candidates(
     one, and it is what stops an assignment due in three weeks being invisible for two of
     them and then arriving with nowhere left to go.
 
-    `not_yet` is an out-parameter, filled with the commitments whose assignment is locked
-    on `day` (migration 0036). It is a set the caller passes in rather than a second
-    return value for the same reason `stale` is passed in: `propose` needs the count for
-    a note, and the set the note describes has to be the same object the gate applied.
+    `not_yet` and `on_calendar` are out-parameters, filled with the commitments this
+    refused and why: locked until a later date (migration 0036), and already sitting on
+    the calendar as an event (migration 0037). Sets the caller passes in rather than
+    second and third return values, for the same reason `stale` is passed in: `propose`
+    needs the counts for its notes, and the set a note describes has to be the same object
+    the gate applied.
+
+    Three different reasons a commitment is not on today's board, and the point of
+    separating them is that they mean opposite things. Stale is a question. Not-yet is a
+    door that has not opened. On-calendar is the only one that is good news.
     """
     if stale is None:
         stale = staleness.stale_ids(conn, day)
@@ -216,7 +223,7 @@ def candidates(
         # The assignment behind the commitment, where there is one, for the two dates
         # migration 0036 added. LEFT JOIN and only through `source_item`: a commitment
         # with no assignment gets NULLs and behaves exactly as it did before.
-        "       a.unlock_at, a.lock_at, "
+        "       a.unlock_at, a.lock_at, c.scheduled_source_item_id, "
         # Sittings already spent on it. A multi-session assignment that keeps its full
         # estimate every morning would be scheduled forever; this is what makes the
         # remainder shrink.
@@ -237,6 +244,15 @@ def candidates(
     for row in rows:
         if int(row["id"]) in stale:
             continue
+        if row["scheduled_source_item_id"] is not None:
+            # It is already on the calendar, and `capacity` has already taken the day's
+            # minutes for it. Offering it to `select` as well is how commitment 588's
+            # ninety minutes got charged twice for one Sep 2 pod session — once as the
+            # fixed event and once as work to fit around it (migration 0037).
+            if on_calendar is not None:
+                on_calendar.add(int(row["id"]))
+            continue
+
         unlock = _day_of(row["unlock_at"], zone)
         if unlock is not None and unlock > day:
             # "Not yet" is a third answer, and it is the one the ledger could not give.
@@ -745,7 +761,11 @@ def propose(
 
     stale = staleness.stale_ids(conn, day)
     not_yet: set[int] = set()
-    pool = candidates(conn, settings, day, at_risk_goals or set(), stale, not_yet=not_yet)
+    on_calendar: set[int] = set()
+    pool = candidates(
+        conn, settings, day, at_risk_goals or set(), stale,
+        not_yet=not_yet, on_calendar=on_calendar,
+    )
 
     # The fortnight, before the day. `runway.allocate` walks every day between here and
     # each obligation's deadline and lays its sittings on the earliest days with room —
@@ -773,9 +793,10 @@ def propose(
         # would keep an id whose assignment unlocked between the two calls, which cannot
         # happen today and is the sort of thing that becomes true quietly.
         not_yet.clear()
+        on_calendar.clear()
         pool = candidates(
             conn, settings, day, at_risk_goals or set(), stale,
-            allocated_today=horizon.on(day), not_yet=not_yet,
+            allocated_today=horizon.on(day), not_yet=not_yet, on_calendar=on_calendar,
         )
     if not_yet:
         # The third answer. Before migration 0036 these landed in "did not fit" beside
@@ -786,6 +807,15 @@ def propose(
         proposal.notes.append(
             f"{len(not_yet)} item(s) not yet open — locked until a later date, "
             "not work that would not fit."
+        )
+    if on_calendar:
+        # Said out loud for the same reason as the other two: an obligation that vanishes
+        # from the board without explanation reads as one the system has forgotten. This
+        # one is the good case — it has a time and a place — and the sentence is what
+        # distinguishes it from the two that are not.
+        proposal.notes.append(
+            f"{len(on_calendar)} item(s) already on the calendar — "
+            "the event is the work, and the day is charged for it once."
         )
     held = len(stale)
     if held:

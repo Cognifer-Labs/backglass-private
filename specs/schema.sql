@@ -109,7 +109,8 @@ CREATE TABLE commitment (
   created_at            TEXT    NOT NULL,
   resolved_at           TEXT,
   resolution_note       TEXT
-);
+, scheduled_source_item_id INTEGER
+  REFERENCES source_item(id));
 
 CREATE INDEX idx_commitment_open ON commitment(user_id, status, due_at)
   WHERE status = 'open';
@@ -714,3 +715,6 @@ CREATE TABLE engagement_distinct (
   decided_at TEXT    NOT NULL,
   UNIQUE (user_id, low_id, high_id)
 );
+
+CREATE INDEX idx_commitment_scheduled ON commitment(scheduled_source_item_id)
+  WHERE scheduled_source_item_id IS NOT NULL;

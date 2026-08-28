@@ -273,6 +273,9 @@ FROZEN_CHECKSUMS = {
     "0036_assignment_window.sql": (
         "8ca3667d59182cbf3ed9752d73e2bec9e689325d5ac62f535299ae246babd122"
     ),
+    "0037_commitment_scheduled_event.sql": (
+        "4e0f75710400a212da1c3635dea69999b30acea6f45e82f14507be197eeadd02"
+    ),
 }
 
 
