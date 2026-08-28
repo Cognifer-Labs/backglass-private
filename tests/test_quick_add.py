@@ -76,3 +76,52 @@ def test_merge_repoints_and_snapshots(conn: sqlite3.Connection, settings: Settin
     # Second merge of the same pair errors cleanly — the loser is gone.
     with pytest.raises(merge_mod.MergeError):
         merge_mod.merge(conn, a, b)
+
+
+def test_a_hand_typed_commitment_is_never_re_extracted(
+    conn: sqlite3.Connection, settings: Settings
+) -> None:
+    """The 2026-08-27 duplication, as a test.
+
+    `quick_add` stamps `extraction_version = 'manual'`, and 'manual' is not a prompt
+    version, so it can never appear in `:compatible_versions`. Before the
+    `source <> 'manual'` predicate, every prompt bump handed the owner's own sentence
+    back to the extractor, which wrote a second commitment beside the one they had
+    already typed — with a date read out of the prose rather than the date they had put
+    in the field.
+
+    Measured on the live ledger the day this was found: 37 manual source items, not one
+    still carrying the 'manual' stamp, and 81 commitments hanging off 34 of them, two of
+    which had grown seven each. 39 of the surplus were open.
+
+    The assertion on `stamps` is the load-bearing half. Excluding by
+    `extraction_version = 'manual'` would look like a fix and hold only until the next
+    bump overwrote the stamp, which is exactly how this got here — so the test states
+    that 'manual' is not, and cannot become, a version the queries accept.
+    """
+    from backglass.__main__ import EXTRACT_PROMPT
+    from backglass.db import query
+    from backglass.extract import prompts
+    from backglass.ledger import USER_ID
+
+    actions.quick_add(
+        conn, settings, what="Book the Act 2 VR pod session", direction="i_owe",
+        due_at="2026-09-03",
+    )
+    item = conn.execute("SELECT * FROM source_item WHERE source = 'manual'").fetchone()
+    assert item["extraction_version"] == "manual"
+    assert item["triage_verdict"] == "keep"
+
+    stamps = ",".join(prompts.load(EXTRACT_PROMPT).stamps)
+    assert "manual" not in stamps.split(","), (
+        "'manual' is not a prompt version — the exclusion cannot rely on the stamp"
+    )
+
+    for name in ("pending_extraction", "pending_extraction_unbatched"):
+        params: dict[str, object] = {"user_id": USER_ID, "compatible_versions": stamps}
+        if name.endswith("unbatched"):
+            params["cutoff"] = "2026-08-27T00:00:00Z"
+        pending = conn.execute(query(name), params).fetchall()
+        assert [r["id"] for r in pending] == [], (
+            f"{name} handed a hand-typed commitment back to the extractor"
+        )

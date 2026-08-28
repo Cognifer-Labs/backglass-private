@@ -5,11 +5,21 @@
 -- names the old stamp in `compatible:`, which says the change is additive and the old
 -- rows stay done. Nothing is ever re-fetched either way.
 --
+-- A manual item is never pending, and the reason it looked pending is that its stamp is
+-- not a prompt version. `web/actions.py::quick_add` writes 'manual' into
+-- `extraction_version` and inserts the commitment the owner typed in the same breath;
+-- 'manual' can never appear in :compatible_versions, so the row came back pending on
+-- every prompt bump and the model wrote another commitment beside the owner's own.
+-- Measured 2026-08-27: 37 manual items, none still stamped 'manual', carrying 81
+-- commitments where 34 were typed — 39 of the surplus open. See
+-- pending_extraction_unbatched.sql for the full note.
+--
 -- Params: :user_id, :compatible_versions (comma-joined stamps)
 SELECT id, source, external_id, occurred_at, author, title, body_text, raw_json
 FROM source_item
 WHERE user_id = :user_id
   AND triage_verdict = 'keep'
+  AND source <> 'manual'
   -- :compatible_versions is every stamp that counts as done — the current one plus the
   -- prompt's `compatible:` list — comma-joined by the caller. instr() with commas on
   -- both sides so `@9` can never match inside `@19`.

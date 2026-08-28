@@ -11,6 +11,10 @@ SELECT COUNT(*) AS stranded
 FROM source_item si
 WHERE si.user_id = :user_id
   AND si.triage_verdict = 'keep'
+  -- Mirrors pending_extraction_unbatched's manual exclusion, and has to: the whole
+  -- contract of this file is that the number the owner reads is the number the next
+  -- un-degraded run would work through. Manual items are no longer in that queue.
+  AND si.source <> 'manual'
   AND (si.extraction_version IS NULL OR si.extraction_version != :extraction_version)
   AND NOT EXISTS (
     SELECT 1

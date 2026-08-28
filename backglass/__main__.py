@@ -691,7 +691,11 @@ def extract(
 
     current = prompts.load(EXTRACT_PROMPT).stamp
     pending = conn.execute(
+        # `source <> 'manual'` mirrors pending_extraction_unbatched: a hand-typed
+        # commitment is not waiting on a model, and counting it here would report a
+        # backlog `sync` will never work through.
         "SELECT COUNT(*) AS n FROM source_item WHERE user_id = ? AND triage_verdict = 'keep' "
+        "AND source <> 'manual' "
         "AND (extraction_version IS NULL OR extraction_version != ?)",
         (USER_ID, current),
     ).fetchone()

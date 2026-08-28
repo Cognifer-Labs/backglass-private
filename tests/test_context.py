@@ -24,10 +24,14 @@ TODAY = date(2026, 8, 18)
 
 
 def _item(conn: sqlite3.Connection, external_id: str, occurred: str) -> int:
+    # `gmail`, not `manual`. The pending queries exclude manual items by source — a
+    # hand-typed commitment is not waiting on a model — so a fixture that called itself
+    # manual would be filtered out before the stamp logic under test ever ran, and every
+    # assertion here would pass for the wrong reason.
     cur = conn.execute(
         "INSERT INTO source_item (user_id, source, external_id, fetched_at, occurred_at,"
         " title, body_text, content_hash, triage_verdict)"
-        " VALUES (1, 'manual', ?, ?, ?, 'T', 'B', ?, 'keep')",
+        " VALUES (1, 'gmail', ?, ?, ?, 'T', 'B', ?, 'keep')",
         (external_id, occurred, occurred, f"h-{external_id}"),
     )
     return int(cur.lastrowid)
