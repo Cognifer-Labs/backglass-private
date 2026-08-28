@@ -83,6 +83,32 @@ def _semantic_pairs(conn: sqlite3.Connection) -> set[tuple[int, int]]:
         return set()
 
 
+def _different_days(a: dict[str, Any], b: dict[str, Any]) -> bool:
+    """Two obligations owed on two different days are two obligations.
+
+    The wording score cannot see this and was never going to: "Read for HON 171, Tue 10
+    Nov: Dante Alighieri, Inferno" and "…Thu 12 Nov: Dante Alighieri, Inferno" differ in
+    one word out of nine and score 0.96, so the clusterer called them a restatement and
+    marked one `drop`. They are two class sessions, and the date is not incidental to
+    them — it is the entire distinguishing fact. Four such pairs sat in the report at the
+    top of the list, which is where a reader looks first.
+
+    Measured on the owner's ledger: this separates the false positives from the true one
+    without touching it. `Submit the Syllabus and Academic Integrity Agreement` and
+    `Submit Syllabus/Academic Integrity Agreement` are both due 2026-09-02 and stay
+    paired; the four HON reading pairs are due two days apart and stop being suspects.
+
+    Only when **both** carry a date. A restatement that lost its date on the way through
+    extraction is exactly the shape this queue exists to catch, so an undated row is
+    never excluded by this rule — silence about a date is not a claim about a different
+    one. Compared on the day, not the instant: "by Friday" and "Friday 5pm" are the same
+    deadline written twice.
+    """
+    left = str(a.get("due_at") or "")[:10]
+    right = str(b.get("due_at") or "")[:10]
+    return bool(left) and bool(right) and left != right
+
+
 def suspects(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Open same-direction pairs scoring in [SUSPECT_FLOOR, 1.0], strongest first.
 
@@ -104,7 +130,7 @@ def suspects(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = [
         dict(r)
         for r in conn.execute(
-            "SELECT c.id, c.direction, c.what, c.source_item_id,"
+            "SELECT c.id, c.direction, c.what, c.due_at, c.source_item_id,"
             "       c.counterparty_entity_id, e.canonical_name AS who"
             " FROM commitment c"
             " LEFT JOIN entity e ON e.id = c.counterparty_entity_id"
@@ -142,6 +168,8 @@ def suspects(conn: sqlite3.Connection) -> list[dict[str, Any]]:
                 continue
             pair = (int(a["id"]), int(b["id"]))
             if pair in settled:
+                continue
+            if _different_days(a, b):
                 continue
             score = _SCORES.get(pair)
             if score is None:

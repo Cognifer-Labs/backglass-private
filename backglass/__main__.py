@@ -2151,7 +2151,7 @@ def recheck_command(
 
     from backglass.extract import prompts
     from backglass.extract import recheck as recheck_mod
-    from backglass.telemetry import Metered
+    from backglass.telemetry import Metered, write_calls
 
     settings = get_settings()
     conn = _open(settings)
@@ -2166,6 +2166,14 @@ def recheck_command(
         only=chat,
     )
     if not dry_run:
+        # The calls this pass made, into `model_call` with no run behind them.
+        # Collected and then dropped until 2026-08-27, which meant a pass run by
+        # hand spent money nothing could see: `state`'s per-tier cost, the Sources
+        # panel and the spend cap all read this table, and CLAUDE.md rule 7 is that
+        # the cap is enforced in code. On the free backend the difference is nil;
+        # one `revise` on claude_cli was $2.05 that appeared nowhere. `run_id` is
+        # NULL because there is no run, which is what `write_calls` already takes.
+        write_calls(conn, calls, None)
         conn.commit()
 
     if as_json:
@@ -2581,7 +2589,7 @@ def relevance_command(
 
     from backglass.extract import prompts
     from backglass.extract import relevance as relevance_mod
-    from backglass.telemetry import Metered
+    from backglass.telemetry import Metered, write_calls
 
     settings = get_settings()
     conn = _open(settings)
@@ -2596,6 +2604,14 @@ def relevance_command(
         limit=limit or relevance_mod.PER_RUN,
     )
     if not dry_run:
+        # The calls this pass made, into `model_call` with no run behind them.
+        # Collected and then dropped until 2026-08-27, which meant a pass run by
+        # hand spent money nothing could see: `state`'s per-tier cost, the Sources
+        # panel and the spend cap all read this table, and CLAUDE.md rule 7 is that
+        # the cap is enforced in code. On the free backend the difference is nil;
+        # one `revise` on claude_cli was $2.05 that appeared nowhere. `run_id` is
+        # NULL because there is no run, which is what `write_calls` already takes.
+        write_calls(conn, calls, None)
         conn.commit()
 
     if as_json:
@@ -2663,7 +2679,7 @@ def revise_command(
 
     from backglass.extract import prompts
     from backglass.extract import revision as revision_mod
-    from backglass.telemetry import Metered
+    from backglass.telemetry import Metered, write_calls
 
     settings = get_settings()
     conn = _open(settings)
@@ -2679,6 +2695,14 @@ def revise_command(
         again=again,
     )
     if not dry_run:
+        # The calls this pass made, into `model_call` with no run behind them.
+        # Collected and then dropped until 2026-08-27, which meant a pass run by
+        # hand spent money nothing could see: `state`'s per-tier cost, the Sources
+        # panel and the spend cap all read this table, and CLAUDE.md rule 7 is that
+        # the cap is enforced in code. On the free backend the difference is nil;
+        # one `revise` on claude_cli was $2.05 that appeared nowhere. `run_id` is
+        # NULL because there is no run, which is what `write_calls` already takes.
+        write_calls(conn, calls, None)
         conn.commit()
 
     if as_json:

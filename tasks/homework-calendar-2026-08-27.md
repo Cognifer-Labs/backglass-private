@@ -419,3 +419,72 @@ before the first deliberate run.
 second look, and `DO NOTHING` would have made `--again` pay for the calls and throw the
 answers away. The empty-run message now names the flag, since "nothing left to judge" is
 more often the cache than the truth.
+
+---
+
+# Audit: look for any other problems (2026-08-27)
+
+`state`, `doctor`, `errors`, `status`, then the ledger. Four real findings, two of them
+data-losing if left alone.
+
+## 1. The duplicate report was proposing to delete half a reading list
+
+`backglass duplicates` led with this, at the top of the first screen:
+
+```
+[restatement]  weakest pair 0.96
+  keep   627  Read for HON 171, Tue 10 Nov: Dante Alighieri, Inferno
+  drop   628  Read for HON 171, Thu 12 Nov: Dante Alighieri, Inferno
+```
+
+They are two class sessions. 627 is due 2026-11-10 and 628 is due 2026-11-12, and the date
+is not incidental to them — it is the entire distinguishing fact. `dedup.suspects` never
+selected `due_at`, so the clusterer could not see it; the strings differ in one word out of
+nine and scored 0.96. Four such pairs were in the report, all marked `drop`.
+
+**Two obligations owed on two different days are two obligations.** Only when both carry a
+date — a restatement that lost its date on the way through extraction is exactly what this
+queue exists to catch, so an undated row is never excluded by the rule. Compared on the
+day, not the instant, because "by Friday" and "Friday 5pm" are one deadline written twice.
+
+Measured on the live ledger: 80 clusters over 327 open rows became 75 over 213, the four
+HON pairs are gone, the true positive (`Submit the Syllabus and Academic Integrity
+Agreement` / `Submit Syllabus/Academic Integrity Agreement`, both due 2026-09-02) survives,
+and a genuinely identical pair that had been buried under the false ones surfaced as the
+first `[certain]` cluster the report has ever had.
+
+## 2. A pass run by hand spent money nothing could see
+
+`sync` writes its calls to `model_call`. The three passes that can also be run from the
+terminal — `recheck`, `relevance`, `revise` — collected a `CallRecord` per call into a
+local list and then dropped it. `state`'s per-tier cost, the Sources panel and the spend
+cap all read that table, and CLAUDE.md rule 7 is that the cap is enforced in code.
+
+Invisible on the free backend, which is what let it sit: every row reads 0.0 either way.
+Found by running `revise` on claude_cli, watching the CLI report 205c, and finding no row
+for it anywhere. `write_calls(conn, calls, None)` in all three; `run_id` NULL is what a
+hand-run pass is, and the column always allowed it.
+
+## 3. `replan: AttributeError: 'Settings' object has no attribute 'walk_minutes'`
+
+In `backglass errors`, once, six hours ago — and already fixed by the time it was read.
+`walk_minutes` landed with the travel work the same day; the crash was the *running*
+desktop app, whose frozen Python predated it. Two rebuilds since. `capacity.day_events`
+now returns walks on the live ledger, so this is recorded as closed rather than open.
+
+## 4. `state` reports two `unknown`s that are not this session's
+
+`deployed.matches_source` and `running.matches_installed` both come back unknown because
+another session in this same checkout is mid-change on `state.py`, `buildstamp.py` and a
+new `/state/build` endpoint that no bundle has yet. The 404 the check reads as "older than
+this checkout" is an endpoint that does not exist anywhere. Named here so the next reader
+does not chase it.
+
+## Not defects, but worth the owner's eye
+
+- 24 open obligations are past due, and at least five are pairs the record has overtaken:
+  two HOV volunteer applications, two McKenna early-arrival questions, two "log the six
+  lunch conversations". `relevance` has judged 491 rows and dropped 58, so it is working —
+  these are what it has not reached.
+- Triage kill rate is 84%, under the 85% floor the Sources panel calls out as drift.
+- `BRIEF_TO` is unset, so the 06:00 brief generates and is never delivered anywhere.
