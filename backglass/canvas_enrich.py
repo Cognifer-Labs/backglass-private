@@ -79,7 +79,7 @@ class Record:
     score: float | None
     title: str = ""
     #: `unlock_at` / `lock_at` — when the work can be started and when the door shuts.
-    #: Migration 0036 says why they are here and not on `commitment`; the short version is
+    #: Migration 0037 says why they are here and not on `commitment`; the short version is
     #: that the feed carries neither, and the page that carries both is the one the owner
     #: already exports. A session read "locked until Sep 3" off a Canvas page by hand on
     #: 2026-08-27 because there was nowhere in the ledger to put it.

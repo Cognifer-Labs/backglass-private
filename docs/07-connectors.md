@@ -239,7 +239,7 @@ Downloads; course ids come from `/api/v1/courses?enrollment_state=active&per_pag
 ```
 
 `unlock_at` and `lock_at` are the two the feed cannot say and the planner now reads
-(migration 0036). An assignment locked until Sep 3 is not overdue and not overflow — it is
+(migration 0037). An assignment locked until Sep 3 is not overdue and not overflow — it is
 *not yet*, which was a state the ledger had no way to hold, and the only reason the owner
 knew about one on 2026-08-27 is that a session opened the page and read it.
 

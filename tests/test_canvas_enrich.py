@@ -341,7 +341,7 @@ def test_a_document_that_is_not_a_list_is_refused(tmp_path: Path) -> None:
 def test_the_availability_window_lands_on_the_assignment(
     conn: Any, settings: Settings
 ) -> None:
-    """Migration 0036. The two dates the ICS feed cannot say and the planner now reads.
+    """Migration 0037. The two dates the ICS feed cannot say and the planner now reads.
 
     CHM 113's Act 2 signup, as Canvas states it: due Sep 10, available Sep 3 to Sep 15,
     locked until Sep 3. Three dates where the ledger could hold one, which is why a

@@ -9,7 +9,7 @@ Two surfaces, four displays: `backglass plan` and `/schedule` for the day; `back
 --runway` and `/schedule/runway` for the semester. Everything here is **display only** —
 no allocator, no capacity model, no migration. Every number below was measured against a
 copy of the live ledger (`schema_version 35`, untouched; the worktree carries unapplied
-0036 and 0037 and must not be pointed at the real database).
+0037 and 0038 and must not be pointed at the real database).
 
 ## A — the runway headline contradicts the rows directly beneath it
 

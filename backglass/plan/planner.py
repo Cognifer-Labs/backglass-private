@@ -82,7 +82,7 @@ class Candidate:
     #: A three-hour move-in is not, and nothing here may cut one in half.
     divisible: bool = False
     #: `assignment.lock_at`, where it is earlier than the due date — the day the door
-    #: shuts rather than the day the work is wanted. Migration 0036. `priority` is ranked
+    #: shuts rather than the day the work is wanted. Migration 0037. `priority` is ranked
     #: on it; `due_at` above is left as the ledger holds it, so a surface that shows the
     #: earlier date can also say where it came from instead of appearing to contradict
     #: Canvas. NULL for everything with no assignment behind it, which is most things.
@@ -205,8 +205,8 @@ def candidates(
     them and then arriving with nowhere left to go.
 
     `not_yet` and `on_calendar` are out-parameters, filled with the commitments this
-    refused and why: locked until a later date (migration 0036), and already sitting on
-    the calendar as an event (migration 0037). Sets the caller passes in rather than
+    refused and why: locked until a later date (migration 0037), and already sitting on
+    the calendar as an event (migration 0038). Sets the caller passes in rather than
     second and third return values, for the same reason `stale` is passed in: `propose`
     needs the counts for its notes, and the set a note describes has to be the same object
     the gate applied.
@@ -221,7 +221,7 @@ def candidates(
         "SELECT c.id, c.what, c.due_at, c.estimated_minutes, c.direction, c.goal_id, "
         "       c.rollover_count, c.estimate_source, s.occurred_at, "
         # The assignment behind the commitment, where there is one, for the two dates
-        # migration 0036 added. LEFT JOIN and only through `source_item`: a commitment
+        # migration 0037 added. LEFT JOIN and only through `source_item`: a commitment
         # with no assignment gets NULLs and behaves exactly as it did before.
         "       a.unlock_at, a.lock_at, c.scheduled_source_item_id, "
         # Sittings already spent on it. A multi-session assignment that keeps its full
@@ -248,7 +248,7 @@ def candidates(
             # It is already on the calendar, and `capacity` has already taken the day's
             # minutes for it. Offering it to `select` as well is how commitment 588's
             # ninety minutes got charged twice for one Sep 2 pod session — once as the
-            # fixed event and once as work to fit around it (migration 0037).
+            # fixed event and once as work to fit around it (migration 0038).
             if on_calendar is not None:
                 on_calendar.add(int(row["id"]))
             continue
@@ -799,7 +799,7 @@ def propose(
             allocated_today=horizon.on(day), not_yet=not_yet, on_calendar=on_calendar,
         )
     if not_yet:
-        # The third answer. Before migration 0036 these landed in "did not fit" beside
+        # The third answer. Before migration 0037 these landed in "did not fit" beside
         # work the day genuinely had no room for, and those are different facts: one is
         # a scheduling failure and the other is a door that has not opened. CHM 113's
         # Act 2 signup was locked until Sep 3 and reported as overflow every morning

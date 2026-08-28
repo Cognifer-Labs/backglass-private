@@ -200,7 +200,7 @@ conversation.
 - [x] A.3 Operative deadline off `fact`, with the retraction filter that turned out to be
       what actually made it right; conflict surfaced when the calendar disagrees.
 - [x] A.4 Reconciliation counts, printed by `backglass bookings`.
-- [x] B.1 Migration 0036: `assignment.unlock_at`, `assignment.lock_at`. **On `assignment`,
+- [x] B.1 Migration 0037: `assignment.unlock_at`, `assignment.lock_at`. **On `assignment`,
       not `commitment`** — same institution, same browser export, and the join through
       `source_item` already exists. Two writers for one fact was the alternative.
 - [x] B.2 `canvas_enrich.py` reads them; the docs/07 snippet now exports them.
@@ -210,7 +210,7 @@ conversation.
 - [ ] B.4 `app-update`. **Deliberately not run from the worktree**: it would build and
       install the desktop app from a branch, and the installed app should follow the
       shared checkout. Run it after merge, in the same breath as the merge.
-- [x] C.1 Migration 0037: `commitment.scheduled_source_item_id`.
+- [x] C.1 Migration 0038: `commitment.scheduled_source_item_id`.
 - [x] C.2 A linked commitment is not a candidate;
       `test_the_day_loses_exactly_the_linked_minutes` measures the reduction.
 - [x] C.3 `booking.past_events` + the shutdown question. Asks, never closes.

@@ -1231,7 +1231,7 @@ def shutdown(
     for row in report.flagged:
         typer.echo(f"  · rolled {row['rollover_count']}x: {row['what']}")
 
-    # Migration 0037's other half. An obligation riding a calendar event never becomes a
+    # Migration 0038's other half. An obligation riding a calendar event never becomes a
     # candidate, so it never gets a block, so `close_day` above never sees it — right
     # while the event is ahead and wrong the morning after. Asked, never inferred: the
     # calendar knows a seat was reserved, not that anybody sat in it.

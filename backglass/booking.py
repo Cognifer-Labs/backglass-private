@@ -484,7 +484,7 @@ class Attended:
 def past_events(conn: sqlite3.Connection, settings: Settings, day: date) -> list[Attended]:
     """Linked obligations whose event finished on or before `day` and are still open.
 
-    The other half of migration 0037, and the reason the link is not a quiet deletion.
+    The other half of migration 0038, and the reason the link is not a quiet deletion.
     A commitment that rides a calendar event never becomes a candidate, so it never gets
     a block, so `rollover.close_day` never sees it — which is right while the event is in
     the future and wrong the morning after. Without this it would sit open forever, the

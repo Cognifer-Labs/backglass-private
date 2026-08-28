@@ -2304,7 +2304,7 @@ def test_the_last_sitting_does_close_it(conn, sett: Settings) -> None:  # type: 
     assert status == "done"
 
 
-# ══ availability windows (migration 0036) ═════════════════════════════════
+# ══ availability windows (migration 0037) ═════════════════════════════════
 
 
 def _with_window(
@@ -2335,7 +2335,7 @@ def _with_window(
 def test_a_locked_assignment_is_not_yet_rather_than_overflow(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
     """CHM 113's Act 2 signup: locked until Sep 3, due Sep 10.
 
-    Before 0036 it sorted into PRIORITY_REST and was counted every morning in the same
+    Before 0037 it sorted into PRIORITY_REST and was counted every morning in the same
     "did not fit" number as work the day had no room for. A door that has not opened and
     a day that is full are different facts.
     """
@@ -2425,7 +2425,7 @@ def test_a_commitment_with_no_assignment_is_unchanged(conn, sett: Settings) -> N
     assert pool[0].closes_at is None
 
 
-# ══ work that is already on the calendar (migration 0037) ═════════════════
+# ══ work that is already on the calendar (migration 0038) ═════════════════
 
 
 def _calendar_event(conn, title: str, starts: str, ends: str) -> int:  # type: ignore[no-untyped-def]
