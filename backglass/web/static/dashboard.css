@@ -233,6 +233,18 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
   padding-inline:calc(var(--border) + var(--sp-4))}
 .cap{font-size:12px;line-height:17px;color:var(--ink-muted);padding:var(--sp-3) 0;
   border-bottom:1px solid var(--rule-hair);margin-bottom:0}
+/* `hidden` means hidden, and in this sheet it did not.
+ *
+ * The attribute's `display:none` lives in the UA stylesheet, so any author rule that
+ * sets `display` beats it whatever its specificity — and `.row` and `.card` two lines
+ * below both do. §9 mechanism 8 hides the row it is removing rather than deleting it, so
+ * the rollback has something to put back; without this the row went to zero opacity and
+ * kept its space, the gap never closed, and under `prefers-reduced-motion` — where the
+ * fade is skipped on purpose — the click produced no feedback at all. `!important`
+ * because the point is to outrank every author `display` in the file, including ones
+ * written after this line. */
+[hidden]{display:none !important}
+
 .row{display:flex;gap:var(--sp-4);padding:var(--sp-3) 0;border-top:1px solid var(--rule-hair);align-items:flex-start}
 /* Off-screen rows are not laid out or painted until they are scrolled to.
  *

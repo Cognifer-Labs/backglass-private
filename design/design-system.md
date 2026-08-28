@@ -549,16 +549,38 @@ is looking at, and a 200ms ease-in feels slower than a 200ms ease-out.
    `<details>` reveals content by flipping a boolean, and a revealed element is not a
    newly inserted one, so `@starting-style` never sees it. The `<summary>` is excluded
    because it never went anywhere. Opening only — a panel closing is a disappearance,
-   and nothing leaves.
+   and it is instant. Mechanism 8 animates one exit and one only: a row the owner
+   removed, off the swap's critical path.
+
+8. **A row the owner removed** leaves at the click. Owner's ruling, 2026-08-27:
+   *"when i drop something it should disappear."* It fades and drops four pixels over
+   90ms, is hidden, and the rows under it close the gap over 160ms on `--ease-in-out` —
+   mechanism 6, fired by a click instead of by a swap. The write is still sent, the panel
+   still swaps, and the swap still wins: this is an optimistic **view**, never an
+   optimistic **record**. A refused write puts the row back, arriving, and the
+   failed-write strip says why. In `static/motion.js`, and which control removes which
+   row is declared in the template as `data-vanish`, never inferred from the URL — a
+   script that guessed would vanish a row on Snooze, which moves a commitment and does
+   not remove it.
 
 ### What does not move, and why
 
 The omissions carry the design more than the inclusions do.
 
-- **Nothing leaves.** Only arrivals are animated, because only arrivals are free. Fading
+- **Nothing leaves on the swap's critical path.** Only arrivals are free *there*. Fading
   a panel out means holding the swap open while it fades — htmx's `defaultSwapDelay` is
   0 for exactly this reason — and that is latency added to the most frequent actions in
-  the product.
+  the product. `.htmx-swapping` therefore carries no transition, and
+  `test_nothing_animates_on_the_way_out` still holds that line.
+
+  **This read "Nothing leaves" until 2026-08-27**, when the owner asked for the opposite
+  and was right. The rule had generalised its own reason: latency is what makes an exit
+  expensive, and an exit that runs *before* the request spends time the owner was going
+  to wait through anyway. Drop on the board was a quarter second of nothing — a POST plus
+  a re-render of the largest fragment in the product — and the ban meant the only honest
+  fix was making the server faster. Mechanism 8 is the amendment, and the boundary is
+  exactly this: **an exit may run off the critical path, and nowhere else.** Anything
+  that would make htmx wait is still refused.
 - **No page cross-fade on navigation.** Cross-document view transitions were considered
   and rejected: page switching is bound to keys 1–9 and fired tens of times a day, and
   a whole-page fade is the single most effective way to make a keyboard-driven app feel

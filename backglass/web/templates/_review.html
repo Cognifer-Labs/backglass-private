@@ -39,10 +39,13 @@
             <p class="why">{{ r['author'] }} said &ldquo;{{ r['quote'] }}&rdquo;
               &middot; {{ r['occurred_at'][:10] }}</p>
             <div class="acts">
-              <button class="btn accept"
+              {# Either answer takes the question off the queue, so the row goes at the
+                 click — §9 mechanism 8. The queue runs to 72 rows and is worked in
+                 streaks; waiting a quarter second per answer is the whole session. #}
+              <button class="btn accept" data-vanish=".rrow"
                       hx-post="/review/recheck/{{ r['id'] }}/confirm"
                       hx-target="#panel-review" hx-swap="outerHTML">Mark {{ r['verdict'] }}</button>
-              <button class="btn reject"
+              <button class="btn reject" data-vanish=".rrow"
                       hx-post="/review/recheck/{{ r['id'] }}/dismiss"
                       hx-target="#panel-review" hx-swap="outerHTML">Still open</button>
             </div>
@@ -68,12 +71,12 @@
           <p class="b2">{{ '%.0f'|format(r['confidence'] * 100) }}% confident · {{ r['starts_at']|when(d.today) }}</p>
           <div class="acts">
             <button class="btn accept" hx-post="/review/plan/{{ r['id'] }}/accept"
-                    hx-target="#panel-review" hx-swap="outerHTML">Accept</button>
+                    hx-target="#panel-review" hx-swap="outerHTML" data-vanish=".rev">Accept</button>
           </div>
           <div class="why">
             <span class="lbl">or</span>
             <button class="btn reject" hx-post="/review/plan/{{ r['id'] }}/reject"
-                    hx-target="#panel-review" hx-swap="outerHTML">Not a plan</button>
+                    hx-target="#panel-review" hx-swap="outerHTML" data-vanish=".rev">Not a plan</button>
           </div>
         </div>
         {% else %}
@@ -111,7 +114,7 @@
              turns the queue into a rubber stamp. Same class, same size, same order weight. #}
           <div class="acts">
             <button class="btn accept" hx-post="/review/{{ r['id'] }}/accept"
-                    hx-target="#panel-review" hx-swap="outerHTML">Accept</button>
+                    hx-target="#panel-review" hx-swap="outerHTML" data-vanish=".rev">Accept</button>
           </div>
           {# Rejecting IS choosing a category — docs/11 §4 lists four buttons and no fifth.
              There used to be a plain "Reject" here as well, sitting above these and
@@ -127,7 +130,8 @@
               {% for key, label in [('wrong_date','Wrong date'), ('not_a_commitment','Not a commitment'),
                                     ('not_mine','Not mine'), ('already_done','Already done')] %}
                 <button class="btn reject" hx-post="/review/{{ r['id'] }}/reject/{{ key }}"
-                        hx-target="#panel-review" hx-swap="outerHTML">{{ label }}</button>
+                        hx-target="#panel-review" hx-swap="outerHTML"
+                        data-vanish=".rev">{{ label }}</button>
               {% endfor %}
             </div>
           </div>

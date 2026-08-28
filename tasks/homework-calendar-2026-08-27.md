@@ -77,3 +77,66 @@ documented downgrade in this connector's own module docstring, not a new bug.
 - [ ] 6. `backglass app-update` so the desktop app carries the new template. Needs a
       clean tree, so it waits on the commit.
 
+---
+
+# Making the writes feel instant (same day, second ask)
+
+Owner: *"make the app more responsive: when i drop some thing it should dissappear among
+other basic animation need to be added"*.
+
+**What was measured before changing anything.** Drop is two clicks (confirm.js arms the
+first), and after the second: a POST, then a re-render of `#panel-board` — the largest
+fragment in the product — then an `outerHTML` swap of the whole panel. `/` renders in
+260ms and weighs 425KB with 1185 `hx-post` controls on it. So the card the owner just
+dropped sat there for a quarter second, and then the entire board replaced itself. The
+write was never slow in the sense that matters; it was slow in the only sense the owner
+can see.
+
+**What was added.** §9 mechanism 8 — the row leaves at the click, and the write goes on
+underneath it. Optimistic **view**, never optimistic **record**: the request is still
+sent, the panel still swaps, and the swap still wins every disagreement. A refused write
+puts the row back and `oops.js` says why.
+
+Marked with `data-vanish` in the template, never inferred from the URL: Resolve and Drop
+on a commitment card, Received on an awaiting row, every answer in the review queue, and
+a roadmap's unlog ×. **Snooze deliberately carries none** — it moves a commitment to
+tomorrow and the card stays on the board, so vanishing it would show a row leaving and
+the swap putting it straight back.
+
+**This amends §9's first omission**, which read "Nothing leaves". The reason it gave was
+latency — an exit inside the swap makes htmx wait, and `defaultSwapDelay` is 0 for
+exactly that reason — and that reason is untouched: `.htmx-swapping` still carries no
+transition and `test_nothing_animates_on_the_way_out` still holds it. This exit runs
+*before* the request, in time the owner was going to spend waiting anyway. The boundary
+that replaces the ban: **an exit may run off the critical path and nowhere else.**
+
+## Two defects found by review, both real
+
+1. **`hidden` did not hide.** The attribute's `display:none` is in the UA stylesheet, so
+   `.row{display:flex}` and `.card{display:flex}` beat it. The row went to zero opacity
+   and kept its space; the gap closed only when the swap landed, and under
+   `prefers-reduced-motion` — where the fade is skipped on purpose — the click produced
+   no feedback at all. Measured in a headless browser both ways: without the rule the
+   hidden row still occupied 136px and pushed its neighbour from 148 to 296.
+   `[hidden]{display:none !important}` in dashboard.css, with
+   `test_the_hidden_attribute_actually_hides` holding it.
+
+2. **One `pending` slot restored the wrong row.** Two exits are in flight whenever the
+   review queue is worked in streaks, and a write landing during the half-hourly sync
+   waits on the lock (the 2026-08-11 lesson). The second click overwrote the slot, so a
+   refusal resurrected whichever row was in it — one row back that was gone, one still
+   missing that the ledger holds open. Now a `Set`, and `restore` takes the row from the
+   failing request's own `detail.elt`. Verified live: server killed, two Resolves
+   clicked, both rows returned, ledger unchanged.
+
+## Verified live, not just tested
+
+Against a scratch ledger, driving Safari: Drop → the card goes and the ledger says
+`dropped`; server killed → Resolve → the row comes back with "▲ Not saved" and nothing
+written. 27 motion tests, full suite green.
+
+## Known leftover
+
+The sidebar's open-commitment count is rendered on page load and is not in any swapped
+fragment, so it is stale until the next navigation — before this change and after it.
+Worth fixing as an out-of-band swap; not part of this.
