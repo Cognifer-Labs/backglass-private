@@ -83,7 +83,11 @@
       <a href="/schedule?date={{ prev }}">← prev</a> ·
       <a href="/schedule">today</a> ·
       <a href="/schedule?date={{ next }}">next →</a> ·
-      <a href="/schedule/week?start={{ week_start }}">week</a>
+      <a href="/schedule/week?start={{ week_start }}">week</a> ·
+      {# The third register. Day, week and month each name the other two — a month
+         reachable only from the sidebar is a month nobody opens from the day they are
+         standing in. #}
+      <a href="/homework?month={{ view.day.strftime('%Y-%m') }}">month</a>
     </p>
 
     {% if view.empty %}

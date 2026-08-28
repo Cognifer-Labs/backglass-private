@@ -39,6 +39,10 @@ def build_router(
         request: Request,
         month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$"),
         only: str | None = Query(None, pattern=r"^(coursework|all)$"),
+        # The course code as the registrar issues it, in any of the spellings a link
+        # might carry it in — `CHM 113`, `CHM113`, `chm113`. Anything else is not a
+        # course and is refused at the door rather than silently emptying the page.
+        course: str | None = Query(None, pattern=r"^[A-Za-z]{2,4}[ -]?\d{3}$"),
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:
         now = today()
@@ -55,6 +59,7 @@ def build_router(
             first,
             today=now,
             only_coursework=only == "coursework",
+            course=course,
         )
         return templates.TemplateResponse(
             request,

@@ -26,9 +26,14 @@
   <a class="hwi q-{{ q.kind }}{% if q.overdue %} late{% endif %}"
      {% if q.href %}href="{{ q.href }}"{% endif %}
      {% if q.url %}target="_blank" rel="noreferrer"{% endif %}
-     title="{% if q.course %}{{ q.course }} · {% endif %}{{ q.title }}{% if q.minutes %} · {{ q.minutes }}m{% endif %}{% if q.kind == 'unlinked' %} · no commitment behind this{% endif %}">
+     title="{% if q.course %}{{ q.course }} · {% endif %}{{ q.title }}{% if q.minutes %} · {{ q.minutes }}m{% endif %}{% if q.kind == 'unlinked' %} · no commitment behind this{% endif %}{% if q.placed %} · the planner put this on {{ q.placed.label }}{% endif %}">
     <span class="t">{% if q.overdue %}▲{% elif q.kind == 'unlinked' %}?{% elif q.done %}✓{% else %}{{ q.time_label or '●' }}{% endif %}</span
-    ><span class="n">{% if q.course %}<i>{{ q.course }}</i> {% endif %}{{ q.title }}</span>
+    ><span class="n">{% if q.course %}<i>{{ q.course }}</i> {% endif %}{{ q.title }}</span
+    >{#- The day a block was actually made for it. A deadline says when work is owed; a
+         block says when it happens, and only the second one gets it done. Not a link:
+         the tile is already one, and an anchor inside an anchor is not markup. The day
+         number at the top of every cell is the way to that day. -#}
+    {%- if q.placed %}<b class="pl" aria-label="planned for {{ q.placed.label }}">▸{{ q.placed.label }}</b>{% endif %}
   </a>
 {%- endmacro %}
 
@@ -37,17 +42,54 @@
   {{ m.banner('Homework', month.label) }}
   <div class="inner">
 
+    {# The filters travel with the pager. A month walked while filtered to CHM 113 that
+       silently dropped the filter on the next arrow would be a page changing the question
+       under the owner — `keep` carries both parameters through every link here. #}
+    {#- A raw `&`, not `&amp;`: this is a variable, so Jinja escapes it once on the way
+        out. Writing the entity here escapes it twice, the href reads `&amp;only=`, and
+        the browser sends a parameter literally named `amp;only` — the filter silently
+        stops travelling with the pager, which is the failure this line exists to prevent. -#}
+    {%- set keep = ('&only=coursework' if month.only_coursework else '')
+                 ~ ('&course=' ~ month.course|replace(' ', '+') if month.course else '') -%}
     <p class="pager quiet">
-      <a href="/homework?month={{ month.prev.strftime('%Y-%m') }}{% if month.only_coursework %}&amp;only=coursework{% endif %}">← prev</a> ·
-      <a href="/homework{% if month.only_coursework %}?only=coursework{% endif %}">this month</a> ·
-      <a href="/homework?month={{ month.next.strftime('%Y-%m') }}{% if month.only_coursework %}&amp;only=coursework{% endif %}">next →</a> ·
+      <a href="/homework?month={{ month.prev.strftime('%Y-%m') }}{{ keep }}">← prev</a> ·
+      <a href="/homework?month={{ month.today.strftime('%Y-%m') }}{{ keep }}">this month</a> ·
+      <a href="/homework?month={{ month.next.strftime('%Y-%m') }}{{ keep }}">next →</a> ·
       {% if month.only_coursework %}
-        <a href="/homework?month={{ month.first.strftime('%Y-%m') }}">show everything due</a>
+        <a href="/homework?month={{ month.first.strftime('%Y-%m') }}{% if month.course %}&amp;course={{ month.course|replace(' ', '+') }}{% endif %}">show everything due</a>
       {% else %}
-        <a href="/homework?month={{ month.first.strftime('%Y-%m') }}&amp;only=coursework">coursework due only</a>
+        <a href="/homework?month={{ month.first.strftime('%Y-%m') }}&amp;only=coursework{% if month.course %}&amp;course={{ month.course|replace(' ', '+') }}{% endif %}">coursework due only</a>
       {% endif %} ·
-      <a href="/schedule/week">week</a>
+      {# Day, week, month: the three registers, and each names the other two. Until this
+         line the month was reachable from the sidebar and from nowhere the owner was
+         actually standing when they wanted it. #}
+      <a href="/schedule?date={{ month.today.isoformat() }}">day</a> ·
+      <a href="/schedule/week?start={{ month.today.isoformat() }}">week</a>
     </p>
+
+    {# One course, or all of them. `.afilter` is the Activity page's filter strip, reused
+       rather than reinvented: it is the same object — plain links whose state is the URL,
+       so a filtered month is a thing the owner can bookmark. #}
+    {# The filtered course is always a chip, even when this month holds nothing of it —
+       a strip that disappeared on an empty month would strand the owner inside a filter
+       with no way back to `all`, which is exactly when they most want out. #}
+    {%- set chips = month.courses if month.course in month.courses
+                    else (month.courses|list + [month.course])|sort -%}
+    {% if chips %}
+      <div class="afilter" id="panel-homework-courses">
+        <p class="lane">course</p>
+        <a href="/homework?month={{ month.first.strftime('%Y-%m') }}{% if month.only_coursework %}&amp;only=coursework{% endif %}"
+           class="b2{% if not month.course %} on{% endif %}">all</a>
+        {% for name in chips %}
+          <a href="/homework?month={{ month.first.strftime('%Y-%m') }}&amp;course={{ name|replace(' ', '+') }}{% if month.only_coursework %}&amp;only=coursework{% endif %}"
+             class="b2{% if month.course == name %} on{% endif %}">{{ name }}</a>
+        {% endfor %}
+        {% if month.course %}
+          <p class="lane">the rest of it</p>
+          <a class="b2" href="/classes#panel-course-{{ month.slug }}">{{ month.course }} on Classes</a>
+        {% endif %}
+      </div>
+    {% endif %}
 
     <div class="hwg" id="panel-homework-grid">
       {% for name in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] %}
@@ -93,6 +135,70 @@
       {% endfor %}
     </div>
 
+    {# docs/06 §Empty states, and it is a real state rather than a defensive one: a
+       course filter on a month that holds none of it draws forty-two empty framed cells
+       and three zeroes, which reads as broken rather than as "nothing due". Say which
+       of the two it is. #}
+    {% if month.empty %}
+      <p class="empty" id="panel-homework-empty">Nothing due and nothing on the calendar
+        {%- if month.course %} for {{ month.course }}{% endif %} in {{ month.label }}.
+        {%- if month.course %} <a href="/homework?month={{ month.first.strftime('%Y-%m') }}">Every course</a>,
+        or {% else %} Try {% endif %}
+        <a href="/homework?month={{ month.next.strftime('%Y-%m') }}{% if month.course %}&amp;course={{ month.course|replace(' ', '+') }}{% endif %}">the next month</a>.</p>
+    {% endif %}
+
+    {# What the planner has actually made room for. The other half of the link this page
+       exists to make: the grid says when work is owed, and this says whether anything
+       has decided when it happens. Owner, 2026-08-27: "other assignments havent been
+       scheduled" — true at the time, and unanswerable, because the two facts lived on
+       two surfaces that never referred to each other. #}
+    <div class="hwrec" id="panel-homework-planner">
+      <p class="lane">what the planner has made room for</p>
+      {% if month.planned_through is none %}
+        <p class="empty">No plan exists for any day yet. The planner runs at 5:45 each
+          morning; <span class="kbd">backglass plan</span> runs it now.</p>
+      {% else %}
+        <p class="hwsum">The planner has reached <b>{{ month.planned_through.strftime('%-d %b') }}</b>.
+          <b>{{ month.planned_count }}</b> item{{ '' if month.planned_count == 1 else 's' }}
+          on this month{% if month.course %} in {{ month.course }}{% endif %}
+          {{ 'has' if month.planned_count == 1 else 'have' }} a block behind
+          {{ 'it' if month.planned_count == 1 else 'them' }}{% if month.unplanned %},
+          and <b>{{ month.unplanned|length }}</b> due on or before that day
+          {{ 'does' if month.unplanned|length == 1 else 'do' }} not{% endif %}.</p>
+        {# The bound, printed with the number it bounds. Past the horizon "no block" is
+           not a finding — the planner has not looked at those days yet, and a page that
+           counted them would report the whole of next month as unscheduled every time
+           it was opened. 2026-08-27: check what a measurement's own bounds are before
+           believing it. #}
+        <p class="hwbound">Counted only up to that day. Work due after it is not
+          unscheduled — it is unconsidered, because the planner proposes one day at a
+          time and has not reached it.</p>
+        {% if month.unplanned %}
+          {# Ten, then a fold. A capped list that says nothing about the cap is the
+             silent truncation this project refuses; a <details> carrying the remainder
+             is a cap the owner can open. Each row goes to the day it is due, which is
+             where a plan for it would have to be made. #}
+          {% macro missing(q) -%}
+            <a class="hwi q-commitment{% if q.overdue %} late{% endif %}"
+               href="/schedule?date={{ q.day.isoformat() }}"
+               title="{{ q.title }} — due {{ q.day.strftime('%-d %b') }}, no block on any live plan">
+              <span class="t">{{ q.day.strftime('%-d %b') }}</span
+              ><span class="n">{% if q.course %}<i>{{ q.course }}</i> {% endif %}{{ q.title }}</span>
+            </a>
+          {%- endmacro %}
+          <div class="hwmiss">
+            {% for q in month.unplanned[:10] %}{{ missing(q) }}{% endfor %}
+            {% if month.unplanned|length > 10 %}
+              <details class="hwmore">
+                <summary>{{ month.unplanned|length - 10 }} more with no block</summary>
+                {% for q in month.unplanned[10:] %}{{ missing(q) }}{% endfor %}
+              </details>
+            {% endif %}
+          </div>
+        {% endif %}
+      {% endif %}
+    </div>
+
     {# The reconciliation. 2026-08-27's lesson: "for anything derived, count the input
        rows against the output rows — silence is the one failure mode neither the ledger
        nor the owner can see." Twenty-two assignments were invisible on every surface for
@@ -100,7 +206,8 @@
     <div class="hwrec" id="panel-homework-audit">
       <p class="lane">what this month was built from</p>
       <p class="hwsum">
-        <b>{{ month.counts.assignments }}</b> Canvas assignments due this month ·
+        <b>{{ month.counts.assignments }}</b> Canvas assignments due this month{% if month.course %}
+        in {{ month.course }}{% endif %} ·
         <b>{{ month.counts.linked }}</b> with a commitment behind them ·
         <b>{{ month.counts.unlinked }}</b> without.
         {%- if month.counts.unlinked %}
@@ -108,7 +215,8 @@
           is real, nothing was extracted from it, so no other surface knows about them and
           the planner has never placed one.
         {%- else %}
-          Every dated assignment this month has a commitment behind it.
+          Every dated assignment this month{% if month.course %} in {{ month.course }}{% endif %}
+          has a commitment behind it.
         {%- endif %}
       </p>
       {# The bound of the measurement, stated with it. 2026-08-27: "when a measurement

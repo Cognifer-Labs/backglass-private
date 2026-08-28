@@ -69,6 +69,25 @@ class Event:
 
 
 @dataclass(frozen=True)
+class Placement:
+    """The day the planner actually put this work on, and how it went.
+
+    The link the page exists to make. 2026-08-27, the owner: "other assignments havent
+    been scheduled" — which was true, and unanswerable, because a due date and a plan
+    lived on two surfaces that never referred to each other. A deadline is a claim about
+    when work is owed; a block is a claim about when it happens. Only the second one gets
+    the work done, and until now nothing said which obligations had one.
+    """
+
+    day: date
+    outcome: str
+
+    @property
+    def label(self) -> str:
+        return self.day.strftime("%-d %b")
+
+
+@dataclass(frozen=True)
 class Due:
     """One thing owed on a day, and the row it can be checked against.
 
@@ -81,6 +100,10 @@ class Due:
     kind: str
     title: str
     course: str
+    #: The day it is owed, always. `at` is the hour and is often absent — most of the
+    #: ledger's deadlines are a date and no time — so anything that has to print a date
+    #: outside the cell it was drawn in reads this instead, rather than an em-dash.
+    day: date
     at: datetime | None
     minutes: int | None
     url: str
@@ -88,6 +111,11 @@ class Due:
     commitment_id: int | None
     overdue: bool = False
     done: bool = False
+    #: Where the planner put it, if it put it anywhere. `None` is a real answer and the
+    #: interesting one: work that is due and has no block is work nothing has made room
+    #: for. An unlinked assignment can never have one — it has no commitment for a block
+    #: to point at, which is a second reason the audit under the grid matters.
+    placed: Placement | None = None
 
     @property
     def time_label(self) -> str:
@@ -157,10 +185,61 @@ class Month:
     counts: Counts
     unlinked: list[Due]
     only_coursework: bool
+    #: The course this month is filtered to, normalised — `""` when it is not filtered.
+    course: str = ""
+    #: The last day a live plan exists for. Every claim on this page about what is or is
+    #: not scheduled stops here, and the page says so.
+    planned_through: date | None = None
+    #: Every course with something on this month, for the chip row. Read off the grid
+    #: after filtering would give one entry, so it is built before the filter is applied.
+    courses: tuple[str, ...] = ()
 
     @property
     def label(self) -> str:
         return self.first.strftime("%B %Y")
+
+    @property
+    def slug(self) -> str:
+        """`chm113` — the anchor `classes.html` gives that course's card."""
+        return self.course.replace(" ", "").lower()
+
+    @property
+    def unplanned(self) -> list[Due]:
+        """Work that is due inside the planned horizon and that no live plan holds.
+
+        Bounded by `planned_through`, and the bound is the whole point: past it the
+        planner has not looked yet, so "no block" means nothing there. Open commitments
+        only — a finished one needs no block, and an unlinked assignment cannot have one
+        because there is no commitment for a block to point at, which the audit under the
+        grid says in its own words.
+        """
+        if self.planned_through is None:
+            return []
+        return [
+            item
+            for week in self.weeks
+            for day in week
+            for item in day.due
+            if day.in_month
+            and day.day <= self.planned_through
+            and item.kind == "commitment"
+            and item.placed is None
+        ]
+
+    @property
+    def planned_count(self) -> int:
+        return sum(
+            1
+            for week in self.weeks
+            for day in week
+            for item in day.due
+            if day.in_month and item.placed is not None
+        )
+
+    @property
+    def empty(self) -> bool:
+        """Nothing at all on the month as it is being shown, filters included."""
+        return self.due_count == 0 and self.event_count == 0
 
     @property
     def due_count(self) -> int:
@@ -244,6 +323,17 @@ def _due_order(item: Due) -> tuple[int, int, str]:
     )
 
 
+def subject(label: str) -> str:
+    """`CHM 113` out of `CHM 113 (Lab)` — the course, without which shell of it.
+
+    The filter is by course and never by component. A student asking "what does CHM 113
+    want from me this month" means the lecture, the lab and the recitation; splitting
+    them would hide two thirds of the answer behind a chip they did not know to click.
+    """
+    parsed = subject_of(label)
+    return parsed[0] if parsed is not None else ""
+
+
 def _course_label(course: str, what: str) -> str:
     """`CHM 113 (Lab)` from a Canvas course code, or from the commitment's own words.
 
@@ -289,6 +379,66 @@ def _assignments(
     return by_item, dated
 
 
+def _planned_through(conn: sqlite3.Connection) -> date | None:
+    """The last day a live plan exists for, or None if the planner has never run.
+
+    The bound on every claim this page makes about scheduling. The planner proposes one
+    day at a time, at 5:45 each morning, so on 27 August it has reached 8 September and
+    everything after that is not unscheduled — it is unconsidered. Reporting "101 items
+    unplanned" for a month the planner has not walked yet is the windowed-measurement
+    failure of 2026-08-27 in a new place: a number that describes where the measurement
+    stops and reads as a description of the work.
+    """
+    row = conn.execute(
+        "SELECT MAX(local_date) AS last FROM day_plan "
+        "WHERE user_id = ? AND status != 'superseded'",
+        (USER_ID,),
+    ).fetchone()
+    try:
+        return date.fromisoformat(str(row["last"])) if row and row["last"] else None
+    except ValueError:
+        return None
+
+
+def _placements(conn: sqlite3.Connection) -> dict[int, Placement]:
+    """Every commitment the live plans have a block for, and the first day it sits on.
+
+    Not bounded to the grid, deliberately. A commitment due on the 16th may be planned
+    for the 8th — that is the planner working, and a month page that only looked inside
+    its own dates would report it unplanned. The whole plan table is 127 days and a
+    handful of blocks each.
+
+    `status != 'superseded'` is the same predicate `planner.current_plan_id` and the
+    brief read a day's plan with: a replanned day leaves its old rows behind and counting
+    them would report work as scheduled twice, on a day whose plan no longer exists.
+
+    First day, when a commitment is split across several sittings. The question the page
+    asks is "has anything made room for this", and the earliest block is the soonest
+    honest answer to it.
+    """
+    rows = conn.execute(
+        "SELECT b.commitment_id, d.local_date, b.outcome "
+        "FROM plan_block b JOIN day_plan d ON d.id = b.day_plan_id "
+        "WHERE d.user_id = ? AND d.status != 'superseded' "
+        "  AND b.commitment_id IS NOT NULL "
+        "ORDER BY d.local_date, b.starts_at",
+        (USER_ID,),
+    ).fetchall()
+    out: dict[int, Placement] = {}
+    for row in rows:
+        key = int(row["commitment_id"])
+        if key in out:
+            continue
+        try:
+            out[key] = Placement(
+                day=date.fromisoformat(str(row["local_date"])),
+                outcome=str(row["outcome"] or "pending"),
+            )
+        except ValueError:
+            continue
+    return out
+
+
 def load(
     conn: sqlite3.Connection,
     settings: Settings,
@@ -297,6 +447,7 @@ def load(
     today: date,
     now: datetime | None = None,
     only_coursework: bool = False,
+    course: str | None = None,
 ) -> Month:
     """The month grid, filled.
 
@@ -307,6 +458,11 @@ def load(
     grid_first, grid_last = weeks[0][0], weeks[-1][-1]
     tz = timezones.active_tz(settings, today)
     moment = now or timezones.local_now(settings)
+    # Normalised through the same regex the label was built with, so `?course=chm113`
+    # and `?course=CHM+113` are the one course they obviously are.
+    wanted = subject(course or "")
+    placements = _placements(conn)
+    horizon = _planned_through(conn)
 
     by_item, dated_assignments = _assignments(conn, tz, grid_first, grid_last)
 
@@ -331,6 +487,10 @@ def load(
 
     due: dict[date, list[Due]] = {}
     backed: set[int] = set()
+    #: Built as rows are read rather than off the finished grid, because the finished
+    #: grid has been filtered to one course and would report only that one — leaving the
+    #: chip row with no way back to the others.
+    present: set[str] = set()
     for row in commitments:
         day, at = _local(str(row["due_at"]), tz)
         if day is None or not (grid_first <= day <= grid_last):
@@ -342,7 +502,11 @@ def load(
         course = _course_label(
             str(assignment["course"]) if assignment is not None else "", str(row["what"])
         )
+        if course:
+            present.add(subject(course))
         if only_coursework and not course:
+            continue
+        if wanted and subject(course) != wanted:
             continue
         done = str(row["status"]) == "done"
         due.setdefault(day, []).append(
@@ -350,6 +514,7 @@ def load(
                 kind="done" if done else "commitment",
                 title=str(row["what"]),
                 course=course,
+                day=day,
                 at=at,
                 minutes=row["estimated_minutes"],
                 url=str(assignment["url"] or "") if assignment is not None else "",
@@ -357,6 +522,7 @@ def load(
                 commitment_id=int(row["id"]),
                 overdue=not done and _is_late(day, at, today, moment),
                 done=done,
+                placed=placements.get(int(row["id"])),
             )
         )
 
@@ -365,22 +531,34 @@ def load(
     # register and counted underneath.
     unlinked: list[Due] = []
     in_month = 0
+    linked = 0
     for day, row in dated_assignments:
         item_id = row["source_item_id"]
-        if item_id is not None and int(item_id) in backed:
-            if day.month == first.month and day.year == first.year:
-                in_month += 1
+        course = _course_label(str(row["course"] or ""), str(row["title"]))
+        if course:
+            present.add(subject(course))
+        # The count is about what this page is showing. A month narrowed to CHM 113 that
+        # went on reporting all 82 of the month's assignments would be answering a
+        # question the owner had just navigated away from — and the unfiltered view still
+        # carries the whole reconciliation, which is where the gap has to be visible.
+        if wanted and subject(course) != wanted:
             continue
-        if day.month == first.month and day.year == first.year:
+        counted = day.month == first.month and day.year == first.year
+        if item_id is not None and int(item_id) in backed:
+            if counted:
+                in_month += 1
+                linked += 1
+            continue
+        if counted:
             in_month += 1
         _, at = _local(str(row["due_at"]), tz)
-        course = _course_label(str(row["course"] or ""), str(row["title"]))
         if only_coursework and not course:
             continue
         entry = Due(
             kind="unlinked",
             title=str(row["title"]),
             course=course,
+            day=day,
             at=at,
             minutes=row["effort_minutes"],
             url=str(row["url"] or ""),
@@ -413,6 +591,11 @@ def load(
                     allday=event.allday,
                 )
                 for event in calendar.get(day, [])
+                # A month filtered to one course is that course's whole month — its
+                # lectures and labs as well as its deadlines. Showing every other
+                # class's meetings beside one course's homework is the question nobody
+                # asked.
+                if not wanted or subject(event.title) == wanted
             ]
             row_days.append(
                 Day(
@@ -429,10 +612,6 @@ def load(
             )
         filled.append(row_days)
 
-    linked = sum(1 for day, row in dated_assignments
-                 if row["source_item_id"] is not None
-                 and int(row["source_item_id"]) in backed
-                 and day.month == first.month and day.year == first.year)
     return Month(
         first=first,
         weeks=filled,
@@ -442,4 +621,7 @@ def load(
         counts=Counts(assignments=in_month, linked=linked, unlinked=in_month - linked),
         unlinked=unlinked,
         only_coursework=only_coursework,
+        course=wanted,
+        planned_through=horizon,
+        courses=tuple(sorted(present)),
     )

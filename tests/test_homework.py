@@ -293,3 +293,227 @@ def test_an_unlinked_assignment_is_late_on_the_same_rule(conn, settings) -> None
 
     entry = _cells(_load(conn, settings))[date(2026, 9, 4)].due[0]
     assert (entry.kind, entry.overdue) == ("unlinked", True)
+
+
+# ── the links out, and the links in ──────────────────────────────────────────
+#
+# A month page nothing points at is a page nobody opens. These hold the three joins the
+# page was wired with: the course it can be narrowed to, the plan block that says the
+# work has actually been made room for, and the pagers on the other two registers.
+
+def _plan(
+    conn: sqlite3.Connection,
+    *,
+    day: str,
+    commitment_id: int,
+    status: str = "proposed",
+    outcome: str = "pending",
+) -> int:
+    conn.execute(
+        "INSERT INTO day_plan (user_id, local_date, tz, capacity_minutes, generated_at,"
+        " status) VALUES (?, ?, 'America/Phoenix', 300, ?, ?)",
+        (USER_ID, day, now_iso(), status),
+    )
+    plan = int(conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"])
+    conn.execute(
+        "INSERT INTO plan_block (day_plan_id, user_id, starts_at, ends_at, kind,"
+        " commitment_id, title, outcome)"
+        " VALUES (?, ?, ?, ?, 'work', ?, 'block', ?)",
+        (plan, USER_ID, f"{day}T09:00:00-07:00", f"{day}T09:30:00-07:00",
+         commitment_id, outcome),
+    )
+    conn.commit()
+    return plan
+
+
+def test_a_course_narrows_the_month_to_that_course(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    chem = _item(conn, source="canvas:ics", external="c1", title="Prelab")
+    _assignment(conn, external="c1", title="Prelab", due_at="2026-09-14", item_id=chem)
+    _commitment(conn, item_id=chem, what="Complete the prelab quiz", due_at="2026-09-14")
+    bio = _item(conn, source="canvas:ics", external="c2", title="Reading quiz")
+    _assignment(conn, external="c2", title="Reading quiz", due_at="2026-09-14",
+                course="2026FallC-T-BIO181-60069", item_id=bio)
+    _commitment(conn, item_id=bio, what="Complete the BIO 181 reading quiz",
+                due_at="2026-09-14")
+
+    both = _cells(_load(conn, settings))[date(2026, 9, 14)].due
+    assert len(both) == 2
+    only = _cells(_load(conn, settings, course="CHM 113"))[date(2026, 9, 14)].due
+    assert [q.course for q in only] == ["CHM 113 (Lab)"]
+
+
+def test_a_course_keeps_its_own_lab_and_recitation(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """The filter is by course and never by component. A student asking what CHM 113
+    wants from them this month means the lecture, the lab and the recitation — splitting
+    those hides two thirds of the answer behind a chip nobody knew to click."""
+    for n, (course, what) in enumerate([
+        ("2026FallC-T-CHM113-60105", "Complete the CHM 113 chapter quiz"),
+        ("2026FallC-T-CHM113-LABORATORY", "Submit the CHM 113 lab report"),
+        ("2026FallC-T-CHM113-Recitation", "Complete the CHM 113 recitation activity"),
+    ]):
+        item = _item(conn, source="canvas:ics", external=f"k{n}", title=what)
+        _assignment(conn, external=f"k{n}", title=what, due_at="2026-09-14",
+                    course=course, item_id=item)
+        _commitment(conn, item_id=item, what=what, due_at="2026-09-14")
+
+    entries = _cells(_load(conn, settings, course="CHM 113"))[date(2026, 9, 14)].due
+    assert sorted(q.course for q in entries) == [
+        "CHM 113", "CHM 113 (Lab)", "CHM 113 (Recitation)"
+    ]
+
+
+def test_the_course_is_read_in_any_spelling_a_link_carries(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    item = _item(conn, source="canvas:ics", external="c3", title="Prelab")
+    _assignment(conn, external="c3", title="Prelab", due_at="2026-09-14", item_id=item)
+    _commitment(conn, item_id=item, what="Complete the prelab quiz", due_at="2026-09-14")
+    for spelling in ("CHM 113", "chm113", "CHM113", "chm 113"):
+        month = _load(conn, settings, course=spelling)
+        assert month.course == "CHM 113", spelling
+        assert month.slug == "chm113"
+        assert _cells(month)[date(2026, 9, 14)].due
+
+
+def test_the_chip_row_still_names_the_courses_it_filtered_away(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """Read off the finished grid this would list one course — the one already chosen —
+    and the owner would have no way back to the others."""
+    chem = _item(conn, source="canvas:ics", external="c4", title="Prelab")
+    _assignment(conn, external="c4", title="Prelab", due_at="2026-09-14", item_id=chem)
+    _commitment(conn, item_id=chem, what="Complete the prelab quiz", due_at="2026-09-14")
+    bio = _item(conn, source="canvas:ics", external="c5", title="Reading quiz")
+    _assignment(conn, external="c5", title="Reading quiz", due_at="2026-09-14",
+                course="2026FallC-T-BIO181-60069", item_id=bio)
+    _commitment(conn, item_id=bio, what="Complete the BIO 181 reading quiz",
+                due_at="2026-09-14")
+
+    assert _load(conn, settings, course="CHM 113").courses == ("BIO 181", "CHM 113")
+
+
+def test_the_count_under_the_grid_counts_what_the_grid_shows(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """A month narrowed to one course that went on reporting all of the month's
+    assignments would be answering the question the owner just navigated away from."""
+    for n, course in enumerate([
+        "2026FallC-T-CHM113-LABORATORY", "2026FallC-T-BIO181-60069",
+        "2026FallC-T-BIO181-60069",
+    ]):
+        item = _item(conn, source="canvas:ics", external=f"n{n}", title=f"Task {n}")
+        _assignment(conn, external=f"n{n}", title=f"Task {n}", due_at="2026-09-14",
+                    course=course, item_id=item)
+
+    assert _load(conn, settings).counts == homework.Counts(
+        assignments=3, linked=0, unlinked=3
+    )
+    assert _load(conn, settings, course="BIO 181").counts == homework.Counts(
+        assignments=2, linked=0, unlinked=2
+    )
+
+
+def test_a_commitment_the_planner_placed_says_which_day(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """The link the page exists to make. A deadline is a claim about when work is owed
+    and a block is a claim about when it happens; only the second gets it done."""
+    item = _item(conn, source="canvas:ics", external="p1", title="Lab report")
+    _assignment(conn, external="p1", title="Lab report", due_at="2026-09-14", item_id=item)
+    cid = _commitment(conn, item_id=item, what="Submit the lab report", due_at="2026-09-14")
+    _plan(conn, day="2026-09-11", commitment_id=cid)
+
+    entry = _cells(_load(conn, settings))[date(2026, 9, 14)].due[0]
+    assert entry.placed is not None
+    assert (entry.placed.day, entry.placed.label) == (date(2026, 9, 11), "11 Sep")
+
+
+def test_a_superseded_plan_does_not_count_as_scheduled(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """A replanned day leaves its old rows behind. Counting them reports work as
+    scheduled on a day whose plan no longer exists — the same `status != 'superseded'`
+    predicate `planner.current_plan_id` and the brief read a day's plan with."""
+    item = _item(conn, source="canvas:ics", external="p2", title="Lab report")
+    cid = _commitment(conn, item_id=item, what="Submit the CHM 113 lab report",
+                      due_at="2026-09-14")
+    _plan(conn, day="2026-09-11", commitment_id=cid, status="superseded")
+
+    month = _load(conn, settings)
+    assert _cells(month)[date(2026, 9, 14)].due[0].placed is None
+    assert month.planned_through is None
+
+
+def test_unplanned_stops_where_the_planner_has_reached(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """The bound is the finding. The planner proposes one day at a time, so past its
+    horizon "no block" means it has not looked yet — and a page that counted those would
+    report the whole of next month as unscheduled every time it was opened.
+    """
+    near = _item(conn, source="canvas:ics", external="p3", title="Near")
+    near_id = _commitment(conn, item_id=near, what="Do the near CHM 113 thing",
+                          due_at="2026-09-08")
+    far = _item(conn, source="canvas:ics", external="p4", title="Far")
+    _commitment(conn, item_id=far, what="Do the far CHM 113 thing", due_at="2026-09-25")
+    placed = _item(conn, source="canvas:ics", external="p5", title="Placed")
+    placed_id = _commitment(conn, item_id=placed, what="Do the placed CHM 113 thing",
+                            due_at="2026-09-09")
+    _plan(conn, day="2026-09-10", commitment_id=placed_id)
+
+    month = _load(conn, settings)
+    assert month.planned_through == date(2026, 9, 10)
+    assert month.planned_count == 1
+    # The near one is inside the horizon and has no block. The far one is not a finding.
+    assert [q.commitment_id for q in month.unplanned] == [near_id]
+
+
+def test_the_month_is_reachable_from_the_pages_beside_it() -> None:
+    """A page nothing points at is a page nobody opens. Day, week and Classes each name
+    the month; the month names the day and the week back."""
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "backglass" / "web" / "templates"
+    assert "/homework?month=" in (root / "schedule.html").read_text()
+    assert "/homework?month=" in (root / "schedule_week.html").read_text()
+    assert "/homework?course=" in (root / "classes.html").read_text()
+    month = (root / "homework.html").read_text()
+    assert "/schedule?date=" in month and "/schedule/week?start=" in month
+    assert "/classes#panel-course-" in month
+
+
+def test_the_filters_survive_the_pager(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """A month walked while filtered that silently dropped the filter on the next arrow
+    would change the question under the owner."""
+    client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
+    body = client.get("/homework?month=2026-09&course=CHM+113&only=coursework").text
+    assert "/homework?month=2026-10&amp;only=coursework&amp;course=CHM+113" in body
+    assert "/homework?month=2026-08&amp;only=coursework&amp;course=CHM+113" in body
+    # And the link is followed, not only read. `keep` is a variable, so a `&amp;` written
+    # into it is escaped twice, the href reads `&amp;only=`, and the browser sends a
+    # parameter literally named `amp;only` — an href that looks right in the source and
+    # drops the filter on the first click.
+    followed = client.get("/homework?month=2026-10&only=coursework&course=CHM+113")
+    assert followed.status_code == 200
+    assert "October 2026" in followed.text
+    assert "show everything due" in followed.text  # the coursework filter survived
+    assert "CHM 113 on Classes" in followed.text  # and so did the course
+
+
+def test_the_route_refuses_what_is_not_a_course_code(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
+    assert client.get("/homework?course=CHM+113").status_code == 200
+    assert client.get("/homework?course=%27+OR+1%3D1").status_code == 422
+    assert client.get("/homework?course=").status_code == 422
+
+
+def test_an_empty_filtered_month_says_which_kind_of_empty_it_is(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """docs/06 §Empty states. A course filter on a month holding none of it draws
+    forty-two empty framed cells and three zeroes, which reads as broken rather than as
+    nothing due — and the way out of the filter has to be in the sentence."""
+    client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
+    body = client.get("/homework?month=2026-09&course=LSB+191").text
+    assert "Nothing due and nothing on the calendar for LSB 191" in body
+    assert "Every course" in body
+    for banned in ("caught up", "🎉", "Great job", "Nice work"):
+        assert banned not in body
+
+
+def test_a_filtered_page_says_so_on_both_of_its_counts(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """Two panels that both say "this month" while one is filtered and the other is not
+    is a page disagreeing with itself about what it is showing."""
+    item = _item(conn, source="canvas:ics", external="f1", title="Lab report")
+    _assignment(conn, external="f1", title="Lab report", due_at="2026-09-14", item_id=item)
+    _commitment(conn, item_id=item, what="Submit the lab report", due_at="2026-09-14")
+
+    client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
+    body = client.get("/homework?month=2026-09&course=CHM+113").text
+    assert body.count("in CHM 113") >= 2

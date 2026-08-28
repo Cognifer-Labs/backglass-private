@@ -2220,3 +2220,17 @@ details.panel:not([open]){padding-bottom:0}
 .hwmore>summary::marker{content:''}
 .hwmore>summary:hover{color:var(--ink);border-color:var(--ink)}
 .hwmore[open]>summary{border-style:solid}
+
+/* The day a block was made for a due item — §9 has nothing to say here, this is type.
+ * A deadline says when work is owed and a block says when it happens; the second is the
+ * one that gets it done, and until this mark existed no surface put the two side by
+ * side. Tabular, so a column of them lines up, and quiet: it is an annotation on the
+ * row, not a second title. */
+.hwi .pl{flex:0 0 auto;align-self:flex-start;
+  font:700 10px/14px ui-monospace,monospace;letter-spacing:.02em;
+  font-variant-numeric:tabular-nums;color:var(--ink-muted)}
+.hwi.late .pl{color:#000}
+/* The planner strip under the grid reuses .hwrec and .hwmiss; the only thing it needs of
+ * its own is room between the two audits, which are separate claims about separate
+ * things and should not read as one block. */
+#panel-homework-planner{margin-bottom:var(--sp-4)}

@@ -140,3 +140,83 @@ written. 27 motion tests, full suite green.
 The sidebar's open-commitment count is rendered on page load and is not in any swapped
 fragment, so it is stale until the next navigation — before this change and after it.
 Worth fixing as an out-of-band swap; not part of this.
+
+---
+
+# Wiring the month to everything beside it (same day, third ask)
+
+Owner: *"continue to add all needed features to link homework tab with others"*.
+
+The month shipped reachable from the sidebar and from nowhere else, and it pointed at
+the day and at Canvas and at nothing in between. Four joins, each of which answers a
+question the owner was already asking somewhere else.
+
+## 1. The course, as a filter and as a link
+
+`?course=CHM+113` narrows the month to one course — **its deadlines and its meetings**,
+because a student asking what CHM 113 wants from them this month means the lecture, the
+lab and the recitation. `homework.subject` normalises the three spellings a link might
+carry (`CHM 113`, `chm113`, `CHM113`) through the same regex `courses._subject` built the
+label with, so the two surfaces cannot come to disagree about which class a piece of work
+belongs to.
+
+The chip strip reuses the Activity page's `.afilter` rather than inventing one; it is the
+same object, plain links whose state is the URL, so a filtered month can be bookmarked.
+The filtered course stays on the strip even when the month holds none of it — a strip
+that vanished on an empty month would strand the owner inside a filter with no way out.
+
+Classes now points here twice: the per-course assignment count is the link (it was a
+readout of a number nothing could be done with), and the "due next" lane names the month.
+The month points back at `/classes#panel-course-<slug>`.
+
+## 2. Whether the planner has actually made room for it
+
+The link the page exists to make. Owner, 2026-08-27: *"other assignments havent been
+scheduled"* — true at the time, and unanswerable, because a due date and a plan lived on
+two surfaces that never referred to each other. A deadline is a claim about when work is
+owed; a block is a claim about when it happens, and only the second one gets it done.
+
+Every due item that a live plan holds a block for now carries the day it sits on
+(`▸8 Sep`), and a panel under the grid says how many have one and lists the ones that do
+not, each linking to the day it is due.
+
+**Bounded by the planner's own horizon, and the bound is the finding.** The planner
+proposes one day at a time at 05:45, so on 27 August it has reached 8 September. Counting
+"unplanned" past that would report the whole of next month as unscheduled every time the
+page was opened — the windowed-measurement failure of 2026-08-27 in a new place. The
+panel says the horizon, counts only up to it, and states in words that work past it is
+*unconsidered, not unscheduled*. On the live ledger: 18 items on August have a block, 33
+due on or before the horizon do not.
+
+`status != 'superseded'` throughout — the predicate `planner.current_plan_id` and the
+brief read a day's plan with. A replanned day leaves its old rows behind, and counting
+them reports work as scheduled on a day whose plan no longer exists.
+
+## 3. Day, week, month — each names the other two
+
+`/schedule` and `/schedule/week` gained a `month` link in the pager they already had;
+the month gained `day` and `week`. Three registers of the same question, and until this
+line the third was reachable only from the sidebar.
+
+## 4. The page tells the truth about what it is showing
+
+Both counts under the grid follow the filter. A month narrowed to CHM 113 that went on
+reporting all 82 of the month's assignments would be answering the question the owner had
+just navigated away from, and two panels saying "this month" while only one of them meant
+it is a page disagreeing with itself.
+
+## Two defects the tests caught
+
+`keep` was built with `&amp;`, and Jinja escapes a variable on the way out — so the href
+read `&amp;only=` and the browser sent a parameter literally named `amp;only`. The filter
+looked right in the source and dropped on the first click of the pager. The test now
+follows the link rather than reading it.
+
+An empty filtered month drew forty-two empty framed cells and three zeroes, which reads
+as broken rather than as nothing due. docs/06 §Empty states, with the way out of the
+filter in the sentence.
+
+## Checked, not assumed
+
+`homework.subject` was run over every distinct calendar title in the live ledger: seven
+subjects, all real courses, no room code or meeting title parsed as one.
