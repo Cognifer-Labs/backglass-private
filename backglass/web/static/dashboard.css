@@ -1850,14 +1850,19 @@ details.panel:not([open]){padding-bottom:0}
  * motion is a system-level decision here in the same way the ink set is, and a
  * duration invented inside a component is how a scale stops being a scale.
  *
- * Four things move. Content that arrives fades up four pixels; a pressed control
+ * Four things move. Content that arrives fades up ten pixels; a pressed control
  * dips three percent; a colour that changes crossfades; the failed-write strip
  * slides in from the bottom edge. Nothing else moves, and the omissions are as
  * deliberate as the inclusions — §9 lists them and says why.
  *
+ * The distance was four pixels until 2026-08-27, when the owner asked why the app had
+ * no animations and every mechanism here turned out to be running correctly. A motion
+ * that cannot be perceived is not a restrained motion, it is an absent one; §9 records
+ * the recalibration and what it deliberately did not change.
+ *
  * Only transform and opacity are animated. §8 rule 7 forbids the two effects that
  * each announce a design language this one is not; the same reasoning reaches motion,
- * so surfaces here shift by a hair and fade, and nothing lifts, bounces or springs.
+ * so surfaces here shift and fade, and nothing lifts, bounces or springs.
  * (The rule's own words are avoided in this comment on purpose — the test that
  * enforces it reads the sheet line by line and does not know a comment from a
  * declaration.) Everything sits under the 300ms ceiling, and every value
@@ -1955,6 +1960,39 @@ details.panel:not([open]){padding-bottom:0}
  * arrives unbidden at the edge of vision and has to be seen to do its job. */
 @keyframes oops-in{from{opacity:0;transform:translateY(calc(var(--motion-travel) * 2))}}
 .oops:not([hidden]){animation:oops-in var(--motion-slow) var(--ease-out)}
+
+/* 5 — the page leaving.
+ * The sidebar is nine plain `<a href>`s and every click is a full document load, so the
+ * one thing on screen that never moved was the biggest thing on it: the old page was
+ * replaced by white and then by the new one. Mechanism 1 already animates the arrival —
+ * `@starting-style` fires on a navigated document — and it was arriving into a flash.
+ *
+ * `navigation: auto` is the whole mechanism. The browser holds the outgoing frame,
+ * paints the incoming one under it, and cross-fades; no script, no page-transition
+ * machinery, and it is inert where the at-rule is unsupported. Verified parsing as
+ * `CSSViewTransitionRule` in this WebKit before it was written, because a rule that
+ * silently does nothing is the failure this product keeps finding.
+ *
+ * **The new page is given `animation:none` on purpose.** The default is a cross-fade of
+ * both halves, and this document already animates its own arrival — leaving both on made
+ * the content fade up through a fading page, which reads as two motions disagreeing about
+ * one event. So only the outgoing frame animates, over `--motion-fast` because it is
+ * leaving and §9's table pays for exits at the shortest rung. The arrival stays
+ * mechanism 1's, unchanged and unaware.
+ *
+ * Gated on the media query directly, and that is not belt-and-braces. §9 rule 4 honours
+ * reduced motion at the token layer by zeroing `--motion-travel` and `--motion-press`,
+ * which resolves every transform in the product to the identity — but a view transition
+ * is a cross-fade of two snapshots, carries no transform, and inherits nothing from those
+ * tokens. It is the first mechanism here that rule 4 does not reach, so it asks the
+ * question itself. */
+@media (prefers-reduced-motion: no-preference){
+  @view-transition{navigation:auto}
+  ::view-transition-old(root){
+    animation:vt-leave var(--motion-fast) var(--ease-out) forwards}
+  ::view-transition-new(root){animation:none}
+}
+@keyframes vt-leave{to{opacity:0}}
 
 /* ── Ask: one question, the whole screen ──────────────────────────────────
  *

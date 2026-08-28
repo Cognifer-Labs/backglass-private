@@ -15,6 +15,17 @@
   document.documentElement.setAttribute(
     'data-theme', localStorage.getItem('bg-theme') || 'light');
 </script>
+{# The one font the product loads, asked for before the stylesheet that discovers it.
+   `font-display: swap` means a cold navigation paints every condensed header in the
+   system sans and then reflows them into Oswald, which is a layout shift on the
+   masthead — the largest text on the page and the first thing read. Preloading moves
+   the request from "after the CSS parses" to "with the CSS", so the swap usually
+   happens before first paint instead of after it.
+
+   `crossorigin` is required even though this is same-origin: fonts are fetched in CORS
+   mode, and a preload without it fetches the file a second time rather than reusing it,
+   which is slower than not preloading at all. #}
+<link rel="preload" href="/static/fonts/Oswald-Bold.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/design/tokens.css">
 <link rel="stylesheet" href="/static/dashboard.css">
 <script src="/static/htmx.min.js" defer></script>

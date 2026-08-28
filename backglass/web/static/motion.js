@@ -21,7 +21,7 @@
  *   2. A panel opening. `<details>` reveals its contents by flipping a boolean, and a
  *      revealed element is not a newly inserted one, so `@starting-style` never sees it
  *      — the one arrival in the product that CSS cannot select. It gets §9 mechanism 1
- *      exactly: fade up four pixels over `--motion`, on `--ease-out`, because the
+ *      exactly: fade up `--motion-travel` over `--motion`, on `--ease-out`, because the
  *      content is entering. Opening only — a panel closing is still a disappearance the
  *      owner asked for and got instantly.
  *
@@ -50,7 +50,7 @@
  */
 const root = document.documentElement;
 
-/** A token, in the unit it is written in. `160ms` and `4px` come back as 160 and 4. */
+/** A token, in the unit it is written in. `220ms` and `10px` come back as 220 and 10. */
 function token(name) {
   return parseFloat(getComputedStyle(root).getPropertyValue(name)) || 0;
 }

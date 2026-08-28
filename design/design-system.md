@@ -480,6 +480,21 @@ Rules:
 Added 2026-08-07. Until then the product had one line of motion in it, and that line
 never played.
 
+**Recalibrated 2026-08-27, owner's ruling.** The owner asked why the app had no
+animations. Every mechanism below was running correctly — `@starting-style` fires on a
+full-document navigation in this WebKit, `motion.js` was loaded, reduced-motion was off,
+and the installed app's stylesheet was byte-identical to the checkout's. The numbers were
+the problem: four pixels over 160ms is under the threshold where a fade-up reads as a
+fade-up, so the arrival was happening and perceptually absent, which is indistinguishable
+from never having built it. Travel went to 10px and `--motion` to 220ms. Nothing else
+changed — the rule that only opacity and transform move, and that nothing lifts, bounces
+or springs, is untouched, because that rule was never what made this invisible.
+
+One consequence to watch: `--motion` at 220ms and `--motion-slow` at 240ms are now
+twenty milliseconds apart, which is not a rung. They never appear together — `--motion-slow`
+is spent on the failed-write strip alone — so this is recorded rather than fixed. If a
+second thing ever earns the slow duration, the scale needs a real gap first.
+
 The governing question is not "would this look nice moving" but **how often does the
 owner see it.** A dashboard is used, not toured. Something that animates the first time
 you see it is charming; the same thing on the four-hundredth resolve is the application
@@ -488,7 +503,7 @@ being slow at you.
 | How often | What it gets |
 |---|---|
 | Tens of times a day — Resolve, Done, a checklist tick, page keys 1–9 | 90ms, or nothing |
-| Daily — opening a page, a panel replacing its contents | 160ms |
+| Daily — opening a page, a panel replacing its contents | 220ms |
 | Occasional — the failed-write strip, the theme flip | 240ms |
 | Rare | Nothing here is rare enough to earn more |
 
@@ -500,9 +515,9 @@ system with seven of them has no rhythm, only seven speeds.
 | Token | Value | For |
 |---|---|---|
 | `--motion-fast` | 90ms | A press, a hover, the dim on a write in flight |
-| `--motion` | 160ms | Content arriving — a swapped panel, a page |
+| `--motion` | 220ms | Content arriving — a swapped panel, a page |
 | `--motion-slow` | 240ms | The failed-write strip, the theme cross-fade |
-| `--motion-travel` | 4px | The only distance anything travels |
+| `--motion-travel` | 10px | The only distance anything travels |
 | `--motion-press` | 0.97 | The only depth anything presses |
 
 Two curves, both ease-out family: `--ease-out` `cubic-bezier(.23,1,.32,1)` for anything
@@ -512,7 +527,7 @@ is looking at, and a 200ms ease-in feels slower than a 200ms ease-out.
 
 ### What moves
 
-1. **Content that arrives** fades up four pixels over 160ms. This is one mechanism, not
+1. **Content that arrives** fades up ten pixels over 220ms. This is one mechanism, not
    three: a swapped panel, a swapped fragment and a whole navigated page are all
    "elements newly inserted into the document", which is what `@starting-style`
    selects. The nine-page sidebar therefore animates without any page-transition
@@ -532,11 +547,12 @@ is looking at, and a 200ms ease-in feels slower than a 200ms ease-out.
    dips, and both take the colour cross-fade.
 3. **A colour that changes** cross-fades over 90ms — hover, selection, the enabled
    state of a source, and the 0.55 dim htmx puts on a control mid-write.
-4. **The failed-write strip** slides eight pixels up from the bottom edge over 240ms.
-5. **The theme flip** cross-fades every surface at once over 160ms, via a class the
+4. **The failed-write strip** slides twice the standard distance up from the bottom
+   edge over 240ms. Twice, because it arrives unbidden at the edge of vision.
+5. **The theme flip** cross-fades every surface at once over 220ms, via a class the
    toggle adds and removes.
 6. **A row that moved because another row left** travels to its new position over
-   160ms, on `--ease-in-out`. Added 2026-08-21, and it is the first thing in the
+   220ms, on `--ease-in-out`. Added 2026-08-21, and it is the first thing in the
    product to use that curve — the two-curve split was declared in advance and until
    now everything in the system was entering, so `--ease-in-out` sat defined and
    unspent. Resolve a commitment and every card below the gap jumps up; this is the
@@ -544,7 +560,7 @@ is looking at, and a 200ms ease-in feels slower than a 200ms ease-out.
    measurement before the swap and another after it, and CSS has no way to hold the
    first one. Cards on screen only, matched by `data-commitment`, in
    `static/motion.js`.
-7. **A panel opening** fades its contents up four pixels over 160ms, on `--ease-out`.
+7. **A panel opening** fades its contents up ten pixels over 220ms, on `--ease-out`.
    Added 2026-08-21. This is mechanism 1 reaching the one arrival it could not select:
    `<details>` reveals content by flipping a boolean, and a revealed element is not a
    newly inserted one, so `@starting-style` never sees it. The `<summary>` is excluded
@@ -553,8 +569,8 @@ is looking at, and a 200ms ease-in feels slower than a 200ms ease-out.
    removed, off the swap's critical path.
 
 8. **A row the owner removed** leaves at the click. Owner's ruling, 2026-08-27:
-   *"when i drop something it should disappear."* It fades and drops four pixels over
-   90ms, is hidden, and the rows under it close the gap over 160ms on `--ease-in-out` —
+   *"when i drop something it should disappear."* It fades and drops ten pixels over
+   90ms, is hidden, and the rows under it close the gap over 220ms on `--ease-in-out` —
    mechanism 6, fired by a click instead of by a swap. The write is still sent, the panel
    still swaps, and the swap still wins: this is an optimistic **view**, never an
    optimistic **record**. A refused write puts the row back, arriving, and the
@@ -562,6 +578,25 @@ is looking at, and a 200ms ease-in feels slower than a 200ms ease-out.
    row is declared in the template as `data-vanish`, never inferred from the URL — a
    script that guessed would vanish a row on Snooze, which moves a commitment and does
    not remove it.
+
+9. **The page leaving** fades out over 90ms while the next one paints under it. Added
+   2026-08-27. The sidebar is nine plain `<a href>`s, so every click is a full document
+   load, and the largest thing on screen was the one thing that never moved: the old page
+   was replaced by white and then by the new one. Mechanism 1 was already animating the
+   arrival — `@starting-style` fires on a navigated document — into a flash.
+
+   `@view-transition { navigation: auto }`, and nothing else: the browser holds the
+   outgoing frame, paints the incoming one under it, and cross-fades. No script and no
+   page-transition machinery, which is why this is a stylesheet rule and not a ninth
+   entry in `motion.js`.
+
+   **Only the outgoing half animates.** The default cross-fades both, and this document
+   already animates its own arrival, so leaving both on made the content fade up through
+   a fading page — two motions disagreeing about one event. `::view-transition-new(root)`
+   takes `animation: none` and mechanism 1 keeps the arrival, unchanged and unaware of
+   this rule.
+
+   It is also the first mechanism rule 4 does not reach, and the rule says so now.
 
 ### What does not move, and why
 
@@ -622,6 +657,12 @@ The omissions carry the design more than the inclusions do.
    to the identity and leaves the cross-fades alone. Reduced motion means less
    movement, not less feedback. A rule written after this one inherits the setting
    instead of having to remember it.
+
+   **Two mechanisms are outside that reach and both name the media query themselves:**
+   the theme flip, which animates colour rather than position, and mechanism 9, which is
+   a cross-fade of two document snapshots and carries no transform for the tokens to
+   zero. The pattern to check when adding a mechanism is not "did I use the tokens" but
+   "does zeroing travel and press actually stop this" — if it does not, gate it.
 
 ---
 

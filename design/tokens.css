@@ -160,16 +160,21 @@
      ease-out family: `ease-in` starts slow and delays the exact instant the owner is
      watching, so it appears nowhere in this product. */
   --motion-fast:   90ms;
-  --motion:       160ms;
+  --motion:       220ms;
   --motion-slow:  240ms;
   --ease-out:     cubic-bezier(0.23, 1, 0.32, 1);
   --ease-in-out:  cubic-bezier(0.77, 0, 0.175, 1);
 
-  /* The only distance anything travels, and the only depth anything presses. Both are
-     deliberately below the threshold where motion reads as a thing moving across the
-     page: this is a flat print aesthetic, and §8 rule 7's ban on shadows and gradients
-     extends to motion — surfaces fade and shift a hair, they never levitate. */
-  --motion-travel: 4px;
+  /* The only distance anything travels, and the only depth anything presses.
+     Raised from 4px to 10px on 2026-08-27 — owner's ruling, after asking why the app had
+     no animations while every mechanism in §9 was running correctly. Four pixels over
+     160ms is below the threshold where a fade-up reads as a fade-up: the arrival was
+     technically happening and perceptually absent, which is the same as not having built
+     it. Ten is where the movement becomes legible without becoming a subject.
+     The ban it still obeys is §8 rule 7's: only opacity and transform, nothing lifts,
+     bounces or springs. A flat print aesthetic is about what moves and how, not about
+     whether the owner can see it. */
+  --motion-travel: 10px;
   --motion-press:  0.97;
 
   /* type */

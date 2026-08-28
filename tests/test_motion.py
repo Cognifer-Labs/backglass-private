@@ -601,3 +601,98 @@ def test_nothing_vanishes_that_does_not_leave() -> None:
         assert "/outcome/" not in element, (
             "a block marked done stays on the day with its outcome shown"
         )
+
+
+# ── mechanism 9: the page leaving ─────────────────────────────────────────
+
+
+def _view_transition_block() -> str:
+    """The reduced-motion-gated block mechanism 9 lives in, comments stripped."""
+    match = re.search(
+        r"@media \(prefers-reduced-motion: no-preference\)\s*\{\s*@view-transition(.+?)\n\}",
+        _sheet(),
+        flags=re.S,
+    )
+    assert match, "mechanism 9's @view-transition block is gone from the stylesheet"
+    return match.group(1)
+
+
+def test_the_page_transition_asks_about_reduced_motion_itself() -> None:
+    """The one place §9 rule 4 does not reach, and the reason the rule now says so.
+
+    Rule 4 stills the product by zeroing `--motion-travel` and `--motion-press`, which
+    resolves every transform to the identity. A view transition carries no transform —
+    it is a cross-fade of two document snapshots — so zeroing those tokens does nothing
+    to it. Ungated, this would be the first mechanism to keep moving for a reader who
+    asked the operating system for less movement, and it would do it on every single
+    navigation.
+
+    The theme flip is outside rule 4's reach for the same shape of reason and names the
+    media query the same way; the check when adding a mechanism is not "did I use the
+    tokens" but "does zeroing travel and press actually stop this".
+    """
+    _view_transition_block()  # asserts the gate is what the at-rule sits inside
+    sheet = _sheet()
+    for match in re.finditer(r"@view-transition", sheet):
+        before = sheet[: match.start()]
+        opened = before.count("{") - before.count("}")
+        assert opened >= 1, (
+            "@view-transition sits at the top level of the sheet — it must be inside "
+            "the prefers-reduced-motion: no-preference block"
+        )
+
+
+def test_only_the_outgoing_page_animates() -> None:
+    """The double-motion decision, pinned.
+
+    The default cross-fades both halves. But a navigated document animates its own
+    arrival already — `@starting-style` fires on it, which is mechanism 1 — so leaving
+    the incoming half on made the content fade up through a fading page: two motions
+    disagreeing about one event. The arrival stays mechanism 1's, and this mechanism
+    owns the exit only.
+    """
+    block = _view_transition_block()
+    assert re.search(r"::view-transition-new\(root\)\s*\{\s*animation:\s*none", block), (
+        "the incoming page must not animate — mechanism 1 already animates its arrival"
+    )
+    old = re.search(r"::view-transition-old\(root\)\s*\{([^}]*)\}", block)
+    assert old, "the outgoing page has no animation, so nothing covers the navigation"
+    assert "--motion-fast" in old.group(1), (
+        "an exit takes the shortest rung in §9's table; a leaving page is not content "
+        "arriving and must not be paid for at --motion"
+    )
+
+
+def test_the_page_transition_invents_no_duration_or_curve() -> None:
+    """§9 rule 3 reaches the newest mechanism too. A view transition is the easiest
+    place in the product to write `0.3s ease` and never be noticed."""
+    block = _view_transition_block()
+    for value in re.findall(r"animation:\s*([^;}]+)", block):
+        if value.strip() == "none":
+            continue
+        assert "var(--motion" in value, f"literal duration in a view transition: {value}"
+        assert "var(--ease" in value, f"literal curve in a view transition: {value}"
+
+
+def test_the_one_font_is_preloaded_and_reusable() -> None:
+    """`font-display: swap` paints the condensed headers in the system sans and reflows
+    them into Oswald — a layout shift on the largest text on the page, on every cold
+    navigation. The preload moves the request from "after the CSS parses" to "with the
+    CSS".
+
+    `crossorigin` is the half that is easy to omit and worse than omitting the preload:
+    fonts are fetched in CORS mode, so a preload without it warms a cache entry the
+    stylesheet cannot reuse and the file is fetched twice.
+    """
+    head = BASE.read_text()
+    link = re.search(r"<link[^>]*rel=\"preload\"[^>]*>", head)
+    assert link, "the Oswald preload is gone from base.html"
+    tag = link.group(0)
+    assert 'as="font"' in tag and 'type="font/woff2"' in tag
+    assert "crossorigin" in tag, (
+        "a font preload without crossorigin is fetched twice — slower than no preload"
+    )
+    assert "Oswald-Bold.woff2" in tag
+    assert head.index(tag) < head.index('href="/static/dashboard.css"'), (
+        "the preload has to come before the stylesheet that discovers the font"
+    )
