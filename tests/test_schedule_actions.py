@@ -545,6 +545,16 @@ def test_the_headline_cannot_claim_more_than_the_board_holds(conn, client, setti
     # The completeness claim is gone precisely when it is false.
     assert "every one of them with a day" not in body
 
+    # The part-placed clause is the half that carries the actual reconciliation: a
+    # divisible obligation the walk starts and cannot finish is in `sittings` AND in
+    # `unreachable`, and it is the five of those that the old sentence counted as
+    # finished. `cannot possibly fit` is `analyzed`, so it is exactly that shape.
+    partial = re.search(r"(\d+) of them part-placed and still short", body)
+    assert partial is not None, "an obligation with sittings it cannot finish went unsaid"
+    assert 1 <= int(partial.group(1)) <= int(wont), (
+        "part-placed work is a subset of what does not finish"
+    )
+
 
 def test_a_board_that_does_fit_keeps_the_plain_sentence(conn, client, settings) -> None:  # type: ignore[no-untyped-def]
     """The reconciliation is not a new permanent hedge. With nothing unreachable the

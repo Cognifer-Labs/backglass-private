@@ -1517,10 +1517,17 @@ Cost: a second email to the same person apologising for the first.
   modified files and an untracked task doc. It came back cleanly because the entry was
   tagged and applied by SHA, but CLAUDE.md's own rule says the stash stack is shared with
   every other worktree and a concurrent session could have popped it. The information I
-  wanted was two pre-existing mypy errors. | To compare against a committed state, read
-  the committed state: `git show HEAD:path > /tmp/x` and run the tool on that, or use a
-  second worktree. Never stash to answer a read-only question — the cost of being wrong
-  is someone else's work, and there is always a non-destructive way to look.
+  wanted was two pre-existing mypy errors. The part that makes it a lesson rather than a
+  note: I had *already* run `git show HEAD:backglass/__main__.py > scratchpad/head_main.py`
+  one command earlier and then stashed anyway. The safe path was not merely available, it
+  was half-executed and abandoned mid-thought. | Never stash to answer a read-only
+  question — the cost of being wrong is someone else's work. And know the right
+  incantation before you need it: `git show HEAD:path` is enough to *read*, but running a
+  type checker on the extracted file does not work (imports resolve against the package,
+  so mypy reports noise rather than the baseline). For a tool that needs a whole tree, use
+  `git worktree add --detach <tmp> HEAD` and pay for the second venv, or accept not
+  knowing. The stash stack is shared with every other worktree; it is never the cheap
+  option it looks like.
 
 - 2026-08-27 | The runway panel opened with "241 obligations, every one of them with a
   day" and then drew 44 rows chipped "Won't fit". Both numbers came from one `horizon`
