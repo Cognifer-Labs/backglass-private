@@ -27,7 +27,11 @@ granted, set `CANVAS_TOKEN` and turn this one off.
 
 **The feed's own shape.** Canvas emits one VEVENT per assignment *and* per calendar event,
 distinguished only by the UID prefix — `event-assignment-<id>` against
-`event-calendar-event-<id>`. Only assignments are obligations, so only they are emitted;
+`event-calendar-event-<id>`. There is a third prefix and missing it cost a course:
+`event-assignment-override-<id>` is an assignment whose due date belongs to the owner's
+section, published *instead of* the base event rather than beside it, so a parser that
+does not know the shape does not lose a date — it loses the assignment. See
+`OVERRIDE_UID`. Only assignments are obligations, so only they are emitted;
 a class meeting is what `apple_calendar` is for. RFC 5545 line folding, TEXT escaping and
 both DTSTART forms are handled here rather than by a dependency, because the subset in
 play is small and pinning a calendar library for it is the larger cost.
@@ -50,6 +54,25 @@ from backglass.retraction import RetractableWindow
 #: Canvas's own discriminator. Everything else in the feed is a calendar event, which is
 #: `apple_calendar`'s job and not an obligation.
 ASSIGNMENT_UID = re.compile(r"event-assignment-(\d+)")
+
+#: `event-assignment-override-916149` — an assignment whose due date belongs to the
+#: owner's own section rather than to the course. Canvas emits it *instead of* the base
+#: VEVENT, not beside it, so failing to recognise the shape does not lose a date: it
+#: loses the assignment.
+#:
+#: Which is what happened. `ASSIGNMENT_UID` needs a digit straight after
+#: `event-assignment-`, `override-` is not one, and so every section-dated assignment
+#: fell out of the feed silently — twelve of them on 2026-08-27, ten of which were the
+#: whole of CHM 113 Laboratory's graded work for September. Nothing failed: the connector
+#: reported `ok`, the count it published was the count it parsed, and the ledger's own
+#: audit could only ever say that every assignment it held had a commitment behind it.
+#: The feed had 219 assignments and the ledger had 207, and no surface compared them.
+OVERRIDE_UID = re.compile(r"event-assignment-override-(\d+)")
+
+#: The assignment's own id, out of the VEVENT's URL — `…#assignment_7494004`. An override
+#: id identifies the *override*, so keying on it would make one assignment two rows the
+#: day its section date changed. The URL is where the stable id survives.
+URL_ASSIGNMENT = re.compile(r"assignment_(\d+)")
 
 #: A folded line continues when the next begins with a space or tab (RFC 5545 §3.1).
 _FOLD = re.compile(r"\r?\n[ \t]")
@@ -302,9 +325,20 @@ class CanvasIcsConnector:
         work takes. Parsing once and rendering twice keeps the two from drifting.
         """
         uid = event.get("UID", "")
-        match = ASSIGNMENT_UID.search(uid)
-        if match is None:
-            return None  # a class meeting, not an obligation
+        override = OVERRIDE_UID.search(uid)
+        if override is not None:
+            # A section-dated assignment. Keyed by the assignment it is a date for, so it
+            # occupies the same row whichever shape the feed publishes it in next; the
+            # override id is the fallback only when Canvas emits no linkable URL, and an
+            # ingested row under an odd id is still recoverable in a way a dropped one is
+            # not.
+            found = URL_ASSIGNMENT.search(event.get("URL", ""))
+            assignment_id = found.group(1) if found else f"override-{override.group(1)}"
+        else:
+            match = ASSIGNMENT_UID.search(uid)
+            if match is None:
+                return None  # a class meeting, not an obligation
+            assignment_id = match.group(1)
         due = _parse_dt(event.get("DTSTART", ""))
         if not due:
             return None  # no date, no commitment — canvas.py's rule, same reason
@@ -322,7 +356,7 @@ class CanvasIcsConnector:
         # Recorded before the boundary check, deliberately: this is what the *store*
         # returned. An assignment the boundary excludes is still an assignment Canvas
         # published, and leaving it out here would make the next run read it as deleted.
-        self.seen_ids.add(f"assignment:{match.group(1)}")
+        self.seen_ids.add(f"assignment:{assignment_id}")
 
         verdict = self.boundary.check([course] if course else [])
         if not verdict.allowed:
@@ -337,8 +371,8 @@ class CanvasIcsConnector:
         # to strip tags, and a tag-stripper is a thing that silently eats content.
         description = _unescape(event.get("DESCRIPTION", "")).strip()
         return ParsedAssignment(
-            assignment_id=match.group(1),
-            external_id=f"assignment:{match.group(1)}",
+            assignment_id=assignment_id,
+            external_id=f"assignment:{assignment_id}",
             course=course,
             title=title,
             due_at=due,

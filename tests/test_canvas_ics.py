@@ -464,3 +464,71 @@ def test_an_excluded_course_contributes_no_assignment_either(
 
     assert list(feed.fetch(None)) == []
     assert feed.assignments == []
+
+
+def override_event(
+    *,
+    uid: str = "event-assignment-override-916149@asu.instructure.com",
+    summary: str = "Individual Prelab Quiz 1: Glassware (Th9_Th10) [CHM 113 LABORATORY]",
+    dtstart: str = "DTSTART;VALUE=DATE;VALUE=DATE:20260902",
+    url: str = "https://canvas.asu.edu/calendar?include_contexts=course_262701#assignment_7494004",
+) -> str:
+    return (
+        "BEGIN:VEVENT\r\n"
+        f"UID:{uid}\r\n"
+        f"SUMMARY:{summary}\r\n"
+        f"{dtstart}\r\n"
+        f"URL:{url}\r\n"
+        "END:VEVENT\r\n"
+    )
+
+
+class TestSectionOverrides:
+    """The shape that silently cost a course.
+
+    Canvas publishes an assignment whose due date belongs to the owner's section under
+    `event-assignment-override-<id>`, *instead of* the base `event-assignment-<id>` and
+    not beside it. `ASSIGNMENT_UID` wants a digit after `event-assignment-` and gets
+    `override-`, so on 2026-08-27 twelve assignments — the whole of CHM 113 Laboratory's
+    September coursework — were dropped by a connector reporting `ok`.
+    """
+
+    def test_a_section_dated_assignment_is_read(self, permissive: Boundary) -> None:
+        feed = FakeFeed(calendar(override_event()), boundary=permissive)
+        items = list(feed.fetch(None))
+        assert [item.title for item in items] == [
+            "CHM 113 LABORATORY — Individual Prelab Quiz 1: Glassware (Th9_Th10)"
+        ]
+        assert feed.assignments[0].course == "CHM 113 LABORATORY"
+        assert feed.assignments[0].due_at == "2026-09-02"
+
+    def test_it_is_keyed_by_the_assignment_not_the_override(
+        self, permissive: Boundary
+    ) -> None:
+        """The override id names the override. Keying on it would make one assignment two
+        rows the day its section date moved — and `source_item` is immutable, so the
+        second row is permanent."""
+        feed = FakeFeed(calendar(override_event()), boundary=permissive)
+        items = list(feed.fetch(None))
+        assert items[0].external_id == "assignment:7494004"
+        assert feed.seen_ids == {"assignment:7494004"}
+
+    def test_a_moved_section_date_rewrites_no_id(self, permissive: Boundary) -> None:
+        moved = override_event(
+            uid="event-assignment-override-999999@asu.instructure.com",
+            dtstart="DTSTART;VALUE=DATE;VALUE=DATE:20260904",
+        )
+        feed = FakeFeed(calendar(moved), boundary=permissive)
+        assert list(feed.fetch(None))[0].external_id == "assignment:7494004"
+
+    def test_an_override_with_no_linkable_url_is_still_ingested(
+        self, permissive: Boundary
+    ) -> None:
+        """An odd id is recoverable. A dropped assignment is not — which is the whole
+        lesson of this class of bug."""
+        feed = FakeFeed(calendar(override_event(url="")), boundary=permissive)
+        assert list(feed.fetch(None))[0].external_id == "assignment:override-916149"
+
+    def test_a_class_meeting_is_still_not_an_assignment(self, permissive: Boundary) -> None:
+        feed = FakeFeed(calendar(class_meeting()), boundary=permissive)
+        assert list(feed.fetch(None)) == []
