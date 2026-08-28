@@ -298,3 +298,72 @@ class TestTheQueueLeadsWithWhatBothSignalsAgreeOn:
 
         monkeypatch.setattr("backglass.search.duplicate_pairs", boom)
         assert dedup.suspects(conn)  # renders, and by wording alone
+
+
+class TestTwoDaysIsTwoObligations:
+    """Found by reading the live duplicates report on 2026-08-27, at the top of it.
+
+    "Read for HON 171, Tue 10 Nov: Dante Alighieri, Inferno" and "…Thu 12 Nov: Dante
+    Alighieri, Inferno" differ in one word out of nine. They scored 0.96, the clusterer
+    called them a restatement and marked one `drop`, and four such pairs were sitting in
+    the first screen of the report — which is where a reader looks and clicks. They are
+    two class sessions; the date is not incidental to them, it is the whole distinguishing
+    fact, and a wording score was never going to see it.
+
+    On the live ledger the rule took the report from 80 clusters over 327 open rows to 75
+    over 213, and surfaced a genuinely identical pair that had been buried under the
+    false ones.
+    """
+
+    def test_the_same_work_owed_on_two_days_is_not_a_duplicate(
+        self, conn: sqlite3.Connection
+    ) -> None:
+        first = a_commitment(
+            conn, "Read for HON 171, Tue 10 Nov: Dante Alighieri, Inferno",
+            due_at="2026-11-10",
+        )
+        second = a_commitment(
+            conn, "Read for HON 171, Thu 12 Nov: Dante Alighieri, Inferno",
+            due_at="2026-11-12",
+        )
+        assert not [
+            p for p in dedup.suspects(conn) if {p["a_id"], p["b_id"]} == {first, second}
+        ]
+
+    def test_the_same_work_owed_on_one_day_still_is(self, conn: sqlite3.Connection) -> None:
+        """The rule has to keep the true positive it was measured against."""
+        first = a_commitment(
+            conn, "Submit the Syllabus and Academic Integrity Agreement",
+            due_at="2026-09-02",
+        )
+        second = a_commitment(
+            conn, "Submit Syllabus/Academic Integrity Agreement", due_at="2026-09-02",
+        )
+        assert [
+            p for p in dedup.suspects(conn) if {p["a_id"], p["b_id"]} == {first, second}
+        ]
+
+    def test_an_undated_restatement_is_never_excluded(self, conn: sqlite3.Connection) -> None:
+        """A restatement that lost its date on the way through extraction is exactly what
+        this queue exists to catch. Silence about a date is not a claim about a different
+        one."""
+        dated = a_commitment(
+            conn, "Submit the Syllabus and Academic Integrity Agreement",
+            due_at="2026-09-02",
+        )
+        undated = a_commitment(conn, "Submit Syllabus/Academic Integrity Agreement")
+        assert [
+            p for p in dedup.suspects(conn) if {p["a_id"], p["b_id"]} == {dated, undated}
+        ]
+
+    def test_a_time_of_day_does_not_split_one_deadline(self, conn: sqlite3.Connection) -> None:
+        """Compared on the day, not the instant: "by Friday" and "Friday 5pm" are the same
+        deadline written twice, and splitting them would reintroduce the duplicates this
+        queue exists to find."""
+        loose = a_commitment(conn, "Submit the CHM 113 safety quiz", due_at="2026-09-02")
+        exact = a_commitment(
+            conn, "Submit CHM 113 safety quiz", due_at="2026-09-02T17:00:00"
+        )
+        assert [
+            p for p in dedup.suspects(conn) if {p["a_id"], p["b_id"]} == {loose, exact}
+        ]
