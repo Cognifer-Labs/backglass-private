@@ -246,3 +246,41 @@ time a course moves and the calendar has not caught up.
 **`backglass bookings` reports; it does not write.** Commitment 588 still carries its 90
 minutes and the calendar event booked for Sep 2 is still budgeted separately. That is
 Increment C, and until it lands the board double-counts that one obligation.
+
+## Landing it — where this stopped, 2026-08-27 evening
+
+`main` is at `e2eb923`: this branch, which is a strict superset of
+`session/planner-richness-2026-08-27` through `bfe1730`. Fast-forwarded rather than merged
+in the shared checkout, because that checkout is on the other session's branch with
+seventeen uncommitted files in it and `main` is checked out nowhere. 2,992 tests pass on
+the merged tree.
+
+**Two steps remain and neither can be done from a worktree.**
+
+1. **Rebuild the app.** `backglass app-update --now` builds the sidecar and then fails at
+   `tauri build` with `npm error could not determine executable to run`, because
+   `desktop/node_modules` is gitignored and exists only in the main checkout. Run it from
+   `/Users/Dharsan/Downloads/backglass`, on `main`, with a clean tree — `app-update`
+   refuses a dirty one.
+
+   It is more urgent than it looks. The installed app is **already** refusing to start:
+   the bundle carries migrations to 0035, the database records 36, and `migrate()` raises
+   `MigrationError: schema_version records migration(s) 36 that are not on disk`. Proved
+   by pointing `MIGRATIONS_DIR` at the bundle against a copy of the ledger. The process is
+   still up, so nothing looks wrong; it fails on its next start. This predates anything on
+   this branch — 0036 is the other session's.
+
+2. **Then, and only then, let 0037/0038 apply.** Not before: launchd runs `backglass sync`
+   from the shared checkout, and while that checkout sits on a branch without these two
+   files, a database at 38 makes the same `MigrationError` break the sync loop. Once the
+   shared checkout is on `main` the files are there and the next command applies them.
+
+   After that, the one write this increment is still waiting on:
+
+   ```sql
+   UPDATE commitment SET scheduled_source_item_id = 11161 WHERE id = 588;
+   ```
+
+   Commitment 588 is the CHM 113 Act I pod session; `source_item` 11161 is the calendar
+   event booked for Wed 2 Sep 6:00pm. That is C.4's first live case, and after it the
+   Sep 2 plan stops budgeting ninety minutes for work that is already on the day.

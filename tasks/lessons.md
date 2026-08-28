@@ -1540,3 +1540,28 @@ Cost: a second email to the same person apologising for the first.
   it, so "how many" and "how many are fine" cannot drift apart. And when a computation
   stops using a constant, grep for the constant — the renderer is where the old horizon
   goes to keep being true-looking.
+
+- 2026-08-27 | `backglass app-update` run from a git worktree builds the sidecar, passes
+  its smoke tests, records the Python manifest, and then dies at `tauri build` with
+  `npm error could not determine executable to run` — which names nothing about the cause.
+  The cause is `desktop/node_modules`, which is gitignored and therefore exists only in
+  the checkout somebody ran `npm install` in. Twenty minutes of build time to learn that
+  the last step was never going to work. | A build that depends on untracked state cannot
+  run anywhere the state was not installed, and the failure should say so before it starts
+  rather than after the expensive part. `appupdate.run` already refuses a dirty tree; the
+  same preflight should refuse a missing `desktop/node_modules` by name. And the installed
+  app should track the main checkout, not whichever worktree happened to be current.
+
+- 2026-08-27 | The desktop app was already refusing to start and nobody knew. A migration
+  applied to the live database (0036, from a concurrent session) that the app's frozen
+  bundle does not carry makes `migrate()` raise `MigrationError: schema_version records
+  migration(s) 36 that are not on disk` — proved by pointing `MIGRATIONS_DIR` at
+  `/Applications/Backglass.app/.../migrations` against a copy of the ledger. The app
+  process was still up, so nothing looked wrong; it would have failed on its next start.
+  The same rule bites the CLI: applying 0037/0038 from this worktree would have broken
+  `backglass sync` on the launchd timer, because launchd runs the *shared* checkout and
+  that checkout is on a branch without them. | A schema version is a contract with every
+  copy of the code that opens the database — the installed app, the shared checkout, each
+  worktree. Never apply a migration whose file is absent from any of them: check
+  `schema_version` against the migrations on disk in the tree launchd runs AND in the app
+  bundle before applying, not after something stops starting.
