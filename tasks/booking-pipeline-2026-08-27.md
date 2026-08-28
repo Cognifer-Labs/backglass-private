@@ -210,9 +210,14 @@ conversation.
 - [ ] B.4 `app-update`. **Deliberately not run from the worktree**: it would build and
       install the desktop app from a branch, and the installed app should follow the
       shared checkout. Run it after merge, in the same breath as the merge.
-- [ ] C.1 Migration: `scheduled_source_item_id`.
-- [ ] C.2 `select` skips linked commitments; test asserts the exact minute reduction.
-- [ ] C.3 Shutdown asks about the event rather than rolling it.
+- [x] C.1 Migration 0037: `commitment.scheduled_source_item_id`.
+- [x] C.2 A linked commitment is not a candidate;
+      `test_the_day_loses_exactly_the_linked_minutes` measures the reduction.
+- [x] C.3 `booking.past_events` + the shutdown question. Asks, never closes.
+- [ ] C.4 **Nothing sets the column yet.** Linking 588 to the Sep 2 event is a one-line
+      UPDATE; having `booking.scan` propose links from a `Booking` and its calendar event
+      is the next increment, and it wants the owner's eye on the first few matches before
+      it is allowed to write.
 
 ## What is still owed, stated plainly
 
