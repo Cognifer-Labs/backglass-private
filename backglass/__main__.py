@@ -1549,6 +1549,15 @@ def _print_report(report: Any, *, dry_run: bool) -> None:
             f"  retracted {report.retracted} item(s) their source no longer has — "
             "an upstream store dropped them"
         )
+    if getattr(report, "revisions_proposed", 0):
+        # Said out loud for the same reason a retraction is: a revision that only ever
+        # appeared as a row on another page is a change to what the ledger believes about
+        # the owner that the owner was never told about. Nothing was written active — the
+        # sentence has to say that too, or it reads as the app having changed its mind.
+        typer.echo(
+            f"  {report.revisions_proposed} fact(s) look overtaken by something newer — "
+            "proposed on /memory, nothing written active"
+        )
     typer.echo(f"  writes {report.writes}, spend {report.spend_cents}c")
     # startswith, because the reason carries which stage stopped ('rate_limit:triage').
     if (report.degrade_reason or "").startswith("rate_limit"):
@@ -2495,6 +2504,75 @@ def relevance_command(
             f"about, {report.kept} kept, {report.discarded} discarded (uncited)"
         )
         typer.echo(f"  spend {round(report.cost_usd * 100)}c")
+    if dry_run:
+        typer.echo("  nothing written")
+    for error in report.errors:
+        typer.echo(f"  {error}", err=True)
+    raise typer.Exit(1 if report.errors else 0)
+
+
+@app.command("revise")
+def revise_command(
+    dry_run: Annotated[
+        bool, typer.Option("--dry-run", help="Print the revisions, write nothing")
+    ] = False,
+    limit: Annotated[int, typer.Option("--limit", help="Facts judged this run")] = 0,
+    as_json: Annotated[bool, typer.Option("--json", help="Machine-readable")] = False,
+) -> None:
+    """Re-read standing facts against what the record said next.
+
+    Owner, 2026-08-27: "i no longer have trayfavors, the app should know this, why does it
+    not process things like these". It knew — a fact said he had joined the Tray Favors
+    team, extracted from the very email asking to leave it, and another said the placement
+    reply was drafted and unsent six minutes before it was sent. Both stayed active,
+    because an obligation the record overtakes has three mechanisms and a fact had none.
+
+    This pass judges each active fact against the newest items the ledger has read and
+    proposes a replacement for the ones a quoted sentence has overtaken. It never writes
+    anything active: a wrong fact rewrite is a bad premise under every model call that
+    follows, so every revision waits on the Memory page for a click.
+    """
+    import json as _json
+
+    from backglass.extract import prompts
+    from backglass.extract import revision as revision_mod
+    from backglass.telemetry import Metered
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    calls: list[Any] = []
+    report = revision_mod.run(
+        conn,
+        settings,
+        Metered(_build_model_client(settings), "revise", calls),
+        prompt=prompts.load("revise-facts"),
+        dry_run=dry_run,
+        limit=limit or revision_mod.PER_RUN,
+    )
+    if not dry_run:
+        conn.commit()
+
+    if as_json:
+        typer.echo(_json.dumps({
+            "judged": report.judged, "proposed": report.proposed,
+            "current": report.current, "discarded": report.discarded,
+            "cost_usd": round(report.cost_usd, 4), "errors": report.errors,
+        }, indent=2))
+        raise typer.Exit(1 if report.errors else 0)
+
+    if not report.judged:
+        typer.echo("nothing left to judge")
+    else:
+        for line in report.verdicts:
+            typer.echo(f"  {line}")
+        typer.echo(
+            f"judged {report.judged}: {report.proposed} proposed, "
+            f"{report.current} still current, {report.discarded} discarded (uncited)"
+        )
+        typer.echo(f"  spend {round(report.cost_usd * 100)}c")
+        if report.proposed and not dry_run:
+            typer.echo("  accept or reject them on /memory — nothing was written active")
     if dry_run:
         typer.echo("  nothing written")
     for error in report.errors:

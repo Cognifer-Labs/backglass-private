@@ -220,3 +220,126 @@ filter in the sentence.
 
 `homework.subject` was run over every distinct calendar title in the live ledger: seven
 subjects, all real courses, no room code or meeting title parsed as one.
+
+---
+
+# The ledger could not change its mind about a fact (2026-08-27)
+
+Owner: *"i no longer have trayfavors, the app should know this, why does it not process
+things like these"*.
+
+It knew, twice over, and could act on neither.
+
+## What the record actually held
+
+`fact` 59 — `work/team-joined` — said "Joined Tray Favors team December 2025", status
+active. It was extracted on 2026-08-23 from source item **10576, the email in which the
+owner asked to leave Tray Favors.** The poison gate behaved exactly as designed: the
+sentence was quoted verbatim, the confidence cleared `AUTO_ACCEPT_CONFIDENCE`, the lane was
+known. The fact was true when it was written; the background sentence in a mail about
+leaving was read as a statement of current standing, which is what it looked like.
+
+`fact` 86 — `premed/clinical_volunteering` — said the placement-change reply was "PREPARED
+2026-08-24, reply drafted in Mail but **NOT YET SENT**". It was written at 10:52. The reply
+went out at 10:58 (items 10576, 10765) and the coordinator answered three times that
+afternoon (10757 with the adult openings list, 10781 saying she would chase the ED training
+schedule, 10782 asking for the ED service description). Four days later the ledger still
+said it was sitting in a draft.
+
+The thread itself was processed correctly — three open commitments track the transition
+(521 change-request form, 522 the update Aimee owes him, 523 the service description) and
+522 is even the right direction, `owed_to_me`. Nothing was missed at ingest. What was
+missing is anything that reads a standing fact again.
+
+## The gap, stated exactly
+
+An obligation the record has overtaken has three mechanisms: `logic` throws out what is
+structurally contradicted, `extract/relevance` retires what a recorded fact makes moot,
+`extract/recheck` re-reads a chat commitment against what the conversation said next. All
+three consume facts as *evidence*. None of them judges a fact.
+
+`questions._contradictions` is the nearest thing and cannot fire here: it needs the same
+`(subject, key)` written twice with two different values, and nothing ever wrote a second
+one. The fact went stale in place, which is the one shape that surface cannot see.
+
+And it is worse than an inert row. `facts.owner_context` rides into every model call, so
+since the 24th the product has been telling itself, on every triage, every extraction and
+every plan, that the owner is on Tray Favors with an unsent draft.
+
+## Fixed now, by hand
+
+`work/team-joined` → 107, and `premed/clinical_volunteering` → 108, both through
+`memory set`, which supersedes rather than edits. ED is recorded as **in progress, not
+confirmed** — Aimee is still waiting on their training schedule, and writing it as settled
+would be the same class of error one step later. `~/.claude/.../banner-placement-change.md`
+said "unsent draft" too and was corrected the same way.
+
+## Built so the class self-reports
+
+`backglass revise` — migration 0036, `specs/extraction-prompts/revise-facts.md`,
+`backglass/extract/revision.py`, wired into `sync` after `relevance` and printed in the
+sync summary.
+
+It is handed the active facts and the newest kept items, and asked one question per fact:
+**has something since made this untrue?** Batched, judged once, ids in and ids back, and a
+citation or no verdict — the four properties `relevance.py` and `recheck.py` already share.
+
+**One thing is inverted, and it is the whole design.** `relevance` may drop an obligation
+on its own above a threshold, because a wrong drop costs one row the owner can see is
+missing and re-add. This pass **may never write anything active, at any confidence**: a
+wrong fact rewrite is a bad premise under every model call that follows and it compounds
+silently. Every verdict lands as an ordinary `proposed` fact, on the Memory page that
+already exists, accepted through `facts.accept` — one door for "a fact becomes current",
+and the owner's click is it.
+
+Two guards worth naming. `overtaken` must quote the sentence that overtook it, from an item
+the pass actually sent, and the quote is checked against that item — silence is not
+evidence, and neither is age. And a `replacement` is required: "no longer true" is a
+deletion wearing a verdict's clothes, so the model must say what is true *now*, keeping the
+history ("joined in December 2025 **and** left in August 2026") rather than erasing it.
+
+The recurrence key is `(fact_id, through_item)` — the newest item the judgement saw. A
+watermark on the run would re-judge all 72 facts every sync and re-pay for the same
+answers; a watermark on the fact alone would judge it once and never look again, which is
+the failure being fixed. Keyed on the pair, a fact is re-judged exactly when the ledger has
+read something since anyone last considered it.
+
+16 tests, including the Tray Favors case end to end and the assertion that matters most:
+after a confident `overtaken` verdict, the original fact is still `active` and
+`owner_context` is unchanged until the proposal is accepted.
+
+## Does it actually work — measured, not assumed
+
+Built, then run against a scratch ledger seeded with the two facts exactly as they read
+before they were fixed, plus the seven real messages of the Banner thread copied out of the
+live ledger.
+
+**On the configured free-tier model (`nvidia/nemotron-3-super-120b-a12b:free`): 3 judged,
+0 proposed.** Including the `NOT YET SENT` fact that rule 7 was written for, with the sent
+reply sitting two lines above it in the same prompt. The first theory was the render: the
+author column held a bare address, so "this address is the user, therefore the user sent
+it, therefore it is not a draft" was three inferential steps to reach something the ledger
+knows for certain. Prompt v2 marks the owner's own items `YOU (the user wrote this)` and
+rule 7 says what that means. Re-ran: **still 0 proposed.**
+
+**On `claude_cli`, same ledger, same prompt: 1 proposed, 2 current, 0 discarded, 34c.**
+The revision is the right one — `premed/clinical_volunteering`, cited to Aimee's own reply,
+replacement saying the request was sent. And the two `current` verdicts are right as well:
+`work/team-joined` really is a permanent statement about December 2025, and nothing in that
+thread says the placement ended — that one was only wrong because the owner said so out
+loud, which no pass can read. The ASU fact is untouched.
+
+So the mechanism, the prompt and the guards work, and the free tier is not strong enough
+for this judgement. Two consequences worth saying rather than discovering later:
+
+- Running on the free tier, this pass will mostly return `current` and cost nothing. It is
+  wired into `sync` anyway because it is harmless there — it writes nothing active — and
+  because the fallback chain (`MODEL_FALLBACK_BACKEND=claude_cli`) already promotes work
+  the free backend refuses.
+- `backglass revise` run by hand with `MODEL_BACKEND=claude_cli` is the way to get a real
+  pass today, and 34c for the whole knowledge base is the price.
+
+The prompt's `model: careful` frontmatter is a hint nothing consumes — `run()` passes
+`settings.model_extract`, exactly as `check-relevance` does. Left consistent with its
+sibling rather than special-cased here; if the tier hint is ever honoured it should be
+honoured for both.

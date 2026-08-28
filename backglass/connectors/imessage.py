@@ -404,7 +404,38 @@ DEPENDENTS = (
     # go with it through ON DELETE CASCADE, which holds because `db.connect` turns
     # `PRAGMA foreign_keys` on.
     "assignment",
+    # Migration 0036. `fact_check.cites_item` names the message whose words overtook a
+    # standing fact, and an iMessage row is exactly the kind that can — so unlike the
+    # three above, this one really does delete rows on a real prune. Losing the verdict
+    # with the message it cited is correct: the citation is the whole of the verdict's
+    # justification, and a fact_check row pointing at a message the owner has narrowed
+    # out of the ledger is a claim nothing can check. The fact itself is untouched, and
+    # `revision.candidates` will simply judge it again next run.
+    "fact_check",
 )
+
+
+def _item_columns(conn: sqlite3.Connection, table: str) -> list[str]:
+    """Which of this table's columns point at a `source_item`, read off the schema.
+
+    `source_item_id` everywhere until migration 0036, which is why this used to be a
+    literal. `fact_check` names its reference `cites_item` — the item whose words
+    overtook a fact — beside a second, unconstrained `through_item`, and a hard-coded
+    column name turned that into `no such column` on the first prune.
+
+    Derived rather than remembered, for the same reason `DEPENDENTS` has a test that
+    derives its membership: the sibling test already reads `PRAGMA foreign_key_list` to
+    decide *which tables* must be here, so reading the same pragma for *which column*
+    keeps one source of truth instead of two that can disagree.
+
+    Every FK to `source_item` is returned, not the first. A table with two would
+    otherwise keep half its dangling rows and fail the constraint anyway.
+    """
+    return [
+        str(fk["from"])
+        for fk in conn.execute(f"PRAGMA foreign_key_list({table})")
+        if str(fk["table"]) == "source_item"
+    ]
 
 
 @dataclass
@@ -474,7 +505,8 @@ def prune(
         # boundary purge does it — a crash rolls the gate closed with everything else.
         conn.execute("UPDATE purge_gate SET open = 1 WHERE id = 1")
         for table in DEPENDENTS:
-            conn.execute(f"DELETE FROM {table} WHERE source_item_id IN ({marks})", doomed)
+            for column in _item_columns(conn, table):
+                conn.execute(f"DELETE FROM {table} WHERE {column} IN ({marks})", doomed)
         conn.execute(f"DELETE FROM source_item WHERE id IN ({marks})", doomed)
         conn.execute("UPDATE purge_gate SET open = 0 WHERE id = 1")
         conn.execute("COMMIT")

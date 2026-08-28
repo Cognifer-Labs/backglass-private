@@ -223,6 +223,38 @@ class RelevanceResponse(Strict):
     verdicts: list[RelevanceVerdict] = Field(default_factory=list)
 
 
+class RevisionVerdict(Strict):
+    """One standing fact, judged against what the ledger has read since it was recorded.
+
+    The inverse asymmetry to `RelevanceVerdict`, and it is the whole design. That one may
+    drop an obligation on its own above a threshold, because a wrong drop costs one row
+    the owner can see is missing. This one may never write anything active at any
+    confidence: a fact rides `facts.owner_context` into every model call the product
+    makes, so a wrong rewrite is a bad premise under every triage, extraction and plan
+    that follows. Every verdict here becomes a `proposed` fact and waits for a click.
+
+    `quote` is copied from the citing item and checked against it, so a fluent-sounding
+    paraphrase cannot stand in for having read the thing that changed.
+    """
+
+    fact_id: int
+    verdict: Literal["overtaken", "current"]
+    confidence: float = Field(ge=0.0, le=1.0)
+    #: `source_item.id` of the item that overtook it. None is only valid for `current`.
+    cites_item: int | None = None
+    #: Verbatim, from that item's text. Checked before anything is proposed.
+    quote: str | None = None
+    #: What the fact should say instead — a complete statement, not "no longer true".
+    #: Required on `overtaken`: this becomes the proposed fact's value, and a revision
+    #: that cannot say what is true now is a deletion wearing a verdict's clothes.
+    replacement: str | None = None
+    reason: str | None = None
+
+
+class RevisionResponse(Strict):
+    verdicts: list[RevisionVerdict] = Field(default_factory=list)
+
+
 def json_schema(model: type[BaseModel]) -> dict[str, Any]:
     """A self-contained JSON Schema for `--json-schema` / a tool `input_schema`.
 

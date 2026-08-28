@@ -714,3 +714,30 @@ CREATE TABLE engagement_distinct (
   decided_at TEXT    NOT NULL,
   UNIQUE (user_id, low_id, high_id)
 );
+
+CREATE TABLE fact_check (
+  id            INTEGER PRIMARY KEY,
+  user_id       INTEGER NOT NULL DEFAULT 1,
+  fact_id       INTEGER NOT NULL REFERENCES fact(id),
+  -- The newest source item in the evidence this verdict was formed against.
+  through_item  INTEGER NOT NULL,
+  verdict       TEXT    NOT NULL,           -- current|overtaken
+  confidence    REAL    NOT NULL,
+  -- The item whose words overtook the fact, and those words. Both required for
+  -- `overtaken`: a verdict that cannot quote the sentence that changed things is
+  -- discarded rather than repaired, the same rule check-relevance and recheck apply.
+  cites_item    INTEGER REFERENCES source_item(id),
+  quote         TEXT,
+  -- What the fact should say instead, as the model read it. This becomes the proposed
+  -- fact's value; it is never written active from here.
+  replacement   TEXT,
+  reason        TEXT,
+  -- The `proposed` fact row this verdict raised, so the surface can be traced back to
+  -- the judgement and a second run does not raise it twice.
+  proposed_fact INTEGER REFERENCES fact(id),
+  status        TEXT    NOT NULL DEFAULT 'pending', -- pending|proposed|current
+  created_at    TEXT    NOT NULL,
+  UNIQUE (user_id, fact_id, through_item)
+);
+
+CREATE INDEX idx_fact_check_fact ON fact_check(user_id, fact_id);
