@@ -633,8 +633,26 @@ def status() -> None:
     kill = conn.execute(query("triage_kill_rate"), {"user_id": USER_ID}).fetchone()
     if kill and kill["total"]:
         rate = float(kill["kill_rate"] or 0.0)
-        warn = "  ← below 85%, rules have drifted" if rate < 0.85 else ""
+        warn = "  ← below 85%" if rate < 0.85 else ""
         typer.echo(f"\ntriage  {kill['dropped']}/{kill['total']} dropped ({rate:.0%}){warn}")
+        # The line used to end "rules have drifted", and on 2026-08-27 that was a false
+        # claim in the owner's own terminal: nothing had drifted. The rate had fallen to
+        # 84% because 221 Canvas assignments arrived, every one of them a real obligation
+        # and correctly kept. docs/02's 85% is a *cost* signal and the number was right —
+        # the sentence attached to it was not, and it sent a reader looking for a rule
+        # that had gone wrong. So the shortfall now shows its own arithmetic: which
+        # sources are keeping what, worst first, and the reader decides whether a source
+        # that keeps most of what it reads is a drifted rule or a source of obligations.
+        if rate < 0.85:
+            typer.echo("  most of what survives, by source:")
+            for row in conn.execute(
+                "SELECT source, COUNT(*) AS kept FROM source_item"
+                " WHERE user_id = ? AND triage_verdict = 'keep'"
+                "   AND (triage_reason IS NULL OR triage_reason NOT LIKE 'structured source%')"
+                " GROUP BY source ORDER BY kept DESC LIMIT 4",
+                (USER_ID,),
+            ):
+                typer.echo(f"    {row['source']:<16} {row['kept']} kept")
 
     last = conn.execute("SELECT * FROM run ORDER BY id DESC LIMIT 1").fetchone()
     if last:
