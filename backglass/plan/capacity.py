@@ -203,6 +203,30 @@ def fixed_events(conn: sqlite3.Connection, day: date, tz: str) -> list[FixedEven
     # event after ~17:00 from its own day, so the planner scheduled work across it.
     # timezones.utc_bounds carries the full reasoning.
     starts_at, ends_before = timezones.day_bounds(day, tz)
+    return _calendar_span(conn, starts_at, ends_before, tz)
+
+
+def fixed_events_between(
+    conn: sqlite3.Connection, first: date, last_exclusive: date, tz: str
+) -> list[FixedEvent]:
+    """The same read over a span of days, in one query rather than one per day.
+
+    `datetime(si.occurred_at)` is a function on the column, so no index can serve it and
+    every call is a scan of all 11k source items. That is 14ms, which is invisible for a
+    day and 0.5s for the Homework month grid's 42 of them. The scan is unavoidable — the
+    stored offsets are what make it necessary, and utc_bounds carries that reasoning —
+    but doing it forty-two times is not.
+
+    Returns the span unbucketed: which day an event belongs to is the caller's question,
+    because a caller that spans a timezone change has two answers for the same instant.
+    """
+    starts_at, ends_before = timezones.utc_bounds(first, last_exclusive, tz)
+    return _calendar_span(conn, starts_at, ends_before, tz)
+
+
+def _calendar_span(
+    conn: sqlite3.Connection, starts_at: str, ends_before: str, tz: str
+) -> list[FixedEvent]:
     # `NOT EXISTS` rather than a status column, because `source_item` is immutable and
     # the row stays true forever: the class really did meet on Wednesdays until the 10th.
     # What changed is that Calendar.app no longer has it, which migration 0030 records
@@ -637,6 +661,68 @@ def _nearest_gap(
     return best[1] if best is not None else None
 
 
+def calendar_events(
+    conn: sqlite3.Connection, settings: Settings, day: date
+) -> list[FixedEvent]:
+    """The day's calendar rows and confirmed plans, once each.
+
+    The skeleton `day_events` builds on, published because a second caller wants exactly
+    this and nothing else: the Homework month grid draws what the owner has to remember,
+    and a routine is configuration and a walk is the cost of an event — neither is a
+    thing to remember. Extracting it also means that grid cannot drift from the planner
+    about what a Tuesday holds, which is the whole reason `day_events` was made the one
+    builder in the first place.
+    """
+    tz = timezones.active_tz(settings, day)
+    return sorted(
+        _distinct(
+            fixed_events(conn, day, tz)
+            + engagement_events(conn, day, tz, min_confidence=settings.confidence_threshold)
+        ),
+        key=lambda e: e.starts_at,
+    )
+
+
+def calendar_events_between(
+    conn: sqlite3.Connection, settings: Settings, first: date, last: date
+) -> dict[date, list[FixedEvent]]:
+    """`calendar_events` for every day from `first` to `last` inclusive, in one pass.
+
+    Grouped by zone before it is grouped by day, because the owner moves between UTC-7
+    and UTC+5:30 and a month can straddle the move. Each zone gets one scan and each
+    event is kept only by the days that zone actually governs, so an instant near the
+    boundary is filed under the day the owner would call it and not under both.
+    """
+    days = [first + timedelta(days=n) for n in range((last - first).days + 1)]
+    by_zone: dict[str, list[date]] = {}
+    for day in days:
+        by_zone.setdefault(timezones.active_tz(settings, day), []).append(day)
+
+    out: dict[date, list[FixedEvent]] = {day: [] for day in days}
+    for tz, zone_days in by_zone.items():
+        governed = set(zone_days)
+        span = fixed_events_between(
+            conn, zone_days[0], zone_days[-1] + timedelta(days=1), tz
+        )
+        for event in span:
+            day = event.starts_at.date()
+            if day in governed:
+                out[day].append(event)
+        for day in zone_days:
+            # Confirmed plans stay per-day: they are a handful of rows read through an
+            # index, and the scan this function exists to collapse is not theirs.
+            out[day] = sorted(
+                _distinct(
+                    out[day]
+                    + engagement_events(
+                        conn, day, tz, min_confidence=settings.confidence_threshold
+                    )
+                ),
+                key=lambda e: e.starts_at,
+            )
+    return out
+
+
 def day_events(conn: sqlite3.Connection, settings: Settings, day: date) -> list[FixedEvent]:
     """The whole day's fixed picture: calendar + confirmed plans + routines, once each.
 
@@ -651,10 +737,7 @@ def day_events(conn: sqlite3.Connection, settings: Settings, day: date) -> list[
     # on, and they are what routines are placed *around*. Deduping before placement is
     # what stops the same class, arriving twice from two calendars, being treated as two
     # obstacles a meal has to dodge separately.
-    booked = _distinct(
-        fixed_events(conn, day, tz)
-        + engagement_events(conn, day, tz, min_confidence=settings.confidence_threshold)
-    )
+    booked = calendar_events(conn, settings, day)
     # Walks are computed from `booked` and added before the routines are placed, so a
     # meal looking for a free gap treats the walk as occupied — the alternative puts
     # lunch inside the fifteen minutes the owner is crossing campus.

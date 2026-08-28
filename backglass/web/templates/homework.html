@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = 'homework' %}
+
+{% block title %}Backglass — Homework{% endblock %}
+{% block meta %}{{ month.label }}{% endblock %}
+
+{# The month as a student reads it. The day and week pages are timelines — they draw
+   durations, and answer "what am I doing next". This draws dates, and answers "when is
+   everything due", which is the question a syllabus actually poses and which no width
+   of week could hold.
+
+   Registers, and each is a different claim (§7b — the ink rides on the keyline, the fill
+   stays neutral):
+     · cobalt   an event: the day already holds this hour
+     · hairline a commitment: the ledger extracted it and can show the sentence. No ink,
+                because the cell around it already carries the page's own (§7b nesting)
+     · vermilion overdue, which is state and beats category (§7b specificity)
+     · dashed   a Canvas assignment with a deadline and nothing extracted from it —
+                the review register, because that is exactly what it needs #}
+
+{# One entry, drawn the same way in a cell and in the audit list below the grid, because
+   they are the same claim in two places. The glyph column is never colour alone (§8
+   rule 3): ▲ late, ? unread by the extractor, ✓ done, otherwise the hour it is due. #}
+{% macro tile(q) -%}
+  <a class="hwi q-{{ q.kind }}{% if q.overdue %} late{% endif %}"
+     {% if q.href %}href="{{ q.href }}"{% endif %}
+     {% if q.url %}target="_blank" rel="noreferrer"{% endif %}
+     title="{% if q.course %}{{ q.course }} · {% endif %}{{ q.title }}{% if q.minutes %} · {{ q.minutes }}m{% endif %}{% if q.kind == 'unlinked' %} · no commitment behind this{% endif %}">
+    <span class="t">{% if q.overdue %}▲{% elif q.kind == 'unlinked' %}?{% elif q.done %}✓{% else %}{{ q.time_label or '●' }}{% endif %}</span
+    ><span class="n">{% if q.course %}<i>{{ q.course }}</i> {% endif %}{{ q.title }}</span>
+  </a>
+{%- endmacro %}
+
+{% block content %}
+<section class="sec" id="panel-homework">
+  {{ m.banner('Homework', month.label) }}
+  <div class="inner">
+
+    <p class="pager quiet">
+      <a href="/homework?month={{ month.prev.strftime('%Y-%m') }}{% if month.only_coursework %}&amp;only=coursework{% endif %}">← prev</a> ·
+      <a href="/homework{% if month.only_coursework %}?only=coursework{% endif %}">this month</a> ·
+      <a href="/homework?month={{ month.next.strftime('%Y-%m') }}{% if month.only_coursework %}&amp;only=coursework{% endif %}">next →</a> ·
+      {% if month.only_coursework %}
+        <a href="/homework?month={{ month.first.strftime('%Y-%m') }}">show everything due</a>
+      {% else %}
+        <a href="/homework?month={{ month.first.strftime('%Y-%m') }}&amp;only=coursework">coursework due only</a>
+      {% endif %} ·
+      <a href="/schedule/week">week</a>
+    </p>
+
+    <div class="hwg" id="panel-homework-grid">
+      {% for name in ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] %}
+        <span class="lbl hwh">{{ name }}</span>
+      {% endfor %}
+
+      {% for week in month.weeks %}
+        {% for d in week %}
+          {# Every cell is a tile, including the empty ones: a month with holes punched
+             in it stops reading as a month. Out-of-month days keep the tile and lose
+             the ink. #}
+          <div class="hwd{% if not d.in_month %} out{% endif %}{% if d.is_today %} now{% endif %}{% if d.past %} past{% endif %}">
+            <a class="hwdn" href="/schedule?date={{ d.day.isoformat() }}"
+               aria-label="{{ d.day.strftime('%A %-d %B') }} — open the day">
+              <b>{{ d.day.day }}</b>
+              <span class="lbl wd">{{ d.day.strftime('%a') }}</span>
+              {%- if d.load_minutes %} <span class="lbl">{{ d.load_minutes // 60 }}h{{ '%02d' % (d.load_minutes % 60) }}</span>{% endif -%}
+            </a>
+
+            {% for e in d.events %}
+              {# Textless is a week-grid affordance — there a block is 9px tall. Here a
+                 cell is a paragraph, so the event says what it is. #}
+              <a class="hwi ev" href="/schedule?date={{ d.day.isoformat() }}"
+                 title="{{ e.span_label }} {{ e.title }}{% if e.location %} · {{ e.location }}{% endif %}">
+                <span class="t">{{ e.time_label }}</span><span class="n">{{ e.title }}</span>
+              </a>
+            {% endfor %}
+
+            {# Six, then a fold. The tallest cell sets the height of its whole week row,
+               and one Friday carrying fifteen items makes the other six days a column of
+               empty tile — the month stops being scannable to show one day in full. The
+               fold is a <details>, so the rest is one click away, in the page, with no
+               script and nothing lost. #}
+            {% for q in d.due[:6] %}{{ tile(q) }}{% endfor %}
+            {% if d.due|length > 6 %}
+              <details class="hwmore">
+                <summary>+{{ d.due|length - 6 }} more</summary>
+                {% for q in d.due[6:] %}{{ tile(q) }}{% endfor %}
+              </details>
+            {% endif %}
+          </div>
+        {% endfor %}
+      {% endfor %}
+    </div>
+
+    {# The reconciliation. 2026-08-27's lesson: "for anything derived, count the input
+       rows against the output rows — silence is the one failure mode neither the ledger
+       nor the owner can see." Twenty-two assignments were invisible on every surface for
+       exactly as long as no page did this arithmetic out loud. #}
+    <div class="hwrec" id="panel-homework-audit">
+      <p class="lane">what this month was built from</p>
+      <p class="hwsum">
+        <b>{{ month.counts.assignments }}</b> Canvas assignments due this month ·
+        <b>{{ month.counts.linked }}</b> with a commitment behind them ·
+        <b>{{ month.counts.unlinked }}</b> without.
+        {%- if month.counts.unlinked %}
+          Those {{ month.counts.unlinked }} are drawn above with a dashed outline: the deadline
+          is real, nothing was extracted from it, so no other surface knows about them and
+          the planner has never placed one.
+        {%- else %}
+          Every dated assignment this month has a commitment behind it.
+        {%- endif %}
+      </p>
+      {# The bound of the measurement, stated with it. 2026-08-27: "when a measurement
+         says a system is failing, check what the measurement's own bounds are before
+         believing it" — and the converse is the danger here, because this one can only
+         say everything is fine. It counts what the connector took from the feed. On
+         2026-08-27 this line read 72 of 72 while twelve assignments — the whole of CHM
+         113 Laboratory's September — were being dropped at parse time by
+         `canvas_ics.OVERRIDE_UID`'s absence, and it could not have said so. That one is
+         fixed; the class of failure is not, which is what this paragraph is for. #}
+      <p class="hwbound">Counted over what the <span class="kbd">canvas:ics</span> feed
+        delivered. An assignment the feed never listed is not in the ledger and cannot be
+        counted here — a course whose feed is short shows up in the Sources panel and in
+        <span class="kbd">backglass doctor</span>, never on this line.</p>
+      {% if month.unlinked %}
+        <div class="hwmiss">
+          {% for q in month.unlinked %}
+            <a class="hwi q-unlinked" {% if q.href %}href="{{ q.href }}"{% endif %}
+               {% if q.url %}target="_blank" rel="noreferrer"{% endif %}>
+              <span class="t">{{ q.at.strftime('%-d %b') if q.at else '—' }}</span
+              ><span class="n">{% if q.course %}<i>{{ q.course }}</i> {% endif %}{{ q.title }}</span>
+            </a>
+          {% endfor %}
+        </div>
+      {% endif %}
+      <p class="empty">Events come from the same reader the day planner builds on
+        (<span class="kbd">capacity.calendar_events</span>), minus routines and walks — so this
+        grid and the schedule cannot disagree about what a Tuesday holds.</p>
+    </div>
+
+  </div>
+</section>
+{% endblock %}
