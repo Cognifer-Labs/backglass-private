@@ -427,3 +427,51 @@ def test_the_watermark_is_the_window_it_was_formed_from(tray, conn, settings) ->
     _fact_id, item_id = tray
     work = revision.Work(facts=[], items=revision.evidence(conn, today="2026-08-27"))
     assert work.through_item == item_id
+
+
+# ── a cheap judge must not close a question a better one has not seen ────────
+
+def test_again_re_opens_what_a_cheaper_model_already_closed(tray, conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """`sync` runs this pass on whatever backend is configured, and on the free tier it
+    answers `current` to almost everything. Those verdicts cache under the same
+    `(fact_id, through_item)` key, so a later hand-run on a stronger model finds nothing
+    left to judge and silently agrees with the weaker one."""
+    fact_id, item_id = tray
+    weak = FakeClient([
+        {"verdicts": [{"fact_id": fact_id, "verdict": "current", "confidence": 0.5}]},
+    ])
+    revision.run(conn, settings, weak, prompt=_prompt())
+
+    blocked = FakeClient([])
+    assert revision.run(conn, settings, blocked, prompt=_prompt()).judged == 0
+    assert blocked.calls == []
+
+    strong = FakeClient([{"verdicts": [{
+        "fact_id": fact_id, "verdict": "overtaken", "confidence": 0.95,
+        "cites_item": item_id, "quote": "move off Tray Favors",
+        "replacement": "Off the Tray Favors team since August 2026.",
+    }]}])
+    report = revision.run(conn, settings, strong, prompt=_prompt(), again=True)
+    assert (report.judged, report.proposed) == (1, 1)
+    assert [p.value for p in facts.proposed(conn)] == [
+        "Off the Tray Favors team since August 2026."
+    ]
+
+
+def test_the_second_look_replaces_the_first_verdict(tray, conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """`DO NOTHING` on the conflict would make `--again` pay for the calls and then throw
+    the answers away. The only way to reach a conflict is a deliberate second look."""
+    fact_id, item_id = tray
+    revision.run(conn, settings, FakeClient([
+        {"verdicts": [{"fact_id": fact_id, "verdict": "current", "confidence": 0.5}]},
+    ]), prompt=_prompt())
+    revision.run(conn, settings, FakeClient([{"verdicts": [{
+        "fact_id": fact_id, "verdict": "overtaken", "confidence": 0.95,
+        "cites_item": item_id, "quote": "move off Tray Favors",
+        "replacement": "Off the Tray Favors team since August 2026.",
+    }]}]), prompt=_prompt(), again=True)
+
+    rows = conn.execute("SELECT verdict, status, proposed_fact FROM fact_check").fetchall()
+    assert len(rows) == 1, "one row per (fact, evidence), not one per look"
+    assert (rows[0]["verdict"], rows[0]["status"]) == ("overtaken", "proposed")
+    assert rows[0]["proposed_fact"] is not None

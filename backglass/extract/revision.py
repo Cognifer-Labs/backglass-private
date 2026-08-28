@@ -165,9 +165,20 @@ def evidence(
 
 
 def candidates(
-    conn: sqlite3.Connection, *, through_item: int, limit: int = PER_RUN
+    conn: sqlite3.Connection,
+    *,
+    through_item: int,
+    limit: int = PER_RUN,
+    again: bool = False,
 ) -> list[dict[str, Any]]:
     """Active facts never judged against evidence this new.
+
+    `again` drops the judged-once filter, and it exists for a specific failure rather
+    than for convenience. `sync` runs this pass on whatever backend is configured, and on
+    the free tier it answers `current` to almost everything — those verdicts are then
+    cached under the same `(fact_id, through_item)` key, so a later hand-run on a stronger
+    model finds nothing left to judge and silently agrees with the weaker one. A cheap
+    judge must not be able to close a question a better judge has not seen.
 
     The judged-once rule, and the reason the key is a pair. A watermark on the run would
     re-judge every fact on every sync and cost the same money for the same answers; a
@@ -178,16 +189,24 @@ def candidates(
     `NOT EXISTS` rather than `LEFT JOIN … IS NULL` because the pair is what is being
     tested, and the index on `(user_id, fact_id)` serves it directly.
     """
+    judged_once = (
+        ""
+        if again
+        else "   AND NOT EXISTS (SELECT 1 FROM fact_check c"
+             "                   WHERE c.user_id = f.user_id AND c.fact_id = f.id"
+             "                     AND c.through_item >= ?)"
+    )
+    params: tuple[Any, ...] = (
+        (USER_ID, limit) if again else (USER_ID, through_item, limit)
+    )
     return [
         dict(row)
         for row in conn.execute(
             "SELECT id, subject, key, value, note, source, created_at FROM fact f"
             " WHERE f.user_id = ? AND f.status = 'active'"
-            "   AND NOT EXISTS (SELECT 1 FROM fact_check c"
-            "                   WHERE c.user_id = f.user_id AND c.fact_id = f.id"
-            "                     AND c.through_item >= ?)"
+            f"{judged_once}"
             " ORDER BY f.id LIMIT ?",
-            (USER_ID, through_item, limit),
+            params,
         )
     ]
 
@@ -403,14 +422,22 @@ def _record(
 ) -> None:
     """The verdict, so the same evidence is never paid for twice.
 
-    `DO NOTHING` on conflict rather than an update: the key is `(fact_id, through_item)`,
-    so a conflict means this exact pair was already judged and the answer has not changed.
+    `DO UPDATE`, and the only way to reach a conflict is a `--again` run: without it the
+    judged-once filter never sends a pair twice. So a conflict means a second, deliberate
+    look at the same evidence — usually a stronger model re-examining what the free tier
+    called `current` — and the newer verdict is the one to keep. `DO NOTHING` here would
+    make `--again` cost the calls and then throw the answers away.
     """
     conn.execute(
         "INSERT INTO fact_check (user_id, fact_id, through_item, verdict, confidence,"
         " cites_item, quote, replacement, reason, proposed_fact, status, created_at)"
         " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
-        " ON CONFLICT (user_id, fact_id, through_item) DO NOTHING",
+        " ON CONFLICT (user_id, fact_id, through_item) DO UPDATE SET"
+        "   verdict = excluded.verdict, confidence = excluded.confidence,"
+        "   cites_item = excluded.cites_item, quote = excluded.quote,"
+        "   replacement = excluded.replacement, reason = excluded.reason,"
+        "   proposed_fact = COALESCE(excluded.proposed_fact, fact_check.proposed_fact),"
+        "   status = excluded.status, created_at = excluded.created_at",
         (
             USER_ID, j.fact_id, through, j.verdict, j.confidence, j.cites_item,
             j.quote, j.replacement, j.reason, proposed_fact, status, now_iso(),
@@ -426,6 +453,7 @@ def run(
     prompt: Prompt,
     dry_run: bool = False,
     limit: int = PER_RUN,
+    again: bool = False,
 ) -> Report:
     """One pass: every fact not yet judged against evidence this new, in batches."""
     report = Report()
@@ -435,7 +463,7 @@ def run(
         # business guessing from the facts alone.
         return report
     through = max(int(i["id"]) for i in items)
-    pending = candidates(conn, through_item=through, limit=limit)
+    pending = candidates(conn, through_item=through, limit=limit, again=again)
     if not pending:
         return report
 

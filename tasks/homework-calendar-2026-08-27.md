@@ -381,3 +381,41 @@ would have suppressed the fixed pass on exactly the facts it was built for.
 
 Three tests hold it, including the one that ties the watermark to the window it was formed
 from.
+
+## What the first real pass actually found
+
+`MODEL_BACKEND=claude_cli backglass revise`, 60 facts, 205c: **4 proposed, 56 current, 0
+discarded.** Three are right and one is the argument for the whole design.
+
+- `education/college` — "incoming fall 2026" to enrolled first-year with the semester
+  underway.
+- `education/class_registration` — replaces a line that had said since **3 June** that the
+  schedule was still changing and the McKenna coordinator owed a confirmation, with the
+  timetable the owner is actually attending. That fact had been riding into every model
+  call for eleven weeks.
+- `preferences/time_allocation` — records that the pre-college allocation ended on Aug 8
+  and names the two inputs that replace it.
+- `volunteering/banner_placement_request` — **over-claims, and should be rejected.** It
+  asserts "the move has since gone through in practice" on the strength of the owner's own
+  reminder listing "Banner ED 4-8pm" among the times to avoid. That is the owner planning
+  around the slot he *asked for*: Aimee's mail says she is still chasing the ED training
+  schedule and the service-description form is unfinished, and the proposal itself admits
+  in its last sentence that formal confirmation is not captured. It contradicts fact 108,
+  written by hand the same afternoon, which says ED is in progress and not confirmed.
+
+A pass permitted to write active would have quietly told the ledger the owner had been
+moved. It is not permitted to, which is the point.
+
+## `--again`: a cheap judge must not close a question a better one has not seen
+
+`sync` runs this on whatever backend is configured. On the free tier it answers `current`
+to almost everything, and those verdicts cache under the same `(fact_id, through_item)`
+key — so a later hand-run on a stronger model finds nothing left to judge and silently
+agrees with the weaker one. Observed: the scheduled pass had already closed 52 facts
+before the first deliberate run.
+
+`backglass revise --again` drops the judged-once filter. The conflict clause became
+`DO UPDATE` at the same time, because the only way to reach a conflict is a deliberate
+second look, and `DO NOTHING` would have made `--again` pay for the calls and throw the
+answers away. The empty-run message now names the flag, since "nothing left to judge" is
+more often the cache than the truth.

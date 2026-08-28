@@ -2493,7 +2493,13 @@ def relevance_command(
         raise typer.Exit(1 if report.errors else 0)
 
     if not report.judged:
-        typer.echo("nothing left to judge")
+        # Said with the way out, because the commonest cause is not "nothing is stale" —
+        # it is that the scheduled pass on the free backend already answered `current` to
+        # everything and cached it under this same evidence.
+        typer.echo(
+            "nothing left to judge"
+            + ("" if again else " — `--again` re-opens what a cheaper model already closed")
+        )
     else:
         # The verdicts first, because a pass costs the same to read as to run: counts
         # alone would make --dry-run pointless.
@@ -2517,6 +2523,13 @@ def revise_command(
         bool, typer.Option("--dry-run", help="Print the revisions, write nothing")
     ] = False,
     limit: Annotated[int, typer.Option("--limit", help="Facts judged this run")] = 0,
+    again: Annotated[
+        bool,
+        typer.Option(
+            "--again",
+            help="Re-judge facts already judged against this evidence — use on a better model",
+        ),
+    ] = False,
     as_json: Annotated[bool, typer.Option("--json", help="Machine-readable")] = False,
 ) -> None:
     """Re-read standing facts against what the record said next.
@@ -2549,6 +2562,7 @@ def revise_command(
         prompt=prompts.load("revise-facts"),
         dry_run=dry_run,
         limit=limit or revision_mod.PER_RUN,
+        again=again,
     )
     if not dry_run:
         conn.commit()
