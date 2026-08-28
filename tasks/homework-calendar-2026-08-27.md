@@ -343,3 +343,41 @@ The prompt's `model: careful` frontmatter is a hint nothing consumes — `run()`
 `settings.model_extract`, exactly as `check-relevance` does. Left consistent with its
 sibling rather than special-cased here; if the tier hint is ever honoured it should be
 honoured for both.
+
+## The bug the first real run found
+
+The pass went live inside half an hour without being asked to: launchd runs `sync` from
+this working tree, so the scheduled run picked up `_revision_pass` and judged 52 facts on
+the free backend before anyone typed the command. (`tasks/lessons.md`, 2026-08-27: the
+scheduler runs the checkout.)
+
+Every one of those verdicts was formed against the wrong evidence. `evidence()` ordered by
+`occurred_at DESC`, and `occurred_at` is when an item *is about* — for a `canvas:ics` row
+that is its **due date**. So "the newest forty things the ledger has read" was in fact "the
+coursework due furthest in the future", topped by an excused-absence form due in **March
+2027**, and every fact in the ledger was being judged against a list of deadlines that have
+not happened.
+
+It showed up as a bad proposal rather than as an error, which is the only reason it was
+caught: the one revision the pass offered cited *"Self & Team Evaluation is due
+2026-12-06"* as grounds for rewriting the semester's course-load fact. A citation that
+cannot support its verdict is exactly what the citation rule exists to make visible, and
+here it made the *window* visible instead.
+
+Two fixes, both in `evidence()`:
+
+- **Order by `id`, not `occurred_at`.** Insertion order is what "newest read" means, and
+  it is what `through_item` is a watermark on — so the window and the recurrence key now
+  describe the same thing. They did not before.
+- **Nothing dated in the future is evidence.** A thing that has not happened cannot have
+  overtaken a fact. Filtered on the date rather than the source, because the shape is what
+  makes it useless and not which connector wrote it: a calendar event next month is
+  exactly as inert as a Canvas deadline.
+
+The window is now recent mail, messages, reminders and calendar rows — the things that
+actually say a state has changed. The 52 cached verdicts were deleted rather than kept:
+they are a cache of judgements formed on evidence that was never evidence, and leaving them
+would have suppressed the fixed pass on exactly the facts it was built for.
+
+Three tests hold it, including the one that ties the watermark to the window it was formed
+from.

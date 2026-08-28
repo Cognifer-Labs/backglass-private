@@ -127,19 +127,39 @@ class Report:
     verdicts: list[str] = field(default_factory=list)
 
 
-def evidence(conn: sqlite3.Connection, *, limit: int = EVIDENCE_ITEMS) -> list[dict[str, Any]]:
+def evidence(
+    conn: sqlite3.Connection, *, today: str | None = None, limit: int = EVIDENCE_ITEMS
+) -> list[dict[str, Any]]:
     """The newest kept items, which is what a fact can have been overtaken by.
 
     Kept only. A dropped item is one triage judged not to bear on the owner's life, and a
     pass that read them would be re-litigating that decision with a more expensive model.
+
+    **Ordered by id, not by `occurred_at`, and that is a bug fix rather than a
+    preference.** `occurred_at` is when the item *is about*, and for a `canvas:ics` row
+    that is its due date — so ordering by it filled this window with coursework due in
+    December and, at the top, an excused-absence form due in March 2027. The first live
+    run judged all 73 facts against a list of future deadlines and, unsurprisingly,
+    proposed one revision citing "Self & Team Evaluation is due 2026-12-06" as grounds
+    for rewriting the semester's course load. Insertion order is what "the newest thing
+    the ledger has read" actually means, and it is also what `through_item` is a
+    watermark on, so the window and the recurrence key now agree.
+
+    **Nothing dated in the future is evidence.** A thing that has not happened cannot
+    have overtaken a fact — an assignment due in six weeks says nothing about whether the
+    owner still volunteers on Wednesdays. Filtered on the date rather than the source,
+    because the shape is what makes it useless here, not which connector wrote it: a
+    calendar event next month is exactly as inert as a Canvas deadline is.
     """
+    stamp = today or now_iso()[:10]
     return [
         dict(row)
         for row in conn.execute(
             "SELECT id, source, occurred_at, author, title, body_text FROM source_item"
             " WHERE user_id = ? AND triage_verdict = 'keep'"
-            " ORDER BY occurred_at DESC, id DESC LIMIT ?",
-            (USER_ID, limit),
+            "   AND substr(occurred_at, 1, 10) <= ?"
+            " ORDER BY id DESC LIMIT ?",
+            (USER_ID, stamp, limit),
         )
     ]
 

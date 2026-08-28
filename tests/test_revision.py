@@ -380,3 +380,50 @@ def test_the_marker_is_off_when_no_addresses_are_configured(tray, conn, settings
     )
     _static, user = revision.render(work, prompt=_prompt(), owner_emails=("", "   "))
     assert "YOU (the user wrote this)" not in user
+
+
+# ── what counts as evidence ──────────────────────────────────────────────────
+#
+# Found by running the pass on the real ledger rather than by reading it. The window was
+# ordered by `occurred_at`, which for a `canvas:ics` row is its DUE DATE — so "the newest
+# things the ledger has read" was in fact "the coursework due furthest in the future",
+# topped by an excused-absence form due in March 2027. Every fact was judged against a
+# list of future deadlines, and the one revision it proposed cited "Self & Team Evaluation
+# is due 2026-12-06" as grounds for rewriting the semester's course load.
+
+def test_evidence_is_ordered_by_what_was_read_not_by_what_it_is_about(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """Insertion order is what "newest read" means, and it is what `through_item`
+    watermarks — so the window and the recurrence key have to agree."""
+    old_news = _item(
+        conn, external="read-second", title="Aimee replied",
+        body="Your placement change is in progress.", occurred_at="2026-08-20T10:00:00+00:00",
+    )
+    future = _item(
+        conn, external="read-first", title="EC PS #1 due", body="due 2026-12-07",
+        occurred_at="2026-12-07T06:59:59+00:00",
+    )
+    window = revision.evidence(conn, today="2026-08-27")
+    ids = [int(i["id"]) for i in window]
+    assert future not in ids, "a deadline in December is not something the ledger has read"
+    assert ids[0] == old_news, "the newest row read comes first"
+
+
+def test_nothing_dated_in_the_future_is_evidence(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """A thing that has not happened cannot have overtaken a fact. Filtered on the date
+    rather than the source: a calendar event next month is exactly as inert as a Canvas
+    deadline is."""
+    _item(conn, external="later", title="Exam 4", body="Exam 4",
+          occurred_at="2026-12-08T00:00:00+00:00")
+    _item(conn, external="calendar-later", title="Lab", body="Lab session",
+          occurred_at="2026-09-30T00:00:00+00:00")
+    today_row = _item(conn, external="today", title="Note", body="Something happened",
+                      occurred_at="2026-08-27T09:00:00+00:00")
+    assert [int(i["id"]) for i in revision.evidence(conn, today="2026-08-27")] == [today_row]
+
+
+def test_the_watermark_is_the_window_it_was_formed_from(tray, conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """`through_item` is `max(id)` of the items sent, so a window ordered any other way
+    would record a watermark that does not describe what was actually judged."""
+    _fact_id, item_id = tray
+    work = revision.Work(facts=[], items=revision.evidence(conn, today="2026-08-27"))
+    assert work.through_item == item_id
