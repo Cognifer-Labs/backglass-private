@@ -2302,3 +2302,124 @@ def test_the_last_sitting_does_close_it(conn, sett: Settings) -> None:  # type: 
         "SELECT status FROM commitment WHERE id = ?", (commitment_id,)
     ).fetchone()["status"]
     assert status == "done"
+
+
+# ══ availability windows (migration 0036) ═════════════════════════════════
+
+
+def _with_window(
+    conn,  # type: ignore[no-untyped-def]
+    commitment_id: int,
+    *,
+    unlock_at: str | None = None,
+    lock_at: str | None = None,
+) -> None:
+    """Hang a Canvas assignment on the commitment's source item, carrying a window.
+
+    Through `source_item`, because that is the join `candidates` uses and the only one
+    that exists — there is no assignment_id on `commitment` and this does not add one.
+    """
+    source_id = conn.execute(
+        "SELECT source_item_id AS s FROM commitment WHERE id = ?", (commitment_id,)
+    ).fetchone()["s"]
+    conn.execute(
+        "INSERT INTO assignment (user_id, source, external_id, source_item_id, course,"
+        " title, due_at, description, description_hash, first_seen_at, last_changed_at,"
+        " unlock_at, lock_at)"
+        " VALUES (?, 'canvas:ics', ?, ?, 'CHM113', 'w', NULL, '', 'h', ?, ?, ?, ?)",
+        (USER_ID, f"assignment:{commitment_id}", source_id, now_iso(), now_iso(),
+         unlock_at, lock_at),
+    )
+
+
+def test_a_locked_assignment_is_not_yet_rather_than_overflow(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """CHM 113's Act 2 signup: locked until Sep 3, due Sep 10.
+
+    Before 0036 it sorted into PRIORITY_REST and was counted every morning in the same
+    "did not fit" number as work the day had no room for. A door that has not opened and
+    a day that is full are different facts.
+    """
+    later = THURSDAY + timedelta(days=7)
+    cid = add_commitment(conn, sett, "book the pod session", n=1, due=later)
+    _with_window(conn, cid, unlock_at=(THURSDAY + timedelta(days=3)).isoformat())
+
+    not_yet: set[int] = set()
+    pool = planner.candidates(conn, sett, THURSDAY, set(), not_yet=not_yet)
+    assert [c.commitment_id for c in pool] == []
+    assert not_yet == {cid}
+
+
+def test_the_day_it_unlocks_it_is_a_candidate(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """The gate is `>`, not `>=`. An item that unlocks today is workable today."""
+    later = THURSDAY + timedelta(days=7)
+    cid = add_commitment(conn, sett, "book the pod session", n=1, due=later)
+    _with_window(conn, cid, unlock_at=THURSDAY.isoformat())
+    not_yet: set[int] = set()
+    pool = planner.candidates(conn, sett, THURSDAY, set(), not_yet=not_yet)
+    assert [c.commitment_id for c in pool] == [cid]
+    assert not_yet == set()
+
+
+def test_a_utc_unlock_is_read_in_the_owners_zone(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """Canvas answers in UTC and the owner lives in two zones.
+
+    "Locked until Jul 30 at 12am" Phoenix comes back as `2026-07-30T07:00:00Z`. Slicing
+    ten characters happens to work here; the closing half is where it breaks, and
+    `test_a_utc_lock_does_not_gain_a_day` is that case.
+    """
+    cid = add_commitment(conn, sett, "book it", n=1, due=THURSDAY + timedelta(days=7))
+    _with_window(conn, cid, unlock_at="2026-07-30T07:00:00Z")
+    pool = planner.candidates(conn, sett, THURSDAY, set())
+    assert [c.commitment_id for c in pool] == [cid]
+
+
+def test_a_utc_lock_does_not_gain_a_day(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """"Available until Jul 31 at 11:59pm" Phoenix is `2026-08-01T06:59:59Z`.
+
+    Read as text that is the first of August — a day of deadline that does not exist, and
+    the owner finds out by missing it. Converted in their own zone it is the 31st.
+    """
+    cid = add_commitment(conn, sett, "book it", n=1, due=THURSDAY + timedelta(days=30))
+    _with_window(conn, cid, lock_at="2026-08-01T06:59:59Z")
+    pool = planner.candidates(conn, sett, FRIDAY, set())
+    assert pool[0].priority == planner.PRIORITY_DUE_TODAY, (
+        "the window shuts on the 31st, which is the day being planned"
+    )
+
+
+def test_a_window_that_shuts_first_outranks_the_due_date(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """BIO 181's Act I pod signup closes Sep 4 for a workbook due Sep 7.
+
+    Ranked on the due date it waits three days past the door it has to go through. The
+    displayed `due_at` is left alone — showing the earlier date as if Canvas had said it
+    is an unsourced claim (rule 1) — so the earlier one rides in `closes_at` instead.
+    """
+    late = add_commitment(conn, sett, "later thing", n=1, due=THURSDAY + timedelta(days=20))
+    closing = add_commitment(conn, sett, "closes first", n=2, due=THURSDAY + timedelta(days=30))
+    _with_window(conn, closing, lock_at=THURSDAY.isoformat())
+
+    pool = {c.commitment_id: c for c in planner.candidates(conn, sett, THURSDAY, set())}
+    assert pool[closing].priority == planner.PRIORITY_DUE_TODAY
+    assert pool[late].priority != planner.PRIORITY_DUE_TODAY
+    assert pool[closing].due_at is not None
+    assert pool[closing].due_at[:10] == (THURSDAY + timedelta(days=30)).isoformat(), (
+        "the ledger's own date is what the block shows"
+    )
+    assert pool[closing].closes_at == THURSDAY.isoformat()
+
+
+def test_a_window_that_shuts_after_the_due_date_changes_nothing(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """Late submission being allowed does not move the deadline."""
+    cid = add_commitment(conn, sett, "thing", n=1, due=THURSDAY)
+    _with_window(conn, cid, lock_at=(THURSDAY + timedelta(days=12)).isoformat())
+    pool = planner.candidates(conn, sett, THURSDAY, set())
+    assert pool[0].priority == planner.PRIORITY_DUE_TODAY
+    assert pool[0].closes_at is None
+
+
+def test_a_commitment_with_no_assignment_is_unchanged(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """The migration is behaviour-neutral on its own, and this is that claim."""
+    cid = add_commitment(conn, sett, "ordinary thing", n=1, due=THURSDAY)
+    pool = planner.candidates(conn, sett, THURSDAY, set())
+    assert [c.commitment_id for c in pool] == [cid]
+    assert pool[0].closes_at is None

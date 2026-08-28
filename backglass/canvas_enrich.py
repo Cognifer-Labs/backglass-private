@@ -78,6 +78,13 @@ class Record:
     submission_state: str | None
     score: float | None
     title: str = ""
+    #: `unlock_at` / `lock_at` — when the work can be started and when the door shuts.
+    #: Migration 0036 says why they are here and not on `commitment`; the short version is
+    #: that the feed carries neither, and the page that carries both is the one the owner
+    #: already exports. A session read "locked until Sep 3" off a Canvas page by hand on
+    #: 2026-08-27 because there was nowhere in the ledger to put it.
+    unlock_at: str | None = None
+    lock_at: str | None = None
 
     @property
     def external_id(self) -> str:
@@ -154,6 +161,8 @@ def load(path: Path) -> list[Record]:
                 submission_state=_text(entry.get("submission_workflow_state")),
                 score=_number(entry.get("score")),
                 title=str(entry.get("name") or ""),
+                unlock_at=_text(entry.get("unlock_at")),
+                lock_at=_text(entry.get("lock_at")),
             )
         )
     return out
@@ -211,6 +220,8 @@ def apply(
             "submitted_at": record.submitted_at,
             "submission_state": record.submission_state,
             "score": record.score,
+            "unlock_at": record.unlock_at,
+            "lock_at": record.lock_at,
         }
         diff = {k: v for k, v in changed.items() if row[k] != v}
         if diff:

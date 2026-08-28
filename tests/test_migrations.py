@@ -270,6 +270,9 @@ FROZEN_CHECKSUMS = {
     "0035_assignment_submission.sql": (
         "30b26fded1b84eda9e4c12e1d5c15e526cd71a780e1e3f2447324d28e86be829"
     ),
+    "0036_assignment_window.sql": (
+        "8ca3667d59182cbf3ed9752d73e2bec9e689325d5ac62f535299ae246babd122"
+    ),
 }
 
 

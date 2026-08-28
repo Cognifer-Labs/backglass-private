@@ -108,7 +108,8 @@ class TestDetect:
         )
 
     @pytest.mark.parametrize(
-        "title", ["Reserve Reading: Chapter 4", "Book Review Essay", "Booked Solid: a case study"]
+        "title",
+        ["Reserve Reading: Chapter 4", "Book Review Essay", "Booked Solid: a case"],
     )
     def test_the_weak_verbs_need_an_object(self, title: str) -> None:
         """`reserve` and `book` have ordinary English meanings a course catalogue is full

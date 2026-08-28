@@ -1,0 +1,36 @@
+-- When the work can be started, and when the door shuts. Neither is the due date.
+--
+-- `tasks/booking-pipeline-2026-08-27.md` Increment B. The case that named it: CHM 113's
+-- Act 2 VR pod signup is due Sep 10, and on 2026-08-27 its Canvas page said
+--
+--     Due Sep 10 at 11:59pm  Points 10  Available Sep 3 at 12am - Sep 15 at 11:59pm
+--     This assignment is locked until Sep 3 at 12am.
+--
+-- Three dates, and the ledger could hold one. So a session opened the page by hand, read
+-- "locked until Sep 3", and wrote the owner a reminder — because nothing in the ledger
+-- could say "not yet", and an item the planner cannot start is otherwise either absent or
+-- falsely due. It reported as overflow every morning until it unlocked, which is the same
+-- word the planner uses for work that would not fit, and it means something entirely
+-- different.
+--
+-- BIO 181's is the sharper version: its Act I pod signup is blocked behind a prerequisite
+-- quiz and closes Sep 4, three days before the workbook that depends on it is due. A
+-- deadline that is *earlier* than the due date and invisible to every surface is how a
+-- student loses points on work they had time for.
+--
+-- On `assignment`, not on `commitment`, and deliberately. These are facts about the
+-- assignment row that already exists, from the same institution that supplied it and out
+-- of the same browser export 0035 reads — the join to `commitment` runs through
+-- `source_item` and already exists. A pair of columns duplicated onto `commitment` would
+-- be two writers for one fact, and the second one goes stale the first time Canvas moves
+-- a date.
+--
+-- Nullable, no default. NULL means "Canvas did not say", which is not "unlocked now" — an
+-- assignment nobody has enriched has no window, and the planner treats it exactly as it
+-- does today. That is what keeps this migration behaviour-neutral on its own.
+
+-- When the assignment becomes actionable. Before this, no amount of planning helps.
+ALTER TABLE assignment ADD COLUMN unlock_at TEXT;
+-- When it stops being submittable. Where this is earlier than `due_at`, it is the real
+-- deadline and `plan/planner.py::candidates` ranks on it.
+ALTER TABLE assignment ADD COLUMN lock_at   TEXT;

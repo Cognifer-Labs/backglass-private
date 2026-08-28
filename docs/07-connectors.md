@@ -226,6 +226,7 @@ Downloads; course ids come from `/api/v1/courses?enrollment_state=active&per_pag
         out.push({ canvas_id: a.id, course_id: cid, name: a.name, due_at: a.due_at,
           points_possible: a.points_possible, submitted_at: s.submitted_at || null,
           submission_workflow_state: s.workflow_state || null, graded_at: s.graded_at || null,
+          unlock_at: a.unlock_at || null, lock_at: a.lock_at || null,
           score: s.score === undefined ? null : s.score }); }
       if (j.length < 100) break;
     }
@@ -237,8 +238,14 @@ Downloads; course ids come from `/api/v1/courses?enrollment_state=active&per_pag
 })();
 ```
 
+`unlock_at` and `lock_at` are the two the feed cannot say and the planner now reads
+(migration 0036). An assignment locked until Sep 3 is not overdue and not overflow — it is
+*not yet*, which was a state the ledger had no way to hold, and the only reason the owner
+knew about one on 2026-08-27 is that a session opened the page and read it.
+
 Then `backglass coursework --enrich ~/Downloads/backglass-canvas-assignments.json`, which
-records points and submission state and *names* the finished work it found. Adding
+records points, submission state and the availability window, and *names* the finished
+work it found. Adding
 `--close-submitted` also resolves those commitments, with the Canvas evidence in
 `resolution_note`; run it with `--dry-run` first and read the list.
 

@@ -52,6 +52,8 @@ def records(*rows: dict[str, Any]) -> list[canvas_enrich.Record]:
             submission_state=row.get("submission_workflow_state"),
             score=row.get("score"),
             title=str(row.get("name") or ""),
+            unlock_at=row.get("unlock_at"),
+            lock_at=row.get("lock_at"),
         )
         for row in rows
     ]
@@ -334,3 +336,40 @@ def test_a_document_that_is_not_a_list_is_refused(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="JSON array"):
         canvas_enrich.load(path)
+
+
+def test_the_availability_window_lands_on_the_assignment(
+    conn: Any, settings: Settings
+) -> None:
+    """Migration 0036. The two dates the ICS feed cannot say and the planner now reads.
+
+    CHM 113's Act 2 signup, as Canvas states it: due Sep 10, available Sep 3 to Sep 15,
+    locked until Sep 3. Three dates where the ledger could hold one, which is why a
+    session read "locked until Sep 3" off the page by hand on 2026-08-27.
+    """
+    _assignment(conn, settings)
+    canvas_enrich.apply(
+        conn,
+        records(export(unlock_at="2026-09-03T07:00:00Z", lock_at="2026-09-16T06:59:59Z")),
+    )
+    row = conn.execute("SELECT unlock_at, lock_at FROM assignment").fetchone()
+    assert row["unlock_at"] == "2026-09-03T07:00:00Z"
+    assert row["lock_at"] == "2026-09-16T06:59:59Z"
+
+
+def test_an_export_without_a_window_leaves_the_columns_null(
+    conn: Any, settings: Settings
+) -> None:
+    """NULL is "Canvas did not say", which is a different claim from "unlocked now"."""
+    _assignment(conn, settings)
+    canvas_enrich.apply(conn, records(export()))
+    row = conn.execute("SELECT unlock_at, lock_at FROM assignment").fetchone()
+    assert row["unlock_at"] is None and row["lock_at"] is None
+
+
+def test_the_window_comes_off_the_export_as_the_snippet_writes_it(tmp_path: Path) -> None:
+    path = tmp_path / "canvas.json"
+    path.write_text(json.dumps([export(unlock_at="2026-09-03T07:00:00Z", lock_at=None)]))
+    rows = canvas_enrich.load(path)
+    assert rows[0].unlock_at == "2026-09-03T07:00:00Z"
+    assert rows[0].lock_at is None

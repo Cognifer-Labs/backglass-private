@@ -27,6 +27,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from backglass import staleness
 from backglass.config import Settings
@@ -80,6 +81,12 @@ class Candidate:
     #: deliverable measured in pages, chapters or runtime and divisible by construction.
     #: A three-hour move-in is not, and nothing here may cut one in half.
     divisible: bool = False
+    #: `assignment.lock_at`, where it is earlier than the due date — the day the door
+    #: shuts rather than the day the work is wanted. Migration 0036. `priority` is ranked
+    #: on it; `due_at` above is left as the ledger holds it, so a surface that shows the
+    #: earlier date can also say where it came from instead of appearing to contradict
+    #: Canvas. NULL for everything with no assignment behind it, which is most things.
+    closes_at: str | None = None
 
     @property
     def small(self) -> bool:
@@ -171,6 +178,7 @@ def candidates(
     at_risk_goals: set[int],
     stale: set[int] | None = None,
     allocated_today: set[int] | None = None,
+    not_yet: set[int] | None = None,
 ) -> list[Candidate]:
     """Open commitments the planner may schedule, with derived priority.
 
@@ -194,12 +202,21 @@ def candidates(
     and for the same reason. It is the only input here that knows about any day but this
     one, and it is what stops an assignment due in three weeks being invisible for two of
     them and then arriving with nowhere left to go.
+
+    `not_yet` is an out-parameter, filled with the commitments whose assignment is locked
+    on `day` (migration 0036). It is a set the caller passes in rather than a second
+    return value for the same reason `stale` is passed in: `propose` needs the count for
+    a note, and the set the note describes has to be the same object the gate applied.
     """
     if stale is None:
         stale = staleness.stale_ids(conn, day)
     rows = conn.execute(
         "SELECT c.id, c.what, c.due_at, c.estimated_minutes, c.direction, c.goal_id, "
         "       c.rollover_count, c.estimate_source, s.occurred_at, "
+        # The assignment behind the commitment, where there is one, for the two dates
+        # migration 0036 added. LEFT JOIN and only through `source_item`: a commitment
+        # with no assignment gets NULLs and behaves exactly as it did before.
+        "       a.unlock_at, a.lock_at, "
         # Sittings already spent on it. A multi-session assignment that keeps its full
         # estimate every morning would be scheduled forever; this is what makes the
         # remainder shrink.
@@ -208,17 +225,45 @@ def candidates(
         "         FROM plan_block b WHERE b.commitment_id = c.id AND b.outcome = 'done'"
         "       ), 0) AS done_minutes "
         "FROM commitment c JOIN source_item s ON s.id = c.source_item_id "
+        "     LEFT JOIN assignment a ON a.source_item_id = c.source_item_id "
         "WHERE c.user_id = ? AND c.status = 'open' AND c.confidence >= ? "
         "  AND c.direction = 'i_owe'",
         (USER_ID, settings.confidence_threshold),
     ).fetchall()
 
     week_end = day + timedelta(days=(6 - day.weekday()))
+    zone = timezones.active_tz(settings, day)
     out: list[Candidate] = []
     for row in rows:
         if int(row["id"]) in stale:
             continue
-        due = date.fromisoformat(str(row["due_at"])[:10]) if row["due_at"] else None
+        unlock = _day_of(row["unlock_at"], zone)
+        if unlock is not None and unlock > day:
+            # "Not yet" is a third answer, and it is the one the ledger could not give.
+            # CHM 113's Act 2 signup was locked until Sep 3 and due Sep 10: without this
+            # it sorted into PRIORITY_REST and was counted, every single morning, in the
+            # same "did not fit" number as work the day genuinely had no room for. Those
+            # are different facts and a plan that renders them with one word is lying
+            # about one of them. `not_yet` collects them for the note in `propose`.
+            if not_yet is not None:
+                not_yet.add(int(row["id"]))
+            continue
+
+        stated = _day_of(row["due_at"], zone)
+        closes = _day_of(row["lock_at"], zone)
+        # A window that shuts before the due date IS the deadline. BIO 181's Act I pod
+        # signup closes Sep 4 for a workbook due Sep 7 — ranking on Sep 7 schedules it
+        # three days after the door it has to go through.
+        #
+        # Ranked on, not displayed as. `Candidate.due_at` stays the date the ledger
+        # holds, because a block that says "due Sep 4" where Canvas says Sep 10 is an
+        # unsourced claim (rule 1) and the owner has no way to see where it came from.
+        # The earlier date rides along in `closes_at` for a surface that wants to say
+        # *why*, and this function stays the only place that decides priority.
+        due = stated
+        if closes is not None and (due is None or closes < due):
+            due = closes
+
         if due is not None and due < day:
             priority = PRIORITY_OVERDUE
         elif due == day:
@@ -253,9 +298,42 @@ def candidates(
                 age_days=(day - occurred).days,
                 done_minutes=int(row["done_minutes"] or 0),
                 divisible=str(row["estimate_source"] or "") == "analyzed",
+                closes_at=(
+                    str(row["lock_at"])
+                    if closes is not None and (stated is None or closes < stated)
+                    else None
+                ),
             )
         )
     return out
+
+
+def _day_of(value: object, zone: str) -> date | None:
+    """The date this timestamp falls on **in the owner's zone**, or None.
+
+    Not the first ten characters, and the difference is a whole day. Canvas returns
+    `unlock_at` and `lock_at` in UTC: "Available Sep 3 at 12am - Sep 15 at 11:59pm"
+    Phoenix comes back as `2026-09-03T07:00:00Z` and `2026-09-16T06:59:59Z`. Slicing
+    those gives the 3rd — right — and the **16th** — a day of deadline that does not
+    exist. The owner moves between UTC-7 and UTC+5:30, so this is not a Phoenix-shaped
+    problem that could be hardcoded away either.
+
+    A bare `2026-09-03` from the ICS feed has no zone to convert and is already a date;
+    it is taken as written.
+    """
+    if not value:
+        return None
+    text = str(value)
+    try:
+        stamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        try:
+            return date.fromisoformat(text[:10])
+        except ValueError:
+            return None
+    if stamp.tzinfo is None:
+        return stamp.date()
+    return stamp.astimezone(ZoneInfo(zone)).date()
 
 
 def _block_title(item: Candidate, minutes: int) -> str:
@@ -666,7 +744,8 @@ def propose(
         return proposal
 
     stale = staleness.stale_ids(conn, day)
-    pool = candidates(conn, settings, day, at_risk_goals or set(), stale)
+    not_yet: set[int] = set()
+    pool = candidates(conn, settings, day, at_risk_goals or set(), stale, not_yet=not_yet)
 
     # The fortnight, before the day. `runway.allocate` walks every day between here and
     # each obligation's deadline and lays its sittings on the earliest days with room —
@@ -689,9 +768,24 @@ def propose(
     if horizon.sittings or horizon.unreachable:
         # Re-derived rather than mutated: `Candidate.priority` is set in `candidates`,
         # and a second writer for it would be a field two functions disagree about.
+        # Re-derived with the same out-set, cleared first: a second pass appending to a
+        # set the first pass already filled would double-count nothing (it is a set) but
+        # would keep an id whose assignment unlocked between the two calls, which cannot
+        # happen today and is the sort of thing that becomes true quietly.
+        not_yet.clear()
         pool = candidates(
             conn, settings, day, at_risk_goals or set(), stale,
-            allocated_today=horizon.on(day),
+            allocated_today=horizon.on(day), not_yet=not_yet,
+        )
+    if not_yet:
+        # The third answer. Before migration 0036 these landed in "did not fit" beside
+        # work the day genuinely had no room for, and those are different facts: one is
+        # a scheduling failure and the other is a door that has not opened. CHM 113's
+        # Act 2 signup was locked until Sep 3 and reported as overflow every morning
+        # until it was not.
+        proposal.notes.append(
+            f"{len(not_yet)} item(s) not yet open — locked until a later date, "
+            "not work that would not fit."
         )
     held = len(stale)
     if held:

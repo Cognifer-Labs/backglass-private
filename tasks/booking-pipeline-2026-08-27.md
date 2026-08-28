@@ -191,16 +191,53 @@ conversation.
 
 ## Steps
 
-- [ ] 0.1 Manual source items skipped by triage/extraction; test.
-- [ ] 0.2 Supersede 642 into 639.
-- [ ] A.1 `booking.py` normaliser + the markdown fixture from assignment 30.
-- [ ] A.2 Booking detection, split into book/attend records.
-- [ ] A.3 Operative deadline off `fact`; conflict surfaced when the calendar disagrees.
-- [ ] A.4 Reconciliation count, printed by `coursework`.
-- [ ] B.1 Migration: `not_before`, `window_closes_at`.
-- [ ] B.2 `canvas_enrich.py` reads `unlock_at` / `lock_at`.
-- [ ] B.3 Planner: "not yet" as a third answer in `select` and the runway.
-- [ ] B.4 `app-update`.
+- [x] 0.1 Manual source items excluded from all three pending queries; regression test.
+- [ ] 0.2 The 39 already-open duplicates. **Not done, and not doable from here.** The fix
+      stops new ones; the board still carries the old ones. Cleaning them changes what the
+      owner reads every morning, so it goes through them — see "What is still owed".
+- [x] A.1 `booking.py` normaliser + the markdown fixture from assignment 30.
+- [x] A.2 Booking detection, split into book/attend records.
+- [x] A.3 Operative deadline off `fact`, with the retraction filter that turned out to be
+      what actually made it right; conflict surfaced when the calendar disagrees.
+- [x] A.4 Reconciliation counts, printed by `backglass bookings`.
+- [x] B.1 Migration 0036: `assignment.unlock_at`, `assignment.lock_at`. **On `assignment`,
+      not `commitment`** — same institution, same browser export, and the join through
+      `source_item` already exists. Two writers for one fact was the alternative.
+- [x] B.2 `canvas_enrich.py` reads them; the docs/07 snippet now exports them.
+- [x] B.3 Planner: "not yet" is a third answer, and a window that shuts before the due
+      date outranks it. Ranked on, not displayed as — `Candidate.closes_at` carries the
+      earlier date so a surface can say where it came from.
+- [ ] B.4 `app-update`. **Deliberately not run from the worktree**: it would build and
+      install the desktop app from a branch, and the installed app should follow the
+      shared checkout. Run it after merge, in the same breath as the merge.
 - [ ] C.1 Migration: `scheduled_source_item_id`.
 - [ ] C.2 `select` skips linked commitments; test asserts the exact minute reduction.
 - [ ] C.3 Shutdown asks about the event rather than rolling it.
+
+## What is still owed, stated plainly
+
+**The 39 duplicate commitments.** They came from the bug Increment 0 fixed and they are
+still open, still holding planner minutes. The pairs are findable — a manual `source_item`
+carrying both the owner's own row (`estimate_source = 'manual'`, confidence 1.0) and one or
+more model-made rows beside it:
+
+```sql
+SELECT s.id AS source_item, c.id, c.what, c.due_at, c.estimate_source, c.confidence
+FROM commitment c JOIN source_item s ON s.id = c.source_item_id
+WHERE s.source = 'manual' AND c.status = 'open'
+ORDER BY s.id, c.confidence DESC;
+```
+
+Superseding rather than deleting keeps the history, and the resolution note should quote
+which row it lost to. It is a small script and it is the owner's call, not a side effect
+of a bug fix.
+
+**No live `meeting:` override is written.** The mechanism is in `booking.py` and tested;
+the CHM 113 case that motivated it no longer needs one, because the stale calendar rows
+are retracted and the corrected ones are in. Writing an override nobody needs would be a
+second source of truth for a fact already settled. The grammar is documented for the next
+time a course moves and the calendar has not caught up.
+
+**`backglass bookings` reports; it does not write.** Commitment 588 still carries its 90
+minutes and the calendar event booked for Sep 2 is still budgeted separately. That is
+Increment C, and until it lands the board double-counts that one obligation.
