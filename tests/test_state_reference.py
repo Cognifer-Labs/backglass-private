@@ -30,9 +30,12 @@ Regenerate with:  uv run python -m tests.test_state_reference
 from __future__ import annotations
 
 import ast
+import re
 import sqlite3
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from backglass import state as state_mod
 from backglass.config import Settings
@@ -70,18 +73,44 @@ its derivation is read from the source rather than from a run.
 EXCLUDED_SECTIONS = ("errors",)
 
 
-def declared() -> dict[tuple[str, str], list[tuple[str | None, int]]]:
+@dataclass(frozen=True)
+class Site:
+    """One `state.add(...)` call site, read out of the source."""
+
+    how: str | None
+    #: The function it sits in, not its line. Line numbers move whenever anything above
+    #: them is edited, so a docstring tweak to `state.py` would have forced a
+    #: regeneration of a document nothing in it had changed.
+    where: str
+    #: Whether this branch passes an `unknown` reason to `Claim`. Read here rather than
+    #: observed from a run, because whether a probe *can* fail is a property of the code
+    #: and whether it *did* is a property of this laptop.
+    unknown_capable: bool
+
+
+def declared() -> dict[tuple[str, str], list[Site]]:
     """Every `state.add("section", "name", Claim(...))` the module contains.
 
     Static, so conditional branches count. A name written from two branches has two
-    entries, which is how the document can say a claim has more than one derivation
-    without a run ever taking both.
+    entries, which is how the document says a claim has more than one derivation without
+    any single run taking both.
 
     `how` comes back as `None` where the argument is not a plain string — an f-string
-    that interpolates a constant, usually — and the row falls back to naming its line.
+    interpolating a module constant, usually — and the row falls back to the live value
+    from `collect`, which reaches most of them.
     """
     tree = ast.parse(Path(state_mod.__file__).read_text())
-    out: dict[tuple[str, str], list[tuple[str | None, int]]] = {}
+    scopes = [
+        (node.lineno, max(getattr(node, "end_lineno", node.lineno), node.lineno), node.name)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef)
+    ]
+
+    def enclosing(lineno: int) -> str:
+        inner = [name for start, end, name in scopes if start <= lineno <= end]
+        return inner[-1] if inner else "<module>"
+
+    out: dict[tuple[str, str], list[Site]] = {}
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -99,12 +128,19 @@ def declared() -> dict[tuple[str, str], list[tuple[str | None, int]]]:
         ):
             continue  # the `errors` catch-all; see EXCLUDED_SECTIONS
         how: str | None = None
+        unknown_capable = False
         claim = node.args[2]
-        if isinstance(claim, ast.Call) and len(claim.args) >= 2:
-            arg = claim.args[1]
-            if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
-                how = arg.value
-        out.setdefault((section.value, name.value), []).append((how, node.lineno))
+        if isinstance(claim, ast.Call):
+            if len(claim.args) >= 2:
+                arg = claim.args[1]
+                if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                    how = arg.value
+            unknown_capable = len(claim.args) >= 3 or any(
+                kw.arg == "unknown" for kw in claim.keywords
+            )
+        out.setdefault((section.value, name.value), []).append(
+            Site(how=how, where=enclosing(node.lineno), unknown_capable=unknown_capable)
+        )
     return out
 
 
@@ -130,44 +166,76 @@ def render(state: state_mod.State, checks: list[state_mod.Verdict]) -> str:
         lines.append(f"\n## `{section}`\n")
         lines.append("| claim | derivation | notes |")
         lines.append("| --- | --- | --- |")
-        for name, claim in claims.items():
+        for name in claims:
             seen.add((section, name))
-            notes = []
-            if claim.unknown is not None:
-                notes.append("unknown-capable")
-            if len(sites.get((section, name), [])) > 1:
-                notes.append(f"{len(sites[(section, name)])} derivations")
-            lines.append(
-                f"| `{name}` | {_cell(claim.how)} | {', '.join(notes) or '—'} |"
-            )
+            lines.append(_row(name, sites.get((section, name), []), claims[name].how))
 
     missing = sorted(k for k in sites if k not in seen and k[0] not in EXCLUDED_SECTIONS)
     if missing:
         lines.append("\n## Configured installs only\n")
         lines.append(
-            "Claims a fresh checkout never reaches — an exported vault, a machine with a\n"
-            "configured upstream. Named here so the surface is complete rather than\n"
-            "complete-as-far-as-this-machine-got.\n"
+            "Claims a fresh checkout never reaches — an exported vault, chiefly. Named\n"
+            "here so the surface is complete rather than complete-as-far-as-this-machine-\n"
+            "got, and read from the source rather than from a run.\n"
         )
-        lines.append("| claim | derivation | source |")
+        lines.append("| claim | derivation | notes |")
         lines.append("| --- | --- | --- |")
         for section, name in missing:
-            how, lineno = sites[(section, name)][0]
-            where = f"`state.py:{lineno}`"
-            lines.append(f"| `{section}.{name}` | {_cell(how) if how else '—'} | {where} |")
+            lines.append(_row(f"{section}.{name}", sites[(section, name)], None))
 
     lines.append("\n## Verdicts\n")
     lines.append(
         "What `state` *judges*, rather than reports. Forty claims with no verdict left\n"
         "every reader to know which numbers were bad news; these are the ones that say so\n"
-        "themselves, and each carries the remedy for its own failure.\n"
+        "themselves, and each carries the remedy for its own failure.\n\n"
+        "The named checks only. `verdicts()` also echoes one row per claim that came back\n"
+        "`unknown` on the run that produced it, and those depend on the machine — a\n"
+        "checkout with an upstream configured has no `code.commits_ahead_of_upstream`\n"
+        "row, so including them made this document disagree with itself across two\n"
+        "clones.\n"
     )
     lines.append("| verdict |")
     lines.append("| --- |")
     for verdict in checks:
+        if verdict.unknown:
+            continue
         lines.append(f"| {verdict.name} |")
 
     return "\n".join(lines) + "\n"
+
+
+def _row(label: str, sites: list[Site], observed_how: str | None) -> str:
+    """One table row: the label, every derivation it has, and what to know about it.
+
+    Every derivation, not the one this run happened to take. `deployed.app` answers
+    "path exists" or names the path it could not find, and a document that showed one of
+    them was incomplete on its own terms while printing "2 derivations" beside it.
+    """
+    # Deduped, in source order. Two branches often differ only in the value they carry —
+    # `code.uncommitted` reports the paths or reports that git could not be run, from the
+    # same `git status --porcelain` — and printing one sentence twice claims a difference
+    # that is not there.
+    hows = list(dict.fromkeys(site.how for site in sites if site.how))
+    if not hows and observed_how:
+        hows = [observed_how]
+    notes: list[str] = []
+    if any(site.unknown_capable for site in sites):
+        notes.append("unknown-capable")
+    wheres = sorted({site.where for site in sites})
+    if wheres:
+        notes.append(", ".join(f"`{where}`" for where in wheres))
+    return (
+        f"| `{label}` | {' <br> '.join(_cell(h) for h in hows) or '—'} "
+        f"| {', '.join(notes) or '—'} |"
+    )
+
+
+#: `deployed.matches_source` builds its `how` around `len(frozen_surfaces())`, which grows
+#: whenever a template is added — so an unrelated new page would change this document and
+#: send the next reader looking for a change to `state.py` that is not there. The count is
+#: a reading, and readings do not belong here; the derivation without it is the same
+#: sentence.
+_COUNTED = re.compile(r"\bsha256 of \d+ frozen surfaces\b")
 
 
 def _cell(text: str | None) -> str:
@@ -175,6 +243,7 @@ def _cell(text: str | None) -> str:
     fight the SQL that is already quoted inside several of them."""
     if not text:
         return "—"
+    text = _COUNTED.sub("sha256 of every frozen surface", text)
     return text.replace("|", "\\|").replace("\n", " ")
 
 
@@ -205,18 +274,46 @@ def test_every_declared_claim_is_documented() -> None:
     claim that had been deleted. So the document is checked against what the module
     *declares*, not against what one machine happened to reach.
     """
-    body = REFERENCE.read_text()
-    undocumented = [
+    documented = _documented()
+    undocumented = sorted(
         f"{section}.{name}"
         for (section, name) in declared()
-        if section not in EXCLUDED_SECTIONS
-        and f"`{name}`" not in body
-        and f"`{section}.{name}`" not in body
-    ]
+        if section not in EXCLUDED_SECTIONS and (section, name) not in documented
+    )
     assert undocumented == [], (
         f"state.py declares claims specs/state.md does not name: {undocumented}. "
         "Regenerate it: uv run python -m tests.test_state_reference"
     )
+
+
+def _documented() -> set[tuple[str, str]]:
+    """Every `(section, name)` the committed reference names, read back qualified.
+
+    Qualified, and not a bare `` `name` `` search anywhere in the body, because names
+    repeat across sections: `last_run` is a claim of both `pipeline` and `vault`, and
+    `on_disk` of both `schema` and `prompts`. A render bug that dropped `vault.last_run`
+    would have been satisfied by `pipeline`'s row and passed.
+    """
+    section = ""
+    out: set[tuple[str, str]] = set()
+    for line in REFERENCE.read_text().splitlines():
+        heading = re.match(r"^## `([a-z_]+)`$", line)
+        if heading:
+            section = heading.group(1)
+            continue
+        if line.startswith("## "):
+            section = ""  # "Configured installs only" / "Verdicts" — rows are qualified
+            continue
+        cell = re.match(r"^\| `([a-z_.]+)` \|", line)
+        if not cell:
+            continue
+        label = cell.group(1)
+        if "." in label:
+            head, _, tail = label.partition(".")
+            out.add((head, tail))
+        elif section:
+            out.add((section, label))
+    return out
 
 
 def test_a_dropped_section_cannot_pass_quietly(tmp_path: Path, settings: Settings) -> None:
@@ -300,6 +397,49 @@ def test_no_configuration_produces_a_claim_the_document_does_not_name(
     assert missing == [], (
         f"a configured install reports claims specs/state.md never names: {missing}"
     )
+
+
+def test_the_reference_does_not_move_when_only_the_machine_does(
+    tmp_path: Path, settings: Settings, monkeypatch: Any
+) -> None:
+    """The failure this refactor exists for, and it was not hypothetical.
+
+    The first draft took `unknown-capable` from whether a probe *failed on this laptop*
+    and listed the verdict rows a run produced. This worktree has no upstream, so
+    `code.commits_ahead_of_upstream` came back unknown and got both a note and a verdict
+    row. `main` has an upstream. The first `pytest` after the merge would have rebuilt the
+    document without those two lines and failed the drift test — and regenerating on main
+    would have flipped them back the next time anyone regenerated from a worktree.
+
+    A reference that ping-pongs with the checkout is not a reference. Both properties are
+    read from the source now, and this pins it with the toggle that actually differed.
+    """
+    real_git = state_mod._git
+
+    def fake_git(*args: str) -> str | None:
+        if args[:2] == ("rev-list", "--count"):
+            return "3"  # a branch that has an upstream, three commits ahead of it
+        return real_git(*args)
+
+    (tmp_path / "a").mkdir()
+    before = build(tmp_path / "a", settings)
+    monkeypatch.setattr(state_mod, "_git", fake_git)
+    (tmp_path / "b").mkdir()
+    after = build(tmp_path / "b", settings)
+
+    assert before == after, "the document changed when only the checkout's upstream did"
+
+
+def test_a_new_template_does_not_rewrite_the_document(
+    tmp_path: Path, settings: Settings
+) -> None:
+    """`deployed.matches_source` builds its derivation around the number of frozen
+    surfaces, which grows whenever a page is added — and the Homework tab is adding one.
+    A count is a reading. It belongs to the command, not to the reference, or an unrelated
+    template sends the next reader hunting for a change to `state.py` that is not there."""
+    body = REFERENCE.read_text()
+    assert "sha256 of every frozen surface" in body
+    assert not re.search(r"sha256 of \d+ frozen surfaces", body)
 
 
 if __name__ == "__main__":  # regeneration entry point, named in the header above

@@ -117,10 +117,9 @@ answer assembled from a missing input is the failure it exists to prevent.
 
 `specs/state.md` lists every claim and its derivation without the values — the surface,
 where the command gives you the reading. It is generated from `backglass/state.py`
-(`uv run python -m tests.test_state_reference`) and a test fails when the two disagree,
-so a section cannot be dropped by a merge without something saying so. That has already
-happened once: an audit section went missing in a merge on 2026-08-07 and nothing
-anywhere recorded that a question had stopped being asked.
+(`uv run python -m tests.test_state_reference`) and a test fails when the two disagree, so
+a section cannot be dropped by a merge without something saying so — which is the fourth
+item in the list above, "an audit section silently dropped by a merge".
 
 The deployed-versus-source line is the one to check before blaming the app for anything:
 the desktop sidecar freezes templates and CSS at build time, so the running app can be
