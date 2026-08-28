@@ -274,7 +274,7 @@ FROZEN_CHECKSUMS = {
         "8ca3667d59182cbf3ed9752d73e2bec9e689325d5ac62f535299ae246babd122"
     ),
     "0037_commitment_scheduled_event.sql": (
-        "4e0f75710400a212da1c3635dea69999b30acea6f45e82f14507be197eeadd02"
+        "e35af0091c89fdbc328ce5bed534ba7efe20ae473a7a1d79a15a94a22f25f581"
     ),
 }
 

@@ -481,7 +481,7 @@ class Attended:
     happened_at: str
 
 
-def past_events(conn: sqlite3.Connection, day: date) -> list[Attended]:
+def past_events(conn: sqlite3.Connection, settings: Settings, day: date) -> list[Attended]:
     """Linked obligations whose event finished on or before `day` and are still open.
 
     The other half of migration 0037, and the reason the link is not a quiet deletion.
@@ -493,7 +493,17 @@ def past_events(conn: sqlite3.Connection, day: date) -> list[Attended]:
     Asks; does not close. Attending is a thing that happens in a room, and the calendar
     knows the appointment was made, not that anybody went (`canvas_enrich` makes the same
     distinction about a Canvas score, for the same reason).
+
+    **The day is the owner's, not UTC's**, and the first version of this got it wrong in
+    exactly the way the same day's planner work had just fixed. `connectors/apple_calendar`
+    stores what JXA's `toISOString()` produces, which is always `Z`: the pod session booked
+    for Sep 2 at 6:00pm Phoenix is on disk as `ends_at = 2026-09-03T02:00:00.000Z`. Sliced
+    to ten characters that is the third, so the evening pass would have asked "did you go?"
+    a day late — for every evening event, every time. The fixtures now carry the `Z` shape
+    the connector actually writes, because the ones that carried `-07:00` passed on data
+    unlike the data.
     """
+    zone = ZoneInfo(timezones.active_tz(settings, day))
     rows = conn.execute(
         "SELECT c.id, c.what, s.title, s.raw_json FROM commitment c"
         " JOIN source_item s ON s.id = c.scheduled_source_item_id"
@@ -507,7 +517,14 @@ def past_events(conn: sqlite3.Connection, day: date) -> list[Attended]:
             ends = str(json.loads(row["raw_json"] or "{}").get("ends_at") or "")
         except ValueError:
             continue
-        if not ends or date.fromisoformat(ends[:10]) > day:
+        if not ends:
+            continue
+        try:
+            stamp = datetime.fromisoformat(ends.replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        finished = stamp.astimezone(zone).date() if stamp.tzinfo else stamp.date()
+        if finished > day:
             continue
         out.append(
             Attended(

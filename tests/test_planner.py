@@ -2501,10 +2501,29 @@ def test_the_evening_pass_asks_about_an_event_that_has_been(conn, sett: Settings
         conn, "DSL VR Pod", "2026-07-30T18:00:00-07:00", "2026-07-30T19:00:00-07:00"
     ))
 
-    assert booking.past_events(conn, THURSDAY - timedelta(days=1)) == []
-    asked = booking.past_events(conn, THURSDAY)
+    assert booking.past_events(conn, sett, THURSDAY - timedelta(days=1)) == []
+    asked = booking.past_events(conn, sett, THURSDAY)
     assert [a.commitment_id for a in asked] == [cid]
     assert asked[0].event_title == "DSL VR Pod"
+
+
+def test_a_utc_event_is_asked_about_on_the_owners_day(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
+    """`connectors/apple_calendar` stores JXA's `toISOString()`, which is always `Z`.
+
+    The Sep 2 6:00pm Phoenix pod session is on disk as `ends_at =
+    2026-09-03T02:00:00.000Z`. Sliced to ten characters that is the third, so the evening
+    pass asks "did you go?" a day late — for every evening event, every time. This is the
+    shape the connector actually writes; the `-07:00` fixtures above are the shape that
+    made the bug invisible.
+    """
+    from backglass import booking
+
+    cid = add_commitment(conn, sett, "the pod session", n=1, due=THURSDAY)
+    _link(conn, cid, _calendar_event(
+        conn, "DSL VR Pod", "2026-07-31T00:50:00.000Z", "2026-07-31T02:00:00.000Z"
+    ))
+    # 2026-07-31T02:00Z is 7:00pm on the 30th in Phoenix — Thursday, the day being closed.
+    assert [a.commitment_id for a in booking.past_events(conn, sett, THURSDAY)] == [cid]
 
 
 def test_attendance_is_asked_never_inferred(conn, sett: Settings) -> None:  # type: ignore[no-untyped-def]
@@ -2515,6 +2534,6 @@ def test_attendance_is_asked_never_inferred(conn, sett: Settings) -> None:  # ty
     _link(conn, cid, _calendar_event(
         conn, "DSL VR Pod", "2026-07-30T18:00:00-07:00", "2026-07-30T19:00:00-07:00"
     ))
-    booking.past_events(conn, THURSDAY)
+    booking.past_events(conn, sett, THURSDAY)
     status = conn.execute("SELECT status FROM commitment WHERE id = ?", (cid,)).fetchone()
     assert status["status"] == "open"

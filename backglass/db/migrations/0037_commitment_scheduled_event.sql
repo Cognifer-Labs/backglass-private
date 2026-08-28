@@ -1,6 +1,8 @@
 -- The calendar event that *is* this obligation, so the planner stops budgeting it twice.
 --
--- `tasks/booking-pipeline-2026-08-27.md` Increment D. Commitment 588 is the case: ninety
+-- `tasks/booking-pipeline-2026-08-27.md` Increment C, which is that file's gap D — they
+-- are the same thing under two labels and this comment is the only place they meet.
+-- Commitment 588 is the case: ninety
 -- minutes, open, due Sep 3, and the work it names is a Dreamscape Learn pod session
 -- reserved for Sep 2 at 6:00pm and already sitting in `source_item` as a calendar event
 -- (`calendar:apple`, id 11161). `plan/capacity.py` subtracts the event from the day's

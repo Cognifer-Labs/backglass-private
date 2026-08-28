@@ -1175,7 +1175,7 @@ def shutdown(
     # calendar knows a seat was reserved, not that anybody sat in it.
     from backglass import booking
 
-    for attended in booking.past_events(conn, day):
+    for attended in booking.past_events(conn, settings, day):
         typer.echo(
             f"  · did you go? {attended.event_title} was {attended.happened_at[:16]} — "
             f"still open: {attended.what}"
