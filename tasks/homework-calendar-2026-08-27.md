@@ -488,3 +488,36 @@ does not chase it.
   these are what it has not reached.
 - Triage kill rate is 84%, under the 85% floor the Sources panel calls out as drift.
 - `BRIEF_TO` is unset, so the 06:00 brief generates and is never delivered anywhere.
+
+## Acting on the audit (same session)
+
+**The three fact revisions accepted, the fourth rejected.** 109/110/111 are now facts
+113/114/115 and supersede 5, 9 and 19; 112 is `retracted`. The concrete effect is one line
+in `facts.owner_context`, which every model call reads: it said since 3 June that the fall
+schedule was still changing and the McKenna coordinator owed a confirmation, and it now
+says what the timetable actually is.
+
+**`relevance` will not clear the overdue backlog, and that is correct.** Run on claude_cli
+it found one candidate, not twenty-four: it has already judged 491 rows, and a verdict
+re-opens only when every dependency it recorded has been broken. Superseding facts 5, 9
+and 19 broke the dependencies of exactly one. The 24 overdue rows are not moot-by-fact —
+a parking permit, two waivers, volunteer applications — they are unfinished work, and
+retiring them is the owner's call and not a model's.
+
+**One certain duplicate collapsed.** `Submit midterm argumentative essay` (files) and
+`Submit Midterm Argumentative Essay` (canvas:ics), both due 2026-10-04, same essay reached
+by two sources. 574 tombstoned with the survivor's id. It was only visible because the
+`due_at` rule cleared the four false HON pairs out of the way.
+
+**The triage alarm was telling the truth and saying the wrong thing.** `status` ended the
+line with "rules have drifted". Nothing had drifted: the rate fell to 84% because 221
+Canvas assignments arrived and every one of them is a real obligation, correctly kept.
+docs/02's 85% is a *cost* signal, so the number is right — the sentence attached to it was
+a false claim in the owner's terminal, and it sends a reader looking for a rule that has
+gone wrong. The line now prints the shortfall's own arithmetic (which sources are keeping
+what, worst first) and lets the reader decide whether a source that keeps most of what it
+reads is a drifted rule or a source of obligations.
+
+**Left alone, on purpose.** The same sentence is in `web/panels.py`, `_sources.html` and
+docs/06, which is where it originates. Changing product copy that quotes a spec means
+changing the spec, and that is a decision rather than an audit fix. Flagged here.
