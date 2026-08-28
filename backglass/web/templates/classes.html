@@ -29,7 +29,11 @@
               {%- if c.rooms %} · {{ c.rooms|join(' · ') }}{% endif -%}
             </p>
           </div>
-          <span class="ct">{{ c.assignment_total }} assignments</span>
+          {# The count was a readout of a number the owner cannot act on. It is now the
+             door to that course's month — the one page that answers "when is all of this
+             due", which is the question the number provokes. #}
+          <a class="ct" href="/homework?course={{ c.subject|replace(' ', '+') }}"
+             aria-label="{{ c.subject }} on the homework month">{{ c.assignment_total }} assignments →</a>
         </div>
 
         {# Meetings. The occurrence count is deliberately on the page: it is how many
@@ -73,7 +77,8 @@
 
         {% if c.upcoming %}
           <div class="gtgt" id="panel-course-{{ slug }}-work">
-            <p class="lane">due next</p>
+            <p class="lane">due next ·
+              <a href="/homework?course={{ c.subject|replace(' ', '+') }}">on the month</a></p>
             {% for a in c.upcoming %}
               <div class="row">
                 <span class="time">{{ a.due_at }}</span>

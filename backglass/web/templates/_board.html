@@ -27,14 +27,18 @@
     <div class="acts">
       {# docs/11 §3: no confirmation on resolve. The action is reversible and the
          dialog costs more over a year than the occasional misclick. #}
+      {# data-vanish: the card leaves at the click, not at the swap — §9 mechanism 8,
+         and motion.js mechanism 3 for why the selector is stated here rather than
+         guessed from the URL. Snooze below carries none: it moves a commitment to
+         tomorrow and the card stays on the board. #}
       <button class="btn ok" hx-post="/commitments/{{ c['id'] }}/resolve"
-              hx-target="#panel-board" hx-swap="outerHTML">Resolve</button>
+              hx-target="#panel-board" hx-swap="outerHTML" data-vanish=".card">Resolve</button>
       <button class="btn defer" hx-post="/commitments/{{ c['id'] }}/snooze/1"
               hx-target="#panel-board" hx-swap="outerHTML">Snooze</button>
       {# docs/06: "No confirmation dialogs except for drop, which is destructive
          and rare." This is the only hx-confirm in the application. #}
       <button class="btn danger" hx-post="/commitments/{{ c['id'] }}/drop"
-              hx-target="#panel-board" hx-swap="outerHTML"
+              hx-target="#panel-board" hx-swap="outerHTML" data-vanish=".card"
               hx-confirm="Drop “{{ c['what'] }}”? This tombstones it.">Drop</button>
     </div>
   </div>

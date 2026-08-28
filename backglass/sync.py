@@ -119,6 +119,7 @@ class SyncReport:
     #: was not, put to the owner as one question instead.
     relevance_dropped: int = 0
     relevance_asked: int = 0
+    revisions_proposed: int = 0
     review_queue: int = 0
     writes: int = 0
     spend_cents: int = 0
@@ -379,6 +380,13 @@ def _sync(
         # entirely when the backend just refused or the cap is reached.
         _relevance_pass(
             conn, settings, Metered(client, "relevance", report.calls), cap, report
+        )
+        # And the facts the record has overtaken. Last of the three, deliberately: it
+        # judges standing facts against what this run has just read, so it wants the
+        # newest items already in the ledger — and it is the cheapest to skip, because
+        # nothing it produces is written active.
+        _revision_pass(
+            conn, settings, Metered(client, "revise", report.calls), cap, report
         )
 
     # Review-day tallies → checkpoints. Deterministic — the data arrives structured,
@@ -1317,3 +1325,37 @@ def _relevance_pass(
     report.errors.extend(result.errors)
     report.relevance_dropped = result.dropped
     report.relevance_asked = result.asked
+
+
+def _revision_pass(
+    conn: sqlite3.Connection,
+    settings: Settings,
+    client: Any,
+    cap: Any,
+    report: Any,
+) -> None:
+    """Re-read standing facts against what the record said next.
+
+    The counterpart to `_relevance_pass` for the other half of the ledger. That one
+    retires an obligation a fact has overtaken; this one proposes a revision to a fact an
+    *item* has overtaken — the gap the owner found on 2026-08-27, when the ledger went on
+    saying he was on Tray Favors with an unsent draft for four days after the record said
+    otherwise, on every model call it made.
+
+    Nothing here is written active at any confidence, so this pass cannot make the ledger
+    wrong; the worst it can do is put a question on the Memory page. Off entirely once the
+    cap is reached, like every other tier (rule 7).
+    """
+    if cap.reached:
+        return
+    from backglass.extract import prompts
+    from backglass.extract import revision as revision_mod
+
+    try:
+        prompt = prompts.load("revise-facts")
+    except Exception as exc:  # noqa: BLE001 — rule 5: a missing prompt degrades the pass
+        report.errors.append(f"revise: {type(exc).__name__}: {exc}")
+        return
+    result = revision_mod.run(conn, settings, client, prompt=prompt)
+    report.errors.extend(result.errors)
+    report.revisions_proposed = result.proposed

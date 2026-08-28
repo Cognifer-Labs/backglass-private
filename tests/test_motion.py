@@ -476,12 +476,128 @@ def test_the_flip_measures_the_live_document() -> None:
     correct and the simplest thing to ask.
     """
     body = _script()
-    flip = re.search(r"afterSwap.*?before = new Map\(\);", body, flags=re.S)
-    assert flip, "the FLIP's afterSwap handler is no longer recognisable"
+    # The loop moved into `travel()` on 2026-08-27 when mechanism 3 needed the same
+    # second half; the property is about where it reads from, not where it lives, so it
+    # is asserted against that function and against the handler that calls it.
+    flip = re.search(r"function travel\(.*?\n\}", body, flags=re.S)
+    assert flip, "the FLIP's second half is no longer recognisable"
     assert "document.querySelectorAll" in flip.group(0), (
         "the FLIP must read the live document after a swap"
     )
-    assert "detail" not in flip.group(0), (
+    handler = re.search(r'"htmx:afterSwap", \(\) => \{\s*travel\(.*?\}\);', body, flags=re.S)
+    assert handler, "nothing spends the measurement after a swap any more"
+    assert "detail" not in flip.group(0) + handler.group(0), (
         "event.detail.target is the element htmx replaced, and it is detached by now — "
         "measuring it gives a rect of zeros and animates a node that will never paint"
     )
+
+
+# ── §9 mechanism 8: the row the owner removed ────────────────────────────────
+#
+# Added 2026-08-27 on the owner's ruling. The mechanism is one exit in a system that
+# refused every exit until then, so what these hold is the boundary, not the animation:
+# it may run before the request and it may not make htmx wait, the row may only be
+# hidden and never deleted, and a refused write must put it back. Get any of those wrong
+# and the surface is lying about what the ledger holds, which is CLAUDE.md rule 1 with
+# the failure moved from a sentence to a row.
+
+TEMPLATES = ROOT / "backglass" / "web" / "templates"
+
+
+def _vanishing() -> list[tuple[Path, str, str]]:
+    """Every control marked `data-vanish`, as (template, selector, the element's tag)."""
+    found: list[tuple[Path, str, str]] = []
+    for path in sorted(TEMPLATES.glob("*.html")):
+        text = path.read_text()
+        for match in re.finditer(r"<(button|a)\b[^>]*?data-vanish=\"([^\"]+)\"[^>]*>", text, re.S):
+            found.append((path, match.group(2), match.group(0)))
+    return found
+
+
+def test_the_exit_runs_before_the_request_not_during_the_swap() -> None:
+    """§9's amended first omission. The ban on exits was always a ban on *latency*: an
+    exit inside the swap makes htmx wait, and `defaultSwapDelay` is 0 so it does not even
+    play. Firing on `htmx:beforeRequest` is what makes this one free, and it is the whole
+    justification for the amendment — so it is the thing asserted."""
+    body = _script()
+    assert 'addEventListener("htmx:beforeRequest"' in body, (
+        "the exit no longer runs before the request; anywhere later is latency in front "
+        "of the most frequent writes in the product"
+    )
+    swapping = re.search(r"\.htmx-swapping\s*\{([^}]*)\}", _sheet())
+    assert swapping and "transition" not in swapping.group(1), (
+        "the amendment permits an exit off the swap's critical path and nothing on it"
+    )
+
+
+def test_the_removed_row_is_hidden_and_never_deleted() -> None:
+    """An optimistic view, never an optimistic record. The row has to survive so a
+    refused write can put it back; a `remove()` here would make the rollback a re-render
+    the client cannot do."""
+    body = _script()
+    assert ".remove()" not in body, (
+        "a vanished row is hidden, not deleted — the rollback needs it to still exist"
+    )
+    assert "hidden = false" in body, "nothing puts a vanished row back"
+
+
+def test_a_refused_write_returns_the_row() -> None:
+    """The one unforgivable version of this feature is a row that vanished on a write
+    that failed: the ledger still holds it and the screen says it does not. `oops.js`
+    already says why; this is the half that puts the row back."""
+    body = _script()
+    for event in ("htmx:responseError", "htmx:sendError"):
+        assert event in body, f"{event} no longer restores the row"
+    # And it must be *that* request's row. Two exits are in flight whenever the queue is
+    # worked in streaks, and a write that lands during the half-hourly sync waits on the
+    # lock (the 2026-08-11 lesson), so "the last row that left" is the wrong answer often
+    # enough to matter: it resurrects a row that is gone and leaves one that is not.
+    restore = re.search(r"function restore\(.*?\n\}", body, flags=re.S)
+    assert restore, "the rollback is no longer recognisable"
+    assert "detail" in restore.group(0), (
+        "the restored row must come from the failing request's own element"
+    )
+
+
+def test_the_hidden_attribute_actually_hides() -> None:
+    """The attribute's `display:none` is in the UA stylesheet, so any author `display`
+    beats it — and `.row` and `.card` both set one. Without an author rule of its own,
+    mechanism 8 left the row holding its space at zero opacity, the gap never closed, and
+    under reduced motion, where the fade is skipped on purpose, the click did nothing
+    visible at all."""
+    assert re.search(r"(^|\})\s*\[hidden\]\s*\{[^}]*display:\s*none\s*!important", _sheet()), (
+        "a bare [hidden] rule is what makes mechanism 8's row leave; without it the "
+        "attribute is advisory in this sheet"
+    )
+
+
+def test_every_vanishing_control_names_a_row_that_exists() -> None:
+    """`data-vanish` carries the selector of the thing to remove, and a selector that
+    matches nothing fails silently — the click would look exactly like the unfixed bug
+    it was added for."""
+    seen: dict[Path, set[str]] = {}
+    for path, selector, _element in _vanishing():
+        if path not in seen:
+            seen[path] = {
+                name
+                for value in re.findall(r'class="([^"]*)"', path.read_text())
+                for name in value.split()
+            }
+        wanted = {part.strip().lstrip(".") for part in selector.split(",")}
+        assert wanted & seen[path], (
+            f"{path.name}: data-vanish=\"{selector}\" matches no class in the template"
+        )
+
+
+def test_nothing_vanishes_that_does_not_leave() -> None:
+    """Snooze is the case this rule exists for. It moves a commitment to tomorrow and the
+    card stays on the board, so vanishing it would show the owner a row leaving and then
+    a swap putting it straight back — a flicker that reads as a bug in the write."""
+    for _path, _selector, element in _vanishing():
+        assert "/snooze/" not in element, "Snooze does not remove the card; it moves it"
+        assert "/untick" not in element and "/tick" not in element, (
+            "a checklist tick toggles in place"
+        )
+        assert "/outcome/" not in element, (
+            "a block marked done stays on the day with its outcome shown"
+        )

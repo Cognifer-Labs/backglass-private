@@ -233,6 +233,18 @@ button.toggle:hover{background:var(--paper);color:var(--ink)}
   padding-inline:calc(var(--border) + var(--sp-4))}
 .cap{font-size:12px;line-height:17px;color:var(--ink-muted);padding:var(--sp-3) 0;
   border-bottom:1px solid var(--rule-hair);margin-bottom:0}
+/* `hidden` means hidden, and in this sheet it did not.
+ *
+ * The attribute's `display:none` lives in the UA stylesheet, so any author rule that
+ * sets `display` beats it whatever its specificity — and `.row` and `.card` two lines
+ * below both do. §9 mechanism 8 hides the row it is removing rather than deleting it, so
+ * the rollback has something to put back; without this the row went to zero opacity and
+ * kept its space, the gap never closed, and under `prefers-reduced-motion` — where the
+ * fade is skipped on purpose — the click produced no feedback at all. `!important`
+ * because the point is to outrank every author `display` in the file, including ones
+ * written after this line. */
+[hidden]{display:none !important}
+
 .row{display:flex;gap:var(--sp-4);padding:var(--sp-3) 0;border-top:1px solid var(--rule-hair);align-items:flex-start}
 /* Off-screen rows are not laid out or painted until they are scrolled to.
  *
@@ -2093,3 +2105,132 @@ details.panel:not([open]){padding-bottom:0}
 /* The closing notes sit under the last tile, which already carries its own 12px. A rule
  * separates them from the feed without adding a fourth gap size. */
 .aend{margin-top:var(--sp-2);padding-top:var(--sp-3);border-top:1px solid var(--rule-hair)}
+
+/* ── the homework month ───────────────────────────────────────────────────
+ *
+ * A third grid, and deliberately not a wider week. The week view is a timeline: entries
+ * are sized by duration and positioned on an hour ruler, which is the right shape for
+ * "what am I doing next" and the wrong one for "when is everything due" — a deadline has
+ * no height. So a cell here is a small stack of tiles and not a canvas, and nothing in
+ * this block reuses .wk7's positioning.
+ *
+ * Every cell is a tile (§7b), including the empty ones and the ones outside the month:
+ * a month grid with holes punched in it stops reading as a month. What varies between
+ * them is ink, never presence.
+ */
+.hwg{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:var(--sp-2);
+  margin:var(--sp-3) 0 var(--sp-4)}
+.hwh{text-align:center;padding-bottom:var(--sp-1)}
+
+.hwd{display:flex;flex-direction:column;gap:var(--sp-1);min-height:112px;
+  padding:var(--sp-2);background:var(--fill-mild);
+  border:2px solid var(--rule);border-radius:var(--radius-3);overflow:hidden}
+/* Today is a ground, not a heavier line — every cell already carries the full 2px rule
+ * (§7b), so "here" has to be said with something the grid is not already saying. */
+/* A neutral step, not a wash: every --*-wash token resolves to the full saturated ink in
+ * dark (§7b), and --ink-wash there is cream — which would paint today's cell paper and
+ * its cream text into it. --fill-mild-2 is the neutral rung above the cell's own ground
+ * and stays neutral in both themes. */
+.hwd.now{background:var(--fill-mild-2)}
+.hwd.now .hwdn b{font-size:15px}
+/* Days already gone keep every tile and lose the ground: the work that was due on them
+ * is still true and still worth reading back, it is simply no longer a thing to do. */
+.hwd.past{background:transparent}
+.hwd.out{background:transparent;border-color:transparent}
+.hwd.out .hwdn{color:var(--ink-muted)}
+
+.hwdn{display:flex;align-items:baseline;gap:var(--sp-1);
+  color:var(--ink);text-decoration:none;font-variant-numeric:tabular-nums}
+.hwdn b{font-size:14px;line-height:18px}
+.hwdn:hover b{text-decoration:underline;text-underline-offset:2px}
+/* The weekday name lives in every cell and is hidden while the column header carries it.
+ * One narrow-screen column with bare numbers in it is a list of integers. */
+.hwdn .wd{display:none}
+
+/* One entry. Two columns — when, and what — because a time that wraps into the title is
+ * the thing the eye is scanning for and cannot find. The title clamps at two lines: a
+ * cell that grows to fit "Lab 2 Module 1 - Act 1: The Chameleon Code - Pre-Lab
+ * Preparation Assignment" drags the whole week row down with it. */
+.hwi{display:flex;gap:5px;align-items:flex-start;
+  padding:3px 5px;background:var(--paper);
+  border:2px solid var(--rule-hair);border-radius:var(--radius-2);
+  font-size:11px;line-height:14px;color:var(--ink);text-decoration:none}
+.hwi:hover{border-color:var(--ink)}
+.hwi .t{flex:0 0 auto;font-variant-numeric:tabular-nums;color:var(--ink-muted);
+  font-weight:700;letter-spacing:.02em}
+.hwi .n{flex:1 1 auto;min-width:0;overflow:hidden;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.hwi .n i{font-style:normal;font-weight:700}
+
+/* The registers. Raw inks, never the --*-line tokens: in dark those resolve to --rule and
+ * every category on this grid would collapse into one paper outline (§7b). */
+.hwi.ev{border-color:var(--cobalt)}
+/* A commitment keeps the hairline and no ink. §7b's nesting exception: a 2px black tile
+ * inside a 2px black cell reads as a box in a box, and the cell is already the ink this
+ * page's category owns. Events differ from due work by ink; due work differs from itself
+ * by state, which is where the remaining inks are spent. */
+.hwi.q-commitment{border-color:var(--rule-hair)}
+.hwi.q-done{border-color:var(--rule-hair)}
+.hwi.q-done .n{text-decoration:line-through;color:var(--ink-muted)}
+/* A Canvas deadline with nothing extracted from it. The review register — dashed, no ink
+ * — because that is what it is: not late, not a category, something the ledger has not
+ * finished reading. */
+.hwi.q-unlinked{border-style:dashed;border-color:var(--rule)}
+/* State beats kind beats category (§7b). Overdue keeps its wash and its saturated line
+ * whatever else the row is. */
+.hwi.late{background:var(--verm-wash);border-color:var(--vermilion);border-style:solid}
+.hwi.late .t,.hwi.late .n{color:#000}
+
+/* The reconciliation under the grid. Dashed, like .rev, because it is the same kind of
+ * statement: here is what the page could not account for. */
+.hwrec{border:2px dashed var(--rule);border-radius:var(--radius-3);
+  padding:var(--sp-3) var(--sp-4);margin:0 0 var(--sp-4)}
+.hwsum{margin:var(--sp-1) 0 0;font-size:13px;line-height:19px}
+.hwsum b{font-variant-numeric:tabular-nums}
+.hwmiss{display:flex;flex-direction:column;gap:var(--sp-1);margin:var(--sp-3) 0 0}
+.hwmiss .hwi{font-size:12px;line-height:16px;padding:var(--sp-1) var(--sp-2)}
+.hwmiss .hwi .t{flex:0 0 52px}
+.hwmiss .hwi .n{-webkit-line-clamp:1}
+.hwrec .empty{padding:var(--sp-3) 0 0}
+
+/* Seven narrow columns stop being a calendar somewhere around 900px — the titles clamp to
+ * nothing and the grid is a field of ellipses. One column per day, in order, is still the
+ * month; it is just read down instead of across. */
+@media (max-width: 900px){
+  .hwg{grid-template-columns:1fr;gap:var(--sp-1)}
+  .hwh{display:none}
+  .hwd{min-height:0}
+  .hwd.out{display:none}
+  .hwdn .wd{display:inline;color:var(--ink-muted)}
+}
+/* The measurement's own bounds, printed under the measurement. Quieter than the count it
+ * qualifies, and not a tile: it is a caveat on a sentence, not a second claim. */
+.hwbound{margin:var(--sp-2) 0 0;font-size:12px;line-height:17px;color:var(--ink-muted)}
+
+/* The per-cell fold. A month row is as tall as its fullest day, so one Friday with
+ * fifteen things due turns the other six into empty columns. Six then a fold keeps the
+ * grid scannable and loses nothing: the rest is one click away, in the page, no script.
+ * The summary is dashed and unfilled — it is a control, not a seventh item. */
+.hwmore{display:flex;flex-direction:column;gap:var(--sp-1);min-width:0}
+.hwmore>summary{list-style:none;cursor:pointer;
+  padding:3px 5px;background:var(--paper);
+  border:2px dashed var(--rule-hair);border-radius:var(--radius-2);
+  font-size:11px;line-height:14px;font-weight:700;color:var(--ink-muted)}
+.hwmore>summary::-webkit-details-marker{display:none}
+.hwmore>summary::marker{content:''}
+.hwmore>summary:hover{color:var(--ink);border-color:var(--ink)}
+.hwmore[open]>summary{border-style:solid}
+
+/* The day a block was made for a due item — §9 has nothing to say here, this is type.
+ * A deadline says when work is owed and a block says when it happens; the second is the
+ * one that gets it done, and until this mark existed no surface put the two side by
+ * side. Tabular, so a column of them lines up, and quiet: it is an annotation on the
+ * row, not a second title. */
+.hwi .pl{flex:0 0 auto;align-self:flex-start;
+  font:700 10px/14px ui-monospace,monospace;letter-spacing:.02em;
+  font-variant-numeric:tabular-nums;color:var(--ink-muted)}
+.hwi.late .pl{color:#000}
+/* The planner strip under the grid reuses .hwrec and .hwmiss; the only thing it needs of
+ * its own is room between the two audits, which are separate claims about separate
+ * things and should not read as one block. */
+#panel-homework-planner{margin-bottom:var(--sp-4)}

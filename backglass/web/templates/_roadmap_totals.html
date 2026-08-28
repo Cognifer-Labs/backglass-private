@@ -45,7 +45,7 @@
             <p class="b2 tent">{{ e['occurred_at'][:10] }} · +{{ e['delta'] }}
               {%- if e['activity'] %} · {{ e['activity'] }}{% endif %}
               {%- if e['note'] %} · {{ e['note'] }}{% endif %}
-              <button class="lnk unlog" title="Remove this entry"
+              <button class="lnk unlog" title="Remove this entry" data-vanish=".tent"
                       aria-label="Unlog {{ e['delta'] }} from {{ t['title'] }}"
                       hx-post="/roadmaps/{{ r['id'] }}/totals/{{ t['id'] }}/unlog/{{ e['id'] }}"
                       hx-confirm="Remove this logged entry? The total recomputes without it."
@@ -60,7 +60,7 @@
                 <p class="b2 tent">{{ e['occurred_at'][:10] }} · +{{ e['delta'] }}
                   {%- if e['activity'] %} · {{ e['activity'] }}{% endif %}
                   {%- if e['note'] %} · {{ e['note'] }}{% endif %}
-                  <button class="lnk unlog" title="Remove this entry"
+                  <button class="lnk unlog" title="Remove this entry" data-vanish=".tent"
                           aria-label="Unlog {{ e['delta'] }} from {{ t['title'] }}"
                           hx-post="/roadmaps/{{ r['id'] }}/totals/{{ t['id'] }}/unlog/{{ e['id'] }}"
                           hx-confirm="Remove this logged entry? The total recomputes without it."

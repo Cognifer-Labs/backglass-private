@@ -17,7 +17,8 @@
       <a href="/schedule/week?start={{ prev }}">← prev</a> ·
       <a href="/schedule/week">this week</a> ·
       <a href="/schedule/week?start={{ next }}">next →</a> ·
-      <a href="/schedule">day</a>
+      <a href="/schedule">day</a> ·
+      <a href="/homework?month={{ first.strftime('%Y-%m') }}">month</a>
     </p>
 
     {# Format-audit ruling: one set of day headers, not two. The capacity band IS

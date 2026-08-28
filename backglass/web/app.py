@@ -160,6 +160,7 @@ def create_app(
     from backglass.web.routes import classes as classes_routes
     from backglass.web.routes import decisions as decisions_routes
     from backglass.web.routes import goals as goals_routes
+    from backglass.web.routes import homework as homework_routes
     from backglass.web.routes import memory as memory_routes
     from backglass.web.routes import people as people_routes
     from backglass.web.routes import roadmaps as roadmap_routes
@@ -179,6 +180,7 @@ def create_app(
     app.include_router(ask_routes.build_router(templates, resolved, get_conn, today))
     app.include_router(scrub_routes.build_router(templates, resolved, get_conn, today))
     app.include_router(classes_routes.build_router(templates, resolved, get_conn, today))
+    app.include_router(homework_routes.build_router(templates, resolved, get_conn, today))
     app.include_router(activity_routes.build_router(templates, resolved, get_conn, today))
 
     # ── read ──────────────────────────────────────────────────────────────

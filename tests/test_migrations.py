@@ -270,11 +270,13 @@ FROZEN_CHECKSUMS = {
     "0035_assignment_submission.sql": (
         "30b26fded1b84eda9e4c12e1d5c15e526cd71a780e1e3f2447324d28e86be829"
     ),
-    # 0036 belongs to the Homework-tab branch (`0036_fact_check.sql`) and is already
-    # applied to the owner's database — `schema_version` reached 36 on 2026-08-27 while
-    # these two were still unapplied on a worktree. Renumbering them off it was free for
-    # exactly that reason and would not have been an hour later; a migration is editable
-    # only until a database has it.
+    "0036_fact_check.sql": (
+        "e6c060302d09a95673544dd202a09f372822ef197b2a81323b6d2954cc01ce4b"
+    ),
+    # 0036 was claimed first and the owner's database applied it on 2026-08-27 —
+    # `schema_version` reached 36 while these two were still unapplied on a worktree,
+    # which is the only reason renumbering them was free. A migration is editable for
+    # exactly as long as no database has it.
     "0037_assignment_window.sql": (
         "8ca3667d59182cbf3ed9752d73e2bec9e689325d5ac62f535299ae246babd122"
     ),

@@ -86,6 +86,12 @@ def _subject(text: str) -> tuple[str, str] | None:
     return subject, "Lecture"
 
 
+#: The same regex, published. A second page needs the course out of a Canvas code or a
+#: commitment sentence, and a second copy of `_CODE` is how two surfaces come to disagree
+#: about which class a piece of work belongs to.
+subject_of = _subject
+
+
 def _in_course_folder(path: str, subject: str) -> bool:
     """Does this drop-folder path sit under this course's directory?
 

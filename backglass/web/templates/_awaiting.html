@@ -28,7 +28,8 @@
                  with a live button: the second click 422s and HTMX, having no error
                  handler, swaps nothing — a click that silently does nothing at all. #}
               <button class="btn ok" hx-post="/commitments/{{ a['id'] }}/resolve"
-                      hx-target="#panel-board" hx-swap="outerHTML">Received</button>
+                      hx-target="#panel-board" hx-swap="outerHTML"
+                      data-vanish=".row">Received</button>
             </div>
           </div>
         </div>
