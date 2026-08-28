@@ -2300,6 +2300,42 @@ def _echo_enrich(
         conn.commit()
 
 
+@app.command("bookings")
+def bookings_command(
+    verbose: Annotated[
+        bool, typer.Option("--verbose", help="Every booking, not just the counts")
+    ] = False,
+) -> None:
+    """Assignments that ask you to reserve a seat, and when they are really due.
+
+    `tasks/booking-pipeline-2026-08-27.md` Increment A. Reads only — this names the
+    booking and the window; it does not open a portal and it does not reserve anything.
+
+    The counts print whether or not anything matched, because a detector that returns
+    nothing on a corpus with nothing to find and a detector whose patterns are broken are
+    the same silence from the outside (the 2026-08-27 lesson).
+    """
+    from backglass import booking
+
+    settings = get_settings()
+    conn = _open(settings)
+    migrate(conn)
+    report = booking.scan(conn, settings)
+    for line in report.lines():
+        typer.echo(line)
+    if not verbose:
+        return
+    for found in report.bookings:
+        moved = ""
+        if found.deadline.moved:
+            moved = f"  (Canvas says {found.due_at}; {found.deadline.basis})"
+        typer.echo(
+            f"  {found.course} — {found.title[:60]}\n"
+            f"    book {found.book_minutes}m by {found.deadline.at}{moved}\n"
+            f"    then attend {found.attend_minutes or '?'}m"
+        )
+
+
 @app.command("coursework")
 def coursework_command(
     refresh: Annotated[
