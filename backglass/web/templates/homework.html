@@ -52,6 +52,10 @@
     {%- set keep = ('&only=coursework' if month.only_coursework else '')
                  ~ ('&course=' ~ month.course|replace(' ', '+') if month.course else '') -%}
     <p class="pager quiet">
+      {# The other register, named from here. A month is a shape and has no top; the
+         to-do list is the same rows in the order they have to be done. #}
+      <a href="/homework?view=list{{ keep }}">to-do</a> ·
+      <b>month</b> ·
       <a href="/homework?month={{ month.prev.strftime('%Y-%m') }}{{ keep }}">← prev</a> ·
       <a href="/homework?month={{ month.today.strftime('%Y-%m') }}{{ keep }}">this month</a> ·
       <a href="/homework?month={{ month.next.strftime('%Y-%m') }}{{ keep }}">next →</a> ·
@@ -73,7 +77,10 @@
     {# The filtered course is always a chip, even when this month holds nothing of it —
        a strip that disappeared on an empty month would strand the owner inside a filter
        with no way back to `all`, which is exactly when they most want out. #}
-    {%- set chips = month.courses if month.course in month.courses
+    {#- `month.course` is `""` on an unfiltered page, and appending that produced a chip
+        with no label sitting beside `all` — both marked `on`, because `"" == ""`. The
+        filter is only added when there IS one. -#}
+    {%- set chips = month.courses if (not month.course or month.course in month.courses)
                     else (month.courses|list + [month.course])|sort -%}
     {% if chips %}
       <div class="afilter" id="panel-homework-courses">
@@ -109,25 +116,35 @@
               {%- if d.load_minutes %} <span class="lbl">{{ d.load_minutes // 60 }}h{{ '%02d' % (d.load_minutes % 60) }}</span>{% endif -%}
             </a>
 
-            {% for e in d.events %}
-              {# Textless is a week-grid affordance — there a block is 9px tall. Here a
-                 cell is a paragraph, so the event says what it is. #}
-              <a class="hwi ev" href="/schedule?date={{ d.day.isoformat() }}"
-                 title="{{ e.span_label }} {{ e.title }}{% if e.location %} · {{ e.location }}{% endif %}">
-                <span class="t">{{ e.time_label }}</span><span class="n">{{ e.title }}</span>
-              </a>
-            {% endfor %}
-
-            {# Six, then a fold. The tallest cell sets the height of its whole week row,
-               and one Friday carrying fifteen items makes the other six days a column of
-               empty tile — the month stops being scannable to show one day in full. The
-               fold is a <details>, so the rest is one click away, in the page, with no
-               script and nothing lost. #}
+            {# Deadlines first. Measured 2026-08-29: this grid drew 159 event tiles
+               against 160 due tiles, with the events uncapped while the deadlines folded
+               at six — a page whose subject is what is owed, rendering the calendar
+               first and in greater quantity. Six, then a fold. The tallest cell sets the
+               height of its whole week row, and one Friday carrying fifteen items makes
+               the other six days a column of empty tile. #}
             {% for q in d.due[:6] %}{{ tile(q) }}{% endfor %}
             {% if d.due|length > 6 %}
               <details class="hwmore">
                 <summary>+{{ d.due|length - 6 }} more</summary>
                 {% for q in d.due[6:] %}{{ tile(q) }}{% endfor %}
+              </details>
+            {% endif %}
+
+            {# Then the calendar, in one line that opens. Owner's ruling, 2026-08-29,
+               asked before it was built: fold the events, do not drop them —
+               `capacity.calendar_events` stays the reader, so this grid and the schedule
+               still cannot disagree about what a Tuesday holds. What changes is that
+               twelve class meetings no longer set the height of a week row to show a
+               timetable that is the same every week and lives on /classes. #}
+            {% if d.events %}
+              <details class="hwmore hwev">
+                <summary>{{ d.event_summary }}</summary>
+                {% for e in d.events %}
+                  <a class="hwi ev" href="/schedule?date={{ d.day.isoformat() }}"
+                     title="{{ e.span_label }} {{ e.title }}{% if e.location %} · {{ e.location }}{% endif %}">
+                    <span class="t">{{ e.time_label }}</span><span class="n">{{ e.title }}</span>
+                  </a>
+                {% endfor %}
               </details>
             {% endif %}
           </div>

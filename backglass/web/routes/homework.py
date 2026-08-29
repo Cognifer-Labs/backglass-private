@@ -1,4 +1,14 @@
-"""The Homework page: a month at a time, with what is due on each day and what is on it.
+"""The Homework page, in two registers over the same rows.
+
+**The to-do list is what `/homework` serves**, because it answers the question the tab is
+opened with. Owner, 2026-08-29: *"i want a homework todo view that ranks all homework by
+due date and time it takes."* A month grid is a shape and has no top; a ranked list has a
+first row, which is the whole point of ranking.
+
+**The month grid keeps every URL it had.** `?month=YYYY-MM` still renders it, so the links
+`/schedule`, `/schedule/week` and `/classes` already carry go on landing where they always
+did — naming a month is asking for the month. `?view=month` reaches it without naming one,
+and `?view=list` names the list explicitly.
 
 Read-only, and a reader rather than a store — `backglass/homework.py` carries the join
 and the reconciliation; this module only hands it to a template. Same shape as
@@ -38,6 +48,10 @@ def build_router(
     def month(
         request: Request,
         month: str | None = Query(None, pattern=r"^\d{4}-\d{2}$"),
+        # Which register. Defaulted from whether a month was named rather than to a
+        # constant: a link that says `month=2026-09` is asking for September, and one
+        # that says nothing is asking what to do next.
+        view: str | None = Query(None, pattern=r"^(list|month)$"),
         only: str | None = Query(None, pattern=r"^(coursework|all)$"),
         # The course code as the registrar issues it, in any of the spellings a link
         # might carry it in — `CHM 113`, `CHM113`, `chm113`. Anything else is not a
@@ -46,6 +60,25 @@ def build_router(
         conn: sqlite3.Connection = Depends(get_conn),
     ) -> Any:
         now = today()
+        if view == "list" or (view is None and month is None):
+            # The list opens on coursework because it is the Homework tab. Unfiltered it
+            # ran to 300 items and its top row was a hall parking permit due 6 July —
+            # real, owed, and not homework. `?only=all` is one click away and the page
+            # prints how many rows that click would add, so the narrowing is stated
+            # rather than silent. The month grid keeps its own default: it is a calendar
+            # of the owner's obligations and always has been.
+            todo = homework.todo(
+                conn,
+                settings,
+                today=now,
+                only_coursework=only != "all",
+                course=course,
+            )
+            return templates.TemplateResponse(
+                request,
+                "homework_todo.html",
+                {"todo": todo, "today": now, "settings": settings},
+            )
         first = homework.month_of(now)
         if month is not None:
             year, index = (int(part) for part in month.split("-"))
@@ -53,7 +86,7 @@ def build_router(
                 asked = date(year, index, 1)
                 if EARLIEST <= asked <= LATEST:
                     first = asked
-        view = homework.load(
+        grid = homework.load(
             conn,
             settings,
             first,
@@ -64,7 +97,7 @@ def build_router(
         return templates.TemplateResponse(
             request,
             "homework.html",
-            {"month": view, "today": now, "settings": settings},
+            {"month": grid, "today": now, "settings": settings},
         )
 
     return router

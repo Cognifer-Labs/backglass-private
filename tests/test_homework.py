@@ -517,3 +517,260 @@ def test_a_filtered_page_says_so_on_both_of_its_counts(conn, settings) -> None: 
     client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
     body = client.get("/homework?month=2026-09&course=CHM+113").text
     assert body.count("in CHM 113") >= 2
+
+
+# ── the to-do list ────────────────────────────────────────────────────────────────
+#
+# The Homework tab's default register (owner, 2026-08-29). The month grid is a shape and
+# this is an order, and the order is the thing worth testing: a list nobody can predict
+# the top of is a list they re-sort in their head.
+
+
+def _todo(conn: sqlite3.Connection, settings: Settings, **kwargs: object) -> homework.Todo:
+    return homework.todo(
+        conn, settings, today=TODAY, now=NOW, **kwargs  # type: ignore[arg-type]
+    )
+
+
+def _titles(view: homework.Todo) -> list[str]:
+    return [item.title for bucket in view.buckets for item in bucket.items]
+
+
+def test_the_list_is_ranked_by_day_then_hour_then_longest(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """Owner, 2026-08-29: "ranks all homework by due date and time it takes". The
+    estimate is the tiebreaker and not the spine — two things due Friday are not the same
+    problem when one is four hours and the other is ten minutes."""
+    item = _item(conn, source="gmail", external="r1", title="mail")
+    _commitment(conn, item_id=item, what="friday short", due_at="2026-09-11", minutes=10)
+    _commitment(conn, item_id=item, what="friday long", due_at="2026-09-11", minutes=240)
+    _commitment(
+        conn, item_id=item, what="friday at nine", due_at="2026-09-11T09:00:00", minutes=5
+    )
+    _commitment(conn, item_id=item, what="thursday", due_at="2026-09-10", minutes=5)
+
+    assert _titles(_todo(conn, settings)) == [
+        "thursday",
+        # A stated hour outranks a bare date on the same day: an 11:59pm deadline is a
+        # deadline and "sometime Friday" is not.
+        "friday at nine",
+        "friday long",
+        "friday short",
+    ]
+
+
+def test_overdue_runs_most_recently_missed_first(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """Sorted the obvious way, the top of the live list was a hall parking permit due
+    six weeks earlier, printed under the words "start here". Staleness is not urgency:
+    yesterday's miss is usually recoverable and July's is a ledger hygiene problem."""
+    item = _item(conn, source="gmail", external="r2", title="mail")
+    _commitment(conn, item_id=item, what="ancient", due_at="2026-07-06", minutes=15)
+    _commitment(conn, item_id=item, what="yesterday", due_at="2026-09-09", minutes=15)
+    _commitment(conn, item_id=item, what="last week", due_at="2026-09-02", minutes=15)
+
+    view = _todo(conn, settings)
+    assert [q.title for q in view.buckets[0].items] == ["yesterday", "last week", "ancient"]
+    assert view.buckets[0].key == "overdue"
+    assert view.next_up is not None and view.next_up.title == "yesterday"
+
+
+def test_the_bands_are_named_and_carry_their_own_load(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """The number the owner acts on is hours, not items."""
+    item = _item(conn, source="gmail", external="r3", title="mail")
+    _commitment(conn, item_id=item, what="today a", due_at="2026-09-10", minutes=45)
+    _commitment(conn, item_id=item, what="today b", due_at="2026-09-10", minutes=90)
+    _commitment(conn, item_id=item, what="tomorrow", due_at="2026-09-11", minutes=30)
+    _commitment(conn, item_id=item, what="december", due_at="2026-12-01", minutes=60)
+
+    view = _todo(conn, settings)
+    bands = {bucket.key: bucket for bucket in view.buckets}
+    assert set(bands) == {"today", "tomorrow", "later"}
+    assert bands["today"].minutes == 135
+    assert bands["today"].load_label == "2h15"
+    assert bands["later"].label == "Later"
+    assert view.count == 4
+
+
+def test_an_unestimated_row_adds_nothing_and_is_counted_saying_so(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """A band reading 45m that is really 45m plus nine unsized items is a number
+    describing where the counting stopped, read as a description of the work."""
+    item = _item(conn, source="gmail", external="r4", title="mail")
+    _commitment(conn, item_id=item, what="sized", due_at="2026-09-10", minutes=45)
+    _commitment(conn, item_id=item, what="unsized", due_at="2026-09-10", minutes=None)
+
+    view = _todo(conn, settings)
+    assert view.minutes == 45
+    assert view.unestimated == 1
+    assert view.buckets[0].unestimated == 1
+
+
+def test_finished_work_is_not_on_the_list(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """The grid keeps it — a month read back with its finished work erased reads as a
+    month where nothing happened. A list is read forward."""
+    item = _item(conn, source="gmail", external="r5", title="mail")
+    _commitment(conn, item_id=item, what="done one", due_at="2026-09-11", status="done")
+    _commitment(conn, item_id=item, what="open one", due_at="2026-09-11")
+    assert _titles(_todo(conn, settings)) == ["open one"]
+
+
+def test_an_assignment_with_no_commitment_is_still_listed(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """The 2026-08-27 failure, one surface along: twenty-two pieces of graded work were
+    invisible everywhere because every surface listed only what another had extracted."""
+    item = _item(conn, source="canvas:ics", external="u1", title="Unlinked lab")
+    _assignment(conn, external="u1", title="Unlinked lab", due_at="2026-09-14", item_id=item)
+    view = _todo(conn, settings)
+    assert _titles(view) == ["Unlinked lab"]
+    assert view.buckets[0].items[0].kind == "unlinked"
+
+
+def test_the_list_says_what_its_filter_is_keeping_off_it(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """A surface that narrows quietly is a surface whose count the owner reads as the
+    whole ledger."""
+    item = _item(conn, source="gmail", external="r6", title="mail")
+    _commitment(conn, item_id=item, what="renew the parking permit", due_at="2026-09-11")
+    _commitment(conn, item_id=item, what="CHM 113 safety quiz writeup", due_at="2026-09-11")
+    canvas = _item(conn, source="canvas:ics", external="c9", title="Lab 2")
+    _assignment(conn, external="c9", title="Lab 2", due_at="2026-09-12", item_id=canvas)
+
+    everything = _todo(conn, settings)
+    assert everything.filtered_out == 0
+    assert len(_titles(everything)) == 3
+
+    coursework_only = _todo(conn, settings, only_coursework=True)
+    assert "renew the parking permit" not in _titles(coursework_only)
+    assert coursework_only.filtered_out == 1
+
+
+def test_a_title_does_not_print_the_course_it_is_already_labelled_with(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """`CIS 236 · CIS 236: watch 1-3-2` clipped in the grid to `CIS 236 CIS 236: watch
+    1-…`, spending the width on the half that identified nothing."""
+    item = _item(conn, source="canvas:ics", external="s1", title="t")
+    _assignment(
+        conn,
+        external="s1",
+        title="CHM 113: Post-Lab writeup",
+        due_at="2026-09-14",
+        item_id=item,
+    )
+    row = _todo(conn, settings).buckets[0].items[0]
+    assert row.course.startswith("CHM 113")
+    assert row.short_title == "Post-Lab writeup"
+
+
+def test_an_isbn_is_not_a_course(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """`_CODE` is "two to four letters then three digits", which is what an ASU course
+    code is made of and also what an ISBN is made of. `Buy Norton — ISBN 978-0-393…`
+    reached the live chip row as a class the owner could filter to."""
+    item = _item(conn, source="gmail", external="i1", title="mail")
+    _commitment(
+        conn, item_id=item, what="Buy Norton reader ISBN 978-0-393-42827-4", due_at="2026-09-14"
+    )
+    # A real course code in a sentence still resolves: the guard is on the fallback only,
+    # and the enrolled set comes from what Canvas has actually issued.
+    _assignment(conn, external="e1", title="Lab 1", due_at="2026-09-14")
+    _commitment(conn, item_id=item, what="finish the CHM 113 safety quiz", due_at="2026-09-15")
+
+    view = _todo(conn, settings)
+    assert "ISBN 978" not in view.courses
+    assert "CHM 113" in view.courses
+
+
+def test_the_row_links_to_the_assignment_and_carries_its_walkthrough(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """Owner, 2026-08-29: "each thing should have a hyperlink to the exact assignment
+    with a walkthrough". The feed's own URL goes to the calendar."""
+    item = _item(conn, source="canvas:ics", external="w1", title="Dataset Evaluation")
+    conn.execute(
+        "INSERT INTO assignment (user_id, source, external_id, source_item_id, course,"
+        " title, due_at, url, description, description_hash, effort_minutes,"
+        " points_possible, first_seen_at, last_changed_at)"
+        " VALUES (?, 'canvas:ics', 'assignment:7833125', ?, ?, ?, ?, ?, ?, 'h', 172, 60.0,"
+        " ?, ?)",
+        (
+            USER_ID,
+            item,
+            "2026FallC-T-CIS236-87708",
+            "T - Dataset Evaluation",
+            "2026-09-14",
+            "https://canvas.asu.edu/calendar?include_contexts=course_274090&month=09"
+            "&year=2026#assignment_7833125",
+            "1. Download the provided dataset.\n2. Build the chart in Excel.\n",
+            now_iso(),
+            now_iso(),
+        ),
+    )
+    conn.commit()
+
+    row = _todo(conn, settings).buckets[0].items[0]
+    assert row.href == "https://canvas.asu.edu/courses/274090/assignments/7833125"
+    assert row.walk is not None and row.walk.offered
+    assert "Download the provided dataset." in [step.text for step in row.walk.steps]
+
+
+def test_the_tab_opens_on_the_list_and_the_month_keeps_its_own_url(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """Every link `/schedule`, `/schedule/week` and `/classes` already carry names a
+    month, and naming a month is asking for the month."""
+    from tests.conftest import panel_slice
+
+    client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
+
+    listed = client.get("/homework")
+    assert listed.status_code == 200
+    assert "panel-homework-total" in listed.text or "panel-homework-empty" in listed.text
+    assert "panel-homework-grid" not in listed.text
+
+    grid = client.get("/homework?month=2026-09")
+    assert grid.status_code == 200
+    assert panel_slice(grid.text, "panel-homework-grid")
+
+    assert "panel-homework-grid" in client.get("/homework?view=month").text
+    assert "panel-homework-grid" not in client.get("/homework?month=2026-09&view=list").text
+
+
+def test_the_month_no_longer_draws_a_chip_with_no_name(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """`chips` appended the current filter whenever it was not already in the list, and
+    an unfiltered page has `course == ""` — so an empty chip rendered beside `all`, both
+    marked `on`, because `"" == ""`."""
+    item = _item(conn, source="canvas:ics", external="ch1", title="Lab 3")
+    _assignment(conn, external="ch1", title="Lab 3", due_at="2026-09-14", item_id=item)
+
+    client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
+    body = client.get("/homework?month=2026-09").text
+    assert 'course="\n' not in body
+    assert "?month=2026-09&amp;course=\"" not in body
+    assert body.count('class="b2 on"') == 1  # `all`, and nothing else
+
+
+def test_the_month_folds_its_calendar_instead_of_being_it(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """Measured 2026-08-29 on the live ledger: 159 event tiles against 160 due tiles,
+    events uncapped while the deadlines folded at six. Owner's ruling the same day: fold
+    them, do not drop them — `capacity.calendar_events` stays the reader, so this grid
+    and `/schedule` cannot disagree about what a Tuesday holds."""
+    for n in range(4):
+        _calendar(
+            conn,
+            source="calendar:asu",
+            external=f"ev{n}",
+            title=f"CHM 113 (Lab) meeting {n}",
+            starts_at=f"2026-09-15T{8 + n:02d}:00:00-07:00",
+            ends_at=f"2026-09-15T{9 + n:02d}:00:00-07:00",
+        )
+    _calendar(
+        conn,
+        source="calendar:asu",
+        external="ev9",
+        title="Advising with Rachel",
+        starts_at="2026-09-15T15:00:00-07:00",
+        ends_at="2026-09-15T15:30:00-07:00",
+    )
+
+    cell = _cells(_load(conn, settings))[date(2026, 9, 15)]
+    assert len(cell.events) == 5
+    assert cell.event_summary == "4 classes · 1 event"
+
+    from tests.conftest import panel_slice
+
+    client = TestClient(create_app(settings), base_url="http://127.0.0.1:8765")
+    grid = panel_slice(client.get("/homework?month=2026-09").text, "panel-homework-grid")
+    # Every event is still in the page, and none of them is a tile until it is opened.
+    assert "4 classes · 1 event" in grid
+    assert "Advising with Rachel" in grid
+    assert grid.count("hwmore hwev") == 1

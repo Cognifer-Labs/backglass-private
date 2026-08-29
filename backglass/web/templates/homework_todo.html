@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% import "_macros.html" as m %}
+{% set active = 'homework' %}
+
+{% block title %}Backglass — Homework{% endblock %}
+{% block meta %}{{ todo.count }} open{% if todo.load_label %} · {{ todo.load_label }}{% endif %}{% endblock %}
+
+{# The Homework tab's default register. Owner, 2026-08-29: "i want a homework todo view
+   that ranks all homework by due date and time it takes."
+
+   The month grid is a shape and this is an order. A grid answers "when is everything
+   due" — it is the syllabus, drawn — and it cannot answer "what do I do next", because
+   a calendar has no top. Both read the same two rows out of the same ledger, so a piece
+   of work on one is on the other; only the question differs, and the pager at the top
+   names the other one so neither is a page you have to remember exists.
+
+   The ranking is stated on the page rather than only in `Due.rank`, because a list whose
+   order the reader cannot reconstruct is a list they will re-sort in their head. #}
+
+{# How to start it, folded under the row. Owner, 2026-08-29: "each thing should have a
+   hyperlink to the exact assignment with a walkthrough if it isnt just answering
+   questions."
+
+   Every step carries the words it was read from — `backglass/walkthrough.py` builds
+   nothing it cannot quote, because rule 1 does not get an exception for a step that
+   would have been useful. And work that IS just answering questions says so in one line
+   instead of opening an empty fold: "nothing to walk through" and "we have nothing" are
+   different facts and the owner can only act on one of them. #}
+{% macro walk(q) -%}
+  {%- set w = q.walk -%}
+  {%- if w and w.offered %}
+    <details class="hww">
+      <summary>how to start it · {{ w.steps|length }} step{{ '' if w.steps|length == 1 else 's' }}</summary>
+      <ol class="hwsteps">
+        {% for step in w.steps %}
+          <li class="l-{{ step.lane|replace(' ', '-') }}">
+            <span class="lane">{{ step.lane }}</span>
+            {%- if step.href %}<a href="{{ step.href }}" target="_blank" rel="noreferrer"
+              {%- if step.quote %} title="{{ step.quote }}"{% endif %}>{{ step.text }}</a>
+            {%- else %}<span{% if step.quote %} title="{{ step.quote }}"{% endif %}>{{ step.text }}</span>{% endif -%}
+          </li>
+        {% endfor %}
+      </ol>
+      <p class="hwbound">Every line above is something the assignment, its materials or
+        the estimate already said — hover one for the words it was read from. Nothing
+        here is advice this app made up.</p>
+    </details>
+  {%- endif %}
+{%- endmacro %}
+
+{% macro row(q) -%}
+  {# One piece of work. The three columns are the three facts the ranking is made of —
+     when it is due, what it is, how long it takes — in that order, so the eye can read
+     down any one of them.
+
+     Registers, §7b: hairline for a commitment the ledger extracted, dashed for a Canvas
+     assignment nothing was extracted from (rule 5 — low confidence is a dashed outline,
+     never a confident statement), vermilion wash for late, which is state and beats
+     both. Never colour alone (§8 r3): the glyph column says it too.
+
+     The walkthrough is a sibling of the link and not a child of it: a `<details>` inside
+     an `<a>` is not markup, and the anchor is the one thing on this row that has to keep
+     working.
+
+     Why a row has no walkthrough rides in the title rather than under the row. As a
+     printed line it was true, sourced, and repeated on more than a hundred rows of the
+     first live render — a page of identical sentences, which is noise whatever each one
+     says. The fact is kept and the room it took is not. #}
+  <div class="hwrow">
+  <a class="hwt q-{{ q.kind }}{% if q.overdue %} late{% endif %}"
+     {% if q.href %}href="{{ q.href }}"{% endif %}
+     {% if q.url %}target="_blank" rel="noreferrer"{% endif %}
+     title="{{ q.title }}{% if q.course %} · {{ q.course }}{% endif %} · due {{ q.day.strftime('%A %-d %B') }}{% if q.time_label %} at {{ q.time_label }}{% endif %}{% if q.kind == 'unlinked' %} · Canvas assignment with no commitment behind it{% endif %}{% if q.walk and not q.walk.offered %} · {{ q.walk.reason }}{% endif %}">
+    <span class="w">
+      <b>{{ q.day.strftime('%-d %b') }}</b>
+      {%- if q.time_label %}<span class="hr">{{ q.time_label }}</span>
+      {%- else %}<span class="hr none" title="the source named a day and no hour">no hour</span>{% endif -%}
+    </span>
+    <span class="n">
+      {%- if q.course %}<i>{{ q.course }}</i> {% endif %}{{ q.short_title }}
+      {#- What the planner has made room for, on the row itself. A deadline says when work
+          is owed; a block says when it happens, and only the second one gets it done.
+          2026-08-27, the owner: "other assignments havent been scheduled" — true, and
+          unanswerable, because the two facts lived on surfaces that never referred to
+          each other. -#}
+      {%- if q.placed %} <b class="pl">▸ blocked {{ q.placed.label }}</b>
+      {%- elif q.kind == 'unlinked' %} <b class="pl no">no commitment, so no block</b>
+      {%- elif todo.planned_through and q.day <= todo.planned_through %} <b class="pl no">no block</b>{% endif -%}
+    </span>
+    {# Tabular figures, §8 rule 8, and right-aligned: the column is read as a quantity. #}
+    <span class="t">{% if q.minutes_label %}{{ q.minutes_label }}{% else %}<span class="none" title="nothing has estimated this">—</span>{% endif %}</span>
+  </a>
+  {{ walk(q) }}
+  </div>
+{%- endmacro %}
+
+{% block content %}
+<section class="sec" id="panel-homework">
+  {{ m.banner('Homework', todo.today.strftime('%a %-d %b')) }}
+  <div class="inner">
+
+    {#- The list opens on coursework, so `all` is the parameter that has to travel, not
+        `coursework`. Written out rather than string-replaced: a `keep` that has to have
+        a substring cut out of it is a filter that will one day travel wrong. -#}
+    {%- set keep = ('&only=all' if not todo.only_coursework else '')
+                 ~ ('&course=' ~ todo.course|replace(' ', '+') if todo.course else '') -%}
+    <p class="pager quiet">
+      <b>to-do</b> ·
+      <a href="/homework?view=month{{ keep }}">month</a> ·
+      {% if todo.only_coursework %}
+        <a href="/homework?only=all{% if todo.course %}&amp;course={{ todo.course|replace(' ', '+') }}{% endif %}">everything owed{% if todo.filtered_out %} (+{{ todo.filtered_out }}){% endif %}</a>
+      {% else %}
+        <a href="/homework{% if todo.course %}?course={{ todo.course|replace(' ', '+') }}{% endif %}">coursework only</a>
+      {% endif %} ·
+      <a href="/schedule?date={{ todo.today.isoformat() }}">day</a> ·
+      <a href="/schedule/week?start={{ todo.today.isoformat() }}">week</a>
+    </p>
+
+    {# The filter strip, the same object as the month's and the Activity page's: plain
+       links whose state is the URL, so a filtered list is a thing to bookmark. #}
+    {% if todo.courses %}
+      <div class="afilter" id="panel-homework-courses">
+        <p class="lane">course</p>
+        <a href="/homework{% if todo.only_coursework %}?only=coursework{% endif %}"
+           class="b2{% if not todo.course %} on{% endif %}">all</a>
+        {% for name in todo.courses %}
+          <a href="/homework?course={{ name|replace(' ', '+') }}{% if todo.only_coursework %}&amp;only=coursework{% endif %}"
+             class="b2{% if todo.course == name %} on{% endif %}">{{ name }}</a>
+        {% endfor %}
+        {% if todo.course %}
+          <p class="lane">the rest of it</p>
+          <a class="b2" href="/classes#panel-course-{{ todo.course|replace(' ', '')|lower }}">{{ todo.course }} on Classes</a>
+        {% endif %}
+      </div>
+    {% endif %}
+
+    {% if todo.empty %}
+      {# docs/06 §Empty states, and it says which kind of empty it is: a filter holding
+         nothing looks exactly like a ledger holding nothing, and only one of those is
+         the owner's problem. #}
+      <p class="empty" id="panel-homework-empty">Nothing open
+        {%- if todo.course %} in {{ todo.course }}{% endif %}
+        {%- if todo.only_coursework %} that is coursework{% endif %}.
+        {%- if todo.course or todo.only_coursework %}
+          <a href="/homework">Everything owed</a>, or
+        {% endif %}
+        <a href="/homework?view=month">the month</a>.</p>
+    {% else %}
+
+      {# The next action, printed once and large. A ranked list still makes the reader
+         work out which end to start from unless the page says it. #}
+      {% if todo.next_up %}
+        <div class="hwnext{% if todo.next_up.overdue %} late{% endif %}" id="panel-homework-next">
+          <p class="lane">start here</p>
+          {{ row(todo.next_up) }}
+        </div>
+      {% endif %}
+
+      <p class="hwsum" id="panel-homework-total">
+        <b>{{ todo.count }}</b> piece{{ '' if todo.count == 1 else 's' }} of work owed
+        {%- if todo.course %} in {{ todo.course }}{% endif %}
+        {%- if todo.load_label %}, <b>{{ todo.load_label }}</b> of it estimated{% endif %}.
+        Ranked by the day it is due, then the hour, then the longest job first — two
+        things due Friday are not the same problem when one is four hours and the other
+        is ten minutes.</p>
+      {%- if todo.filtered_out %}
+        {# What the filter is keeping off the page, printed with the count it changes.
+           A surface that narrows quietly is a surface whose number the owner reads as
+           the whole ledger — the 2026-08-27 lesson, one page along. #}
+        <p class="hwbound"><b>{{ todo.filtered_out }}</b> other dated obligation{{ '' if todo.filtered_out == 1 else 's' }}
+          {{ 'is' if todo.filtered_out == 1 else 'are' }} open and not counted above
+          {%- if todo.only_coursework %}, because this list is coursework and
+            {{ 'it is' if todo.filtered_out == 1 else 'they are' }} not{% endif %}
+          {%- if todo.course %} or {{ 'is' if todo.filtered_out == 1 else 'are' }} in another course{% endif %}.
+          <a href="/homework?only=all">Everything owed</a>.</p>
+      {%- endif %}
+      {%- if todo.unestimated %}
+        {# The bound of the measurement, printed with it. 2026-08-27: a number that
+           describes where the counting stopped reads as a description of the work. #}
+        <p class="hwbound"><b>{{ todo.unestimated }}</b> of them have no estimate and add
+          nothing to that total, so the real load is higher than the number above. An
+          estimate comes from the extraction or from the Canvas row; nothing invents one
+          here.</p>
+      {%- endif %}
+
+      {% for bucket in todo.buckets %}
+        <div class="hwband" id="panel-homework-{{ bucket.key }}">
+          <p class="lane">{{ bucket.label }}
+            <span class="note">{{ bucket.note }}</span>
+            <span class="cnt">{{ bucket.items|length }}{% if bucket.load_label %} · {{ bucket.load_label }}{% endif %}</span>
+          </p>
+          {# Twelve, then a fold — the same cap-you-can-open the month grid uses. A
+             capped list that says nothing about its cap is the silent truncation this
+             project refuses. #}
+          {% for q in bucket.items[:12] %}{{ row(q) }}{% endfor %}
+          {% if bucket.items|length > 12 %}
+            <details class="hwmore">
+              <summary>{{ bucket.items|length - 12 }} more {{ bucket.label|lower }}</summary>
+              {% for q in bucket.items[12:] %}{{ row(q) }}{% endfor %}
+            </details>
+          {% endif %}
+        </div>
+      {% endfor %}
+
+      {# What the planner has reached, stated once at the bottom rather than implied by
+         every "no block" above it. Past the horizon "no block" is not a finding — the
+         planner proposes one day at a time and has not looked there yet. #}
+      <div class="hwrec" id="panel-homework-planner">
+        <p class="lane">what the planner has made room for</p>
+        {% if todo.planned_through is none %}
+          <p class="empty">No plan exists for any day yet, so no row above can say whether
+            anything has made room for it. The planner runs at 5:45 each morning;
+            <span class="kbd">backglass plan</span> runs it now.</p>
+        {% else %}
+          <p class="hwsum">The planner has reached
+            <b>{{ todo.planned_through.strftime('%-d %b') }}</b>. Only rows due on or
+            before that day are marked <span class="kbd">no block</span> — work due after
+            it is not unscheduled, it is unconsidered.</p>
+        {% endif %}
+      </div>
+
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

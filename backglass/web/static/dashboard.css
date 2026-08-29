@@ -2272,3 +2272,103 @@ details.panel:not([open]){padding-bottom:0}
  * its own is room between the two audits, which are separate claims about separate
  * things and should not read as one block. */
 #panel-homework-planner{margin-bottom:var(--sp-4)}
+
+/* The calendar fold inside a month cell. Cobalt, because §7b gives plans and schedule
+ * that ink and this is the only thing in the cell that is neither owed nor overdue —
+ * and cobalt never carries text (§8 r9), so it is the keyline and nothing else. */
+.hwev>summary{border-style:solid;border-color:var(--cobalt);color:var(--ink)}
+.hwev>summary:hover{border-color:var(--ink)}
+
+/* ── The to-do list ──────────────────────────────────────────────────────────────
+ *
+ * The Homework tab's default register (owner, 2026-08-29). Three columns, and they are
+ * the three facts the ranking is made of: when it is due, what it is, how long it takes.
+ * Fixed outer columns and tabular figures (§8 r8) so the eye can read straight down
+ * either number without the titles pushing them out of line.
+ */
+.hwrow{display:flex;flex-direction:column;gap:var(--sp-1);min-width:0}
+.hwt{display:flex;gap:var(--sp-2);align-items:baseline;
+  padding:var(--sp-2) var(--sp-3);background:var(--fill-mild);
+  border:2px solid var(--rule-hair);border-radius:var(--radius-3);
+  color:var(--ink);text-decoration:none;font-size:13px;line-height:19px}
+.hwt:hover{border-color:var(--ink)}
+/* When. A fixed column, because a date that moves with the length of the title above it
+ * is a column the eye cannot run down. */
+.hwt .w{flex:0 0 92px;display:flex;flex-direction:column;
+  font-variant-numeric:tabular-nums;line-height:16px}
+.hwt .w b{font-size:13px}
+.hwt .w .hr{font-size:11px;color:var(--ink-muted)}
+.hwt .w .hr.none{font-style:italic}
+/* What. Takes the slack, and clamps at two lines rather than growing the row. */
+.hwt .n{flex:1 1 auto;min-width:0;overflow:hidden;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.hwt .n i{font-style:normal;font-weight:700}
+/* How long. Right-aligned against a fixed column: it is a quantity, and a column of
+ * quantities is read by its right edge. */
+.hwt .t{flex:0 0 52px;text-align:right;font-variant-numeric:tabular-nums;font-weight:700}
+.hwt .t .none{font-weight:400;color:var(--ink-muted)}
+/* The block the planner made, or the fact that there is none — an annotation on the
+ * title, never a second title. */
+.hwt .pl{font:700 10px/16px ui-monospace,monospace;letter-spacing:.02em;
+  color:var(--ink-muted);white-space:nowrap}
+.hwt .pl.no{font-weight:400;font-style:italic}
+
+/* Registers, §7b: the ledger's own hairline for an extracted commitment, a dashed
+ * outline for a Canvas row nothing was extracted from (§8 r5 — low confidence is never
+ * a confident statement), and the vermilion wash for late, which is state and beats
+ * both (§7b specificity). */
+.hwt.q-commitment{border-color:var(--rule-hair)}
+.hwt.q-unlinked{border-style:dashed;border-color:var(--rule)}
+.hwt.late{background:var(--verm-wash);border-color:var(--vermilion);border-style:solid}
+.hwt.late .n,.hwt.late .w b,.hwt.late .t{color:#000}
+.hwt.late .pl{color:#000}
+
+/* The next action, printed once above the bands. A ranked list still makes the reader
+ * work out which end to start from unless the page says it, so this one is said louder:
+ * the same row, on the panel's own ground, under its own label. */
+.hwnext{margin:var(--sp-3) 0;padding:var(--sp-3);
+  background:var(--fill-mild-2);border:2px solid var(--ink);border-radius:var(--radius-3)}
+.hwnext .hwt{font-size:15px;line-height:22px;background:var(--paper)}
+.hwnext .lane{margin:0 0 var(--sp-2)}
+
+/* One band — overdue, today, this week. The header carries the count and the load,
+ * because the number the owner acts on is hours and not items. */
+.hwband{margin:var(--sp-4) 0 0}
+.hwband>.lane{display:flex;align-items:baseline;gap:var(--sp-2);
+  margin:0 0 var(--sp-2);padding-bottom:var(--sp-1);border-bottom:2px solid var(--rule)}
+.hwband>.lane .note{flex:1 1 auto;font-weight:400;text-transform:none;letter-spacing:0;
+  color:var(--ink-muted)}
+.hwband>.lane .cnt{flex:0 0 auto;font-variant-numeric:tabular-nums;color:var(--ink)}
+.hwband .hwrow+.hwrow{margin-top:var(--sp-1)}
+#panel-homework-overdue>.lane{border-bottom-color:var(--vermilion)}
+
+/* The walkthrough. A fold, so a hundred-row list is not a hundred open checklists, and
+ * dashed while closed for the same reason every other control on this page is: it is a
+ * control, not a step. */
+.hww{margin:0 0 0 var(--sp-3)}
+.hww>summary{list-style:none;cursor:pointer;display:inline-block;
+  padding:2px var(--sp-2);background:var(--paper);
+  border:2px dashed var(--rule-hair);border-radius:var(--radius-2);
+  font-size:11px;line-height:16px;font-weight:700;color:var(--ink-muted)}
+.hww>summary::-webkit-details-marker{display:none}
+.hww>summary::marker{content:''}
+.hww>summary:hover{color:var(--ink);border-color:var(--ink)}
+.hww[open]>summary{border-style:solid;margin-bottom:var(--sp-2)}
+.hwsteps{margin:0;padding:0 0 0 var(--sp-3);list-style:none;
+  display:flex;flex-direction:column;gap:var(--sp-1)}
+.hwsteps li{display:flex;gap:var(--sp-2);align-items:baseline;
+  padding:var(--sp-1) var(--sp-2);background:var(--paper);
+  border:2px solid var(--rule-hair);border-radius:var(--radius-2);
+  font-size:12px;line-height:17px}
+/* The lane word is the glyph column: a step is never its position alone (§8 r3). */
+.hwsteps .lane{flex:0 0 60px;margin:0}
+.hwsteps a{color:var(--ink)}
+
+@media (max-width: 880px){
+  /* The hour and the estimate stack under the date rather than squeezing the title into
+   * a two-word column. */
+  .hwt{flex-wrap:wrap}
+  .hwt .w{flex:0 0 auto;flex-direction:row;gap:var(--sp-2)}
+  .hwt .n{flex:1 1 100%;-webkit-line-clamp:3}
+  .hwt .t{flex:0 0 auto;text-align:left}
+}

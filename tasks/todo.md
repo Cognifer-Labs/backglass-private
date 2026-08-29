@@ -1702,3 +1702,93 @@ With these two, the plan file has no open items whose value survives measurement
 built this session, four were measured and declined with the numbers recorded, and two were
 found already done.
 
+
+---
+
+## Homework tab — the month stops being a calendar (2026-08-29)
+
+Owner: *"Make a better home work tab view"*. Measured on the live ledger, August 2026:
+**159 event tiles against 160 due tiles**, events uncapped while due folds at six. The
+page's docstring says deadlines are the subject and the calendar is context; the render
+says the opposite. Class meetings redraw every weekday, multi-day banners redraw on every
+day they span, and the homework sits underneath all of it. One busy Saturday sets the
+height of its whole week row, so 18, 22 and 23 August are 500px of empty box.
+
+Owner's ruling this session, asked before building: **fold the events into one line** —
+not deleted. `capacity.calendar_events` stays the reader, so the grid and `/schedule`
+still cannot disagree about what a Tuesday holds; only the presentation collapses.
+
+- [ ] 1. **Events fold** (`homework.py`, `homework.html`, `dashboard.css`). One cobalt
+      tile per cell — `3 classes · 1 event` — opening in place as a `<details>`, the same
+      no-script idiom the `+n more` fold already uses. A class meeting is an event whose
+      title parses to a course code through `courses.subject_of`, which the page already
+      calls for the course filter; no new classifier.
+- [ ] 2. **Due first.** The deadlines move above the fold in every cell. The one change
+      that makes the page about homework again.
+- [ ] 3. **Titles stop repeating the course.** `CIS 236 CIS 236: watch 1-…` — the `<i>`
+      tag already prints the course, so a title that opens with the same code loses it.
+      A `Due.short_title` property, so it is testable.
+- [ ] 4. **The blank course chip.** `chips` appends `month.course` whenever the filter is
+      not already in the list, and an unfiltered page has `course == ""` — so an empty
+      chip renders beside `all`, and both are marked `on` because `"" == ""`.
+- [ ] 5. **`ISBN 978` is not a course.** `_course_label` falls back to parsing the
+      commitment's own sentence, and `_CODE` reads a book number as a course code. The
+      fallback is restricted to subjects that appear on a real `assignment.course`; the
+      Canvas column stays authoritative and "complete the CHM 113 safety quiz" still
+      resolves.
+
+Verification: `uv run pytest tests/test_homework.py`, then the month rendered on a fresh
+port and read against the same August the measurement was taken from.
+
+### What shipped, and the two asks that arrived after the plan
+
+The plan above was written for "make a better homework tab view" and then the owner said
+what they actually wanted, twice, mid-build:
+
+> *"i want a homework todo view that ranks all homework by due date and time it takes"*
+>
+> *"each thing should have a hyperlink to the exact assignment with a walkthrough if it
+> isnt just answering questions"*
+
+So the grid work stayed (it is still a register and still had the faults measured above)
+and the tab's **default** became the list.
+
+- [x] 1. **Events fold** — one `3 classes · 1 event` line per cell, opening in place.
+      159 event tiles now sit inside 30 folds; the 160 due tiles draw directly.
+- [x] 2. **Due first** in every cell.
+- [x] 3. **`Due.short_title`** — a title stops repeating the course it is labelled with.
+- [x] 4. **The blank course chip** is gone; one chip is marked `on`, not two.
+- [x] 5. **`ISBN 978` is not a course** — `homework.enrolled()` guards the sentence
+      fallback with the codes Canvas has actually issued.
+- [x] 6. **The to-do list** (`homework.todo`, `Bucket`, `Todo`, `homework_todo.html`).
+      Ranked overdue → day → stated hour → longest job first, in bands (Overdue, Today,
+      Tomorrow, the rest of this week, next week, later) each carrying its own load.
+      `/homework` serves it; `?month=` and `?view=month` still serve the grid, so every
+      existing link keeps landing where it did.
+- [x] 7. **The exact assignment link.** All 223 Canvas rows carried a URL to the
+      *calendar* — `…/calendar?include_contexts=course_274090#assignment_7833006`. Both
+      ids needed were already in the row, so `walkthrough.canvas_link` builds
+      `…/courses/274090/assignments/7833006`. Zero calendar links remain on either view.
+- [x] 8. **The walkthrough** (`backglass/walkthrough.py`), folded under each row: the
+      link and its points, the software to have open, the readings and links it names,
+      and **the course's own bulleted instructions verbatim**, capped at 15 with the
+      remainder named. Nothing is model-written — every step carries the words it was
+      read from, because rule 1 does not get an exception for a step that would have been
+      useful. Coverage on the live ledger: 21 of 210 unsubmitted assignments offer one,
+      117 say their description names no tools, readings or steps, and 66 are quizzes,
+      exams, LearningCurves, forms or watch-and-answer videos — the owner's own "if it
+      isnt just answering questions" boundary, enforced.
+
+Two corrections the live render forced, both recorded in the code:
+
+- **Overdue runs most recently missed first.** Sorted the obvious way the top row was a
+  hall parking permit due 6 July, printed under the words "start here". Staleness is not
+  urgency.
+- **The list opens on coursework.** Unfiltered it was 300 rows of mostly life admin on a
+  tab called Homework. `?only=all` is one click away and the page prints how many rows
+  that click adds, so the narrowing is stated rather than silent.
+
+Verified: `tests/test_homework.py` 41 passed, `tests/test_walkthrough.py` 8 passed, full
+suite 3016 passed. `tests/test_state_reference.py::test_the_reference_matches_state_py`
+fails, and fails identically on the base commit with this work stashed — it is not this
+change and `specs/state.md` needs regenerating by whoever owns that drift.

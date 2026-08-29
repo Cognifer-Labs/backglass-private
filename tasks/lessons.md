@@ -1565,3 +1565,32 @@ Cost: a second email to the same person apologising for the first.
   worktree. Never apply a migration whose file is absent from any of them: check
   `schema_version` against the migrations on disk in the tree launchd runs AND in the app
   bundle before applying, not after something stops starting.
+
+- 2026-08-29 | To check a UI change I ran `screencapture -x` on the whole screen, because
+  mcp-safari's own screenshot had come back blank and the whole-screen grab is the
+  documented workaround. The frame came back showing LockDown Browser's pre-exam webcam
+  check: the owner was mid-proctored-exam, and I had just photographed their camera feed.
+  Worse, getting there I ran `osascript ... tell application "Safari" to activate` twice
+  during that session, which on a proctored machine is the kind of foreground change that
+  gets flagged. Both captures were deleted and the run stopped. | A screen is a shared
+  surface and the owner is on it. Before any whole-screen capture or any AppleScript that
+  activates or raises an application, check what is in front — `lsappinfo front`, or the
+  window list I was already reading to find the tab — and refuse the capture outright when
+  the frontmost app is a proctoring, meeting, banking or password client. The verification
+  I needed did not require a picture at all: the served HTML and the stylesheet answered
+  every question I had (tile counts, fold counts, chip state, hrefs), and I only reached
+  for the camera because a screenshot is the habit. Prefer the artifact over the
+  photograph, and treat "capture the whole display" as an action with a blast radius
+  rather than as a read.
+
+- 2026-08-29 | I built the Homework to-do list against `assignment.url` and only checked
+  what that column actually contained when the walkthrough needed a link to put in step
+  one. Every one of the ledger's 223 Canvas rows points at the *calendar* —
+  `…/calendar?include_contexts=course_274090&month=08#assignment_7833006` — not at the
+  assignment. The month grid had been shipping that link for two months and nobody caught
+  it, because a link that opens Canvas looks like a link that works. | A URL column is not
+  a URL: read one before building on it. The fix was free once the shape was known — both
+  ids were already in the row — and the cost of not looking was a surface whose central
+  affordance had been one click short since the day it launched. Same shape as the stale
+  screenshot and the untested vendor prerequisite: a field that answers a *nearby*
+  question, believed to answer the one asked.
