@@ -774,3 +774,40 @@ def test_the_month_folds_its_calendar_instead_of_being_it(conn, settings) -> Non
     assert "4 classes · 1 event" in grid
     assert "Advising with Rachel" in grid
     assert grid.count("hwmore hwev") == 1
+
+
+def test_a_class_with_no_canvas_shell_still_counts_as_a_course(conn, settings) -> None:  # type: ignore[no-untyped-def]
+    """`courses.py`: "the calendar is what decides that a course exists and Canvas only
+    decorates it." LSB 191 is its worked example and this ledger carries a second in LIA
+    101, which meets on the calendar and has issued no Canvas assignment at all.
+
+    Guarding the sentence fallback on Canvas alone strips the course off any commitment
+    naming such a class — and the to-do list opens on coursework, so a stripped label is
+    not a missing chip, it is the row vanishing from the tab that exists for it."""
+    _assignment(conn, external="en1", title="Lab 1", due_at="2026-09-14")  # CHM 113
+    _calendar(
+        conn,
+        source="calendar:asu",
+        external="lia",
+        title="LIA 101",
+        starts_at="2026-09-15T10:00:00-07:00",
+        ends_at="2026-09-15T11:00:00-07:00",
+    )
+    assert homework.enrolled(conn) == frozenset({"CHM 113", "LIA 101"})
+
+    item = _item(conn, source="gmail", external="en2", title="mail")
+    _commitment(conn, item_id=item, what="write the LIA 101 reflection", due_at="2026-09-16")
+    _commitment(
+        conn, item_id=item, what="Buy the Norton ISBN 978-0-393-89300-7", due_at="2026-09-16"
+    )
+    _commitment(conn, item_id=item, what="RSVP to the meetup in RM 151", due_at="2026-09-16")
+
+    view = _todo(conn, settings)
+    assert "LIA 101" in view.courses
+    # A book number and a room number are two to four letters and three digits, which is
+    # also what a course code is. Neither is a class the owner can be filtered to.
+    assert "ISBN 978" not in view.courses
+    assert "RM 151" not in view.courses
+
+    coursework = _todo(conn, settings, only_coursework=True)
+    assert "write the LIA 101 reflection" in _titles(coursework)

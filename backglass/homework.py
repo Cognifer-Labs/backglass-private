@@ -607,26 +607,41 @@ def subject(label: str) -> str:
 
 
 def enrolled(conn: sqlite3.Connection) -> frozenset[str]:
-    """Every course code Canvas has actually issued an assignment under.
+    """Every course code the owner is actually taking, from Canvas and from the calendar.
 
     The guard on the sentence fallback below. `courses._CODE` is "two to four letters
     then three digits", which is what an ASU course code is made of and also what an ISBN
-    is made of: `Buy Norton — ISBN 978-0-393…` produced a course called **ISBN 978**, and
-    it reached the chip row of the Homework page as a class the owner could filter to.
+    and a room number are made of: `Buy Norton — ISBN 978-0-393…` produced a course called
+    **ISBN 978**, and an AI meetup in room 151 produced **RM 151**. Both reached the chip
+    row of the Homework page as classes the owner could filter to.
 
     A registrar-issued code is a fact the ledger already holds, so the fallback is checked
     against it rather than made stricter with a second regex — the next false positive
     will not be an ISBN, and a blocklist only ever knows about the one that already
     happened.
+
+    **Both sources, because `courses.py` rules that the calendar decides a class exists
+    and Canvas only decorates it** — LSB 191 is its own worked example, and this ledger
+    carries a second in LIA 101, which meets on the calendar and has issued no Canvas
+    assignment at all. Guarding on Canvas alone would strip the course off any commitment
+    naming it, and the to-do list opens on coursework, so a stripped label is not a
+    missing chip — it is the row vanishing from the tab that exists for it.
     """
-    rows = conn.execute(
+    found = set()
+    for row in conn.execute(
         "SELECT DISTINCT course FROM assignment WHERE user_id = ? AND course IS NOT NULL "
         "AND course != ''",
         (USER_ID,),
-    ).fetchall()
-    found = set()
-    for row in rows:
+    ).fetchall():
         parsed = subject_of(str(row["course"]))
+        if parsed is not None:
+            found.add(parsed[0])
+    for row in conn.execute(
+        "SELECT DISTINCT title FROM source_item WHERE user_id = ? AND source LIKE 'calendar%' "
+        "AND title IS NOT NULL AND title != ''",
+        (USER_ID,),
+    ).fetchall():
+        parsed = subject_of(str(row["title"]))
         if parsed is not None:
             found.add(parsed[0])
     return frozenset(found)
