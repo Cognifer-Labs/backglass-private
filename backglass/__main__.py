@@ -29,7 +29,7 @@ from backglass.extract import client as model_client
 from backglass.extract import prompts
 from backglass.goals import activities as activities_mod
 from backglass.ledger import USER_ID
-from backglass.sync import EXTRACT_PROMPT, SyncLocked, sync
+from backglass.sync import EXTRACT_PROMPT, SyncLocked, record_run, sync
 
 app = typer.Typer(
     add_completion=False,
@@ -420,7 +420,35 @@ def sync_command(
     """Ingest, triage, extract."""
     settings = get_settings()
     conn = _open(settings)
-    migrate(conn)
+    started_at = now_iso()
+    try:
+        migrate(conn)
+    except Exception as exc:
+        # rule 5, one layer earlier than sync() itself can reach: a schema mismatch
+        # (found 2026-09-08 — a working-tree migration rename collision) throws here,
+        # before `sync()` ever runs, so nothing would otherwise land in `run` at all.
+        # 196 crashes across roughly three hours left zero trace, and `state`'s own
+        # "last run completed without degrading" check kept reading the last *successful*
+        # row from before the outage as current, because there was nothing newer to read.
+        # A degraded row here is what that check needs to catch the very next cycle
+        # instead of staying blind until someone reads `sync.err` by hand. Re-raised
+        # after recording, so the traceback and the non-zero exit are unchanged.
+        #
+        # Best-effort, same as `_record_repair_errors` below: a *first-ever* migration
+        # failing before the `run` table exists yet would make this INSERT itself throw,
+        # and a failure to record a failure must never replace the original traceback
+        # with a more confusing one about a missing table.
+        try:
+            record_run(
+                conn,
+                started_at=started_at,
+                degraded=True,
+                degrade_reason=f"migrate() failed: {type(exc).__name__}: {exc}",
+            )
+            conn.commit()
+        except Exception:  # noqa: BLE001 — rule 5, and the real error raises right below
+            pass
+        raise
     connectors = _all_connectors(conn, settings)
     if not connectors:
         typer.echo("no sources configured; run `backglass auth <label>` first", err=True)
